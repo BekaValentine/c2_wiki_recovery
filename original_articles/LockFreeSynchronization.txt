@@ -1,0 +1,88 @@
+There is LockBasedSynchronization and LockFreeSynchronization, depending on whether synchronization uses locks or not.
+
+LockBasedSynchronization is susceptible to problems such as DeadLock''''''s, LiveLock, PriorityInversion''''''s and CaravanFormation''''''s. LockFreeSynchronization and WaitFreeSynchronization are implemented without locks, and therefore do not suffer from these problems. 
+
+AsynchronousProgramming is a typical technique for achieving LockFreeSynchronization: An operation is done on a copy of the object and then replaced by a LockFreePrimitive like CompareAndExchange (CAS) or DoubleCompareAndExchange (DCAS). Usually it also utilizes RollBack''''''s when the LockFreePrimitive''''''s detect RaceCondition''''''s while doing an operation, simply because the object has been modified by another thread. That is usually detected using ChangeNumber''''''s.
+
+-- GuillermoSchwarz
+
+---------
+
+SoftwareTransactionalMemory and TransactionalActorModel may be implemented by use of LockFreeSynchronization. They can also resolve DeadLock by aborting one or more transactions.
+
+Temporal techniques can also support lock-free synchronization (but not WaitFreeSynchronization). Activity is placed on a logical schedule, and different threads aren't allowed to get very far ahead of the logical schedule from other threads. For example, one could ensure audio and video streams are synchronized by having the audio thread wait for the video thread and vice versa when either gets too far ahead of the other. In this design, each unit of 'state' belongs to a particular thread, and to manipulate state in another thread you would schedule an event to run in the other thread's future. (A compare-and-swap might be used to actually schedule the events.)
+
+----
+
+There is quite a lot literature about LockFreeSynchronization or better WaitFreeSynchronization. 
+The first and really good article I read about it was
+
+http://citeseer.ist.psu.edu/herlihy93waitfree.html
+
+And a quick search at CiteSeer led to the following, that seems to explain it too:
+
+http://citeseer.ist.psu.edu/valois95lockfree.html
+
+Here is a site devoted exactly to lock-free synchronization algorithms and related topics:
+
+http://www.1024cores.net
+
+libcds [Concurrent Data Structure]: C++ implementation of lock-free data structures and garbage collectors 
+
+http://sourceforge.net/projects/libcds/files/
+
+
+----
+
+Partly misleading discussion(s) moved to LockFreeSynchronizationDiscussion
+-----
+
+''How can you tell that the copy you made is internally consistent? OptimisticLocking refers to a database technique for maintaining data consistency, and it presupposes lower-level locking mechanisms to get consistent copies of data. It's a much higher-level concept that doesn't seem relevant. What would you do, just read a data structure several times in a row until you get the same thing twice? That doesn't guarantee anything.'' 
+
+Let us assume that whenever you change a data structure, you finally change the change number. Also let us assume that the whole data structure is not next to the data you want to change, but close to a pointer to the data you want to change. The algorithm is like this:
+
+	1 Read the change number and store it somewhere. Increment the copy.
+
+	1 Copy the data structure.
+
+	1 Change the data structure.
+
+	1 Atomically compare change numbers and exchange pointers.
+
+	1 If CAS failed, GOTO 1
+
+-- GuillermoSchwarz
+
+
+''Step 4 is the magic part.''
+
+''Forget about the data structure; consider only the pointer as the shared data structure, since the state of the data pointed to never changes for a given pointer.''
+
+''Now, how do you read the change number, compare it to a saved change number, then update the change number (a step which is missing from your description) and update (not necessarily exchange) the pointer if the change number comparison succeeds, all as an atomic operation? Typical hardware won't help you with this.''
+
+''You can't update the pointer until the comparison succeeds. If the comparison succeeds, then it might be succeeding simultaneously for another writer. When you update the pointer, it could be that the change number and pointer have changed in the meantime, in which case you've lost an update.''
+
+''Am I missing something?''
+
+I think you are missing that there is hardware that implements the CAS (CompareAndExchange) instruction atomically with the aid of LockFreeOperatingSystems. Other hardwares implement TestAndSet or DCAS (DoubleCompareAnExchange). All those instructions can be executed atomically either by implementing a very short lock (avoiding most of the problems related to LockBasedSynchronization) or simply failing if another process change the data in mean time (which means LockFreeSynchronization can suffer from ProcessStarvation).
+
+Also note that the comparison can't suceed at the same time for two writers, even if there are more than 1 CPU, because CAS has CacheCoherenceSemantics.
+
+-- GuillermoSchwarz
+
+''OK, I wasn't familiar with the acronym CAS and had to guess at its meaning. Back when I used to work in assembly language, I never saw CAS-type operations that worked on more than a machine word (4 bytes these days). Are you sure that the 8/16 byte CAS described earlier isn't fairly exotic?''
+
+No DCAS isn't really exotic. If I remember correctly its part of the X86 instruction set since Pentium and called CMPXCHG8B. The 68K family had TAS (atomic Test And Set) since 68000 and e.g. cmp2, chk2, cas, and cas2 in the 68060.
+
+* CAS is short for atomic CompareAndSwap, better known as CompareAndExchange.
+
+* Does it matter how many bytes are swapped atomically? I guess it does, if not cmp8xchg16 would simply be called cmpxchg and would compare data of any size and exchange data of any size. Having a shorter CAS means you can implement a longer CAS (for bigger compared data or exchanged data) using the algorithm above.
+
+----
+
+Many processors now use "reservation protocols" to implement test-and-set primitives.  For example, the PowerPc uses two instructions--"lwarx" (Load Word And Reserve Indexed) and "stwcx." (Store Word Conditional Index; yes the period is part of the mnemonic; it's a PowerPc NamingConvention that indicates that one or more status bits are possibly affected by the instruction).  The first instruction loads a word from the specified address, and sets a "reservation bit" in the processor (and broadcasts the reservation to any other CPUs in a multi-processor system).  The second instruction tests the "reservation bit" to see if it is still valid; if so it performs the store.  Otherwise the store is not performed; a processor status bit is set to indicate which is the case.  Any other load or store instruction to the same address will cause the reservation bit to be invalidated.  Other things (including innocent loads/stores somewhere else) can also invalidate the reservation bit; a PowerPc implementation may have a single reservation bit, an array of bits keyed by address, or whatever mechanism is appropriate.  Thus the potential for lots of "false positivies" coupled with retries (and potential LiveLock) exists--if an interrupt occurs between the "lwarx" and "stwcx." then you are virtually guaranteed that the "stwcx." will fail.
+
+
+----
+SynchronizationStrategies
+CategoryConcurrencyPatterns

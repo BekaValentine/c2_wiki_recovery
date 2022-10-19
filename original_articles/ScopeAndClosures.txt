@@ -1,0 +1,151 @@
+'''[This page should probably refactored with the pages LexicalScoping, DynamicScoping, LexicalClosure and maybe SpecialVariable and DynamicExtent.]'''
+
+----
+
+''I am in need to explain these terms in another context since I haven't found good explanations elsewhere. I hope some people find this useful. The discussion is based on JavaLanguage for the time being.'' -- PascalCostanza
+----
+
+'''Lexical scoping'''
+
+A programming language is said to be lexically scoped if names for variables and methods are looked up according to the textual arrangement of their definitions. So in the following example, the methods getSecurityManager and setSecurityManager always refers to the variable globalSecurityManager as defined in the class Security''''''Manager, because this is their shared scope.
+
+ class Security''''''Manager {
+
+	static Security''''''Manager globalSecurityManager;
+
+	static Security''''''Manager getSecurityManager() {
+	return globalSecurityManager;
+	}
+
+	static void setSecurityManager(Security''''''Manager sm) {
+	globalSecurityManager = sm;
+	}
+ }
+(This is, of course, not a faithful implementation of the Java API specification of a class with a similar name. ;)
+
+So especially when one of those methods is called in another context, you cannot accidentally "override" this variable. See the following example.
+
+ class My''''''Class {
+
+	void myMethod() {
+	Security''''''Manager globalSecurityManager;
+	Security''''''Manager.setSecurityManager(new Security''''''Manager());
+	}
+ }
+Here, the call to Security''''''Manager.setSecurityManager does not change the local variable of myMethod, but still the static variable with the same name in the class Security''''''Manager, as intended by the programmer of that class.
+----
+'''Dynamic Scoping'''
+
+Well, lexical scoping is the standard behavior in Java and almost all programming languages nowadays, so why bother to give this the funny name "lexical scoping"? Because there are some languages available that additionally offer "dynamic scoping". With dynamic scoping, the call to Security''''''Manager.setSecurityManager would in fact change the local variable and not the static one in class Security''''''Manager. This is because a dynamically scoped variable is looked up in the call stack that is active at the moment when a name needs to be resolved and found in the most recent stack frame. How on earth could this ever be a useful behavior? Here is another example: consider a class that defines a "special", i.e. dynamically scoped variable "debug" as follows. (Of course, this is an "extension" to Java made up on the spot.)
+
+ class Debug''''''Support {
+
+	special static boolean debug = false;
+
+ }
+Now a programmer can choose to temporarily switch debugging on and/or off by introducing a new definition for this variable as follows.
+
+ class My''''''Class {
+
+	void myMethod() {
+  
+	boolean debug = true;
+	
+	// everything from here is being debugged
+	
+	callOtherStuff();
+	
+	// after exit from this method,
+	// debug is reset to its previous state
+	// because the local variable goes out of scope
+  
+	}
+ }
+What's interesting here is that the new definition for debug introduced in myMethod affects all code called within the dynamic scope of this definition. So everything that is called within callOtherStuff also sees debug as being set to true. (Unless, of course, it is again overridden by another definition for debug.)
+
+You might think of a straightforward way to simulate this in Java, but this is most likely not correct because you need to think of too many special cases. For example, here is a straightforward but erroneous implementation in pure Java.
+
+ class My''''''Class {
+
+	void myMethod() {
+  
+	Debug''''''Support.debug = true;
+	
+	callOtherStuff();
+	
+	Debug''''''Support.debug = false;
+	
+	}
+ }
+This code makes the implicit assumption that debug was set to false beforehand. However, in the general case you do not know the actual value stored in the debug variable, so you would have to write the following.
+
+ class My''''''Class {
+
+	void myMethod() {
+  
+	boolean previousDebugState = Debug''''''Support.debug;
+	Debug''''''Support.debug = true;
+	
+	callOtherStuff();
+	
+	Debug''''''Support.debug = previousDebugState;
+	
+	}
+ }
+Well, and then there's the possibility that callOtherStuff throws an exception and in this case, the reset code would not be executed. So you would have to provide a try-finally block accordingly. Furthermore, you most likely would need to store the debug state in a ThreadLocalVariable, and not a global one. What about synchronization? And so it goes on and on and on. You see that manually implementing dynamic scopes in Java is very tedious and dynamically scoped variables as a built-in feature of the language would provide a much easier way to handle such cases.
+
+CommonLisp offers dynamically scoped variables if they are explicitly defined as such (by means of defparameter or defvar), and they are called "special variables". Furthermore, there is the convention in the Common Lisp community to always name them with preceding and succeeding stars. So the name for the debug variable of the example given above in equivalent Common Lisp code would be *debug*. (Common Lispers heavily rely on this convention, so you should really abide by it!)
+----
+'''Closures and lexical closures'''
+
+Assume that Java had methods as first-class data types (like delegates in CsharpLanguage or function pointers in CeeLanguage or CeePlusPlus). Assume further that you could declare a method in the local scope of another method. Then you could, for example, write the following.
+
+ function createAdder(int n) {
+
+	// define a method
+	int adder(int k) {
+	n = n + k;
+	return n;
+	}
+
+	// return it as a result  
+	return adder;
+ }
+Now you can call this method in order to yield an adder with a start value as follows...
+
+ f = createAdder(5);
+
+...and afterwards call f repeatedly to increment the start value and return it...
+
+ f(6) => yields 11 (5 + 6)
+ f(7) => yields 18 (11 + 7)
+ f(6) => yields 24 (18 + 6)
+
+...and so on. Another call to createAdder would return a fresh adder.
+
+ f2 = createAdder(6);
+
+ f2(6) => yields 12 (6 + 6)
+ f2(5) => yields 17 (12 + 5)
+
+...and so on.
+
+What happens here in detail? We have already seen that the method createAdder defines the method adder inside of its scope. What's interesting here is that method adder refers to the parameter n that is passed to createAdder. When the method adder is returned as a result by createAdder, this binding to the parameter n is retained. The method adder is said to "close over" parameter n; it is said to be a "closure". The term "lexical closure" is used when a closure preserves lexical scoping, i.e. when the variable references cannot accidentally be overridden by other local definitions (see above). Since almost all languages with closures offer lexical closures by now, it's usually safe to use the terms "closures" and "lexical closures" synonymously.
+
+Note that the closure is retained even after createAdder has completed and the stack has no reference to n anymore. This is the very reason why closures and local method definitions have not been added to the Java programming language (and other C-like languages): because of their implementation schemes for local variables, these languages would not be able to guarantee safe access to arbitrary variables in the lexical scope in the case of closures.
+
+(Java's InnerClass''''''es are a variation on the theme of closures. They are, in fact, able to access some variables in their lexical scope, but only if these variables are declared as final. Again, access to non-final variables would not be safe in the general case. The reason is that a local variable would not exist anymore after a stack frame has been cleared on exit of the respective method, so a write access to such a variable would fail. On the other hand, final variables can safely be copied around because they don't need to keep track of possible changes to their values - and this is exactly how Java implements closures over final variables: it just copies them to fields that are implicitly created for inner classes.)
+----
+'''Summary'''
+
+In the early days, lexical scoping was a distinguishing feature of AlgolLanguage and its descendants, whereas early implementations of LispLanguage were purely dynamically scoped. SchemeLanguage has introduced lexical scoping and lexical closures to the Lisp world, and CommonLisp has incorporated these notions as defaults as well. Since there are cases where dynamic scoping is very useful, CommonLisp still additionally offers dynamic scoping for specially declared SpecialVariable''''''s.
+
+''I don't know what other languages offer both lexical and dynamic scoping.''
+
+PerlLanguage does; my() variables are lexicals, whereas local() variables are dynamically scoped.
+
+IoLanguage does; variables are dynamicly bound to their objects (not their calling context) by default, but blocks can be used for lexical scoping.
+
+EmacsLisp supports it since version 24.
+----
+See also CategoryClosure, LexicalClosure, WhatIsClosure, ScopingRules

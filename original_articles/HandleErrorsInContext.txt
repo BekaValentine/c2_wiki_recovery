@@ -1,0 +1,134 @@
+''From SelfDocumentingCode:''
+
+'''''Handle errors in the same place where you detected them.'''''
+
+Many errors are bizarre. Some aren't even related to the main thread of execution at all, such as a disk I/O exception when you thought you were just performing a store to a database--which semantically just feels like moving data from here to there. However, (if you're aware the error may occur) you have to deal with them some time. Might as well do it while you know what the heck you did to cause the problem.
+
+'''Therefore,''' handle errors in the context that created them. Thus, not only do you not let invalid state propagate through the code, but you have a clear idea what the (usually complex) error handling code is supposed to be there for. Moreover, you keep the complex code contained and localized instead of smeared throughout the system.
+
+This is a very good technique to maintain SelfDocumentingCode. Most if not all possible scenarios are clearly grouped. (cf. GroupRelatedInformation) This avoids necessitating traceability comments or a separate document to keep track of what's going on.
+
+This is probably countermand to exception theory. That's probably because very long jumping exceptions aren't good (just a couple stack frames).
+
+An example. Some people write code like this:
+
+ if( a''''''Function() == SUCCESS )
+ {
+	do stuff
+	if( another''''''Function() == SUCCESS )
+	{
+	 do more stuff
+	 return SUCCESS;
+	}
+	else
+	{
+	 handle error.
+	}
+ }
+ else
+ {
+	handle error.
+ }
+
+ return FAILURE;
+
+However, this is far superior, even though it duplicates ''return''s:
+
+ if( a''''''Function() != SUCCESS )
+ {
+	handle error.
+	return FAILURE;
+ } 
+
+ do stuff
+
+ if( another''''''Function() != SUCCESS )
+ {
+	handle error.
+	return FAILURE;
+ }
+
+ do more stuff.
+
+ return SUCCESS;
+
+Typically, many if( failed ) { return } groups are done in succession followed by a return SUCCESS; with no code in between. You can imagine how this would look five or six indentation levels deep.
+
+NOTE: Typically SUCCESS and FAILURE are true and false respectively. In this spirit, then, keep in mind that it's sometimes a good idiom to do this:
+
+ if( !a''''''Function() )
+	return false;
+
+ return true;
+
+even though the simpler return a''''''Function(); is cleaner. This is especially true if you have many of these do function then handle error, return false groupings in the method. The reason is, you can easily move the group around or add a new call at the bottom.
+
+Of course, it's easy to change the code. Your call. I just prefer keeping error semantics explicit especially since I have a bad habit of adding error handlers to the naked return false later on as I need to. Something I heard about HandleErrorsInContext.
+
+See SingleFunctionExitPoint
+
+----
+
+A dissenting opinion:
+
+'''Handle errors as late as you possibly can.'''
+
+Forces:
+	* The code that caused the error doesn't know how to handle it.
+	* Mixing error handling code with business logic obfuscates both. It's better to separate concerns.
+	* Our code might be reused in other applications. Therefore, we don't want to tie the code to a particular error handling strategy.
+	* Excellent exception mechanisms exist that allow us to communicate arbitrary information from the point where the exception was thrown to the point where it is handled. 
+	* If we don't handle the error at all, the exception will propagate and in most programming languages, this will result in the program being halted and the exception name being printed. This might actually be sufficient. Thus YouArentGonnaNeedIt applies.
+
+'''Therefore''':
+
+Handle errors as late as you possibly can. If something goes wrong, just throw an exception. A very generic one. Later, when doing FunctionalTest''''''ing, you might find out that just printing "error: aborted" and exiting on some illegal input isn't sophisticated enough. At that time, it's really easy to find the point where it should be caught and handle it properly.
+
+Very long jumping exceptions are good, the longer the jump the better. The more distance there is between the error handler and the thrower the more code there is that doesn't have to deal with program errors (although it does all have to be exception safe). 
+
+''As the author of the top part, I suspect you're right that exceptions are different. Actually, I think that throwing an exception ''is'' handling the error by passing the buck. By handling the error in context, I suppose I meant to say that when you detect an error deal with it in some shape or form right there. Don't set a flag to be processed later, don't use ugly structured programming to push the error away. Do something there and then if you can. There are exceptions [npi] to this rule, naturally, but the idea is to keep error code out of the way of main line code and contained instead of woven through it. Of course, this also means multi-step try() blocks are bad because you lose the specific context that caused the problem, but then we already knew to ExtractMethod.''
+
+----
+
+I agree that you should handle errors in context, but I don't think the classic C error handling pattern:
+
+ if( a''''''Function() != SUCCESS )
+ {
+	handle error.
+	return FAILURE;
+ } 
+
+is the way to do it.
+
+The reason is because it requires you to stuff your function calls inside of conditionals even if they don't belong there. Notice, in the above code, the emphasis is placed on the return value of a''''''Function() and the conditional and its corresponding block, rather than on a''''''Function() itself and what it's really doing. If a function is used to simplify some complicated conditional and it's only purpose is to return some value, then that's one thing, but when you have a function that does something meaningful in addition merely returning a value, the code ends up being misleading:
+
+ if (save''''''Changes() == FAILURE) {
+ 	raise''''''Error(
+ 		"Couldn't save your changes: %s.",
+ 		error''''''String()
+ 	);
+ 	return FAILURE;
+ }
+
+Yeah, we care about save''''''Changes()'s return value, but the return value is only secondary to save''''''Changes() actually trying to save the changes (opening files, writing to them, closing them, etc.); the error handling handles something exceptional and it shouldn't dominate the entire expression like that. Consider the above rewritten slightly:
+
+ rv = save''''''Changes();
+ if (rv == FAILURE) {
+ 	raise''''''Error(
+ 		"Couldn't save your changes: %s.",
+ 		error''''''String()
+ 	);
+ 	return FAILURE;
+ }
+
+It's pretty much the same thing, except now the function call and corresponding error handling code are separated into two different statements. First, we call the function, then, afterwards, we check its return value and handle any errors as needed.
+
+Take a look at what the Mozilla project has to say about this: http://www.mozilla.org/hacking/mozilla-style-guide.html#Errors
+
+-- WilliamDavis
+
+Actually, exception handling shines when there is a hierarchy of calls.  If one uses error returns, the error condition must be checked for and returned all the way back up the calling sequence.  Exceptions return back up the calling sequence invisibly (with the definition of "invisible" being language specific").  Essentially, exceptions allow direct communication from the error detector back to the initial caller, bypassing the intermediates.  --WayneMack
+
+----
+
+CategoryException

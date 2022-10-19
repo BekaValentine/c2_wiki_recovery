@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Unit Testing My Library Graceful Exit
+      </h1>
+      <p>
+        [prev <a href="UnitTestingMyLibraryPrintHeader.html">UnitTestingMyLibraryPrintHeader</a> | next <a href="UnitTestingMyLibraryReturnError.html">UnitTestingMyLibraryReturnError</a> | top <a href="UnitTestingMyLibrary.html">UnitTestingMyLibrary</a> ]
+      </p>
+      <p>
+        The next subroutine for testing presents some new wrinkles.
+      </p>
+      <code>
+        sub gracefulExit {<br/>
+        # print the footer<br/>
+        &printFooter;<br/>
+        # close the html<br/>
+        print $output->end_html;<br/>
+        # disconnect the handle to the database<br/>
+        if ($gSth) { $gSth->finish; }<br/>
+        $gDBhandle->disconnect;<br/>
+        # quit gracefully<br/>
+        exit;<br/>
+        }<br/>
+      </code>
+      <p>
+        One problem is the exit statement here.  If you call this subroutine from a <a href="TestSuite.html">TestSuite</a>, it stops execution of the <a href="TestRunner.html">TestRunner</a>.  This makes it necessary to go into the copy of MyLibrary.pm that's being tested and comment out the exit line.
+      </p>
+      <p>
+        Another complication is that this subroutine calls another one, so we have to take the needs and influence of MyLibrary::printFooter.  Fortunately, it's easy to factor out this particular subroutine.  If we don't even define the one variable it expects, it executes without complaint and doesn't produce any output.
+      </p>
+      <p>
+        Furthermore, this subroutine presents new expectations (a database handle and possibly a statement handle) and has other <a href="SideEffect.html">SideEffect</a>s than printing output.  (As an aside, I would say the main reason I prefer the <a href="PythonLanguage.html">PythonLanguage</a> over the <a href="PerlLanguage.html">PerlLanguage</a> is not the executable-line-noise saw, but that Perl is <em>all</em> <a href="SideEffect.html">SideEffect</a>s. -- <a href="ChrisGray.html">ChrisGray</a>)  In the absence of a method for setting up <a href="MockObject.html">MockObject</a>s for the handles it is possible to set up an empty MySQL database and run some inconsequential SQL statement.
+      </p>
+      <p>
+        So a working <a href="TestCase.html">TestCase</a> looks like this
+      </p>
+      <code>
+        # ---------- tests for &MyLibrary::gracefulExit ----------<br/>
+        package gracefulExit;<br/>
+        use Test::Unit;<br/>
+        require "../MyLibrary.pm";<br/>
+        use CGI;<br/>
+        use DBI;<br/>
+        use IO::String;<br/>
+        sub set_up {<br/>
+        $io = IO::String->new($result);<br/>
+        $old_handle = select($io);<br/>
+        $MyLibrary::output = new CGI("");<br/>
+        $MyLibrary::gDBhandle = DBI->connect("DBI:mysql:mylibrary_test:localhost", \"test", "test");<br/>
+        $MyLibrary::gSth = $MyLibrary::gDBhandle->prepare("show tables");<br/>
+        $MyLibrary::gSth->execute;<br/>
+        }<br/>
+        sub tear_down {<br/>
+        select($old_handle);<br/>
+        $io = undef;<br/>
+        $result = undef;<br/>
+        $old_handle = undef;<br/>
+        $MyLibrary::output = undef;<br/>
+        $MyLibrary::gSth->finish;<br/>
+        $MyLibrary::gDBhandle->disconnect;<br/>
+        $MyLibrary::gSth = undef;<br/>
+        $MyLibrary::gDBhandle = undef;<br/>
+        }<br/>
+        sub test_footer {<br/>
+        my $expected = "</body></html>";<br/>
+        &MyLibrary::gracefulExit;<br/>
+        assert(! $MyLibrary::gSth->{Active}, "gSth still active");<br/>
+        assert(! $MyLibrary::gDBhandle->{Active}, "gDBhandle still active");<br/>
+        assert($result eq $expected, "gracefulExit failed with gFooter given");<br/>
+        }<br/>
+      </code>
+      <p>
+        Oops!  <a href="ThreeStrikesAndYouRefactor.html">ThreeStrikesAndYouRefactor</a>.  We've repeated the same lines for capturing STDOUT three times.  We need to rethink that.
+      </p>
+      <p>
+        So using <a href="ExtractMethod.html">ExtractMethod</a> we add the following subroutine.
+      </p>
+      <code>
+        # ---------- subroutines ----------<br/>
+        package subroutines;<br/>
+        sub trap_stdout {<br/>
+        my($unit_ref, $result, $io, $old_handle);<br/>
+        $unit_ref = $_[0];<br/>
+        $io = IO::String->new($result);<br/>
+        $old_handle = select($io);<br/>
+        &$unit_ref;<br/>
+        select($old_handle);<br/>
+        return $result;<br/>
+        }<br/>
+      </code>
+      <p>
+        And, for instance, the <a href="TestCase.html">TestCase</a> for MyLibrary::printFooter becomes.
+      </p>
+      <code>
+        # ---------- tests for &MyLibrary::printFooter ----------<br/>
+        package printFooter;<br/>
+        use Test::Unit;<br/>
+        require "../MyLibrary.pm";<br/>
+        use IO::String;<br/>
+        sub set_up {<br/>
+        $MyLibrary::gFooter = "***FOOTER TEXT***";<br/>
+        }<br/>
+        sub tear_down {<br/>
+        $MyLibrary::gFooter = undef;<br/>
+        }<br/>
+        sub test_footer {<br/>
+        my $expected = $MyLibrary::gFooter;<br/>
+        my $result =  &subroutines::trap_stdout(\&MyLibrary::printFooter);<br/>
+        assert($result eq $expected, "printFooter failed when gFooter given");<br/>
+        }<br/>
+        sub test_no_footer {<br/>
+        my $expected = "";<br/>
+        $MyLibrary::gFooter = undef;<br/>
+        my $result = &subroutines::trap_stdout(\&MyLibrary::printFooter);<br/>
+        assert($result eq $expected, "printFooter failed when no gFooter given");<br/>
+        }<br/>
+      </code>
+      <p>
+        And similarly for the other <a href="TestCase.html">TestCase</a>s.
+      </p>
+      <hr/>
+      <p>
+        So within the MyLibrary.pm module the five or so instances of the line:
+      </p>
+      <code>
+        exit;<br/>
+      </code>
+      <p>
+        get replaced with:
+      </p>
+      <code>
+        &Exit;<br/>
+      </code>
+      <p>
+        and we add a small subroutine to the file:
+      </p>
+      <code>
+        sub Exit {<br/>
+        exit;<br/>
+        }<br/>
+      </code>
+      <p>
+        And the subroutine trap_stdout introduced above and refined in <a href="UnitTestingMyLibraryReturnError.html">UnitTestingMyLibraryReturnError</a> in the <a href="TestSuite.html">TestSuite</a> becomes:
+      </p>
+      <code>
+        sub trap_stdout {<br/>
+        my($unit_ref, $args, $result, $io, $old_handle);<br/>
+        $unit_ref = $_[0];<br/>
+        $args = $_[1];<br/>
+        print STDOUT @args;<br/>
+        $io = IO::String->new($result);<br/>
+        $old_handle = select($io);<br/>
+        local *MyLibrary::Exit = sub { ; };<br/>
+        &$unit_ref(@$args);<br/>
+        select($old_handle);<br/>
+        return $result;<br/>
+        }<br/>
+      </code>
+      <p>
+        and we a version of the module that should run the same as the old version but can be tested without shutting down the <a href="TestSuite.html">TestSuite</a> in mid-test.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryTesting.html">CategoryTesting</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,97 @@
+* Richard, what is your plan/design/idea here?
+
+The plan is two-fold. First, to create a secure programming language implementing the generalized capabilities model (ie, all of its references will be generalized capabilities). Second, to create a framework so people can create Graphs (models, applications, processes, components) of whatever they want. If the first thing gets done first, then the second reduces to nothing.
+
+The idea here is manifold. The most fundamental concept is that a capability's permissions always apply to itself. Not the object it points to (which is another way of saying 'the capabilities contained in the object'), but itself. This is mucho importantes because it's the only way to ensure ''uniformity'' and ''conciseness'' of permissions. It's also the only way to have ''fine-grained'' permissions; permissions apply to individual caps, not groups of caps.
+
+So if you have a delete permission set then this means that you have permission to delete that capability (assuming you can get a message through to it). And naturally, in order to be perfectly uniform, in order to create a capability, you need to have the create permission set on the capability you want to create. So the system has to read the future, which is actually very simple since it creates the future. The new capability has the exact same permissions as the message that asks to create it. If that message doesn't have create set then the capability that would've been created doesn't grant it the power to create it.
+
+The crucial concept this all hinges on is ''implicit permissions''. This is where the trinary logic comes in. It's really simple though. A capability can have a permission set (ON), unset (OFF), or absent (non-existent). If it's set or unset then that value replaces the relevant value of the permission in the message when the capability passes the message. If it's absent then the value in the message is ''unchanged''. This is how multi-inheritance works; the message picks up permissions as it goes along, and if a permission is absent in a capability then it's the same value as whatever the message picked up last by whichever route it took. And inheritance is the way aggregation works. So absent permissions are mucho importantes!
+
+(Keep in mind that absent permissions obsolete any aggregation flag.)
+
+Absent permissions make everything work. The most trivial thing they make work is the extensible permissions. Suddenly, you can create any permission you want and it will ''propagate perfectly'' because it will be absent everywhere else in the system. More importantly, implicit permissions make ''override'' work in a ''uniform'' manner, as just another permission flag. And override is more than mucho importantes because it's the lynchpin to the whole system. And of course, the fact that a new capability has the permissions of the message that creates it only makes sense with inheritance, which means implicit permissions.
+
+(Absent permissions is why the Smalltalk VM would have to be rewritten to make it secure. ON and OFF can be implemented as special references in Smalltalk, but Unset/Implicit/Absent is the intended behaviour of pre-existing references in the Smalltalk image. And of course, the VM simply doesn't work that way.)
+
+Implicit permissions are also necessary to make sense of implicit capabilities. Let's say for example that you've got a 1 MB array of bytes. Obviously, you don't want to implement it as an object with a million capabilities pointing to individual bytes. Just as obviously, you don't want to create a new class of objects to deal with this trivial optimization. So what you do is you implement it as a byte array in the object, with each byte addressable by an implicit capability named "1" or "2" or whatever. Then of course, you can create a special message to return "1 to: 50" without any problems. The trick that makes this work, that makes the semantics perfectly uniform, is the implicit permissions. Because the permissions on the implicit capabilities are ''absent'', they are the same permissions as those in the object containing the byte array. They're inherited. So the system works exactly like what you'd expect, even though its semantics actually ''make sense''.
+
+Another important concept is that all links are ''bidirectional''. This means that all capabilities are ''paired up''. Why do you care that they're paired up? So that the user who gave you a capability to an object can ''revoke'' it. This isn't necessary in theory because you can use a capability security model where the caps you hand out are only valid for a limited period of time. But of course, that doesn't make sense in practice. In practice, it's necessary for people to be able to see the caps they handed out and revoke them as necessary. So how do you ensure that they're actually paired up? That's really simple. You implement a subscriber model where any caps that aren't properly paired up don't see any updates to the object they point to. So if object A doesn't have a cap to object B which contains a cap to object A, then when object A gets updated, it won't update the cap pointing back to itself. Really simple, and necessary besides.
+
+It's also how you implement ''fine-grained history'', which is necessary for user sanity. The way it works is the following. Each capability holds a start and end version. So each capability knows exactly which versions of the object it applies to. If it gets a message requesting access to a version of the object it doesn't apply to then it rejects it, and that's all there is to it. Usually, a user will send a message asking for #latest and then it all works. If a user asks for version #345 of an object whose capability has been revoked, then that request will fail. But of course, since you can't revoke read access to a past version of an object you've given out (you ''must'' assume the user made a copy so it's proper for them to see the original version as many times as they wish) the user can still access it through an old capability still in the system. Why would they do that? That's really simple.
+
+Basically, whenever the permissions change on a capability, a ''new'' capability is generated with the new permissions. This capability is put in a new version of the object that contains it and any capabilities that point to that object (which are properly paired up) have their versions updated. And so both the old and the new capability can still be accessed from that object, so long as you have permission to do so. And this is both elegant and necessary if you've got an append-only system because you want to avoid having to update the entire graph of capabilities every time you change a single object.
+
+Now, just what [redacted] is override? That's really simple. The override flag means that the other flags are ''overridden''. To actually understand why override is necessary takes a bit more effort. You see, the generalized capability model is based on ''ownership by topology''. And its topology is determined by those override flags. Recall that capabilities are paired up. When a capability has override ''absent'' and its partner has it ''unset'' then the link is going in the direction of ''that'' capability. Anyone following it is said to be going ''downwards'' and anyone following its partner is said to be going ''upwards''.
+
+So what does this topology amount to? It means that you own any object you can reach by going downwards, starting from a capability with override set. In a working system, the login process provides each user with a capability (with override set) to the topmost object in their domain. As a result of the override semantics, they can change any object they can reach by going downwards and revoke any properly paired caps to those objects.
+
+When a user sets override on a capability, this means they've given ownership of anything beneath it to anyone that can reach that capability.
+
+So for example, let's say the system is organized in a strictly top-down manner, as a lattice, and the login process gives you the cap at /root/userA, where foreslashes indicate going downwards and backslashes indicate going upwards. The cap at /root/userA will have override set to ON, all caps going downwards will have override UNset, and all caps going upwards will have override OFF. When you send messages to objects in your user domain, they pass through /root/userA where they pick up override, then they keep going downwards, always keeping the override ON (because they pass caps with override UNset). So whatever object in your domain they manage to get to, you will be able to do absolutely anything you want with it. Now suppose you provide a link to userB so that /root/userB\foo points to /root/userA/bar/. /root/userB\foo will ''not'' be able to do anything they want in /root/userA/bar/. Rather, they will be constrained by the permissions you set on those objects' caps. The \foo cap you provide breaks override in any message userB sends to your objects.
+
+There are no actual delete or change_permission permissions. Since override determines ownership, it implies deletion and permission changing. There is no situation where it is legitimate for a user who doesn't own a link to change the permissions on it. And there should be no such situation involving delete either. (not exactly true: As long as one understands that having override over a capability means one can change its PARTNER's permissions.)
+
+What other permutations of override are there? 
+
+     Partner
+ Link\    ON            OFF           UNSET
+ ON       unstable      owner         owner+
+ OFF      public        level         upwards
+ UNSET    pulic+        downwards     double-downwards
+ (more on this)
+
+And how do you change the past? In an append-only system, changing the past can refer only to either creating a capability to an object whose last capability (pointing to it) had already been deleted, linking to a specific version of an object, or branching off a different version of an object. (more on this)
+
+More to come. -- RichardKulisz
+
+----
+''But of course, since you can't revoke read access to a past version of an object you've given out (you ''must'' assume the user made a copy so it's proper for them to see the original version as many times as they wish) the user can still access it through an old capability still in the system.''
+
+So, it's not like in HollywoodOs where deleting a file removes it from the screen of someone who's reading it, then?  (See PatriotGamesMovie - the book doesn't have that interesting piece of UI design.)
+
+
+''Is it just me or is what I wrote above completely impenetrable? It didn't seem that way when I wrote it.''
+
+Ok, I just reread this. The ternary flags make sense; I can see the logic of the set/unset/absent. Flowing bidirectionally makes sense. I could use some clarification (preferably concise) about override in the first place, as well as whatever you planned to say about its "permutations". The question about changing the past is interesting, and open. And you said you had more to say about implicit delete. -- dm
+
+It's impossible to be concise when I don't know what you're asking.
+
+''The word "concise" comes up simply because I'm hoping for a shorter rather than a longer explanation. I'm asking you to explain the use of override, for starters.''
+
+I think I understand what you're asking now. You want to know what behaviour override makes possible that would be impossible or impractical without it, correct?
+
+Override creates two classes of users of objects, owners and non-owners. Owners get to change the permissions on objects and create/destroy links to them. Without override, non-owners are unable to do any of these things.
+
+Change users to 'objects' (which is what they are in the system) and you can have any legitimate combination of secure access you can imagine.
+
+For example, A owns B and B'. B owns C and C'. B owns C'. Nothing else owns anything else. Ownership is transitive.
+
+''Your further comments help clarify. I'm not sure I understand correctly about the topology, though, because it seems like there could be ambiguities about the directed arcs introduced by overrides; we start with an arbitrary graph, right? What is to prevent cycles, such that there is no unambiguous upward/downward in a region?''
+
+''Oh, wait, you said hierarchical, so you mean a tree, not an arbitrary graph. I'm going to have to reread from the start again, I think.''
+
+''What did you mean by saying it is both hierarchical '''and''' a lattice?''
+
+Removed.
+
+There is never any ambiguity because direction is always a local property of individual links, and not a global property of the whole graph. If object A owns B which owns C which owns A, there is no ambiguity in this situation at all. There is massive instability in it but that's simply not your concern to worry about.
+
+The only thing you really care about is single-rootedness. Cycles, you don't give a damn about. If users of the system find them useful, and/or are stupid enough to create cycles of users, then that's not your business to say otherwise as an OS designer.
+
+So nothing detects or prevents cycles. I used to be worried about preventing them but I'm not anymore. The only important requirement is that no component have more than the unique invariant root it starts out with. Which is itself only necessary for aesthetic / garbage collection reasons. And that property is given by 1) you can't create a node without creating a downwards link to it in the system, 2) you can't delete the last downwards link to a node without deleting the node.
+
+''Ok, I just reread everything again, and you're right, that does seem simple and elegant.''
+
+''I think it'd be helpful if you gave some scenarios demonstrating how this mechanism achieves things that are not achieved with past approaches. I believe that it does, but "the devil is in the details". Are there any gotchas? I mentioned cycles and you said it doesn't matter, because people get what they ask for so they shouldn't ask for that. Are there other such things people should make a point of doing or not doing with this?'' -- dm
+
+By past approaches, do you mean other cap schemes?
+
+My understanding of other cap schemes is that they are exceedingly primitive, with no concept of standard permissions, or useful abstractions (like inheritance) at all. The difference between gotos and objects. Also, other cap schemes seem to be terribly monolithic. They center on the idea that a "kernel" or whatever holds caps in proxy for "something else". There is no such thing in the GCM. All caps are in the system and the objects that hold these caps are in the system too. Caps may cross components (like filesystems) but each component is responsible for its own caps, and the same applies to each object within each component.
+
+But there aren't that many cap schemes at all, so I'm not certain that's what you refer to.
+
+There are innumerable gotchas possible. That's what happens when a system has genuine expressive power, when what you say actually matters. That's also why people will create automated tools to identify security patterns and antipatterns. Not to restrict bad behaviour, but to make the consequences of it clearer to whomever engages in it.
+
+----
+See CapabilitySecurityModel

@@ -1,0 +1,233 @@
+There are those who like to AvoidExceptionsWheneverPossible. There are others who hate this attitude. Let's try to depolarize the discussion with some code.
+
+In ExtremeProgrammingInPractice, we see the following algorithm:
+	 :	Try to add a new user to the database, and email them their new password. If either of the above steps fail, redirect the user to a web page explaining what happened. Also, if the emailing fails, delete the user from the database.
+
+''Before jumping to solutions let's observe that the above is not an algorithm, it is a specification of a requirement (business rule), probably a UserStory or half of it in XP jargon.'' 
+
+''Second, the specification is not well-defined. Within the scope of a single interaction with the user (it's talking about redirecting the user to an error page), these things absolutely cannot be accomplished: you cannot make a transaction of the first two actions (inserting into the database and sending an email), and you cannot reliably detect if the email failed in such a short time span (it may take hours or even days); even if it fails, it's hard to make sure that the user is deleted because then the delete must fail.'' 
+
+{Monitoring returned/bounced emails would generally be a separate operation.}
+
+''What is needed here is a workflow scenario, not a transaction scenario, which will render the problem of how to handle exceptions moot. Further clarifications are welcome. Hopefully, it's not another typical book/toy example that doesn't have any relation to reality and encourages sloppy thinking in software practice.''
+
+Why not put the explanation page up anyway, but have a link to click in the email that confirms and actually initiates the account?... which would make this a definite 'state machine' type situation... but no one seems to have voted for that yet... oh well, the road less travelled by... -- BillWeston
+
+The requirements, though reasonable, are more complicated than any exception-handling situation I've come across in four years of Java coding. A simple try...catch...finally construct almost always suffices, but not in this case.
+
+Isn't this the case of a long running transaction? I wouldn't attempt this with simple exception handling, like try-catch-finally. -- LuizEsmiralha
+
+----
+Increment the number of your favorite to vote:
+* [1] Use ErrorValue''''''s and if's
+* [7] Throw/Catch Exceptions
+* [2] PassAnErrorHandler
+* [0] Use InvisibleExceptionHandlers
+* [2] Use a NullObject
+* [2] Use a StateMachine or StrategyPattern
+* [1] BackTracking or other kinds of NonDeterministic handling of the offending code. Downside: You cannot undo the external world.
+
+If you can think of other options, please post them and mention their pros/cons. If you want to use a language feature that Java doesn't have, feel free to write the code in a language that does.
+
+----
+
+For some entries, see:
+* ErrorValue
+* PassAnErrorHandler
+* InvisibleExceptionHandlers
+
+----
+
+An offsite link with a good comparison of various techniques in C++ exists at: http://www.vollmann.ch/en/pubs/cpp-excpt-alt.html
+
+----
+
+'''Throw/Catch Exceptions'''
+
+ try {
+	 U''''''serDatabase.add(user);
+	 mailPassword(email, password);
+	 redirect("success");
+ } catch(D''''''atabaseFailure e) {
+	 redirect("addfailure");
+ } catch(E''''''mailFailure e) {
+	 U''''''serDatabase.delete(email); ''//This can also fail !!!''
+	 redirect("mailfailure");
+ }
+'''Pros:'''
+	* Puts all the normal code together, and all the exception code together.
+	* Reflects the pseudocode at the top of this page almost 1:1.
+	* Shortest so far.
+	* Also easy to UnitTest.
+'''Cons:'''
+	* If you're not used to reading try/catch blocks, the normal code looks obscured by the indentation, as if it were incidental. (See IlluminateTheMainline.)
+	* Could be shorter still.
+	* Requires exception handling support from the language - thus is not usable in languages without that support.
+	* Requires several reserved keywords ('try', 'catch', 'finally', 'throw'), polluting the identifier namespace.
+	* Forcefully breaks encapsulation by requiring client code to know what exceptions called code might raise without an explicit way of describing those exceptions. (Java does have a way, but it uses unusual syntax and another reserved word)
+	* If the called code changes, and raises a different exception, this will force a change in the catch group. Therefore the Throw/Catch technique causes coupling.
+	* The catch groups suffers from SwitchStatementsSmell, as described below.
+	* There is no guarantee that exceptions are handled correctly, or at all (i.e. do-nothing catch block).
+	* A given function or method using a try/catch/finally block must not only perform its duty but also handle any exceptions in doing so. This decreases cohesion within that function or method.
+	* As the try block may contain more than one statement, it is possible for different statements to raise the same error classes for different reasons. Thus one reason can 'mask' another. This exacerbates the debugging process as the person debugging is quite likely to try to fix the more obvious cause of the exception. E.g. if the mailPassword() step recorded the email in the database but the email table has some problem, then we may end up redirecting to 'addfailure' even though the user has been added. So in fact, this ordinary looking example is itself a potential source of difficult to fix errors thanks to the 'try' block.
+
+''How is it obvious that the D''''''atabaseFailure exception is emitted from U''''''serDatabase.add(), and that E''''''mailFailure is emitted from mailPassword()? Is it not better style to wrap each potentially throwing function call in its own try/catch block? In this case, how is Throw/Catch Exceptions any better than testing error codes?''
+
+Unless both methods throw the same exceptions you don't need separate try/catch blocks for each call. Is this what you mean?
+
+''I think that the question is - how can the reader tell which calls might throw which exceptions? The example is (reasonably) clear, but I recently worked on code that had one try block with about 5 catches, and eleven function calls inside the try(); each function would throw exceptions on failure cases. During initial testing (not UnitTest''''''ing, alas), I was hard pressed to find which function was failing, because the exception names were not immediately relatable to the calls that threw them, and the log statements were subclassed so that I had to search header files to find what was failing. Not the best way to make it easy to track the errors down.'' -- PeteHardie
+
+The caller should not need to know which call throw the exceptions, because exceptions should describe '''why''' things failed, not '''what''' thing failed (e.g., F''''''ileNotFoundException vs C''''''annotReadConfigFileException. I have seen codes that throws C''''''onstructionException from constructors, the only way to handle those is to dump the error and exit, since you never know why it failed to recover). If you really need to know which call failed to properly handle the error, put them in separate try-blocks. If you only need to know to debug it, look at the stack trace.
+
+''If you use EclipseIde, turn on "Mark Occurrences" in the Java editor preferences. Then put your cursor on an exception named in a catch clause.  Every method in the try block that can throw that exception will be highlighted.''
+
+---- 
+'''PassAnErrorHandler'''
+
+''''''
+    void handle_database_failure() {
+        redirect("databasefailure"); // assuming this jumps somewhere (bad idea, but same as in the Try/Catch example)
+    }
+
+    void handle_email_failure() {
+	 User''''''Database.delete(email, handle_database_failure);
+	 redirect("mailfailure");
+    }
+
+    User'''''Database.add(user, handle_database_failure);
+    mailPassword(email, password, handle_email_failure);
+    redirect("success");
+''''''
+
+Note that in this scheme we can't be affected by the very error that appeared in the original Try/Catch example above (where an un-handled database error could have been raised in the error handler block for the Email''''''Failure). See PassAnErrorHandler for details. --MikeAmy
+
+----
+'''Strategy Example'''
+
+ N''''''ewUserNotifier notifier = new N''''''ewUserNotifier(user);
+ notifier.useDatabase(userDatabase);
+ notifier.attemptToAddUser();
+ notifier.sendPasswordEmail();
+ notifier.handlePendingIssues();
+ notifier.redirectWebPage();
+ delete notifier;
+
+A variation of the NullObject example, where the notifier maintains its state via a StrategyPattern, delegating the relevant methods to the appropriate strategy object.  For example, if attemptToAddUser() fails, then the updated strategy object's sendPasswordEmail() and handlePendingIssues() will do nothing.  However, if sendPasswordEmail() fails, then handlePendingIssues() will result in the deletion of the user's record from the database.  In either case, redirectWebPage() will redirect to the error page; otherwise, to the success page.
+
+'''Pros'''
+* Clarity of intent.
+* Encourages OnceAndOnlyOnce (no cut & pasting of the exception handling code).
+* Encourages OneResponsibilityRule.
+* The reader never knows how exceptional cases are handled.
+* Adding a user to the database is completely factored from other actions.  It hasn't a clue it's the first thing to be performed.
+
+'''Cons'''
+* Somewhat more complex than the NullObject implementation.
+* The reader never knows how exceptional cases are handled by static code analysis.
+----
+'''Use a NullObject'''
+
+ N''''''ewUserNotifier notifier = U''''''serDatabase.add(user);
+ notifier.sendPasswordEmail();
+ redirect(notifier.pageToRedirectTo());
+
+''(FIXME: Someone give me some help with these names - they suck.)''
+
+That is:
+	* if everything succeeds, everything acts as expected.
+	* if U''''serDatabase.add() fails, it returns an NullObject that
+		* Does nothing on the sendPasswordEmail() invocation, and
+		* Returns "addfailure" from pageToRedirectTo().
+	* if U''''serDatabase.add() succeeds, and sendPasswordEmail() fails, the NullObject
+		* Returns "mailfailure" from pageToRedirectTo().
+
+'''Pros:'''
+	* Clarity of intent.
+	* Encourages OnceAndOnlyOnce (no cut & pasting of the exception handling code).
+	* Encourages OneResponsibilityRule (ask me to explain how this is true, if it isn't clear enough).
+	* The reader never knows how exceptional cases are handled.
+
+'''Cons:'''
+	* Involves writing extra classes (abstract N''''''ewUserNotifier, plus the one for the normal case, plus the NullObject, plus whatever MockObject''''''s you need for testing). ''Sometimes you can make the base NewUserNotifier concrete, and use instances (or possibly a Singleton instance) of the superclass as a NullObject, giving empty interface implementations. That's pretty straightforward to write; then you just override those methods in a subclass to provide functionality for "the normal case".''
+	* The reader never knows how exceptional cases are handled. (For example, notifier.sendPasswordEmail() does not communicate that it deletes the user from the database if it fails. This is hidden behaviour and an unwanted side-effect -- ThomasEyde)
+	* ''UserDatabase.add() "knows" that it's the first call in the chain, and that it has to create a NewUserNotifier object - a requirement of the calling function. By contrast, mailPassword, called by 'notifier.sendPasswordEmail();' is unchanged. The add() method is being forced to have a nasty coupling to this caller.''
+
+----
+
+'''Use a StateMachine'''
+
+In ALGOL derived languages, this is a pain, but it could look something like:
+
+ enum {
+     ADD_USER,
+     MAIL_PASSWORD,
+     REDIRECT,
+     STOP,
+     ERROR,
+ } eState = ADD_USER;
+
+ while( STOP != eState ) {
+     switch( eState ) {
+         case ADD_USER: 
+             eState = MAIL_PASSWORD; // Alternatively, eState++;
+             if( !U''''''serDatabase.add(user) )
+                 eState = ERROR;
+             break;
+
+         case MAIL_PASSWORD:
+             eState = REDIRECT; // Alternatively, eState++;
+             if( !mailPassword(email, password) )
+                 eState = ERROR;
+             break;
+
+         case REDIRECT:
+             eState = STOP; // Alternatively, eState++;
+             if( !redirect("success") )
+                 eState = ERROR;
+             break;
+
+         case ERROR:
+             // ERROR!
+             eState = STOP;
+             break;
+     }
+ }
+But this is ridiculously stupid. With closures, a state machine is infinitely more elegant simply by using CollectionAndLoopVsSelectionIdiom with lambda thunks (and a little let* magic). Alternatively, one could create state objects in object-oriented BondageAndDisciplineLanguage''''''s.
+
+''[DeleteMe] Thanks for this crazy entry. One problem, however: It doesn't actually recover from the error conditions. Remember: We need to redirect to the appropriate failure page on failure. Also, if the email fails, the user needs to be deleted from the database. Can you add this handling in to the above code, so that the differences between all the techniques can be highlighted? Thanks!''
+
+'''Pros:'''
+* ?
+
+'''Cons:'''
+* Has the common problem of standardizing on an ErrorValue solution: Everything must be a function, and all functions must return a boolean success/failure flag. No functions may return application-defined values.
+
+--------
+'''Result Values''' AKA ErrorValue
+
+ if (good = addUserToDatabase(user))
+   good = emailUser(user);
+   if (! good) deleteUserFromDatabase(user);
+ }
+ if (! good) messageToUser(user);
+Note that this does not check the status of the deletion operation, but this does not appear to violate the requirements, which only say a message must be displayed, which is already indicated at that stage here. A fancier version may track which kind of error is encountered in order to properly log it. Here is one approach.
+
+  errMsg = "";  // initialize as blank
+  if (! addUserToDatabase(user)) {
+     errMsg = "Cannot add user to database";
+  }
+  if (!length(errMsg) && !emailUser(user))
+     errMsg = "Cannot email user";
+     if (!deleteUserFromDatabase(user)) {
+        errMsg = "Cannot remove user from database after email failure";
+     }
+  }
+  if (length(errMsg)) {
+    displayError(errMsg);
+  } 
+ 
+
+Also, it seems a little strange to delete the user. Perhaps a better approach is to mark that user as "on hold" or the like. 
+
+----
+CategoryException, CategoryExample

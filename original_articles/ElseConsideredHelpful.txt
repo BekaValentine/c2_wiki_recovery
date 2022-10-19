@@ -1,0 +1,195 @@
+Contrary to the claims on ElseConsideredSmelly, use of "else" in if statements may contribute to code clarity and ease of understanding.
+
+-----
+
+''Consider this subroutine, taken from production VisualBasic code:''
+ Private Sub Write''''''Property''''''Element(ByVal psName As String, ByVal pvValue As Variant)
+  Dim xmlElmt As MSXML.IXMLDOMElement
+  ' ...  Code to create the XML Element and write pvValue type information into it.  ...
+  If Is''''''Date(pvValue) Then
+   xmlElmt.Text = Format$(pvValue, "YYYY/MM/DD HH:NN:SS")
+  Else If Var''''''Type(pvValue) = vbObject Then
+   If pvValue Is Nothing Then
+    ' (No text)
+   Else
+    Call D''''''oObjectSerialization(xmlElmt, pvValue)
+   End If
+  Else If Is''''''Null(pvValue) Then
+   ' (No text)
+  Else If Is''''''Empty(pvValue) Then
+   ' (No text)
+  Else If Is''''''Missing(pvValue) Then
+   xmlElmt.Text = "Missing"
+  Else
+   xmlElmt.Text = CStr(pvValue)
+  End If
+ End Sub
+''We can eliminate all "else" clauses by doing early exits from the subroutine, and forcing the one nested if into a separate subroutine:''
+ Private Sub W''''''ritePropertyElement(ByVal psName As String, ByVal pvValue As Variant)
+  Dim xmlElmt As MSXML.IXMLDOMElement
+  ' ...  Code to create the XML Element and write pvValue type information into it.  ...
+  If Is''''''Date(pvValue) Then
+   xmlElmt.Text = Format$(pvValue, "YYYY/MM/DD HH:NN:SS")
+   Exit Sub
+  End If
+  If Var''''''Type(pvValue) = vbObject Then
+   Call W''''''riteObjectValue(xmlElmt, pvValue)
+   Exit Sub
+  End If
+  If Is''''''Null(pvValue) Or Is''''''Empty(pvValue) Then
+   ' (No text)
+   Exit Sub
+  End If
+  If Is''''''Missing(pvValue) Then
+   xmlElmt.Text = "Missing"
+   Exit Sub
+  End If
+  xmlElmt.Text = CStr(pvValue)
+ End Sub
+ 
+ Private Sub W''''''riteObjectValue(ByRef xmlElmt As MSXML.IXMLDOMElement, ByVal pvValue As Variant)
+  If pvValue Is Nothing Then
+   ' (No text)
+  Else
+   Call D''''''oObjectSerialization(xmlElmt, pvValue)
+  End If
+ End Sub
+''But does this make the code easier to understand?''
+
+''(I think not.  ;-)''
+
+'''''(...and darn I hate ConvertSpacesToTabs -- it keeps trashing code.)'''''
+
+This example better illustrates the need for an "elsif" construct than just plain "else".  (And also the need for whitespace!)
+
+----
+
+First: Thank you for this Page. We need it to keep the balance (like with every refactoring that has a reverse refactoring). It reminds us of the OverDoseEffect.
+
+But still: when I was reading the first example (sorry I'm unfamiliar with VB) my thoughts were (in this sequence)
+	 :	"Damned, he has found a good counter example."
+	 :	"ok if that badlynamedthingthere is a date ..."
+	 :	"... then it gets formatted and somesuch ..."
+	 :	"ok, I think I understand that."
+	 :	"Why is he not returning now?"
+	 :	"There must be something more about the variable that he wants to do, regardless whether it is a date or not"
+	 :	"Whatever that is, it is not in the opening else block."
+	 :	"Goto end of block. Where is that block ending?"
+	 :	"Ah, lots of else-ifs here. Is he going around returns?"
+	 :	"Nothing after the end of my block. All that parsing was for nothing." ''Disappointment''
+	 :	"The second solution isn't nice to read either, but some of the effects stem from the lengthy syntax and the bad indentation ''[that has improved now]''. Anyway, I can understand every block in isolation. That's better localized code, that's easier to parse (mentally) and easier to break into parts for the next refactoring we're doing."
+
+--DierkKoenig
+
+----
+
+HungarianNotation translation: '''pvValue''' = parameter, Variant type, named "Value"
+
+It happens that I'm not doing anything between the final "End If" and "End Sub". But I could. Tomorrow, I may decide to add some code there ''(which is why MultipleExitPoints can be really annoying and confusing)''. And I can find other code that uses "else", where the "End If" is followed by other code, or the entire "If-EndIf" block is in a loop.
+
+With the second example, I find it's easier to understand each statement in isolation -- until I get to the "xmlElmt.Text = CStr(pvValue)" statement at the end: While it looks like "unconditional execution" ''(to one unaccustomed to the FORTH idiom mentioned on ElseConsideredSmelly)'', it's really executed "in all cases other than the ones mentioned above." ''(I find this "do X when none of the other rules apply" logic common in business requirements.)'' In this case, the final "else" happens to be the most common case. But in other syntatically similar cases, the final "else" can be the least common case, making "unconditional execution" very far from the correct understanding.
+
+I think the 63 lines of this function (in the original production code) argue more strongly for its refactoring than the presence of "else" or "ElseIf" clauses.
+Even if I pulled the entire If-ElseIf-EndIf block to another subroutine, I'd still use the ElseIf syntax. -- JeffGrigg
+
+----
+
+''"ElseIf" is a "select-case" -- for use when, due to limitations of the programming language, you can't do select-case.'' -- JeffGrigg
+
+See VbFlexibleSelectCase
+
+----
+
+We can eliminate all "else" clauses by doing early exits from the subroutine.
+
+To me this is the clearest. It keeps the indenting to reasonable levels and simplifies the tests because each test gets to assume more and more facts. It's a natural kind of filtering waterfall. Lots of nested if-then-elses make the relatively simple logic much more complicated.  -- AnonymousDonor
+
+----
+Also, we can eliminate all "else" clauses by using polymorphism.  A professor of mine explained that if you have too many else clauses, you probably need to use a polymorphic object whose subclasses implement the different clauses.  Seems to me "else" clauses (and for that matter "if" clauses") can be replaced with an indexed call to a polymorphic class.
+
+''This appears to be a far better argument.  I agree that the clarity of the code code be improved greatly by through polymorphic classes.  I find it difficult to determine if "Is Nothing", "Is''''''Null", and "Is''''''Empty" are variations on a single case and why they differ from "IsMissing."  It would be much clearer to use a class factory to create the appropriate Property''''''Element object (with a clear name!) and then be able to call Write on that object.''
+
+----
+
+Unfortunately, all four of the different varieties of nullity (Nothing, Null, Empty, Missing) here are VB's fault. Still, it seems to me like some sort of canonicalization should be happening upstream. Unless this is the only client of these values, I bet there's lots of testing for nullity elsewhere in the code.
+
+Date formatting surely wants to be factored out. Is this the only place in the software that dates are converted to strings?
+
+The "create the XML Element and write pvValue type information into it" part of the routine should be separated from the part that actually computes the serialization.
+
+So I reckon we want something along the following lines. Please excuse any flubs arising from the fact that I don't know much VB.
+
+ Private Sub W''''''ritePropertyElement(By''''''Val psName As String, By''''''Val pvValue As Variant)
+  Dim xmlElmt As MSXML.IXMLDOMElement
+  ' ...  Code to create the XML Element and write pvValue type information into it.  ...
+  If N''''''eedsNoText(pvValue) Then Exit Sub
+  If V''''''arType(pvValue) = vbObject Then
+   Call D''''''oObjectSerialization(xmlElmt, pvValue)
+  Else
+   xmlElmt.Text = XMLPropertyText(pvValue)
+  End If
+ End Sub
+
+ Private Function N''''''eedsNoText(By''''''Val pvValue As Variant) As Boolean
+  N''''''eedsNoText = (pvValue Is Nothing) Or Is''''''Null(pvValue) Or Is''''''Empty(pvValue)
+ End Function
+
+ Private Function S''''''tringifyDate(By''''''Val pvValue As Variant) As String
+  S''''''tringifyDate = Format$(pvValue, "YYYY/MM/DD HH:NN:SS")
+ End Function
+
+ Private Function XMLPropertyText(By''''''Val pvValue As Variant) As String
+  If Is''''''Date(pvValue) Then
+   XMLPropertyText = S''''''tringifyDate(pvValue)
+  Else If Is''''''Missing(pvValue) Then
+   XMLPropertyText = "Missing"
+  Else
+   XMLPropertyText = CStr(pvValue)
+  End If
+ End Function
+
+This is a beautiful example of the sort of thing that would be easier in a language with GenericFunction''''''s. (Because you want to do this via polymorphism, but in a conventional OO language you don't have any way of attaching polymorphic behaviour to built-in types like Date.) The only one I'm familiar with is CommonLisp (though DylanLanguage has them too), but here's how the code might look in a hypothetical VB-with-generic-functions.
+
+ Private Sub W''''''ritePropertyElement(By''''''Val psName As String, By''''''Val pvValue As Variant)
+  Dim xmlElmt As MSXML.IXMLDOMElement
+  ' ...  Code to create the XML Element and write pvValue type information into it.  ...
+  Serialize(xmlElmt, pvValue)
+ End Sub
+
+ ' Default:
+ Private Generic Function Serialize(xmlElmt As MSXML.IXMLDOMElement, pvValue As Variant)
+  xmlElmt.Text = CStr(pvValue)
+ End Generic Function
+
+ Private Generic Function Serialize(xmlElmt As MSXML.IXMLDOMElement, pvValue As Date)
+  xmlElmt.Text = Format$(pvValue, "YYYY/MM/DD HH:NN:SS")
+ End Generic Function
+
+ ' Definitions for Serialize on Object classes just as for D''''''oObjectSerialization
+ ' in the existing code. Probably Serialize and DoObjectSerialization would become the
+ ' same function.
+
+ Private Generic Function Serialize(xmlElmt As MSXML.IXMLDOMElement, pvValue Is Missing)
+  xmlElmt.Text = "Missing"
+ End Generic Function
+
+ Private Generic Function Serialize(xmlElmt As MSXML.IXMLDOMElement, pvValue Is Nothing)
+  ' Do nothing
+ End Generic Function
+
+ Private Generic Function Serialize(xmlElmt As MSXML.IXMLDOMElement, pvValue Is Null)
+  ' Do Nothing
+ End Generic Function
+
+ Private Generic Function Serialize(xmlElmt As MSXML.IXMLDOMElement, pvValue Is Empty)
+  ' Do Nothing
+ End Generic Function
+
+That's painfully verbose, largely because VB ''is'' painfully verbose. But it's very
+clear. And a lot of the verbosity is because of having to deal separately with Null,
+Nothing, Empty and Missing; if those cases can be canonicalized upstream then the code
+becomes correspondingly shorter.
+
+----
+
+Debated under SwitchStatementsSmell.

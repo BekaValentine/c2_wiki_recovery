@@ -1,0 +1,72 @@
+The ModuleDependencyProblem is as follows:  Module ''A'', where ''A'' can be a class, an application, a library, etc., uses services provided in module ''B''.  Module ''B'' is shipped and deployed separately from module ''A'' (or can be, at least); ''A'' dynamically loads in ''B'' upon startup.  A new version of ''B'' comes out, ''B' '', which replaces ''B'' in the system (we'll ignore installing multiple versions of ''B'' for now).  What happens?
+
+Several possibilities:
+
+'''1: All works fine'''.  ''B' '' provides the same interface and semantics as ''B'', and ''A'' functions correctly with ''B' '' in all respects.  (We ignore performance changes here, though performance degradation can make ''B' '' unacceptable in some cases).
+
+'''2A: B' is rejected immediately'''.  When loading program ''A'', it attempts to load ''B'', discovers a version that is incompatible (or is believed by the software to be incompatible); ''A'' is then halted with a diagnostic.
+
+'''2B:  B' is rejected later'''.  ''A'' successfully loads and starts, and loads ''B'' as part of its initialization.  At some point in the operation of ''A'', an incompatibility is detected and reported to the user (this may result in termination of ''A'').
+
+'''3: Bad stuff happens'''.  ''A'' successfully loads and starts, and loads ''B''.  At some point in the operation of A, an incompatibility manifests itself as some form of UndefinedBehavior, such as incorrect computation, data corruption, random crashing, a non-obvious exception, or some other nastiness.
+
+Clearly, '''1''' is better than '''2A''' or '''2B''', both of which are better than '''3'''.  Opinion seems to be divided between which of '''2A''' and '''2B''' is better--'''2B''' allows some work to get done in the interim, but many cases of '''2B''' indicate the presence of case '''3''' as well. 
+
+Various manifestations of the ModuleDependencyProblem are known as DllHell, the FragileBinaryInterfaceProblem and the FragileBaseClassProblem -- this page is intended to be an umbrella for those.
+
+There are two sub-categories of the module dependency problem -- the ''semantic module dependency problem'' and the ''implementation module dependency problem''.
+
+Dependency problems can also be categorized by the TypesOfDependency (and by what needs to be done to resolve the problem).
+
+'''The semantic module dependency problem'''
+
+This occurs when a semantic change made in ''B' '' invalidates an assumption made in ''A''.  It can be an obvious thing, like removing an API (or changing it in a non-backwards-compatible fashion)--these can often be caught by tools such as linkers or loaders.  Or, it can be hidden--''A'' makes assumptions about the behavior of ''B'' which are violated in ''B' '', without changing any public interfaces.	Most languages don't provide any way of specifying implementation semantics (though EiffelLanguage and others that support DesignByContract can do this to some extent, through preconditions and postconditions).
+
+Note that with a semantic module depenency problem occurs, case '''1''' above is not possible--the change breaks the code, period.  The trick is to cause any such change to result in cases '''2A''' or '''2B''' and not '''3'''.  This is very difficult for hidden semantic changes.
+
+'''The implementation module dependency problem'''
+
+The implementation module dependency problem occurs when the tools used to process programs (compilers, interpreters, virtual machines, linkers, loaders, etc.) hardcode assumptions about ''B'' in the code for ''A''--assumptions which ought not affect program correctness--and these assumptions are violated in ''B'.''  As a result, ''A'' functions incorrectly (often with case '''3''') when used with ''B'.''
+
+In an ideal world, this would not exist--the implementation dependency problem is entirely an artifact of the tools which are used.  Most such dependencies are justified on performance grounds--lookup by pointer/offset is far faster than lookup by hashing, for instance.  Some languages are more prone to this than others--CeePlusPlus is the most notorious example (offsets from an object's address needed to access fields and function addresses are hardcoded into an application--a seemingly innocuous change to a class definition, such as adding a test function, can render these offsets incorrect.  The result is UndefinedBehavior -- this is what is meant by the FragileBinaryInterfaceProblem).  Generally, static languages are more susceptible to this than languages with DynamicTyping -- though that isn't necessarily the case.  (JavaLanguage is statically typed, though far less prone to this than C++.)
+
+The usual solution to the implementation module dependency problem is to re-compile ''A'' with the interface definitions for ''B' '' instead of ''B'', thus correct assumptions can be had.  (This new version ''A' '' will no longer work with ''B'' however; nor with ''B"'' when that comes out.)
+
+----
+
+'''Possible solutions and workarounds'''
+
+A ''solution'' is intended to prevent the problem from occurring; a ''workaround'' is intended to make the problem less obnoxious when it occurs.  Some of the solutions may produce ''false positives''--causing a revised module ''B' '' to be rejected as incompatible when it in fact is.  (False positives are arguable better than false negatives (case '''3'''), as the latter implies UndefinedBehavior).
+
+	* Versioning of modules.  Subsequent releases of modules have a version number attached (or implemented with some OS hack, such as SymbolicLink''''''s on Unix), which is queriable by the loader.  Versioning scheme may be simple (a serial number, which if different causes the module to be rejected) or complicated (major.minor.bugfix, which requires the developers of ''B'' revisions to assign numbers correctly).
+
+	* Support for multiple versions.  If version numbers (or similar) are provided, then it is possible to have multiple versions of the module--i.e. both ''B'' and ''B' ''--installed at once.  Applications would default to latest and greatest, and can be changed to default to a known-good version when available.  Downside is that users may have to intervene in what should be a developer manner--and that it is possible that an application (via linking in intermediate modules) may require two different versions of the same module.
+
+	* Use of languages/environments/platforms which don't engage in obnoxious optimizations.  Forget the lack of GarbageCollection--this is the biggest shortcoming of CeePlusPlus for business applications, in my opinion.  Java (and languages implemented on the JavaVirtualMachine), SmalltalkLanguage, etc. don't suffer from implementation module dependency problems, in general.
+
+	* Use of DesignByContract.  The nice thing about DesignByContract is the pre- and post-conditions of a routine are part of it's ''interface''--if the preconditions strengthen or the postconditions weaken that indicates a non-backwards compatible change.  
+
+	* '''Static Linking'''.	If ''A'' needs a specific version of ''B'', link it in statically rather than depending on the dynamic loader.  Wastes space, and prevents an upgrade from ''B'' to ''B' '' when it is beneficial -- but solves the problem.  (There is a ConsideredHarmful paper out there -- DynamicLinkingConsideredHarmful -- which advocates exactly this, for the reasons stated.)
+
+	* '''Use better dynamic loaders'''.  One problem with C/C++ is that the linkers/loaders typically used (and provided by the operating system) are stupid--and will generally err on the side of linking an application rather than producing a linker error.  Your standard C/C++ linker/loader is utterly helpless when it comes to determining whether or not two .o files were compiled against the same .h file (unless a symbol is completely missing).
+
+----
+
+'''DLL Hell'''
+
+DLL Hell experienced by MicroHell users like myself is another manifestation of this problem. To get around it, multiple names for a module evolve, along with other tricks. The end result is an unstable system which has been patched into the limits of acceptability.
+
+Into this situation, has now been introduced an exploit for JPEG parsers, which may effect any DLL that happens to parse a JPEG. There's no central registry, no list of which applications use which DLL, so the result is ''very bad''.
+
+-- MikeWarot
+
+My feeling is that it is best to stick with the original DLL's (when shipped) if possible, for this is what integration testing was probably done with. This is the case even if DLL's are later upgraded. But, some approach would be needed if later or alternative versions exist and the original is not found. 
+
+If the original version is not found, questions arise such as:
+
+* Should the closest versioning match be chosen, or the most recent match?
+* Should the user be prompted for a choice or should system just pick a best guess?
+* Should user be prompted for a choice if guessed DLL fails?
+* Should the user be warned if only a version older than the original target version is found?
+----
+Does anyone know of any build system that allows us to manage applications as a loose combination of versioned modules (as described above)? Most of the build tools seem to be concerned with compiling and archiving etc. -- SriramGopalan

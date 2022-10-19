@@ -1,0 +1,128 @@
+My ExBase days still make me appreciate easy application of "cursoring" techniques. That is, the ability to process records one-at-a-time with an imperative (procedural) style. (Sometimes called "iterating".) Newer query-favoring tools don't seem to acknowledge this, making cursoring cumbersome or verbose.
+
+As an example, suppose from a vendor we receive and import a CSV file representing a table with "header" rows and "detail" rows in the following table structure:
+ 
+ table: rawInfo
+ --------------
+ lineNum  // sequential line number
+ lineType // 'header' or 'detail'
+ content
+
+We want to associate the headers with corresponding detail so that we have a table or view with just the detail that has the columns: "lineNum", "headNum", and "content". "headNum" is the corresponding header line number.
+
+The declarative SQL way to do such is generally using a correlated sub-query along the lines of:
+
+ SELECT A.lineNum, 
+   (SELECT max(H.lineNum) FROM rawInfo as H
+     WHERE H.lineNum < A.lineNum AND H.lineType = 'header'
+   ) AS headNum, 
+   A.content
+ FROM rawInfo AS A
+ WHERE A.lineType <> 'header'
+
+The cursor-oriented approach would resemble:
+
+ // cursor pseudo-code
+ curHeadNum = 0;   
+ for r = each row in rawInfo ordered by lineNum {
+   if r.lineType = 'header' {
+     curHeadNum = r.lineNum;
+   } else {
+     save(r.lineNum, curHeadNum, r.content);
+   }
+ } // next r
+
+(Error handling code for missing headers is not shown for either.)
+
+I believe most developers will find the cursor-oriented approach more intuitive and "natural" because it is "mechanical" instead of logical.
+
+However, one may argue that one just has to learn how to switch to declarative thinking. "Don't be a baby and just learn the 'smart' way."
+
+But, I still find that the cursor-oriented approach is often more flexible. It will have less DiscontinuitySpike''''''s as changes or additions are made. Maybe this is also a limitation of my ability to design effective declarative solutions quickly and concisely. Or it maybe a limit of declarative approaches in general or the specific query language, such as SQL or dialects of. For example, SQL is natorious for ThickBreadSmell.
+
+Either way, for me, cursoring solutions are still often easier to devise for many situations despite having greatly improved my declarative skills. Saying that declarative is always better for me or my team-mates may go against practical MindOverhaulEconomics even if our brains were the bottleneck.
+
+Further, the above cursor approach is simply '''much faster''' on the RDBMS I've tested it on. It's hard to see how an optimizer can automatically optimize the SQL version to compete. That would take some impressive AI.
+
+Thus, cursoring (iteration) still has a place.
+
+(By the way, a practical application of this is analyzing a text file folder/directory listing dump, such as from "DIR /S" in DOS or "ls" variants in Unix.)
+
+----
+Although TutorialDee defines a mechanism for iterating the tuples of a relation, it's deliberately awkward and verbose to (among other things) discourage students from using iterative techniques where set-oriented ones are preferable.  The RelProject, however, defines a simple tuple iterator.  For example, the following iteratively outputs the RelVar names in the catalog in alphabetical order:
+
+ FOR sys.Catalog ORDER(ASC Name); 
+    WRITELN Name;
+ END FOR; 
+''Rats, now I have to add iterators to TopsQueryLanguage to compete. (That and little things like implementation.) [See later below for suggested compromise] --top''
+
+Implementation would be nice.  Here's a slightly more complex, but realistic, example of Rel / TutorialDee code that generates a backup of a database by emitting it as an executable script to re-create the database:
+
+ // Version 0.3.2 Database Backup Script
+
+ WRITELN "/*** Rel Database Backup ***/";
+ WRITELN;
+
+ WRITELN "// Created in Rel Version " || (ver FROM TUPLE FROM (EXTEND sys.Version ADD (major || "." || minor || "." || revision || " " || release AS ver)));
+ WRITELN "// Using D''''''atabaseToScript version 0.3.2";
+ WRITELN;
+
+ WRITELN "BEGIN TRANSACTION;";
+ WRITELN;
+
+ BEGIN TRANSACTION;
+
+ FOR
+	UNION {
+		EXTEND sys.Catalog {Name, Owner, C''''''reationSequence, Definition, isVirtual} WHERE Owner <> "Rel" ADD (0 AS P''''''rocessSequence, "var" AS objectType),
+		EXTEND (sys.Operators WHERE C''''''reatedByType="") {Name, Owner, C''''''reationSequence, Definition} WHERE Owner <> "Rel" ADD (0 AS P''''''rocessSequence, "operator" AS objectType, false AS isVirtual),
+		EXTEND sys.Types {Name, Owner, C''''''reationSequence, Definition} WHERE Owner <> "Rel" ADD (0 AS P''''''rocessSequence, "type" AS objectType, false AS isVirtual),
+		EXTEND sys.Constraints {Name, Owner, C''''''reationSequence, Definition} WHERE Owner <> "Rel" ADD (1 AS P''''''rocessSequence, "constraint" AS objectType, false AS isVirtual)
+	} ORDER (ASC P''''''rocessSequence, ASC C''''''reationSequence);
+    BEGIN;
+	WRITELN "ANNOUNCE '" || objectType || " " || Name || "';";
+	CASE;
+		WHEN objectType = "var" THEN
+			BEGIN;
+				WRITELN "VAR " || Name || " " || Definition || ";";
+				IF NOT isVirtual THEN
+					EXECUTE "IF COUNT(" || Name || ") > 0 THEN BEGIN; WRITE '" || Name || " := '; OUTPUT " || Name || "; WRITELN ';'; END; END IF;";
+				END IF;
+			END;
+		WHEN objectType = "constraint" THEN WRITELN "CONSTRAINT " || Name || " " || Definition || ";";
+		ELSE WRITELN Definition;
+	END CASE;
+	WRITELN;
+    END;
+ END FOR;
+
+ COMMIT;
+
+ WRITELN "COMMIT;";
+ WRITELN;
+
+ WRITELN "/*** End of Rel Database Backup ***/";
+
+ WRITELN "ANNOUNCE 'End of Script.';";
+
+------
+
+For TopsQueryLanguage, I'll avoid defining an imperative language at this point. However, I'll suggest two commands that allow ties to imperative languages:
+
+* changeRun(<table>,<scriptName>,[<column-table>])
+* rt = run(<table>,<scriptName>,[<column-table>])
+
+"changeRun" passes a reference of the given table to the given script. The script can then process the given table as it pleases with its own loop. (The TQL processor may have to actualize the given table if its virtual at the time.) A reference API would be provided to access it in a typical iterator fashion {row = getNext()}, probably distributed as C code which can then be re-wrapped for specific languages.
+
+The optional TqlColumnTable can be used to pass parameters. It's generally sent as four associative arrays, or plain arrays if the language does not support associative arrays. The usual column-table short-cut syntax can be used. Normally, only the "expr" portion would be used in practice.
+
+"run" is somewhat similar to changeRun; however, it executes the script for each record and returns a result table (rt). It better fits the spirit of FunctionalProgramming than "changeRun", but may be less efficient because, first, it must make a new (virtual) table rather than change an existing one; and second, re-executes the script for each row in the source table (thus, no explicit loop needed). 
+
+The re-execution in "run" is probably more overhead than an explicit single loop, as done by "changeRun". "changeRun" essentially would be categorized as one of the TqlDataAlterationOperators.
+
+(This still needs some pondering because in-table-versus result-table and inner-looping versus implied-looping should be independent choices.)
+
+--top
+
+-------
+CategoryExample

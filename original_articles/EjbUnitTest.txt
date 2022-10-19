@@ -1,0 +1,149 @@
+The purpose of this page is to discuss and possibly define some guidelines for doing UnitTest''''''s on EnterpriseJavaBeans. (Initiated by FredrikRubensson.) This page is intended to be edited along the way so remove, move and/or restructure any stupidities as necessary.
+
+''Isn't that the goal of all these pages?''
+
+----
+
+'''Main problems'''
+
+Problems shared by all enterprise bean types.
+
+The run time environment is quite different from the development environment and the tests in the development environment may not be able to simulate the surroundings. One way to go is to write a simple container simulator that is easy to use in a local environment.
+
+''We did this, partly because EJB had not fully materialized when we started development. However, we ended up with just too much work keeping our container simulation up to date with the actual container. -- HaskoHeinecke''
+
+'''Testing entity beans'''
+
+It makes sense to discuss entity beans first since session beans may often be dependent on some kind of entity beans to enable meaningful testing of them.
+
+When DesigningEntityBeans it seems that they typically have as little business logic as possible and if so it only makes sense to test them deployed in the container. If you want to test them outside the container, save your effort for BMP entity beans, where you do real work. Test the JDBC that provides the persistence mechanism for the entity bean using the usual techniques. There does not appear to be any point to try to test a CMP entity bean outside a container, except perhaps by verifying the finder queries against a GoldenMaster.
+
+To enable meaningful tests of session beans outside the container it may be necessary to create a 'dumb data' version of the bean.
+
+'''Testing session beans'''
+
+Session beans contain lots of logic and can be tested outside the container given that needed entity beans are simulated in some way. The tests can be structured so that it is easy to reuse them when testing the deployment.
+
+----
+
+I disagree. I don't think that it makes sense to try to test any kind of EJB outside of the context of a container that it is deployed in. Note that it doesn't have to be the SAME container, but it does need to be a container. For instance, consider testing a stateful session bean - without a container, how will you test how it reacts to different transaction states?
+
+Personally, I unit test my EJB's (both entity and session) in the VisualAge for Java WebSphere Test Environment using JavaUnit. That way, I have a full container that allows me to test the transactional nature of the beans, while still being able to use JUnit.  
+
+I do follow your approach of testing the Entity beans ''first'' before testing the session beans that use them. That is a standard layered testing approach and is very useful. Also, if my EJB's use any dependent objects (standard Java classes), I will test them separately as well.
+
+-- KyleBrown
+
+The reason we would like to test business logic outside the container (or in a simulated container) is a practical one. We don't want the business logic developer to have to care about the EJB environment. We are using WebLogic from Bea for political reasons and it isn't that easy to setup and deploy in and we haven't seen any easy IDE integration yet. (I imagine that part is easier with IBM's solution.) So we figure that we should have a couple of "integrators" that deploys and tests in the container so that the business logic developer can focus on business logic. 
+
+I would appreciate any comments about the usefulness of our approach. I guess if the bean can't be tested in a meaningful way outside the container we will have to try another approach.
+
+-- FredrikRubensson
+
+----
+
+There is an interesting article at JavaWorld on enhancing JUnit to test EJBs called "Test Infect your EnterpriseJavaBeans." See: http://www.javaworld.com/javaworld/jw-05-2000/jw-0526-testinfect.html. -- JulianSominka
+
+JeffSchnitzer wrote a JavaUnit TestRunner servlet that he believes is a more elegant solution. Among other advantages, his servlet uses the dynamic classloader so it's not necessary to restart the appserver when the test classes change. You can download JunitEe at http://www.infohazard.org/junitee. There is also a tutorial.
+
+----
+
+On the FoodSmart and Courier projects at GemStone, we have had good results using JavaUnit to unit test EJB applications deployed in GemStonej. We use the same basic approach outlined in http://www.javaworld.com/javaworld/jw-05-2000/jw-0526-testinfect.html, in terms of letting the setUp() method and helper methods establish the initial conditions (including creation of beans).
+
+However, we haven't found it necessary to use the servlet-based approach mentioned in that article, whose purpose seems to be to get the TestCase to execute in a servlet engine VM, which ostensibly acts as a client VM to the VM running the EJB. It's not clear to me what value is added (i.e., whether any extra context gets into the game) by requiring the EJB client VM to be a servlet engine VM. The same effects can be achieved by just letting the Java VM that gets started as a result of issuing "java junit.[text]ui.TestRunner" on the command line, be the EJB client VM.
+
+-- RandyStafford
+
+----
+
+A servlet-based approach is advantageous because:
+
+A) I don't need to worry about how to set up the external client, B) since my real clients are servlets, it better approximates the production environment, C) I can now test the web-application classes as well, and D) If the tests are written as a web-application, you can test on multiple servers without having to change JNDI properties or any other code.  Just deploy and run the tests.
+
+-- JeffSchnitzer
+
+----
+
+Our situation:
+* EntityBean''''''s with no or little logic
+* SessionBean''''''s contains logic and use EntityBean''''''s (FacadePattern)
+
+Our test environment:
+* EJB Server is the InpriseAppServer
+* IDE is JBuilder
+* Beans are deployed into App''''''Server or are running in local container
+* TestCase''''''s are "normal" clients
+
+Testing EntityBean''''''s is easy because often they are really dumb and do not relate on each other so you can test them standalone.
+
+Testing SessionBean''''''s is much more difficult because you must take care that your system is in a consistent state.
+
+Two solutions:
+a) after EntityBean testing immediately undo all changes (could be hard)
+b) separate EntityBean and SessionBean testing. Before testing the SessionBean''''''s bring your system in a defined and consistent state (for example with a SQL script, DB dump restore, etc.)
+
+
+Does anyone really goes the "pure" way and resets its system before every TestCase?
+
+-- Oliver Geisser (o.geisser@ce-ag.com), 24.08.2000
+
+Not yet, I'm just using a pre-initialized in-memory SQL database to run the tests. But I imagine that something neat could be done with a transaction rollback in tearDown(), to make each test case more independent. -- AndersBengtsson
+
+An in-memory SQL database. That sounds interesting. Could you shed some light on this? How do you populate your database in setUp? And how do you emulate a container at runtime? Do your beans still access a naming server to retrieve the DataSource? -- WilfredSpringer
+
+HypersonicSql is a small Java database that can be run in memory. I don't populate the database in setUp yet, instead I depend on earlier tests to set up a reasonable set of data to work with (Yeah, I know...). If I need any more specific data than "any Foo whatsoever" I create it direcly in the test that need it.
+
+All naming lookups are done via a class called Homes, with methods like "public FooHome fooHome()" that encapsulates the naming lookups. But I use the same DataSource for both tests and productions, instead I let the test suite modify the datasource settings for the server. -- AndersBengtsson
+
+----
+
+Hopefully this is a good place for this. My apologies if it isn't. With respect to the problem of testing EJBs within a proper container, I use a CommandProxy session bean to communicate between the bean under test and its corresponding JUnit test. CommandProxy accepts Command objects and returns CommandReport objects.  The JUnit test is a T3 client of the CommandProxy bean. I tried the servlet approach suggested in the 'Test Infect Your Enterprise Java Beans' article, but didn't like it because I wanted the test cases to stay out of the container as much as possible, and because it gave me less control during test setup. -- DavidVentimiglia
+
+----
+
+Does anybody have any good suggestions about AutomatingEjbUnitTests? We have a nightly build process using JakartaAnt that runs our unit tests. We are just getting our EJB development under way, and would like to add EJB unit tests to our Ant build. Ant has tasks that can start and stop our server (BEA WebLogic), and of course it has the JavaUnit task, but I'm not sure whether it will be awkward deploying our beans and testing them, all from the Ant build. Does anyone have any experience with this? -- JimDoyle
+
+----
+
+Anyone have any experience getting Junitee to work with Jboss and EJB's? I was able to get them to work with weblogic 6.0, but no luck with JBoss. I get a null pointer exception when it tries to access the testclass I wrote to test the bean. From what I gather and read, you should be able to move this stuff from one app server to another without any changes, besides a re-compile using the different libs for the app server.	
+
+Also, from what I know, the classpath implementation is different between appservers. In BEA, anything in the ear file is part of the classpath. But in JBoss, you must modify the MANIFEST.MF file and add the war, jar etc to it's classpath. Even with that change, it still doesn't work.
+
+Any ideas??
+
+gary@anywaregroup.com
+
+-- gary ogden
+
+''Well, JBoss is doing it right, and WebLogic isn't, I can tell you that much (see the specs). In actual fact, not everything in the EAR file is in the classpath in WebLogic (see WebLogicGripes for more detail). Have you done the example EJB deployment for JBoss yet? It seemed fairly clear to me what needs to go on.''
+
+Actually, it's a servlet that calls the EJB methods for testing using juntee. I have no problems deploying ejbs and running them on jboss. It's when using junitee, jboss, and tomcat that the problem arises with a null pointer exception when it tries to find the class you tell it to use to execute the tests. I wouldn't have posted the previous inquiry if I couldn't get an EJB deployed. Kind of hard to try unit tests if you can't even get the bean deployed....
+
+''Well, it's a classpath issue. Appservers are not meant to make everything deployed on them accessible to the classpath of everything else. You still need to tell it where things lie. I'll assume that the servlet is in a WAR file, and the WAR file, in turn, is packaged in an EAR file, like this:''
+	theEar.ear
+	|-- theEjb.jar
+	|-- theWar.war
+	|-- lib/libJar.jar
+''theWar.war then, in order to find the EJB, needs to have a MANIFEST.MF file in it, with a Class-Path entry of theEjb.jar (the packaging as according to the relative locations in the EAR file).''
+
+''If you have a class that doesn't live in either the EJB jar or the WAR archive, then you should package that up into a jar file, and put it in the EAR (like lib/libJar.jar). Then, extend the Class-Path entry for theWar.war to include lib/libJar.jar. Likewise, if the EJB jar needs it, extend the Class-Path entry in it's MANIFEST.MF file.''
+
+''These issues are covered in the J2EE 1.3 spec, and the Java Extension Mechanism Spec. (J2EE 1.2 was meant to use this as well, but it was only implicit, not explicit.)''
+
+''As a side issue: I don't like the idea of testing EJBs via a servlet, anyway, even though that's the popular approach. It takes very little effort to turn your unit test into a proper application client, which gives you better access, anyway. -- RobertWatkins''
+
+Thanks for the input, Robert. But it turns out that the release of the jboss/tomcat 'embedded' isn't as complete as one might think. I had to make changes that should have been done since it was embedded and I was not integrating them myself. So that nullpointerexception thing is resolved. But now when I call an EJB from a jsp page in jboss/tomcat, it can't find the EJB package, even though they are in the same ear, and the MANIFEST.MF of the war web app has the bean in the classpath parm. Oh well, at least this stuff keeps me busy....
+
+----
+
+''' Using Cactus for Testing EJBs '''
+
+There is some design discussion currently going on regarding EJB Unit Testing in Cactus. There is a new Wiki page - CactusEjb
+
+-- Mike Davis
+
+What are the benefits of testing EJBs in Cactus versus a standalone client?
+Anyone care to share their experience?
+
+----
+CategoryEjb

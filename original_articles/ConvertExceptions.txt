@@ -1,0 +1,174 @@
+This page was unfortunately lost a while back.  I've attempted to rebuild it from memory...
+
+The idea here is to convert one exception to another.	For instance, consider a system built using a FourLayerArchitecture My database layer objects will be throwing a lot of database-specific exceptions. My domain code (above the database layer) doesn't care about the specifics of these exceptions. It just wants to know if it needs to retry the operation, or if it's a lost cause and it needs to notify the UI. 
+
+So my uppermost database code "translates" errors by catching the lower-level errors and throw-ing a different, more generic database error. The domain code catches that error and may handle it by repeating the operation, or throwing a domain-like exception up to the UI layers. 
+
+This idiom is useful in a lot in similar situations - most notably converting CORBA exceptions to those recognized by my client code. I often find it useful to follow the following technique; the old exceptions are not discarded; rather they are appended to the new one where applicable. This makes for a multi-level message that can frequently aid diagnosing a problem. For example, rather than being told simply "Error recording order" a user might see "Error recording order / Disk is full" 
+
+Java's RMI framework uses this idiom extensively, as does the Java Reflection API. -- KyleBrown
+
+
+----
+
+I was going to add a page entitled something like "use exceptions to pinpoint problems" but then I realized I was only adding a small gloss to the above. 
+
+Which is this: most of the time, when I convert exceptions, I am boiling them down. The client has an inherently simpler view of the server's world than the server does and, correspondingly, groups the various exceptions that the server throws into a much smaller set.
+
+It disturbed me, at first. My servers would throw fabulously descriptive messages saying exactly what went wrong. My clients would catch them all in 
+the same block (thereby implicitly converting them all to a generic "server's 
+being temperamental" sort of message). Then I realized this is exactly right--
+ConvertExceptions is simply an instance of the InformationCanAlwaysBeThrownAway meta-pattern. -- WilliamGrosso
+
+''No--don't throw the information away.  Used NestedExceptions (ChainedExceptions).  When you create the simpler exception, point it to the original exception. ''
+
+----
+
+I do much the same except that I also ''add'' information. So when a server throws an exception I strip off the details that aren't interesting to me, elaborate on the ones that are if need be, and tack on the details that are available at the client level. I do this most often when the client code is also a server for something else. For instance, if the database layer fails because of a missing column; the data server might tack on the fact that the column name came from meta-data; The application server, which would be the next to catch the exception, would know that the query is being performed as part of validating a maintenance operation; and the client would know exactly what kind of maintenance operation was being performed. As a result the user might see a message like this: "object definition for "my_thing" could not be created because a persistent field named "my_field" did not have an associated database column defined for it". -- PhilGoodwin
+
+----
+
+Yup. That's exactly the pattern --- RemoveDetailsAddContext. -- WilliamGrosso
+(ignoring that one man's details are another man's context)
+----
+This also helps hide implementation. For example, suppose we implement a stack by building it on an array. Popping an empty stack naturally yields ArrayIndexOutOfRangeException. Do we need to convert this exception? In this case, the gain is arguably small.
+
+However, if some other code wants to catch this specific error, it wants to do so in an implementation-independent way. Suppose we change the stack to use linked lists. Now the empty stack pop will probably give a NullPointerException. If we don't convert exceptions, any code catching the old exception will break.
+
+From a YouArentGonnaNeedIt point of view, I guess the time to convert is the first time you write code to catch it. -- DaveHarris
+
+----
+
+I think DaveHarris is on the right track here.  The point isn't so much
+to "boil down information" or to "add information".  The key issue is
+that each level of abstraction should have a contract that's consonant
+with that level of abstraction.  Suppose module A is built on module B,
+and module B uses exceptions to report some circumstance, and module
+A anticipates that circumstance, and chooses to deal with it by throwing
+an exception to its own caller.  Well, the exception that A throws should
+be meaningful in terms of the contract that A provides.
+
+For example, module A might be a program that takes the name of a mailing
+list and tells you all the recipients who are on the list.  If no such
+mailing list is found, module A tells you that by throwing the
+no-such-mailing-list exception.  Module A
+knows (but encapsulates) that mailing lists are implemented using a
+special text file. It calls module
+B, which is a general utility for scanning text files for lines that
+match a certain expression.  Module B fails to find a matching line,
+and throws a no-matching-line exception, in accordance with its contract.
+Module A anticipated that this might happen, and so it has a catch
+clause that catches no-matching-line, and handles it by throwing
+no-such-mailing-list.
+
+Indeed, if module A were to allow the no-matching-line exception to
+simply percolate up, then module A would have a bug, because module
+A's contract does not say that one of its possible outcomes is to
+throw no-matching-line.  (What would that mean, anyway?  We asked
+module A to expand a mailing list; we didn't say anything about
+matching any stinking lines.)
+
+These comments apply to any language with exceptions (e.g. CommonLisp),
+not just Java.  It doesn't matter whether the language contains the
+concept of "checked" exceptions (CommonLisp doesn't).
+
+-- DanWeinreb
+----
+
+I have an approach similar to this that is used with JavaBeans. The major force behind it is it is not good to throw away information. Where KyleBrown talked about appending messages, my approach appends exceptions.
+
+Imagine you have a Bean called Sheeba, then define an exception called Sheeba_Exception. All exceptions that are defined by the Sheeba subsystem must subclass Sheeba_Exception. This follows the convention used by the java.io package, and allows code using your subsystem to easily catch exceptions associated with it.
+
+The Sheeba_Exception class has two constructors. One that takes a string message, and the other that takes a string message and an exception. The latter constructor is used to "wrap" exceptions. A method is also provided to return the exception that "caused" the exception to be thrown. If none did, then it returns null. The exception could also override toString() and printStackTrace().
+
+One possible improvement is to make Sheeba_Exception handle a list of exceptions rather than just one. Consider the code that handles a Sheeba_Exception, at the moment it can only get information the exception one layer down. But it is possible that there are multiple layers of exceptions and without making assumptions, the client code will lose this information. -- OliverBurn
+
+I would tend to extend this concept to use a NestedException interface. Any exception that implements NestedException will be able to return the Exception that caused this exception. This would allow chaining of the ultimate cause of a failure into the top-level Exception and would allow clients that aren't interested to remain ignorant of the deeper core of an exception. -- PeterSumskas
+
+When the code doesn't know how to convert the exception properly, then throw an UnhandledException. -- MartinPool
+
+I disagree. I think that you should only CatchWhatYouCanHandle, otherwise just LetExceptionsPropagate. -- PhilGoodwin
+
+You are both right. Martin's UnhandledException wraps a CheckedException as an UncheckedException, so that the exception can propagate without making the
+code really ugly. -- JohnFarrell
+
+If you want to ConvertExceptions to reduce clutter in your "throws" clause, then OliverBurn's solution above is a cleaner and more expressive way to do it. Once you've included the top level exception type in your "throws" clause you can always convert to that type with effects similar to MartinPool's UnhandledException. You can also convert to derived types as you find that you need finer granularity (without having to change the "throws" clause). When you HomogenizeExceptions like this you insulate your methods against the propagation of compile time dependencies, but you do so at the expense of writing more code. Smaller projects should still probably LetExceptionsPropagate. -- pg
+
+----
+
+In C++, there's an interesting problem with converting exceptions. Since C++ does not have a global root for all exceptions (despite a standard library class that is intended for this purpose), each library has generally chosen its own unrelated root for the exceptions it throws. This means it's harder to reuse exception conversion code in C++ than e.g. in Java for each method of your interface. There's a way to overcome this problem though:
+
+  void ConvertExceptionsToCORBA(const char *file,int line)
+  {
+	try { throw; }
+	catch (Database''''''Exception &e) { throw CORBAException(e.what(),file,line); }
+	catch (File''''''Exception &e) { throw CORBAException(e.describe(),file,line); }
+  }
+
+Then catch all exceptions and just call this function in the handler. However, there are some compilers that do not seem to support this fully due to interaction between C++ exception handling semantics and the compiler's mechanism for destruction of the thrown exception object. I have not seen a better alternative to this unless you can ensure that all exception classes are derived from the same base exception class. -- Esa Pulkkinen
+
+----
+"I have this pattern..." and here's part of it.
+
+There's a frequent problem, when converting exceptions, of deciding whether you're discarding valuable information. This problem is especially vexing when you're balancing the need for appropriate error messages with the need to support your application in the field.
+
+'''Therefore:''' Log all significant catches, particularly those that convert the exception. Arrange to dump the log in a form that can be emailed or faxed back to you from the field. --DaveSmith
+
+----
+I find it very useful and appropriate to convert exceptions. If I catch a SQL exception from JDBC, I might change it into a "WidgetNotF''''''ound" exception for the layer above me to deal with.
+
+However, I don't just throw away the SQL exception, I log it. That way the end user can see the context-appropriate message AND the developer can consult the log to see the detailed root of the problem. Sometimes exceptions get converted two or three times, and the log contains the trail of messages for the developer to follow.
+
+In fact I usually perform the logging operation in the constructor of the exception to save me the trouble of doing it in each catch block.
+
+Frank
+
+''Agreement here.  The '''code''' doesn't need to know why the SQL engine failed to find a row - it needs only to know that the row wasn't found, so it can report ''No''''''Such''''''Item''.  The developer, however needs to know if the failure was a database error or a missing row, which the log should show.'' --PeteHardie
+----
+Folks might be interested in my ThrowableChain interface, whose javadoc is available at http://foundry.sourceforge.net/docs/api/foundry/throwables/ThrowableChain.html.  Comments here appreciated.  --LairdNelson
+
+''Um...perhaps you might actually want to write some documentation?  At least as of 2004-08-31, that page has no documentation for what the methods do, what the parameters mean, or, in fact, anything other than what the compiler can extract.''
+
+----
+
+The best solution to a lot of these problems is to allow for ExceptionChaining.  In Microsoft's CLI / .Net, the constructor for Exception allows you to pass another Exception, called the InnerE''''''xception.  This because the InnerE''''''xception property of the new E''''''xception.  This eliminates the problem of how much data to include from the original exception (the one being "converted"), and it also provides a very clear separation of information -- each exception parameter (such as the database server name, or table row, or application name) is exposed on the exception on which it is relevant.
+
+I believe logging in an exception constructor is Evil.  The same goes for the conversion point of the exception.  If there is a handler that understands the exception, then you have needlessly generated noise, and even misled the user.  (If the user sees errors in the event log, but these errors have actually been caught and handled, then you have misled the user, and potentially taught the user to ignore the event log.)
+
+The right thing to do for logging, is to provide a method that, in a single place, handles logging a given exception.  Then, when appropriate (in your catch statement, etc.), you can call your LogE''''''xception method.
+
+-- ArlieDavis
+
+----
+
+'''Alternate Viewpoint: Do Not Convert Exceptions'''
+
+I have found it is usually best not to convert exceptions.  An exception is a situation that the code is not designed to deal with.  To convert the exception is to hide the initial source of the problem.  When I receive a call from a user, I would like to hear the precise error message or error code that generated the problem; too many times the converted message loses detail or is flat out wrong.
+
+''This is also my point of view. The code can either catch and handle the exception, or, if it cannot handle it, pass it to the above layer. The code might convert the exception, but this should be only a strategy for handling exception.''
+
+''One example could be, converting database constraint exception to useful error messages. In this case the exception is not caused by a bug, but by incorrect entry from the user. The user errors are expected, and it makes sense to report that there is already a customer with the number 123 rather than the unique constraint PK_3563 has been violated. On the other hand, if the database crashed, and this was not expected, the original exception should be passed to the above layer''
+
+I usually try to ensure our GUI front end prevents the user from entering incorrect values.  In the example above, the system should be providing new customer IDs; I con't imagine how frustrating it would be for a user to have to keep guessing what unused IDs are available and having the system tell him he guessed wrong.  In general, try to prevent exceptions and database contraints errors from occurring.
+
+----
+
+A rule for when to ConvertExceptions: ExceptionsArePartOfYourInterface.  Do you want your users to know you are using an array under the covers?  How about JDBC?  If not, ConvertExceptions.
+
+This implies that ConvertExceptions should be applied at subsystem boundaries -- where you need to put extra thought into the your interfaces anyway.
+
+-- DarronShaffer
+
+----
+
+ConvertExceptions is a reasonable solution to ExceptionUnderloading.
+
+-- RobertEngdahl
+
+----
+
+See also: EvaluatePreconditions, AvoidImplementationSpecificExceptions
+
+----
+
+CategoryException

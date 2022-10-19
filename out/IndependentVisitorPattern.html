@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Independent Visitor Pattern
+      </h1>
+      <p>
+        <em>I've put the ideas from this discussion into a concrete example with running code and disciplined refactoring: </em><a href="VisitorPatternRefactoring.html">VisitorPatternRefactoring</a> -- <a href="JustinSampson.html">JustinSampson</a><em></em>
+      </p>
+      <hr/>
+      <p>
+        Reading the discussion of the <a href="VisitorPattern.html">VisitorPattern</a>, particularly the concerns about circular dependencies, I started to wonder how the pattern could be refactored to remove the cycles. <a href="AcyclicVisitor.html">AcyclicVisitor</a> eliminates the compile-time dependencies by using multiple inheritance and dynamic casts, which a lot of people are uncomfortable with for various reasons. So I sat down with a simple <a href="VisitorPattern.html">VisitorPattern</a> class diagram and started thinking.
+      </p>
+      <p>
+        Then this example occurred to me: Doesn't the <a href="SimpleApiForXml.html">SimpleApiForXml</a> (SAX) kind of look like it could be a Visitor for a <a href="DocumentObjectModel.html">DocumentObjectModel</a> (DOM) structure? It certainly seems to fit the pattern, and doesn't have any circular dependencies. The idea is that SAX is event-based while DOM is tree-based, but they both represent basically the same model. (Actually it looks more like a <a href="HierarchicalVisitorPattern.html">HierarchicalVisitorPattern</a>.)
+      </p>
+      <p>
+        For the purpose of discussion consider these classes: <em>These are </em>'not<strong> the real SAX and DOM classes or interfaces; they are vastly simplified to make an easy example. The method names are also changed to look more like the description of </strong><a href="HierarchicalVisitorPattern.html">HierarchicalVisitorPattern</a>.<em></em>
+      </p>
+      <code>
+        interface SaxVisitor {<br/>
+        void enterDocument();<br/>
+        void leaveDocument();<br/>
+        void enterElement(String name, Map attributes);<br/>
+        void leaveElement(String name);<br/>
+        void visitText(String characters);<br/>
+        }<br/>
+      </code>
+      <code>
+        abstract class DomNode {<br/>
+        abstract void accept(SaxVisitor sax);<br/>
+        }<br/>
+      </code>
+      <code>
+        class DomDocument extends DomNode {<br/>
+        DomElement root;<br/>
+        void accept(SaxVisitor sax) {<br/>
+        sax.enterDocument();<br/>
+        root.accept(sax);<br/>
+        sax.leaveDocument();<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        class DomElement extends DomNode {<br/>
+        String name;<br/>
+        Map attributes;<br/>
+        List content;  // list of DomElement and DomText objects<br/>
+        void accept(SaxVisitor sax) {<br/>
+        sax.enterElement(name, attributes);<br/>
+        Iterator contentIterator = content.iterator();<br/>
+        while (contentIterator.hasNext()) {<br/>
+        ((DomNode) contentIterator.next()).accept(sax);<br/>
+        }<br/>
+        sax.leaveElement(name);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        class DomText extends DomNode {<br/>
+        String text;<br/>
+        void accept(SaxVisitor sax) {<br/>
+        sax.visitText(text);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Notice that the DOM classes depend on the SAX visitor interface, but the SAX visitor does not depend on the DOM classes. The idea is that the SAX visitor describes everything it cares about directly in its interface, without reference to the classes implementing the structure.
+      </p>
+      <p>
+        That is, the visitor is independent of the particular way the structure is implemented. The visitor's interface describes exactly what it wants to visit and what information it needs. The structure classes can be changed drastically, but as long as they can maintain the appearance that the visitor cares about -- that is, they can provide the information the visitor asks for -- the visitor doesn't need to change. This is apparent in the fact that SAX is most often used as part of a <a href="BuilderPattern.html">BuilderPattern</a>, where the SAX visitor is <em>building</em> a DOM tree -- and the driver is actually an XML parser reading from a file. The SAX visitor (actually it's called the ContentHandler) doesn't care how the model is represented, it just cares about getting the information in the right order.
+      </p>
+      <p>
+        -- <a href="JustinSampson.html">JustinSampson</a>
+      </p>
+      <hr/>
+      <p>
+        I thought of a few more ways to refactor this pattern last night.
+      </p>
+      <p>
+        <strong>1.</strong> The whole idea of the pattern was that the visitor shouldn't be dependent on the representation of the model, it should just declare what it wants to know for each kind of structure it could encounter. That raises a concern about the way I wrote the enterElement method above, which takes a Map of the element's attributes. It would be cleaner to write the interface like this:
+      </p>
+      <code>
+        interface SaxVisitor {<br/>
+        void enterDocument();<br/>
+        void leaveDocument();<br/>
+        void enterElement(String name);<br/>
+        void leaveElement(String name);<br/>
+        void visitAttribute(String name, String value);<br/>
+        void visitText(String characters);<br/>
+        }<br/>
+      </code>
+      <p>
+        Now all that is required by the visitor is that elements contain attributes, but the way they are represented within the class implementing the element doesn't matter. The iteration through the attributes is moved from the visitor to the model; which makes sense, since the original intent of the <a href="VisitorPattern.html">VisitorPattern</a> was to refactor traversal code out of visitor class. That gives us more flexibility to refactor the DomElement class.
+      </p>
+      <p>
+        For example, maybe instead of having a Map inside DomElement, we could introduce another class:
+      </p>
+      <code>
+        class DomAttribute extends DomNode {<br/>
+        String name;<br/>
+        String value;<br/>
+        void accept(SaxVisitor sax) {<br/>
+        sax.visitAttribute(name, value);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Then DomElement's content list can contain attribute nodes just like text and nested element nodes. (This is actually how the real DOM works.) The point is, since the visitor isn't dependent on the implementation, we can choose whether to use the map or introduce another subclass. Or go the other way, too -- if we already have a subclass, but it's not pulling its own weight and we want to eliminate it. The original <a href="VisitorPattern.html">VisitorPattern</a> and all its other variations wouldn't allow that, because they would be dependent on the existence of that subclass.
+      </p>
+      <p>
+        <strong>2.</strong> As another way to go, if we think that some visitor method is taking too many  parameters, then we can use <a href="IntroduceParameterObject.html">IntroduceParameterObject</a> to factor them out. This is actually how the real SAX works with attributes; they have an Attributes interface that gets passed in where I was passing in a Map to enterElement above. The implementation passes in an adapter implementing that interface for callbacks to the implementation to get the data.
+      </p>
+      <p>
+        This introduces an extra class that may seem redundant with the structure classes, but it still avoids the circular dependencies, and again it allows us to change the structural implementation at will as long as we can still provide an adapter to the visitor's parameter interface. Our Attributes adapter could be a wrapper for the Map, or it could delegate to the DomElement to iterate through its content and look for DomAttribute nodes; either way, the visitor doesn't know the difference and doesn't have to be changed.
+      </p>
+      <p>
+        <strong>3.</strong> The structure classes (DomNode et al.) are still dependent on the visitor interface. There is no more circular dependence, but there is still a dependence. What happens if we want to add a different <em>kind</em> of visitor? That is, the <a href="VisitorPattern.html">VisitorPattern</a> allows us to plug visitors that do different things with the information, but it doesn't allow us to plug in visitors that look at the structure differently.
+      </p>
+      <p>
+        For example, let's say we just want to count all the nodes in the structure. (Okay, it's a silly example, but it's simple.) We could write a new visitor interface like this:
+      </p>
+      <code>
+        interface DummyVisitor {<br/>
+        void visitNode();<br/>
+        }<br/>
+      </code>
+      <p>
+        To support this in the code above, we would have to add a new accept(DummyVisitor) method to DomNode and all its subclasses.
+      </p>
+      <p>
+        Alternatively, what if we factor out all that traversal code into yet another class?
+      </p>
+      <code>
+        class SaxTourGuide {<br/>
+        void traverseDocument(DomDocument dom, SaxVisitor sax) {<br/>
+        sax.enterDocument();<br/>
+        traverseElement(dom.getRootElement(), sax);<br/>
+        sax.leaveDocument();<br/>
+        }<br/>
+        void traverseElement(DomElement dom, SaxVisitor sax) {<br/>
+        sax.enterElement(dom.getName());<br/>
+        Iterator contentIterator = dom.getContentIterator();<br/>
+        while (contentIterator.hasNext()) {<br/>
+        DomNode node = (DomNode) contentIterator.next();<br/>
+        if (node instanceof DomAttribute) {<br/>
+        traverseAttribute((DomAttribute) node, sax);<br/>
+        } else if (node instanceof DomElement) {<br/>
+        traverseElement((DomElement) node, sax);<br/>
+        } else if (node instanceof DomText) {<br/>
+        traverseText((DomText) node, sax);<br/>
+        }<br/>
+        }<br/>
+        sax.leaveElement(dom.getName());<br/>
+        }<br/>
+        void traverseAttribute(DomAttribute dom, SaxVisitor sax) {<br/>
+        sax.visitAtttribute(dom.getName(), dom.getValue());<br/>
+        }<br/>
+        void traverseText(DomText dom, SaxVisitor sax) {<br/>
+        sax.visitText(dom.getCharacters());<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        That uses runtime type information and downcasting, but now we can remove the accept() methods from DomNode et al., eliminating the dependence of the structure on the visitor. Then whenever we want to add a new <em>kind</em> of visitor, we don't need to touch the structure classes at all; we just need to write a new TourGuide class:
+      </p>
+      <code>
+        class DummyTourGuide {<br/>
+        void traverseDocument(DomDocument dom, DummyVisitor dum) {<br/>
+        dum.visitNode();<br/>
+        traverseElement(dom.getRootElement(), dum);<br/>
+        }<br/>
+        void traverseElement(DomElement dom, DummyVisitor dum) {<br/>
+        dum.visitNode();<br/>
+        Iterator contentIterator = dom.getContentIterator();<br/>
+        while (contentIterator.hasNext()) {<br/>
+        DomNode node = (DomNode) contentIterator.next();<br/>
+        if (node instanceof DomAttribute) {<br/>
+        traverseAttribute((DomAttribute) node, dum);<br/>
+        } else if (node instanceof DomElement) {<br/>
+        traverseElement((DomElement) node, dum);<br/>
+        } else if (node instanceof DomText) {<br/>
+        traverseText((DomText) node, dum);<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+        void traverseAttribute(DomAttribute dom, DummyVisitor dum) {<br/>
+        dum.visitNode();<br/>
+        }<br/>
+        void traverseText(DomText dom, DummyVisitor dum) {<br/>
+        dum.visitNode();<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        An extra bonus from this refactoring is that now, again just by introducing more TourGuides, we can support using one kind of visitor with different structure implementations just as well as different kinds of visitors with one structure.
+      </p>
+      <p>
+        Continuing the XML example, we could introduce a new TourGuide which, instead of traversing a DOM tree, actually parses an XML file. This ParsingTourGuide would have a parseXml(InputStream, SaxVisitor) method. Each time it sees "<foo " it calls sax.enterElement("foo"), then it calls visitAttribute() as it parses each attribute, and so forth. And so we have arrived, in a roundabout way, at the <em>original intent</em> of SAX, that is, a standard interface for XML parsers.
+      </p>
+      <p>
+        <strong>So,</strong> in summary, here are the participants we've come up with in this final refactoring:
+      </p>
+      <dl>
+        <dt><strong>Visitor</strong> (SaxVisitor, DummyVisitor)</dt>
+        <dd>Describes what information a particular kind of visitor wants to know about some kind of model. Doesn't depend on any other participants.</dd>
+      </dl>
+      <dl>
+        <dt><strong>Structure</strong> (DomDocument, DomElement, DomAttribute, DomText, InputStream)</dt>
+        <dd>Describes a particular representation of some structural model. Doesn't depend on any other participants.</dd>
+      </dl>
+      <dl>
+        <dt><strong>TourGuide</strong> (SaxTourGuide, DummyTourGuide, ParsingTourGuide)</dt>
+        <dd>Implements a traversal algorithm over the Structure as appropriate for the Visitor.</dd>
+      </dl>
+      <p>
+        -- <a href="JustinSampson.html">JustinSampson</a>
+      </p>
+      <p>
+        This is like a visitor with <a href="EvisceratedObject.html">EvisceratedObject</a>s as parameters (an EvisceratedVisitor?). The tradeoff between this and a normal visitor is that in a normal visitor, you get access to the real original objects, whereas here, you don't, but you avoid cyclic dependencies, plus you don't actually need to have any original objects, so you can drive a visit from some other source (eg rather than building the DOM tree and visiting that, you can use SAX input directly). I <a href="HaveThisPattern.html">HaveThisPattern</a>, and i use it a lot in conjunction with parsers, as i describe on <a href="PrettyPrintingJavaWithVisitor.html">PrettyPrintingJavaWithVisitor</a>.
+      </p>
+      <p>
+        Again, this makes me ponder the relationship between VisitorAndBuilder.
+      </p>
+      <p>
+        -- <a href="TomAnderson.html">TomAnderson</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryPattern.html">CategoryPattern</a>
+      </p>
+    </div>
+  </body>
+</html>

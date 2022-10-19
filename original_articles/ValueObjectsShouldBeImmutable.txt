@@ -1,0 +1,147 @@
+You can easily get a nasty bug if you make a change to a ValueObject.
+
+  task1.setStartDate(new Date("1 Jan 98");
+  task2.setStartDate(task1.getTaskDate());
+  //then somewhere in the task class
+  void delay(int delayDays) {
+	_startDate.setDate(_startDate.getDate() + delayDays);
+  }
+
+  // then somewhere 
+  task2.delay(5);
+
+and now you find task1's start date has changed.
+
+This is doubly nasty because it is really hard to find the cause of the trouble.
+
+So if you design an object that should be a value object, don't provide any methods that change its state, ie make it immutable.
+
+Users will have to write
+  void delay(int delayDays) {
+	_startDate = new Date(_startDate.getDate() + delayDays);
+  }
+
+If you are using a ValueObject that is mutable, treat it like it is immutable. You may not realize why, but you will save a lot of time and money.
+
+-- MartinFowler
+
+----
+
+I have observed another manifestation of this in Java:
+
+'''Problem:''' Returning an object by means of an accessor method. You intend to return ''a value'' but you return a ''Java object reference''. 
+
+'''Symptoms:''' the client object is given a reference to an attribute. This attribute may have been declared private. The client of the class could invoke methods through this reference to change the value of the attribute.
+
+	* An object A contains another object B
+	* Object B may be either mutable or immutable depending on its interface
+		* For example java.lang.String (immutable, ValueObject) and java.lang.StringBuffer (mutable, ReferenceObject)
+	* Consequence: If B has a mutable interface, the state of B can be changed outside A even if B was declared as a private attribute in A.
+''Only if someone is violating the LawOfDemeter.  Only A should be sending messages to B. -- JackRich''
+
+'''Solution:''' The accessor method returns ''a copy of'' the attribute and not a reference to the attribute itself.
+
+(See [http://www.drst.demon.co.uk/soft/java/index.html#References] (for a concrete example) and ReturnNewObjectsFromAccessorMethods for further details. (Also of interest: JavaIdioms.)
+
+I'm not convinced ValueObject classes are classes at all since:
+	* It makes little sense for instances of ValueObject classes to have unique identities (For example, in what sense can we distinguish between multiple instances of the value "true"? It seems as though we don't need a notion of unique identity with instances of a boolean.) ''But surely the whole point of a ValueObject is that its value is its identity. Boolean has two values: true and false, so there are 2 unique identities in class Boolean.''
+	* Immutable operations of the kind that apply to value objects seem to be little more than mathematical functions. (For example, java.lang.String.toUpperCase() - which maps the ValueObject to a different ValueObject (i.e. there are no "side-effects" on the state of the object).)
+
+Personally, I choose to model each kind of ValueObject as an AbstractDataType implementation.
+
+--
+
+----
+
+This doesn't make any sense to me.  The way that Java models an AbstractDataType is with a class.  "Class" is a language feature in Java, while AbstractDataType is not.  So, how can you choose to model anything as an AbstractDataType?
+
+Further, it is very useful to model an AbstractDataType as a class, because that way you get polymorphism for free.  Sometimes inheritance is useful, too.  As a long-time Smalltalker, I realize that it is a little funny to use the same language mechanism to represent integers and customers, but there are advantages to having as few mechanisms as possible, and there are some fairly simple idioms for implementing a ValueObject, so I long ago decided that it was unnecessary to have two language mechanisms, one for objects and one for AbstractDataType.
+
+-- RalphJohnson
+
+----
+
+To make things clearer, I should have pointed out that I'm talking about conceptual models rather than code. 
+
+There are types in Java that behave like ADTs. Consider the ''primitive data types'' (i.e. boolean, char, byte, short, int, long, float and double), for example: they have values, the values can be related using constants and side-effect free functions. Above all, their (logical) states can't be changed.
+
+This use of ADTs fits well with the attributes allowed in the Class Diagrams of OMT and the FusionMethodology. (Especially since you are told in the OMT book ([ISBN 0136298419]) that attributes in OOA class diagrams are types of "pure data values" rather than other objects.)
+
+Hope that helps.
+
+--
+
+----
+
+How does SmalltalkLanguage handle ValueObject''''''s? For example integers, boolean values. How are these defined? (What other classes make up their definition?)
+
+--
+
+----
+
+SmallIntegers are primitives in Smalltalk.  Although there is a class SmallInteger, you can't subclass it and a lot of the methods can't be changed.  On the other hand, Boolean, True and False are just normal Smalltalk classes.  Moreover, I consider classes like Date and Fraction to be ValueObject''''''s, too.  To me, a ValueObject is not a language feature, it is a design feature.  I call an object a ValueObject when I want to  treat it like a value, and that means making it be immutable.  It is theoretically possible to modify a Date or a Fraction, though I've never seen it done, so in practice they are immutable.  Point should also be immutable, though I've seen a Point modified.  It shouldn't be; if you want a Point with a different value, make a new one.  The problem with Point is that it has an x: and a y: message that lets you change its value. Those methods should be deleted and the only way you should be able to set those fields is to create a new object.
+
+-- RalphJohnson
+
+----
+
+It is interesting to note that the classic CircleAndEllipseProblem is a variation on the same theme.  Ellipses that can be modified really represent the mathematical notion of a family of ellipses rather than a single concrete instance.  -- MichaelFeathers
+
+----
+
+It is even more interesting that constness hasn't been brought up in this discussion at all.
+
+----
+
+
+The problem is that most static-typed algol-style languages (CsharpLanguage, for example) have no syntactic sugar for manipulating immutable structs.  If, for example, one wishes to make a copy of an object where they only change one or two fields of the struct, one generally must use the full-field copy constructor.  For example, to change the size of any given font (roughly): 
+
+ float newSize = 8;
+ myFont = new Font(
+ 	myFont.FontFamily, 
+ 	newSize, 
+ 	myFont.Style, 
+	GraphicsUnit.Point,
+ 	myFont.GdiCharSet,
+ 	myFont.GdiVerticalFont
+ );
+
+Whereas, for a mutable type, the statement is simply:
+
+ myFont.Size = 8;
+
+Which is not to say that value types should be mutable - just that a language that encourages the use of immutable value types should support a native syntax for copy-with-changed-members.  While that kind of functionality would be inappropriate for properly encapsulated classes, most value-type structs tend to be just a pile of public properties.  One can mimic a copy-with-changed-members functionality in constructors, it would require a long, labour-intensive list of constructors since you'd have to cover each reasonable set of changes.  The minimal case would be providing a method for each public property CopyWithX - such as
+
+ public Font CopyWithSize(int newSize) {}
+
+but since the language has no macro capabilities, these constructors would have to be codegenned or done manually - Microsoft themselves have not seen fit to include such functions.  Plus, the approach would be inefficient, as making multiple changes would involve making discardable intermediates (the FP approach) - and afaik we're using Value Types for the sake of efficiency.
+
+An example of a good "Immutable Copy/Change" in C# would be to allow property setters to be defined as "readonly" (which, for non-C# users, means "settable only during initialization").  Then, let them be supported in the new C#3.0 "initializers" so that creating a font with changed size would be myFont = new Font(myFont){Size = 8}.
+
+-- MartinZarate
+
+''ObjectiveCaml has something very much like this for structures, whose elements are immutable by default.  If you have, for instance:''
+
+    type point = { x : int; y : int }
+    let p1 = { x = 3; y = 4 }
+    (* --> val p1 : point = {x = 3; y = 4} *)
+
+''then you can subsequently do:''
+
+    let p2 = { p1 with y = 5 }
+    (* --> val p2 : point = {x = 3; y = 5} *)
+
+''Similar syntax exists for objects; "current object, except…" is very easy to write.''
+
+Same in HaskellLanguage:
+
+    data Point = P { x, y :: Int }
+    p1 = P { x = 3, y = 4 }
+    p2 = p1 { y = 5 }
+
+----
+
+See ValueObjectsCanBeMutable, RefactoringImprovingTheDesignOfExistingCode
+
+----
+CategoryModellingLawsAndPrinciples

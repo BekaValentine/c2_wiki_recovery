@@ -1,0 +1,291 @@
+For the latest version of the software and for recent discussion about problems and usage, please goto 
+
+http://sourceforge.net/projects/cppunit 
+
+----
+
+I've created a patch to CppUnit 1.5.5 which allows it to be built as a .DLL in MSVC6.  This can be found at: http://www.wpi.edu/~davidl/cppunit-1.5.5_msvc-dll.tar.bz2
+
+To apply the patch, you'll need a copy of CygWin.  Then use the following commands:
+	* tar xvzf cppunit-1.5.5.tar.gz
+	* bzip2 -dc cppunit-1.5.5_msvc-dll.tar.bz2 | tar xvf -
+	* patch -p0 < cppunit-1.5.5_msvc-dll.diff
+	* cp cppunitdll.dsp cppunit-1.5.5/src/cppunit
+
+To use this:
+	* Include cppunitdll.dsp in an MSVC6 workspace.
+	* Link to cppunitdll.lib, which will be located in cppunit-1.5.5/lib
+	* Make sure that CPPUNIT_DLL is defined either via the command line or before any CppUnit header files are included.
+
+Using CppUnit as a DLL fixes some bugs when trying to use CppUnit across many different .DLLs.  In my case, I wanted to use CppUnit in a project consisting of many different plugins, each of which would have test cases compiled into them.  Linking CppUnit statically into each of these files caused numerous problems, so I built CppUnit as a .DLL.
+
+DavidLudwig
+
+----
+I've tried to make some changes to Michael's CppUnit to make it compile faster. I ended up starting again from scratch. It still takes longer than I'd like. It doesn't have a nice UI yet. I'll put it on my home page http://www.wi.leidenuniv.nl/~mmeijeri
+
+It's a work in progress, so don't expect too much.
+
+I've been playing with Visual Works. I wish there was something this fast for C++. I guess I'll have to write it myself...
+
+MartijnMeijering
+
+''What would make it compile faster?  Pulling all of the framework into one header?  Or, pulling out features?''
+----
+Since C++ has no way to programm a OS independent GUI, how about using Java for the GUI and C++ for the framework itself? I don't know how these can be combined, but I know that Java can call native C code, so it should be possible. -- MalteKroeger
+
+I've written one called JavaUi. It has a code generator that turns your CppUnit test into a shared library that can be loaded into a JUnit ui via a Java class that is also generated. All you have to do is write your tests, run the generator, and compile. If you want a copy email me at: mailto:pgoodwin@ix.netcom.com and I'll send you the .zip (it's about 1MB). -- PhilGoodwin
+
+----
+As far as compilation times go -- why not compile the framework as a shared library so that the only new code that gets compiled is the test itself? Also, the headers might benefit from some refactoring to make them take care of themselves as needed. There are already include guards in there so nesting the includes ought to be safe. -- PhilGoodwin
+
+When you add a test, the class definition changes and that causes recompilation of the file containing main. In Michael's framework this includes recompiling the TestRunner stuff. In my version I used the pimpl idiom to avoid recompilation. Also, I now declare the testing classes in a .cpp file. I used to put a global function "Test XXXTestSuite()" in a separate header file, but I now simply declare them in main and let the linker sort it out. I don't think having lots of header files with small and predictable contents was worth the hassle.
+
+If you use JavaUi each test is compiled into its own shared library so changing one test class only causes that file to recompile. However, the whole CppUnit framework is compiled into every shared library. There could be less compiling all around if the framework were compiled into a shared library. -- PhilGoodwin
+
+----
+
+The problem with shared libraries is that the framework must use the same compiler as the test cases. Otherwise name mangling will get you. So you get stuck simulating classes in a C like syntax.
+-- ThaddeusOlczyk
+
+----
+
+I've been wondering whether the JUnit design works as well for C++ as it does for Java. I think SUnit, the original Smalltalk framework, would have been a more natural port to C++. While Java code looks stylistically similar to C++, Smalltalk is more semantically equivalent. Actually, with the lack of Meta-classes in the C++ object-model, I believe that the simplicity and elegance of SUnit would be lost in the port. Encouraged by the work of "MartijnMeijering", 
+
+I decided to rethink the design and implementation of Unit Testing in C++ with the hope of delivering a system that would retain the simplicity of SUnit/JUnit (the true sign of a good design) and enable developing with the pattern of CodeALittleTestALittle put forth in the KentBeck and ErichGamma article "TestInfected". What makes this most difficult (besides using an object-model that does not have metaclasses or true object references!) is that I need an infrastructure that would scale up to large and complex multiplatform C++ systems with multiple test-drivers. 
+
+I am currently calling this effort UTX, which stands for Unit Testing Framework. You may say that it should be UTF and, hey man, what can I say, you'd be right. Unfortunately, this was too close to UTF-7, UTF-8, and UTF-16 (which our system uses) for my comfort level. Also, UTX makes a snappy namespace and macro prefix. I will try to present enough of the source code and design rationale in CppUtxOverview to get the basic strategy across. I wont be presenting pieces that are straightforward or that translate relatively unchanged from SUnit/JUnit. In you are interested, this continues on CppUtxOverview. -- RobertDiFalco
+
+----
+
+I've recently been thinking about ClassHierarchyTestingInCppUnit. -- MichaelFeathers
+
+----
+
+Can anybody help me implement CppUnit on gcc/linux/x86?  I have it working except for divideByZero.  I think I need to catch SIGFPE, but I don't know how  to deal with that in the context of the TestCase. -- JohnClonts (john-clonts@reliantenergy.com)
+
+Yes, I'd like to help here.
+I wrote a little module that catches the SIGFPE, longjmps back to the context
+where it was caused and throws a C++ exception from there, which is then
+caught and processed as usual by the test framework.
+It took me a while to find out how to reset the FPU so that the remains of the
+computation on its stack are cleaned up.
+
+Changes up to now: 
+	* Unixified (compiles and runs on gcc 2.8.0 on Linux 2.0.36 on i586 with no warnings)
+	* Debugging support to show what's going on
+	* Makefiles
+	* The framework compiles to a shared library
+	* Support for converting SIGFPE to a C++ exception (dubious?)
+
+Open issues:
+	* Get rid of the CppUnit.h header file (refactor)
+	* I have the gut feeling that there is one more class used than is needed -- that T''''''estCaller stuff looks so complicated
+
+''Actually, T''''''estCaller is fairly important, since it provides a way to compose member functions into a TestSuite without those cool Java reflection features.  Perhaps there is a better way to implement this, but I can't think of one.  I suppose the alternative is to implement the run() method and have it directly invoke each of the test member functions.  This technique only works if you don't rely on the fixture getting properly set up and torn down for each method invocation.'' -- ChrisBrooks
+
+It's not polished, but it works, according to one(!) user besides me.
+If you'd like a copy, please write to me.  
+
+Michael, would you like to host the port on your web site?
+
+-- RainerBlome (mailto:rainer_blome@de.ibm.com)
+
+----
+
+(Re: catching SIGFPE)  What I had learned when I researched it was the gcc (mine was 2.7.2) was not able to do this.  I tested egcs on a friends system (version 1.1.2) and it handled it fine when compiled with -fsjlj-exceptions.  So I decided to wait til I upgraded.  -- JohnClonts
+
+----
+
+I'm pretty much following ErichGamma and KentBeck's lead on copyright/license.  It is, after all, a port of JavaUnit.  I'm just happy that people find it useful.  
+
+I've been thinking about the T''''''estCaller issue a bit, but I haven't come up with anything simpler.  T''''''estCaller was actually a late addition.  I knew I wanted to use a pointer to a member function, but the hitch was that it has to point to a function in a derived class.  I had no idea how to do it until Erich mailed me a snippet of code. 
+
+Originally, you had to override runTest() and add a macro call in it for each test you that you supported.  The macro looked something like this: 
+
+ #define CPPUNIT_DISPATCH(testname) if (name () == #testname) testname (); else
+
+(hoping my memory serves me right).. inefficient, and one more step when you add a test, but simple.  I just don't like doing busy work.
+
+BTW, there are only three reasons why CppUnit has DividebyZero as an example: JavaUnit did it, it was free with MSDEV, and it would have been lame to release it without a test error example.
+
+If you all would like to fold your OS support into one CppUnit package, please let me know.
+
+-- MichaelFeathers
+
+----
+
+I was wondering why the TestRunner class hasn't been factored out into its own source and header files. I did that and all I have to do is to instantiate TestRunner in my test executable's main() and add suites to it. No need to recompile the TestRunner class.
+
+-- OliverKamps
+
+----
+
+I've written one test suite with CppUnit using gcc on FreeBSD.
+mailto:chanders@timing.com.
+Compiler and OS particulars are:
+gcc version egcs-2.91.66 19990314 (egcs-1.1.2 release).
+FreeBSD 4.0-19990731-CURRENT.
+
+Summary of changes:
+	* Made a number of changes to compile with gcc and build a shared library.
+	* Moved TestRunner to the shared library.
+	* Removed the main from TestRunner.cpp.
+	* Added TestRunner::run( ) to run all the tests.
+
+So my first TestRunner looks like this:
+
+ #include "TestRunner.h"
+ #include "testInstrConfig.hh"
+ int
+ main( int, char ** )
+ {
+ TestRunner tr;
+ tr.addTest( "Test''''''Instr''''''Config", Test''''''Instr''''''Config::suite( ) );
+ tr.run( );
+ return (0);
+ }
+
+----
+
+It seems like there is a great deal of work duplication between the various developers porting CppUnit to unix.  I found myself doing much the same work as the others above.  Is anyone submitting their work back to MichaelFeathers?  If not, is anyone willing to create a general repository for the unix porting, to help minimize this?  I just hate to see all this effort going towards extending CppUnit staying mostly hidden, requiring emailings to the respective authors in order to do source comparison (what can I say, I'm lazy).
+
+-- NormanNunley
+
+----
+
+That is a very good idea.  I've received code for at least two UNIX ports recently and I haven't had a chance to read through them or consider how to merge them yet.
+
+The one thought I have is that it would be nice to have a set of vanilla C++ files which define the framework in a way that is completely portable.  All of the platform specific code (GUIs, runners, etc.) could work from that base.  It may just be a pipe dream, but much of the feedback I've heard so far makes it sound doable even though some environments are more restrictive than others.  On the other hand, cross-platform compatibility for the basic source is nice, but it solves a non-problem.  People are happy and they are getting work done. It may just be easier to pass each of the ports on to RonJeffries for his website.  It is TestingFramework central.
+
+Regardless, I'll start going through the sources this evening.
+
+-- MichaelFeathers
+
+----
+See RwCppUnit.
+
+-- DonaldMcLean
+
+Does anyone have a counter-example of why test fixtures are a good idea in C++? They seem to be so endemic to all of these discussions about test frameworks that it leaves me wondering if I'm missing something. -- DanMuller
+
+''Why test fixtures are a good idea:''
+
+	1. Yes, code each test as a simple function, using local variables for the objects.
+	1. Keep writing more tests.
+	1. Hmm, notice that many of the tests use the same objects. <<Duplicate code alert>>
+	1. Pull common objects into a fixture.
+	1. Step back and admire how much smaller your tests have become.
+
+So basically, test fixtures aren't so much about testing as they are about refactoring. -- JonReid
+
+I don't find this argument compelling. Reusing variables in different pieces of code that don't need to share state usually smells bad in production code, and I think it does in UnitTest''''''s, too. (I'm assuming that individiual unit tests should be independent, is that reasonable?) Also, the test fixtures' setUp() and tearDown() functions seem out of place in C++ -- that's what constructors and destructors are for.
+
+If you have a group of variables that are used often, and it really grates to repeat the declarations, wrap them in a struct. Then you've got a one-liner in each function to declare a local instance of the struct.
+
+I suppose if setUp() and tearDown() were removed, and a fixture instance was created before and destroyed after each test is called, then I could see using fixtures as a way of sharing variable definitions. As it stands, if I understand CppUnit right, you're not sharing just the definitions, but also the instances. In fact, the example given in the CppUnit Cookbook seems to work around this by having setUp and tearDown dynamically allocate and delete the objects (but it can't avoid sharing the pointer variable instances), which adds unnecessary complexity.
+
+Does this clarify my reservations? -- DanMuller
+
+Yes indeed. It sounds like the problem stems from the way the xUnit architecture combines test cases and test fixtures into the same class. When you instantiate tests in order to populate a suite, you get the fixtures as extra baggage. Managing the fixtures separately makes sense. I wonder if it would also eliminate the awkward syntax that results from mixing fixture (pointer-based) variables and on-the-fly (stack-based) variables. -- JonReid
+
+-----
+Here's a pipe-dream : I want to be able to write a test to make sure something doesn't compile.
+
+ class A {}
+ class B : public A {}
+ M''''''yAutoPtr<A> ap;
+ M''''''yAutoPtr<B> bp;
+ ap = bp; // must compile
+ bp = ap; // must not compile.
+
+Can anyone thing of a way to automate the test that "bp = ap" must not compile? My only approximation so far it to have a preprocessor flag which enables or disables the set of things that must not compile, and I occasionally run it and manually count error messages. --AndyJewell
+
+
+Look at how configure scripts work on Unix.  They check whether things compile or not by generating tiny bits of code, running the compiler over them and catching error return codes.  You could do the same thing within a test framework using the "system" function in the standard library.  You would need to make the framework configurable so that the user could specify how to run the compiler.
+
+----
+I'm not sure what you mean but the usual method is to use explicit template instantiation. --RobertDiFalco
+
+----
+
+Take a look at http://www.boost.org/libs/static_assert/static_assert.htm
+and http://www.boost.org/libs/type_traits/index.htm#relationships.
+
+Also see http://www.moderncppdesign.com/ -- KevinCline
+
+-------------------------------------------------------------
+Apologies if this is too trivial a question, but is there a way to 
+call all test suites through the CPPUnit MFC GUI i.e. the equivalent of a "-all" parameter? 
+
+I've tried calling each suite in succession with a loop, but I get threading problems.  The system pends continuously because of the CSingleLock call in the ActiveTest destructor.  (It seems that the current thread has not finished).  My windows threading knowledge is not very hot, so if anyone has done this already could they send suggestions to Steve at smoott@hotmail.com?  
+
+My only alternative is to add every test into one test suite, which is not very stylish.
+Thanks.
+----
+I've added some code to CppUnit to map Win32 access violations into exceptions that can be trapped by the framework. That way you get a failing test instead of a crash. 
+If anybody is interested drop me a mail. -- ErnestoGuisado
+
+As I've got several requests for this code, I've decided to put it on the web. It's at <http://erngui.com/prog/xp/cppunit.html>.
+
+-------------
+There is a const mistake in 1.5.3.
+
+In Test.h countTestCases is const - but the overide in TestSuite is not.  The fix is:
+declare const in TestSuite.h and TestSuite.cpp
+use const_iterator in TestSuite.cpp:
+	for (std::vector<Test *>::const_iterator it = m_tests.begin ();
+
+-------------
+Maybe I'm doing something wrong, but when I make cppunitd.lib or cppunit.lib and try
+to link it into any of my other projects, I get all sorts of linker symbol collisions.
+I have to directly add the files into my project to get it working.
+
+Is this a known problem? or am I simply doing something wrong?
+
+''The solution is to link with the appropriate runtime libraries in your project settings.  C/C++ tab, "Code Generation", change to Multithreaded DLL or Debug Multithreaded DLL, as appropriate. -TomPlunket''
+
+----
+
+So current CppUnit (1.6.2) includes that pretty slick testing suite that fails a test in MSVC.  I know what's wrong.  I'll do my best to present it here...
+
+ doc/FAQ:
+ '' 2.3) Why does the test ExceptionTest.testAssignment failed in
+         CppUnit test suite?
+
+       - I've never been able to figure out why that test fails.  It
+         seems to be specific to VC++ since the test passes with gcc. 
+         If you can figure out the failure, please let us know!''
+
+I sent email to all of the addresses that I found and got no response.  So here I'll try again...
+
+This is happening because the C++ libraries that are shipping with MSVC are slicing the exception in the assignment code.  The real fact of the matter is that there are a number of operations in the test code that are doing this, but the compiler is "smart" enough to resolve the function addresses at compile time for most of them due to the fact that the objects are instantiated in the function, sliced, and then used in the same function (so the compiler knows what the vtable should be).  I can break a couple of the other exception code tests by putting the actual assertions into functions which get called rather than keeping them in the same function where the objects are instantiated.
+
+So- what *exactly* is happening?  MSVC's implementation of std::exception::operator=() is doing a "trick" to copy the exception, it's destructing it and then constructing it in-place.  The code likely looks something like:
+
+ exception::operator=(const exception& e)
+ {
+    this->~exception();
+    new (this) exception(e);
+ }
+
+Pretty sloppy, due to the fact that it's guaranteeing that anything derived from execption will '''be''' exception upon completion of this function.
+
+I have confirmed this behaviour with Pete Becker of Dinkumware, the implementors of MS's Standard Library.  Unfortunately he's told me that they didn't actually do exception, and he doesn't even have the code.  I hope that he can get it to the right people because it's a pretty serious deficiency, but I would think that in the general case, #define'ing out the call to exception::operator=() in CppUnit::Exception::operator=() for MSC_VER would solve the problem.  Alternatively the MSVC implementation of CppUnit could just set the exception::what member by hand, but since CppUnit::Exception doesn't use that, it's probably not necessary to do even that.
+
+
+----
+
+Make TestCase represent one test and only one test. The dispatching layer of runTest is
+the thing i have to explain the most and is the hardest to understand. If you want to share
+a common setup or teardown then move it to a separate class.
+----
+
+This page discusses possible enhancements/fixes to CppUnit.
+----
+RefactorMe: 
+* I'm moving the reflection subset to CppUnitReflection. Other should do the same kind of thing (please). Or contract if prose covers a resolved matter.
+* There should be pages CppUnitExceptions, CppUnitArchitecture, and a unifying TestFixtures page to canonize this important concept.
+
+----
+

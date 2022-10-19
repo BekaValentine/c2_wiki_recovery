@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Deleting Objects And Records Question
+      </h1>
+      <p>
+        When you delete a user, for example, a large number of objects that refer to the user will need to be updated also. This all happens in a transaction. The objects will get updated in memory before the database transaction is committed. 
+      </p>
+      <p>
+        How do you handle "restoring" the in memory objects when a rollback in the database occurs?
+      </p>
+      <p>
+        The transaction context does not include objects so there is no equivalent way of undoing all the changes that have been made to objects.
+      </p>
+      <p>
+        The realistic solutions I can think of:
+      </p>
+      <ul>
+        <li>
+           restart the system so it reloads from the database
+        </li>
+        <li>
+           don't use OO over relational
+        </li>
+        <li>
+           map tables and objects 1-1, which defeats the purpose
+        </li>
+      </ul>
+      <p>
+        Is there a better way? 
+      </p>
+      <hr/>
+      <p>
+        From what follows, there appears to be a lot of confusion about what problem is presented above. It is not even clear whether it is the original author who is attempting to clarify the problem. If a few more of the interlocutors could identify themselves, or at least differentiate themselves, others might be better able to follow the discussion.
+      </p>
+      <p>
+        Questions that appear to remain unanswered are:
+      </p>
+      <ul>
+        <li>
+           What does it mean to delete a user, and why would you want to do this?
+        </li>
+        <li>
+           Why do the objects in memory need to be updated?
+        </li>
+        <li>
+           Why should this be before the database transaction is committed?
+        </li>
+        <li>
+           Why would a rollback in the database occur, except for technical reasons?
+        </li>
+        <li>
+           Why would the updated objects need to know that this technical failure had occurred?
+        </li>
+        <li>
+           Is this a purely hypothetical "example"?
+        </li>
+        <li>
+           Are we talking about routers + DB, routers + OO + DB, or some other combination?
+        </li>
+        <li>
+           Is this a database application with a ORM?
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        <em>Well, not really a general solution, but as a heuristic something to think of: do not delete users. Block the account, move them to a history table, etc.</em>
+      </p>
+      <hr/>
+      <p>
+        The do not delete is a good heuristic. Move them to history, mark the record as expired (most datamodels do not sufficiently take into account the passage of time). However, if you really do want to delete, or in any case when you still need some way to rollback the in-memory state, it's relatively straightforward for those who have some experience with coding for this sort of problem.
+      </p>
+      <code>
+        Transaction tx; // some object that representation the db transaction<br/>
+      </code>
+      <code>
+        try {<br/>
+        // make changes to objects<br/>
+        // either<br/>
+        // 1) mark changed objects "dirty" or<br/>
+        // 2) push change records onto an undo stack<br/>
+        // at any time, if something goes wrong, throw Exception<br/>
+        tx.commit(); // throws exception if failure <br/>
+        } catch (Exception re) {<br/>
+        // either<br/>
+        // 1) throw away dirty objects and reload as needed from db<br/>
+        // 2) pop undo stack and revert objects<br/>
+        tx.rollback();<br/>
+        }<br/>
+      </code>
+      <p>
+        Throwing away and reloading "dirty" objects can be efficient if you only load objects from the db as needed. Of course, an optimal object tree loading and caching strategy is beyond the scope of this explanation.
+      </p>
+      <p>
+        The implementation for languages the don't have an explicit exception mechanism is left as an exercise for the reader.
+      </p>
+      <hr/>
+      <p>
+        <em>Now to the more fundamental question what to do with deleted entities and their representation in memory, here's the golden rule everybody and their friends in the O/R mapping land forgets to follow:</em>
+      </p>
+      <hr/>
+      <p>
+        <strong>In-memory object representations of entities stored in the database should only live for the duration of a transaction.</strong>
+      </p>
+      <p>
+        That's a huge restriction. That means no in-memory caching. Every object must be reconstituted from the database for every page hit (for example). That seems somewhat harsh and the wrong direction given the large cores available now.
+      </p>
+      <p>
+        <em>That's the rule, of course there'll be some exceptions. For example, you don't need to reload a lookup table with valid US States :) The fundamental problem though is that all data that has to have transactional integrity, need to follow that rule. Object frameworks running with memory caches just cannot handle transactional integrity and there have been repeated failures of frameworks that tried to do concurrency control and transactional integrity against cached objects. (Things like </em><a href="TopLink.html">TopLink</a>, <a href="WebLogic.html">WebLogic</a> the version 5 series, etc). The failures are of two types: one is that naive implementation deadlocked repeatedly, another one that the concurrency model was quite confusing for the developers that couldn't relate that easily to business rules and incorrect transactions would be performed against the database.<em></em>
+      </p>
+      <p>
+        <em>But you have large amounts of core, give it to the DBMS, it can put it to very good use. A brief visit to </em><a href="http://www.tpc.org,">http://www.tpc.org,</a> will convince you with some numbers that most of the optimizations with object caches are not needed yet, just like with any optimization. Only optimize when you identified a bottleneck, and most of the time bottlenecks are not the problem of databases, but the problem of how OO code accesses databases indirectly through the O/R mapping layer.<em></em>
+      </p>
+      <p>
+        I am just hard pressed to see how you would give 100msec response times if you had to build on object graph of 10 objects on every request.
+      </p>
+      <p>
+        <em>Well, I hope you won't issue 10 queries or worse for that graph, although I've seen that happening. Some of these days I'll have to write up </em>PutTheDamnDataOnTheDamnScreen design pattern. A typical response time from databases these days is 1 ms and under for Xeon 2Ghz and more.<em></em>
+      </p>
+      <hr/>
+      <p>
+        <strong>That's a huge restriction. That means no in-memory caching. Every object must be reconstituted from the database for every page hit (for example). That seems somewhat harsh and the wrong direction given the large cores available now.</strong>
+      </p>
+      <p>
+        Sure there's in-memory caching: at the database. Let the database do it. Only create the objects needed within the context of a single transaction. This means you'll always see the same data as any other database client.
+      </p>
+      <p>
+        <em>The database is typically on another machine, therefore that's not in-memory, that's across the pipe, the thing in-memory caching is trying to avoid.</em>
+      </p>
+      <p>
+        <em>Why not go the other way and get rid of the mapping and go with just objects?</em>
+      </p>
+      <p>
+        Go ahead (though they still have to be serialized and put on disk at some point, and this is mainly non-trivial, unless you can deal with <a href="ThePrevayler.html">ThePrevayler</a> and its restrictions, or you have the luxury of using <a href="GemStone.html">GemStone</a>).
+      </p>
+      <p>
+        <em>I found the prevayler programming model quite confusing. Could have been me or the documentation. Clearly a write will happen but until then the data are cached. I suppose you are moving all the other things like event propagation into the database as well? Otherwise how will you know which objects related to what? Which makes the database very closely mapped to the objects.</em>
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd>I believe the intent with the prevayler model is that the write happens immediately. The trick is that it's a small write. Every once in a while, a batch of those writes are converted to a single image, but this is an optimization, and has no effect on the semantics: if no batch of writes is every deleted, then that list of tiny writes is the authoritative version of events at all times, as any image of the system at any point in time can be generated from that log. This is nothing new to rdbs's, but it is useful at times to have a separate feature. -- <a href="WilliamUnderwood.html">WilliamUnderwood</a></dd>
+      </dl>
+      <p>
+        <em>The performance of the prevayler write operations was slightly worse than for mysql. That's not so good.</em>
+      </p>
+      <hr/>
+      <p>
+        Battling these issues is another <a href="ArgumentsAgainstOop.html">ArgumentsAgainstOop</a>. One does not have to worry about such if they talk to the database directly. The database is not some evil thing to be wrapped away like a child abuser. (Yeah, I know, you think I'm trolling and out to stir the pot, but its the hard ugly truth, people. We can perhaps move this to another topic later if you find this criticism "intrusive".)
+      </p>
+      <p>
+        <em>Unless you do the activate on every request approach you have the same problem. It doesn't matter if they are objects or records or whatever.</em>
+      </p>
+      <p>
+        Not sure what you mean by "activate on every request". Activate what?
+      </p>
+      <p>
+        <em>Activate means create the objects from the database. Passivate is save the objects back to the database and delete the objects. Another issue is how do you handle locking at an object level if they aren't in memory? An object may be used by several different requests at a time. When an object is activated does it get automatically shared, or does a copy exist for each request, in which case you couldn't have locks.</em>
+      </p>
+      <p>
+        Since all database accesses, both reads on activate and writes on passivate, will happen within a transaction, database will do all the locking that you will need, and will do it <strong>correctly</strong> and <strong>reliably</strong>. Otherwise you may risk repeating the experience of <a href="WebLogic.html">WebLogic</a> 5 series which deadlocked all over the place because they thought they could address this issue better than a database engine. Different requests are in different transactions therefore they should operate with their own private copies of the database entities.
+      </p>
+      <p>
+        <em>That's the thing though, we are talking about behavioral level locking, not data level locking. People get a myopia thinking all that programs do is transform data. If I need to lock a printer, for example, database transactions and database locks are irrelevant. This is why the the database centric model doesn't translate out into the larger world where objects do things to things, not just data.</em> 
+      </p>
+      <p>
+        Well, a printer doesn't need to be loaded from the database, does it? But an account object does.The context of this page was related more to accounts than to printers. YMMV as always. And speaking of printers, I'd be very worried of that printer driver that doesn't manage whatever locking/queuing/serialization on its own, I could sell you a better printer :) 
+      </p>
+      <p>
+        <em>Operations on the printer will be in the transactional path. The database centric approach just doesn't deal with these questions. It can be a lot of other things that printers: Other applications. Log files. Nuclear power rod placement. Vending machine hardware state. All these contain changes to items not in the database but they will also cause changes related to objects stored in the database.</em>
+      </p>
+      <p>
+        A queue of printer content can be modeled with a database just fine. I don't see where we need to "lock" anything unless it is a dedicted printer, which then can look something like:
+      </p>
+      <code>
+        printHandle = lockPrinter(....)<br/>
+        // note that handle could be an object or associative array<br/>
+        if (! printHandle.locked) {    <br/>
+        print('Sorry, printer in use now')<br/>
+        } else {<br/>
+        printHandle.content = myContent<br/>
+        printIt(printHandle)<br/>
+        unLockPrinter(printHandle)<br/>
+        }<br/>
+      </code>
+      <p>
+        Not a queue of printer content. The actual physical printer.
+      </p>
+      <p>
+        <em>I thought I addressed that. The example above does not assume a multi-job queue. May I aks for clarification?</em>
+      </p>
+      <p>
+        The state is in the printer. Not the database. A database rollback will have no physical impact on the printer.
+      </p>
+      <p>
+        <em>A printer cannot reach out and grab the just-finished printout from the user. I am still not sure what you mean. I need a more specific </em><a href="UseCase.html">UseCase</a>. I remember in the DOS days where one had more low-level control over the printer. One generally could send one character at a time if they wanted to. But, the printers often buffered a bit for smoother communication. Some waited until a "new-line" was sent, others simply waited a few seconds before printing what it had. If you wanted to cancel a printout, you just stopped sending stuff to it and issued a "form-feed". But graphical printing and languages (like <a href="PostScript.html">PostScript</a>) complicates things. Because layering may be involved, often a page has to be sent as a unit and the printer won't print it until it receives an 'end-of-page' indicator of some sort. Thus, the smallest practical unit tends to be "page" these days. But the later Windows OS's seem to use the queueing model, which a database-like model is just fine for as far as I can tell.<em></em>
+      </p>
+      <p>
+        Router upgrade scenario. This is a real-life example, BTW. I am upgrading 20 routers and the corporate databases about the routers. I go through and put all the routers in upgrade mode which puts them in a special management state. This is all or nothing. On router 1 and 2 I upgrade the router and the database. Router 3 fails for some reason or the host fails. Rolling back the database transaction will not rollback routers 1 and 2 software versions and it will not take all the other routers out of upgrade state. You can do X, Y, and Z as solutions. The bottom line is state exists in places other than the database and thus are outside the database transaction mechanism. This state can be in other applications or devices or the UI etc.
+      </p>
+      <p>
+        <em>I think the issue here is </em>'"mirroring"<em>'. You have a database model of the routers, and they may get out-of-synch. This is an issue with any model of an external thing. If you use (RAM) objects to mirror the state of the routers, you have the same problem. A solution may be to query the routers for their state rather than ask the database. Or, query the routers in order to update the database. In other words, don't just assume the routers accepted a given request, ask them. I don't see this as being much different than a mailing address database getting out of date as people move around and not tell the database or operator what happened. For example, somebody might say, "Tomorrow I am moving. Can you please update your records to reflect my new address?" And then you pull out of the move at the last minute and forget to tell the data entry people.</em>
+      </p>
+      <p>
+        Come on pattern gurus! Yes, this is the same problem that can occur whenever a copy is made. It's a hard problem that has been with us since at least the invention of writing. I call it the DistributionPattern, but only because I first recognized it when considering what it is that makes distributed systems tend towards complexity. Perhaps DuplicationPattern would be a better term. The golden rule, then: <strong>Never duplicate without considering whether and how the duplicate should be kept in step with the original</strong>.
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd>I generally see these employed:</dd>
+      </dl>
+      <ul>
+        <li>
+           Polling
+        </li>
+        <li>
+           Scheduled updates
+        </li>
+        <li>
+           Event-driven updates (such as explicit "update" request)
+        </li>
+      </ul>
+      <dl>
+        <dt> </dt>
+        <dd>Also, <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a> dictates that "copying" should only be done as a last resort. Always directly query the original if possible.</dd>
+      </dl>
+      <p>
+        <em>I would call it proxying. It's not a copy. It's not a mirror. The device itself holds state so it doesn't need to be copied or mirrored. I am not looking for a solution, those aren't that hard to think of. The point is that the database centric model does not handle this scenario. It only has transaction on the data it manages, which may be a small portion of the data in a transaction path. Extend this to physical devices where a command must be issued to close a door a door for example. Operations are in transactions as much as data. So are event changes.</em>
+      </p>
+      <p>
+        Well, fundamentally everything in computing is a copy. But if you think that the copying is not the fundamental cause of the problem, then I'm baffled about what the problem is. Unless it's a lack of copying. "Proxy" is an interesting word, since it would locate the ancestor of the problem in the pre-literate era when, for example, the Pharaoh gives Moses his ring as the sign of conferred authority, making Moses his proxy.
+      </p>
+      <hr/>
+      <p>
+        <em>I don't see how it is a problem with (just) databases. If the message that the router failed does not get back to your model, be it a database model or an object model, then it is out-of-sync with the router state. It is not the database's fault that I see anywhere. Note that you don't have to use database transactions if they don't help.</em>
+      </p>
+      <p>
+        It's not a matter of fault. It's a matter of getting the desired result. The result is a transaction over more than database data. The solution to the problem on this page suggested with the idea of keeping objects around only as long as the transaction. That doesn't work in more complex apps where data is kept in other devices or operations are required as the undo. I feel a strong the database is always the right approach vibe going on here.
+      </p>
+      <p>
+        <em>No, it is just that databases seem to be fingered as the problem in the situations given when they are probably not. They may not always be the right solution, but these scenarios are not such a case so far.</em>
+      </p>
+      <hr/>
+      <p>
+        <strong>Battling these issues is another </strong><a href="ArgumentsAgainstOop.html">ArgumentsAgainstOop</a>.<strong></strong>
+      </p>
+      <p>
+        Only there's no battle if you limit object lifetimes to one transaction. You have the same problems with any paradigm if you try to persist a local copy of data between transactions. It doesn't matter if you persist that data in a struct, a record, a variable or an object.
+      </p>
+      <p>
+        <em>Agreed. They are the same no matter what. And the database centric perspective can only be used on applications that only transform data, which is very limiting in certain industries.</em>
+      </p>
+      <p>
+        [Some of these issues are raised in <a href="ProgrammingWithoutRamDiskDichotomy.html">ProgrammingWithoutRamDiskDichotomy</a>. 
+        If one follows that advice, then their designs will tend to look procedural I suspect.]
+      </p>
+      <p>
+        It doesn't matter if you keep local copies of the data in objects, records, structs, tables, variables or registers. Programming paradigm is orthogonal to this issue. I think some OO folks make it harder on themselves by trying to maintain bigger object models than they need for longer periods of time than they ought to. Those folks usually aren't used to thinking in terms of ACID transactions.
+      </p>
+      <hr/>
+      <p>
+        <em>I don't see how it is a problem with (just) databases.</em>
+      </p>
+      <p>
+        It is less of a problem. It's not great because I still see performance being a problem. Queries against objects are a problem because you would have to page in each object to perform the query. Relationships between objects are difficult because you have to activate the entire relationship graph in order to use the relationships. If a user is related to a hundred other objects, that's a lot of objects to bring in.
+      </p>
+      <p>
+        <a href="BertrandMeyer.html">BertrandMeyer</a> talks about this problem in his book. He seems to want <a href="ProgrammingWithoutRamDiskDichotomy.html">ProgrammingWithoutRamDiskDichotomy</a>, but never seems to settle on anything specific.
+      </p>
+      <p>
+        <em>Though we are not just talking about the memory in one computer. We are talking about the memory and operations across multiple nodes so ram disk isn't enough.</em>
+      </p>
+      <p>
+        In this case the problem seems to be how to manage distributed systems that mirror/copy information, and not databases in particular. Correct? I am trying to figure out the scope of the issues raised here.
+      </p>
+      <hr/>
+      <p>
+        The situation described above and the ways to deal with it is addressed in two books: <a href="TransactionalInformationSystems.html">TransactionalInformationSystems</a> and DatabasesAndTransactionProcessing, very good books to have anyways, but if there's no general solution I or somebody else can help you with, unless we have more details. I don't know if those details will fit in the wiki page, however. It is not a problem specific with databases, but with any software system that needs to have transactional integrity requirements while having an interface to the real world, like ATM systems for example: you cannot rollback the dispensed money because the database decided to rolback for whatever reasons. Real world does not understand two-phase commit therefore there are different solutions. I'm not sure I can go into all the details of these types of situations on a wiki page, therefore I highly recommend those books.
+      </p>
+      <p>
+        <em>As far as the ATM example, if we know money was given out, then one should not roll back the transaction in the database. That is a programming flaw. If the program does not know the state of the physical money transaction, then some sort of flag should be set so that the problem can be investigated. Rollback is not a general-purpose way to handle every problem. Generally only use rollback if there is no physical copying/mirroring to some outside system, at least not any that have significant consequences.</em>
+      </p>
+      <p>
+        That's really the point of this page. The database centric view is not a strong solution for many problem spaces.
+      </p>
+      <p>
+        <em>I have yet to see a specific problem that an OO system would also not have a problem with. So far I only see misuse of "rollback". </em>'Rollback is a bonus tool, not a mandatory one<em>'.</em>
+      </p>
+      <p>
+        It's not just an OO problem. Keep the same data in records, tables, whatever. It's the same problem. It's just cast in OO because it is in java. The problem is because the database and the OO are not the same so the transaction scope is not correct when dealing with anything other that database data. Many operations do not deal only with database data so it is a problem. One worth talking about. 
+      </p>
+      <p>
+        <em>Are we talking about routers + DB, routers + OO + DB, or some other combination? Perhaps there are too many scenarios floating around and everybody is intermixing them.</em>
+      </p>
+      <hr/>
+      <p>
+        <strong>Router Example</strong>
+      </p>
+      <p>
+        Here is my pseudo-code interpretation of the router software upgrade scenario given above:
+      </p>
+      <code>
+        Get list of routers to be updated from database.<br/>
+        Update routers based on list.<br/>
+        Ask routers what their version is.<br/>
+        If any router has old version or does not respond:<br/>
+        Then raise error<br/>
+        Else update version numbers in database based on list<br/>
+      </code>
+      <p>
+        Note that we don't need roll-back transactions here because we don't update the database until the routers pass a test. 
+      </p>
+      <p>
+        Now, the original scenario description hinted something about rolling back the routers also. It seems one was trying to extend the roll-back functionality to the multiple routers. I don't think that is possible because they are not integrated sufficiently. Thus, if we want to put back the old software if one or more updates fail, then we probably have to write that logic ourselves (or copy a template example).
+      </p>
+      <p>
+        I would suspect it is best to simply raise an error condition if something fails rather than try to put the old software back on all of them. If all routers need the same version of software and something goes wrong, then human intervention is probably the best course of action. If a node fails for update, then it may fail for the put-back also.
+      </p>
+      <p>
+        <em>This is the concept of </em>TestableOutput described in the books mentioned above, and which I'm also currently using in the project. So the idea is that you have a real world effect (updating router software, it would be dispensing money for an ATM, it's something similar in my current project), that cannot be rolled back, but which can be tested for (ATM machines have reliable hardware counters that will always tell you how much money they've given out in their lifetime).<em></em>
+      </p>
+      <p>
+        <em>The way to deal with errors depends on whether the database update happens before the output or after the output, implementing a custom application recovery phase (as opposed to the classical automated DBMS recovery) in which the software responsible for representing the output mechanics, tests the output and then updates the database, and does that continuously until it succeeds. Under the condition that only a bounded number of errors will occur the system will reach a consistent state. Reliable queues are very handy to implement such a mechanism, and if there's more than the bounded threshold of errors, then you can use a separate administrative queue that will alarm system administrators to take a manual intervention. Insertion into a reliable queue is something that it is unlikely to ever fail, or never fail more than a bounded number of times, unless you have a piss poor queue manager, as opposed for example to database updates that may rollback for unexpected/unrelated conditions.</em>
+      </p>
+      <p>
+        <em>That would be in principle, but what I fail to see is the relation between this use case and your initial question related to deletion of users.</em>
+      </p>
+      <hr/>
+      <p>
+        <em>That's the point. Database transactions are not sufficient.</em>
+      </p>
+      <p>
+        I thought the point was that databases were not sufficient, not necessarily just transactions. (Whether a wider range of things can be wrapped into a transaction model/paradigm or not, I don't really know. It would make an interesting area of research.)
+      </p>
+      <hr/>
+      <p>
+        <em>I may be missing the point of the original question but in my world, the cache is an optimization and is not required. Object consumers first look in the cache and if it is not there, go to the database and update the cache. So, my question is, why do anything on rollback of a delete? Leave those objects removed from the cache and let the system rebuild the cache next time they are requested?</em> -- <a href="RobertDiFalco.html">RobertDiFalco</a> 
+      </p>
+      <p>
+        It's not a cache. They are the real objects. So if objects exist beyond the transaction they have to be deleted in concert with the database. 
+      </p>
+      <p>
+        <em>Guess I'm just not tracking then. I don't have this issue in our systems, we must use a different approach for mapping objects to tables. -- </em><a href="RobertDiFalco.html">RobertDiFalco</a><em></em>
+      </p>
+      <p>
+        No much to track really. Delete a user. The user causes three other objects to be deleted and 5 other objects to be updated. The objects cause database writes within a transaction context, though the changes are immediately visible in the objects. The transaction fails. The database is rolled back to the correct values but the objects have changed. If you are keeping around the objects then the database and objects do not match. There is no rollback for the objects nor is there a mechanism that I know about for doing it.
+      </p>
+      <p>
+        <em>Constrain the lifetime of the objects to the transaction and you'll have rollback for objects.</em>
+      </p>
+      <p>
+        As was suggested previously. Problems are:
+      </p>
+      <ul>
+        <li>
+           non database transactions - state not kept in the database or rollbacks requiring operations (like restoring a software version) is not in the transaction path of the database so is not handled.
+        </li>
+      </ul>
+      <p>
+        <em>It doesn't matter if the transaction is a database transaction or not. Whatever the transaction is, scope the objects to it.</em>
+      </p>
+      <p>
+        How? The database is has no scope this with the database transaction.
+      </p>
+      <p>
+        <em>I'm not saying "database transaction". I'm saying "transaction". Every interaction with a system can be compartmentalized as a transaction.</em>
+      </p>
+      <ul>
+        <li>
+           response time - responding in short periods is not possible if an object graph has to be recreated on every request.
+        </li>
+      </ul>
+      <p>
+        <em>Only create the objects needed to complete the current transaction. It shouldn't be much more expensive than allocating RAM.</em>
+      </p>
+      <p>
+        Um, that's not remotely credible.
+      </p>
+      <p>
+        <em>Have you measured object creation time in a language that keeps a contiguous heap? And if you don't have cycles to spend creating objects, don't use objects.</em>
+      </p>
+      <ul>
+        <li>
+           event notification - registering with objects for event changes doesn't work. You have to rewire it through the database.
+        </li>
+      </ul>
+      <p>
+        <em>It works within the lifetime of the object. If you need to know when the database changes you'll have to register with the database.</em>
+      </p>
+      <p>
+        I don't want to know when the database changes. As a security subsystem I want to know when the user object changes. To get those changes I'll need to be activated.
+      </p>
+      <p>
+        <em>If the user object isn't persisted and shared through a database, the problem that started this discussion doesn't exist. If the user object is persisted and shared through a database then it's only valid during one transaction.</em>
+      </p>
+      <ul>
+        <li>
+           queries - going through objects for queries will be slow because objects will need to be paged in to apply the criteria.
+        </li>
+      </ul>
+      <p>
+        <em>I don't understand. Query the database; that's what they're good for.</em>
+      </p>
+      <p>
+        Ok, this is painful. Is there room in your philosophy for anything other than a database?
+      </p>
+      <p>
+        <em>Absolutely. We're not talking about my philosophy. I only uses databases when I absolutely have to, and even then I try to avoid relational databases if I can. But when I'm writing code that will be one of many users of a database, I interact with it in ACID transactions.</em>
+      </p>
+      <ul>
+        <li>
+           navigation - you can't navigate between objects without paging them in from the database
+        </li>
+      </ul>
+      <p>
+        <em>Yes. You won't see stale objects when something else updates the database.</em>
+      </p>
+      <ul>
+        <li>
+           scale - for large systems the database becomes the bottleneck
+        </li>
+      </ul>
+      <p>
+        <em>Yes. If you can't use a database, don't use a database. Or use a faster database.</em>
+      </p>
+      <p>
+        {So Oracle and DB2 are selling snake oil?}
+      </p>
+      <p>
+        <em>No, but they aren't selling the fastest databases in the world either. And like I said, if you can't use a database, don't use a database.</em>
+      </p>
+      <p>
+        How do you know what you can do without talking about it? 
+      </p>
+      <p>
+        <em>I test to find out what I can do. How does your question relate to this discussion? Someone wrote that one of the problems with constraining the lifetime of an object to the lifetime of a transaction was that the database becomes a bottleneck. If the database is a bottleneck, use a faster database or don't use a database. Object lifetime has no relationship to that problem.</em>
+      </p>
+      <p>
+        It has everything to do with it. If the database performance isn't sufficient then you would have to use in-memory approach which is directly related to object life time. If the database was fast enough for your app then transaction scoped life times could work.
+      </p>
+      <p>
+        <em>But if you don't use a database then the "deleting records" part of the question (see page title) goes away. If the database is a bottleneck it isn't because object lifetimes are scoped to transactions.</em>
+      </p>
+      <p>
+        <a href="AreRdbmsSlow.html">AreRdbmsSlow</a>
+      </p>
+      <hr/>
+      <p>
+        I'm confused. Isn't this a database application with a ORM? Why would you update the objects in memory, why wouldn't you just invalidate the object and let them refresh themselves from the database - so it doesn't matter if there was a commit or a rollback? Another classic approach is to not make the changes in the objects <strong>until</strong> the transaction has successfully been committed. To me, it doesn't sound like a good idea to make the changes immediately visible (i.e. pre-commit). We usually make our event notifications occur in the commit code, after the database transaction has committed. Another trick some people use is to have a hot and cold state. The hot state is copied to the cold state only after the transaction has committed. Usually, the best idea is to minimize caching. We used to cache EVERYTHING in an Object Manager and it just made the application slow and a memory hog. Now we only have objects for things that are currently in use and the code is much simpler. -- <a href="RobertDiFalco.html">RobertDiFalco</a>
+      </p>
+      <p>
+        <em>If I have graph 5 deep of object relationships, do you want me to update the database or use the objects that know about the graph to update the objects and then have that update the database with changes? Again, if I have the objects I want to do things through the objects not the database. It's in the object where the relationships are kept and where the proper validation happens, where the listeners are notified, where the proper actions are taken. If I delete a user I just can't delete a user record in the database. There are 3 tables that make up a user. When a user is deleted the payroll app in another system needs to be updated. Then I need to tell the email lists that a user has been deleted so they can update their lists. They will email the email list owner of the deletion. The email lists being updated in turn require X to be update and do Y. And so on. How does this work with just object invalidation? Objects aren't just data.</em>
+      </p>
+      <p>
+        I wouldn't use event notification for updating tightly associated objects. Events are too loosely associated for objects that have strict dependencies. If I call some CRUD method on a user like #delete, I would expect the correct tables to be updated (usually tables joined in some way) and <em>if the transaction was successful</em> I would post an event to any listeners like the User Manager View for the UI or a Listener that sends an email to the email list owner. I would not make these listeners things that enforce data-integrity. You also have to decide who owns what? Does the email recipient own the Payroll user? Is the Payroll user the same object as the System user? Maybe the System User has an email address field? If the subordinate was being deleted you would have to go to the parent and delete that first and work your way down. But there is not reason to keep the entire object graph in memory at all times. I would have the Objects model behavior on the state that is in the database, but essentially be stateless or transient. This way I could use them as objects with knowing whether they were all in memory or the database. I wouldn't have to sweat interdependencies in the memory model and possible drift from the database state. Everything becomes simpler. But to clients of the objects, it still looks like they are just dealing with objects. -- <a href="RobertDiFalco.html">RobertDiFalco</a>
+      </p>
+      <p>
+        <em>I would post an event to any listeners like the User Manager View for the UI or a Listener that sends an email to the email list owner.</em>
+      </p>
+      <p>
+        I don't see the mechanics of this. Usually notification is done via an observer pattern where objects register with one another. If a user has a new credit card and other objects have registered for this event, then the event would be posted. The listeners would need to be in memory to get the event and take action. The registration is an object relationship at a base class level. I don't know how the registered object could be faulted in. I am not sure why listeners are not a good way to update relationships. It seems very clean to me. How about if yhour objects are large, say lik a car schematic. Do you really want to fault the car in every time it is needed?
+      </p>
+      <p>
+        <em>It just makes things more complicated. You could have pre-commit listeners or post-commit listeners, but that seems a little overkill. For what it's worth, I'm not sure what you mean by "fault". What does the registration have to do with anything? -- </em><a href="RobertDiFalco.html">RobertDiFalco</a><em></em>
+      </p>
+      <p>
+        "fault" like in page fault is used in OODBMS world to say an objects is faulted in when referenced if it isn't already in memory. Even if you don't use listeners for relationship management there are listeners for everything else. Is it more complicated than user knowing every relationship in which it participates and then updating them manually? -- <a href="AnonymousDonor.html">AnonymousDonor</a>
+      </p>
+      <p>
+        Ah, so you are saying that the business object references the listener registration in your systems? So as a result the business object has to stay in memory even when it is not within the scope of a transaction? We take a simpler but less fine-grained approach. Listeners are registered with an Event Manager that is a singleton and the Listeners are associated with one or more Classes rather than objects themselves. Transaction objects have a #fire method that simply collects the events until the transaction is committed. If the commit fails then the collected events are discarded, otherwise they are forwarded to the Event Manager so that they can fired. For data-relationships, general logging, regenerating subordinate tables (say like a paths table for graph relationships), or inter-process mutex locking we use Transaction.PreCommitHandler and Transaction.PostCommitHandler. These only live for the life of the transaction. The PreCommitHandlers are great for things like regenerating an table that represents ACLS (say because a user is added or deleted). As their name implies they are fired before the commit and they are given the Transaction object they were added to as an argument. This allows you to add things in the same transaction context in a fairly loose way allowing them to respond to #commit or #rollback in the same way. The PostCommitHandler is fired after a commit or after a rollback. It's more like a transaction finally handler. They are great for things like removing locks that (sometime during the life of a transaction) were acquired on a specific UID but should not be released until the transaction is complete.
+      </p>
+      <code>
+        public class Person extends Persistent<br/>
+        {<br/>
+        ...<br/>
+      </code>
+      <code>
+        public void update( Transaction txn ) ...<br/>
+        {<br/>
+        final SystemLock lock = SystemLock.acquire( this.getIdentity() );<br/>
+      </code>
+      <code>
+        txn.addPostCommitHandler( new Transaction.PostCommitHandler()<br/>
+        {<br/>
+        public void handle( boolean wasCommitted )<br/>
+        {<br/>
+        lock.release();<br/>
+        }<br/>
+        } );<br/>
+      </code>
+      <code>
+        super.update( txn );<br/>
+        }<br/>
+      </code>
+      <code>
+        ...<br/>
+        }<br/>
+      </code>
+      <p>
+        This might be better named TransactionFinallyHandler, but you get the idea. Locks are only created for certain objects and only when the first method is called on them that requires a lock. The lock is then held until the transaction is committed or rolledback.
+      </p>
+      <p>
+        With Event Listeners, Pre-commit Handlers, Post-commit Handlers, and trying to keep as many business objects as possible stateless or use lazy caches our system continues to be simple and fairly easy to extend for our purposes. -- <a href="RobertDiFalco.html">RobertDiFalco</a>
+      </p>
+    </div>
+  </body>
+</html>

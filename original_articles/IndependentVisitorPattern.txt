@@ -1,0 +1,180 @@
+''I've put the ideas from this discussion into a concrete example with running code and disciplined refactoring: VisitorPatternRefactoring -- JustinSampson''
+
+----
+
+Reading the discussion of the VisitorPattern, particularly the concerns about circular dependencies, I started to wonder how the pattern could be refactored to remove the cycles. AcyclicVisitor eliminates the compile-time dependencies by using multiple inheritance and dynamic casts, which a lot of people are uncomfortable with for various reasons. So I sat down with a simple VisitorPattern class diagram and started thinking.
+
+Then this example occurred to me: Doesn't the SimpleApiForXml (SAX) kind of look like it could be a Visitor for a DocumentObjectModel (DOM) structure? It certainly seems to fit the pattern, and doesn't have any circular dependencies. The idea is that SAX is event-based while DOM is tree-based, but they both represent basically the same model. (Actually it looks more like a HierarchicalVisitorPattern.)
+
+For the purpose of discussion consider these classes: ''These are '''not''' the real SAX and DOM classes or interfaces; they are vastly simplified to make an easy example. The method names are also changed to look more like the description of HierarchicalVisitorPattern.''
+
+    interface Sax''''''Visitor {
+        void enterDocument();
+        void leaveDocument();
+        void enterElement(String name, Map attributes);
+        void leaveElement(String name);
+        void visitText(String characters);
+    }
+
+    abstract class Dom''''''Node {
+        abstract void accept(Sax''''''Visitor sax);
+    }
+
+    class Dom''''''Document extends Dom''''''Node {
+        Dom''''''Element root;
+        void accept(Sax''''''Visitor sax) {
+            sax.enterDocument();
+            root.accept(sax);
+            sax.leaveDocument();
+        }
+    }
+
+    class Dom''''''Element extends Dom''''''Node {
+        String name;
+        Map attributes;
+        List content;  // list of Dom''''''Element and Dom''''''Text objects
+        void accept(Sax''''''Visitor sax) {
+            sax.enterElement(name, attributes);
+            Iterator contentIterator = content.iterator();
+            while (contentIterator.hasNext()) {
+                ((Dom''''''Node) contentIterator.next()).accept(sax);
+            }
+            sax.leaveElement(name);
+        }
+    }
+
+    class Dom''''''Text extends Dom''''''Node {
+        String text;
+        void accept(Sax''''''Visitor sax) {
+            sax.visitText(text);
+        }
+    }
+
+Notice that the DOM classes depend on the SAX visitor interface, but the SAX visitor does not depend on the DOM classes. The idea is that the SAX visitor describes everything it cares about directly in its interface, without reference to the classes implementing the structure.
+
+That is, the visitor is independent of the particular way the structure is implemented. The visitor's interface describes exactly what it wants to visit and what information it needs. The structure classes can be changed drastically, but as long as they can maintain the appearance that the visitor cares about -- that is, they can provide the information the visitor asks for -- the visitor doesn't need to change. This is apparent in the fact that SAX is most often used as part of a BuilderPattern, where the SAX visitor is ''building'' a DOM tree -- and the driver is actually an XML parser reading from a file. The SAX visitor (actually it's called the Content''''''Handler) doesn't care how the model is represented, it just cares about getting the information in the right order.
+
+-- JustinSampson
+
+----
+
+I thought of a few more ways to refactor this pattern last night.
+
+'''1.''' The whole idea of the pattern was that the visitor shouldn't be dependent on the representation of the model, it should just declare what it wants to know for each kind of structure it could encounter. That raises a concern about the way I wrote the enterElement method above, which takes a Map of the element's attributes. It would be cleaner to write the interface like this:
+
+    interface Sax''''''Visitor {
+        void enterDocument();
+        void leaveDocument();
+        void enterElement(String name);
+        void leaveElement(String name);
+        void visitAttribute(String name, String value);
+        void visitText(String characters);
+    }
+
+Now all that is required by the visitor is that elements contain attributes, but the way they are represented within the class implementing the element doesn't matter. The iteration through the attributes is moved from the visitor to the model; which makes sense, since the original intent of the VisitorPattern was to refactor traversal code out of visitor class. That gives us more flexibility to refactor the Dom''''''Element class.
+
+For example, maybe instead of having a Map inside Dom''''''Element, we could introduce another class:
+
+    class Dom''''''Attribute extends Dom''''''Node {
+        String name;
+        String value;
+        void accept(Sax''''''Visitor sax) {
+            sax.visitAttribute(name, value);
+        }
+    }
+
+Then Dom''''''Element's content list can contain attribute nodes just like text and nested element nodes. (This is actually how the real DOM works.) The point is, since the visitor isn't dependent on the implementation, we can choose whether to use the map or introduce another subclass. Or go the other way, too -- if we already have a subclass, but it's not pulling its own weight and we want to eliminate it. The original VisitorPattern and all its other variations wouldn't allow that, because they would be dependent on the existence of that subclass.
+
+'''2.''' As another way to go, if we think that some visitor method is taking too many  parameters, then we can use IntroduceParameterObject to factor them out. This is actually how the real SAX works with attributes; they have an Attributes interface that gets passed in where I was passing in a Map to enterElement above. The implementation passes in an adapter implementing that interface for callbacks to the implementation to get the data.
+
+This introduces an extra class that may seem redundant with the structure classes, but it still avoids the circular dependencies, and again it allows us to change the structural implementation at will as long as we can still provide an adapter to the visitor's parameter interface. Our Attributes adapter could be a wrapper for the Map, or it could delegate to the Dom''''''Element to iterate through its content and look for Dom''''''Attribute nodes; either way, the visitor doesn't know the difference and doesn't have to be changed.
+
+'''3.''' The structure classes (Dom''''''Node et al.) are still dependent on the visitor interface. There is no more circular dependence, but there is still a dependence. What happens if we want to add a different ''kind'' of visitor? That is, the VisitorPattern allows us to plug visitors that do different things with the information, but it doesn't allow us to plug in visitors that look at the structure differently.
+
+For example, let's say we just want to count all the nodes in the structure. (Okay, it's a silly example, but it's simple.) We could write a new visitor interface like this:
+
+    interface Dummy''''''Visitor {
+        void visitNode();
+    }
+
+To support this in the code above, we would have to add a new accept(Dummy''''''Visitor) method to Dom''''''Node and all its subclasses.
+
+Alternatively, what if we factor out all that traversal code into yet another class?
+
+    class S''''''axTourGuide {
+        void traverseDocument(Dom''''''Document dom, Sax''''''Visitor sax) {
+            sax.enterDocument();
+            traverseElement(dom.getRootElement(), sax);
+            sax.leaveDocument();
+        }
+        void traverseElement(Dom''''''Element dom, Sax''''''Visitor sax) {
+            sax.enterElement(dom.getName());
+            Iterator contentIterator = dom.getContentIterator();
+            while (contentIterator.hasNext()) {
+                Dom''''''Node node = (Dom''''''Node) contentIterator.next();
+                if (node instanceof Dom''''''Attribute) {
+                    traverseAttribute((Dom''''''Attribute) node, sax);
+                } else if (node instanceof Dom''''''Element) {
+                    traverseElement((Dom''''''Element) node, sax);
+                } else if (node instanceof Dom''''''Text) {
+                    traverseText((Dom''''''Text) node, sax);
+                }
+            }
+            sax.leaveElement(dom.getName());
+        }
+        void traverseAttribute(Dom''''''Attribute dom, Sax''''''Visitor sax) {
+            sax.visitAtttribute(dom.getName(), dom.getValue());
+        }
+        void traverseText(Dom''''''Text dom, Sax''''''Visitor sax) {
+            sax.visitText(dom.getCharacters());
+        }
+    }
+
+That uses runtime type information and downcasting, but now we can remove the accept() methods from Dom''''''Node et al., eliminating the dependence of the structure on the visitor. Then whenever we want to add a new ''kind'' of visitor, we don't need to touch the structure classes at all; we just need to write a new Tour''''''Guide class:
+
+    class D''''''ummyTourGuide {
+        void traverseDocument(Dom''''''Document dom, D''''''ummyVisitor dum) {
+            dum.visitNode();
+            traverseElement(dom.getRootElement(), dum);
+        }
+        void traverseElement(Dom''''''Element dom, D''''''ummyVisitor dum) {
+            dum.visitNode();
+            Iterator contentIterator = dom.getContentIterator();
+            while (contentIterator.hasNext()) {
+                Dom''''''Node node = (Dom''''''Node) contentIterator.next();
+                if (node instanceof Dom''''''Attribute) {
+                    traverseAttribute((Dom''''''Attribute) node, dum);
+                } else if (node instanceof Dom''''''Element) {
+                    traverseElement((Dom''''''Element) node, dum);
+                } else if (node instanceof Dom''''''Text) {
+                    traverseText((Dom''''''Text) node, dum);
+                }
+            }
+        }
+        void traverseAttribute(Dom''''''Attribute dom, D''''''ummyVisitor dum) {
+            dum.visitNode();
+        }
+        void traverseText(Dom''''''Text dom, D''''''ummyVisitor dum) {
+            dum.visitNode();
+        }
+    }
+
+An extra bonus from this refactoring is that now, again just by introducing more T''''''ourGuides, we can support using one kind of visitor with different structure implementations just as well as different kinds of visitors with one structure.
+
+Continuing the XML example, we could introduce a new Tour''''''Guide which, instead of traversing a DOM tree, actually parses an XML file. This P''''''arsingTourGuide would have a parseXml(Input''''''Stream, Sax''''''Visitor) method. Each time it sees "<foo " it calls sax.enterElement("foo"), then it calls visitAttribute() as it parses each attribute, and so forth. And so we have arrived, in a roundabout way, at the ''original intent'' of SAX, that is, a standard interface for XML parsers.
+
+'''So,''' in summary, here are the participants we've come up with in this final refactoring:
+
+	'''Visitor''' (Sax''''''Visitor, Dummy''''''Visitor):	Describes what information a particular kind of visitor wants to know about some kind of model. Doesn't depend on any other participants.
+	'''Structure''' (Dom''''''Document, Dom''''''Element, Dom''''''Attribute, Dom''''''Text, Input''''''Stream):	Describes a particular representation of some structural model. Doesn't depend on any other participants.
+	'''Tour''''''Guide''' (S''''''axTourGuide, D''''''ummyTourGuide, P''''''arsingTourGuide):	Implements a traversal algorithm over the Structure as appropriate for the Visitor.
+
+-- JustinSampson
+
+This is like a visitor with EvisceratedObject''''''s as parameters (an EvisceratedVisitor?). The tradeoff between this and a normal visitor is that in a normal visitor, you get access to the real original objects, whereas here, you don't, but you avoid cyclic dependencies, plus you don't actually need to have any original objects, so you can drive a visit from some other source (eg rather than building the DOM tree and visiting that, you can use SAX input directly). I HaveThisPattern, and i use it a lot in conjunction with parsers, as i describe on PrettyPrintingJavaWithVisitor.
+
+Again, this makes me ponder the relationship between VisitorAndBuilder.
+
+-- TomAnderson
+----
+CategoryPattern

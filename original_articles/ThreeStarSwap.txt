@@ -1,0 +1,99 @@
+My favorite example of WriteOnlyCode in C was something that I saw described by a recent graduate who boasted that he had demonstrated it at interview and was subsequently hired:
+
+a ^= b ^= a ^= b;
+
+which swaps ints a and b without using a temporary. I have actually seen this code used (I don't really want to remember where).
+
+This is a nice trick, but not quite as clever as TwoPointersInOneWord which requires the same insight and might actually be useful. -- WardCunningham
+
+What is amazing about this code is - not only is it truly opaque, but it is also more expensive than the more straightforward version! -- RussellGold
+
+Russell: Is it more expensive? This version requires 3 instructions (3 xors):
+ a <- a xor b;
+ b <- b xor a;
+ a <- a xor b;
+and the straightforward way also requires 3 instructions (3 movs):
+ tmp <- a;
+ a <- b;
+ b <- tmp;
+You may be right - the second two movs can be done in parallel in the second version - but it also requires another register. (This is offtopic, feel free to delete). -- ScottDe
+
+''I nearly offered up a variant of this, and decided to post the perl instead (lest folks think I'm needlessly picking on C). I used to use it during link traversal. In the 20 years that have passed since I last used it, I've forgotten the details, but here's the awful hack: keep the intermediate result (a^b) in the link, and xor against it to get either the next cell or the target of the link. It effectively lets you keep two pointers in one address. At the time, the memory saved was way more expensive than the extra cpu cycles consumed. --TomStambaugh''
+
+As written, I am fairly sure the C/C++ has undefined meaning. It modifies 'a' twice without an intermediate SequencePoint, which is a no-no. 
+
+''That is correct - there is no sequence point (see appendices C and D of C99), so the expression is undefined. It could be rewritten with each XOR as a separate statement.'' --DanielKnapp
+
+''So would a ^= (b ^= (a ^= b)); be useful then? -- j'' That still doesn't contain any sequence points, so is still UB in c || c++.
+
+The correct version would be a^=b; b^=a; a^=b;
+
+I imagine avoiding a temporary can be a good optimisation if you are short on registers. If you write it out in full, I don't think it's much worse than other extreme optimisations. Use of "x = ***px" often signifies a much deeper problem because those indirection levels probably correspond to something in the real world, which would mean the code is cutting across abstraction boundaries. -- DaveHarris
+
+The main point in using this construct:
+ #define swap(x,y) x^=y^=x^=y
+was that it didn't use a temporary variable. Therefore it worked no matter what the type of x and y was. It just saved you the trouble of defining swap_int(int x, int y) and swap_float() and swap_double(). The use of XOR protected you from overflows which could arise if you used +/- operations. -- zvr
+
+''That macro definition will be trouble:''
+
+ #define swap(x,y) x^=y^=x^=y
+ int ar[N];
+ int *start = ar, *end = ar + NUMELEM(ar) - 1;
+ while( start < end ) {
+	swap(*start++, *end--);
+ }
+----
+To see how dangerous ideas like this are, consider the following function which is based on the trick above:
+
+ void swap(int* a, int* b) 
+ {
+   *a = *a ^ *b;
+   *b = *b ^ *a;
+   *a = *a ^ *b;	
+ }
+Maybe some crazy guy does this to save memory. Now, if someone calls this function like this, everything should work fine.
+
+ swap(&a[i], &a[j]);
+However, think about what happens if i == j.  
+
+''That's an astute observation. However, wrapped in the reversal loop you can get protection from that. I suspect that all the bus access makes the xor-swap less efficient than a traditional temp-swap. If your constraint is register availability, it's a nifty solution.''
+
+OK, let's annotate:
+
+ void swap(int* a, int* b) 
+ { // *a == *b
+   *a = *a ^ *b;  // *a = 0
+   *b = *b ^ *a;  // *b = *b
+   *a = *a ^ *b;  // *a = (0 ^ *b) = *b
+ }
+In other words, if a[i]==a[j], absolutely ''nothing'' happens, precisely as you'd expect.
+
+''Try again with the i==j case.''  Right, I missed this case: if i==j, then you have an aliasing problem, thus:
+
+ void swap(int* a, int* b) 
+ { // a == b
+   *a = *a ^ *b;  // *a = 0
+   *b = *b ^ *a;  // *b = 0
+   *a = *a ^ *b;  // *a = 0
+ }
+----
+I have only ever used this in assembly to swap two registers.
+The one time I reached for this in C it didn't work because they were pointer variables. I suppose I could have casted them to integer and back but that's too messy.
+
+----
+I've seen the three-statement version attributed to Solomon Golomb (and referred to as the "Golomb Switch"), dating from when registers were ''really expensive''. I'd be curious if a more substantive attribution than this rumour comes to light.
+
+
+----
+How about: 
+
+a = a + b; 
+b = a - b; 
+a = a - b;
+
+Yes, I guess it can overflow. -- MilanBabuskov
+
+----
+I'm surprised no one has mentioned that many processors have instructions to swap without a temporary, for instance "XCHG" on x86.  A reasonably intelligent C compiler could probably eliminate the temporary variable for a normal swap.
+
+Unless both parameters are in registers already, XCHG is a bad idea.  For legacy reasons, XCHG with a memory parameter acts as if it has a LOCK prefix, even if it doesn't.  That will absolutely kill performance if used frequently. -- Myria

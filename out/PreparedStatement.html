@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Prepared Statement
+      </h1>
+      <p>
+        An SQL query or "statement" that is pre-defined on the database server, typically with parameters that can be passed arguments when the statement is executed.  Unlike typical SQL query execution where a query string is executed immediately, <a href="PreparedStatements.html">PreparedStatements</a> separate definition from execution.  A <a href="PreparedStatement.html">PreparedStatement</a> is defined using SQL -- including indicated parameters and (frequently, but not always) parameter types -- in one step, and can be executed (repeatedly, if necessary) along with specified parameter arguments in a separate step.
+      </p>
+      <p>
+        Use of <a href="PreparedStatement.html">PreparedStatement</a>s provides two main benefits over equivalent <a href="DynamicSql.html">DynamicSql</a>:
+      </p>
+      <ul>
+        <li>
+           If a given query needs to be repeatedly re-executed -- particularly if the query needs to be re-run with varying parameter arguments -- re-executing a <a href="PreparedStatement.html">PreparedStatement</a> requires less CPU resource (i.e., runs faster and/or consumes less energy) than re-executing <a href="DynamicSql.html">DynamicSql</a>.  This is because dynamically-generated SQL needs to be created, parsed, planned and executed every time.  A given <a href="PreparedStatement.html">PreparedStatement</a> is created, parsed and planned only once; (re-)execution only runs (or re-runs) the predefined query plan.  In rare circumstances, this can result in a suboptimal query plan for particular parameter arguments, with slower than expected execution.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           As long as care is taken to never incorporate external data in <a href="PreparedStatement.html">PreparedStatement</a> definitions, classic <a href="SqlInjection.html">SqlInjection</a> is effectively eliminated without having to rely on quote-escaping, keyword scanning, or other filtering mechanisms.  This is because parameter arguments are only bound to a pre-existing query plan, and thus cannot be used to construct a new -- possibly malicious -- query.
+        </li>
+      </ul>
+      <p>
+        Let's look at a simple example in PHP using PostgreSQL.  Assume we want to select all customers from a customers table with a specified name, which has been obtained from the user and stored in a variable $userInput.
+      </p>
+      <p>
+        If we don't use prepared statements and naïvely use <a href="DynamicSql.html">DynamicSql</a>, the simplest (and most dangerous) case could be this:
+      </p>
+      <code>
+        <?php<br/>
+        // Connect to a database named "mydb"<br/>
+        $dbconn = pg_connect("dbname=mydb");<br/>
+      </code>
+      <code>
+        // Create a query for execution<br/>
+        $qry = "SELECT * FROM customers WHERE name = '" + $userInput + "'";<br/>
+      </code>
+      <code>
+        // Execute the query.<br/>
+        $result = pg_query($dbconn, $qry);<br/>
+        ?><br/>
+      </code>
+      <p>
+        If $userInput is, say, "'; delete from customers; --", we're going to be in trouble.  This dangerously simplistic example invites SQL injection.  
+      </p>
+      <p>
+        If we're going to create dynamic SQL from user input, we must <strong>sanitise the user input</strong>, as follows:
+      </p>
+      <code>
+        <?php<br/>
+        // Connect to a database named "mydb"<br/>
+        $dbconn = pg_connect("dbname=mydb");<br/>
+      </code>
+      <code>
+        // Create a query for execution<br/>
+        $qry = "SELECT * FROM customers WHERE name = '" + pg_escape_string($userInput) + "'";<br/>
+      </code>
+      <code>
+        // Execute the query.<br/>
+        $result = pg_query($dbconn, $qry);<br/>
+        ?><br/>
+      </code>
+      <p>
+        This requires discipline and care to ensure that pg_escape_string() (or some appropriate equivalent) is consistently used, and we need assurance that pg_escape_string() is reliable and complete enough to ensure sanitisation against any possible attack.  <strong>That adds complexity and risk: we have to trust the filters to be correct, and we have to ensure that they're used consistently and correctly.</strong>
+      </p>
+      <p>
+        Using prepared statements, the above would be:
+      </p>
+      <code>
+        <?php<br/>
+        // Connect to a database named "mydb"<br/>
+        $dbconn = pg_connect("dbname=mydb");<br/>
+      </code>
+      <code>
+        // Prepare a query for execution<br/>
+        $result = pg_prepare($dbconn, "myquery", 'SELECT * FROM customers WHERE name = $1');<br/>
+      </code>
+      <code>
+        // Execute the prepared query.<br/>
+        $result = pg_execute($dbconn, "myquery", array($userInput));<br/>
+        ?><br/>
+      </code>
+      <p>
+        The pg_prepare function sends the query string to the DBMS for compilation, and identifies the parametric query with the name "myquery".  It is now prepared, i.e., compiled, for execution.
+      </p>
+      <p>
+        The pg_execute function invokes "myquery", passing only the data for the parameter identified by '$1'.  It does <strong>not</strong> construct a new query string from "myquery" + $1 for parsing, planning and execution.  It merely passes the argument to 'myquery' -- which has already been parsed and planned (compiled) via pg_prepare -- in the same manner as passing an argument to a pre-existing stored procedure.  If "userInput" consists of "'; delete from customers; --", all it will do is harmlessly try to select a customer whose name is "'; delete from customers; --".  
+      </p>
+      <hr/>
+      <p>
+        The idea of <a href="PreparedStatement.html">PreparedStatement</a> is straightforward enough, but how is one forced to interface with them in modern DBMSs?  Are <a href="PreparedStatement.html">PreparedStatement</a>s typically associated directly with the DBMS, or do DBMSs allow session-created <a href="PreparedStatement.html">PreparedStatement</a>s?  It seems to me the latter would be at least as efficient but far more flexible: it'd reduce how much you're tied to the Database (since the regular SQL could still be executed, and applications wouldn't all be tied to a single version of the statement) and a little caching would effectively allow one to avoid recompiling the <a href="PreparedStatement.html">PreparedStatement</a> when many instances of the same application-version connect.
+      </p>
+      <p>
+        Anyone know of a good reference on these things?
+      </p>
+      <p>
+        <em>References tend to be product specific.  See, for example, </em><a href="http://www.postgresql.org/docs/current/static/sql-prepare.html">http://www.postgresql.org/docs/current/static/sql-prepare.html</a> or <a href="http://dev.mysql.com/doc/refman/5.0/en/sqlps.html''">http://dev.mysql.com/doc/refman/5.0/en/sqlps.html''</a>
+      </p>
+      <hr/>
+      <p>
+        See <a href="TopOnPreparedStatements.html">TopOnPreparedStatements</a>
+      </p>
+    </div>
+  </body>
+</html>

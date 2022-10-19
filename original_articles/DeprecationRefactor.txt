@@ -1,0 +1,137 @@
+A BigRefactorings Pattern.
+
+'''Problem'''
+
+You made a bad design decision in a server module early, and then many client modules invested in it.
+
+'''Solution'''
+
+	* Comment the bad code "deprecated" with your initials.
+	* Use TestDrivenDevelopment to write a better system, leaving the old one in place in parallel
+	* Match every API into the old system by passing similar tests on the new system
+	* After you match all the features, seek every client of the bad system, and refactor it to use the good one
+	* When no client uses the bad system, go back to the server module and have a CodeDeletingParty
+	* Because better systems often simplify, inspect the clients for simplifications that can now ripple out
+
+You should (ContinuousIntegration) integrate many times between each star, and you could also (DailyDeployment) deploy and FrequentReleases too.
+
+The steps preserve reversibility, so if nobody likes the new system you can generally walk the steps backwards to reinstate the old system.
+
+If the going gets rough, you can add a global switch, declaring which version you want today. That lets you flip it back in an emergency, and for BlinkComparator manual tests.
+
+----
+
+Note to newbies: A big refactoring is a pattern of many small refactors. Each one of these (per the book ''RefactoringImprovingTheDesignOfExistingCode'') is a series of opportunities to run the UnitTest''''''s, perform ContinuousIntegration, or perform FrequentReleases. This is why we comment the bad code "deprecated", so that during these BigRefactorings your colleagues don't connect more client modules to the code you are trying to destroy.
+
+----
+
+Another somehow related practice, that I just went through yesterday: you've got a parameterized method, used a number of times, and you need to change it radically in some way (better algorithm, based on different inputs, our my case.) You can't change it all at once as each caller will need to supply different parameters (different both from each other and from the ones they currently supply.) So what you do is:
+
+	1 Make a copy of the method, rename the copy, and change one of the callers to use the new method.
+	1 Then modify the copied method to use the new algorithm, hard-coding the needed parameters, and ignoring the existing ones.
+	1 Then do an "Introduce Parameter" on each argument, changing the caller to supply the right values.
+	1 Do a "Remove Parameter" on each of the old arguments, again, changing the caller.
+	1 Now you've got a generic parameterized method. Change the callers, one at a time, to use the new method.
+	1 Delete the original method.
+
+This is basically a ReplaceAlgorithmRefactor, but in a situation where both the algorithm and the method signature must change. I bring it up here because it has the same flavor of refactoring into duplication, and then removing the duplication. Anybody have a name for this one?
+
+-- ErnestFriedmanHill  
+
+----
+
+The control software for a legacy system was frequently causing the error flags to be set in the custom hardware.  The original implementation had many hundreds (1000+, maybe) of memory mapped I/O points.  All of these were implemented as simple C++ pointer dereferences.  I did the folloing in order to instrument them in such a way that we could track down the cause of the error:
+
+	* Implemented a handful of low level access methods on the hardware and instrumented those.
+	* Implemented a stl style /container/ class for I/O points.
+	* Implemented an iterator class similar to the vector<bool> specialization (along with its companion reference class).
+	* Changed every I/O point to be the appropriate IO container and/or iterator.
+
+This refactoring took several weeks.  Interestingly we were able to prove that the hardware error flags were useless as implemented.  The PCI bus handled the errors, we didn't need to.  Several months later, there was a problem integrating with a new (faster) CPU.  As a result of the refactoring, we were able to fix this problem in just a morning.  I was really lucky with this one.  It was before I had ever heard of XP and there were no tests to support the refactoring.
+
+-- RusselHill (from the XpMailingList)
+
+----
+
+ > The refactoring is a lot slower, especially in doing things like
+ > ExtractMethod, because you have to remember to change the header, too,
+ > which was a major pain.
+
+Let's do a "deprecation refactor" in C++, and minimize the number of edits between each test.
+
+Start with this bad design:
+
+    string OurParser::generate();
+
+That will generate a new file's contents. Test it by parsing a tiny file, then call 'generate()', and compare the results to the original file.
+
+But one should not use 'string' to accumulate a file. So the first refactor gets us ready to accumulate using a stream buffer. But we won't implement it; just start passing the argument around:
+
+    string OurParser::generate(ostream & o);
+
+Add that argument to the internal support methods, too. Add a 'streamstring z' to the test code, and pass this in. Test.
+
+Next, for every += statement on the string, inside, add a parallel << statement, to sink the same data into the stream.
+
+Add a test assertion (to every test case) that z.str() contains the correct text, too. Test.
+
+"Deprecation refactor" works by implementing two systems in parallel, getting the new one to work, then nuking the old one. It's time to nuke the old system. Back up our files, because we are about to break the "1-5 edits between tests" rule.
+
+Go to the prototype...
+
+    class OurParser { ...
+        string generate(ostream & o);
+
+...and change it to take out the keystone declaration for the old system:
+
+    class OurParser { ...
+        void generate(ostream & o);
+
+Try to compile, and tap <F4> to navigate to each new syntax error.
+
+We just picked the one change (in a strongly typed system) that will cause the most simple syntax errors everywhere. Fixing each one (and removing the unneeded variables) - in the tests, the method definitions, and in the support routines - will completely erase the old system. At the end of a long serious of edits and compile attempts, the surviving test assertions all pass.
+
+Conclusion - strong typing makes features easier to remove.
+
+-- PhlIp
+
+Things are not always so easy.  For example, you might discover that some of your callers don't have easy access to the appropriate ostream to pass.  What starts out as an easy change quickly becomes a cascading mess with dozens of files changing to get the system back in working order.  We need a better technique.
+
+-- AlanBaljeu
+
+No, just adapt the two interfaces:
+
+    std::string no_ostream_in_sight() {
+      return OurParser::generate();
+    }
+becomes
+    std::string no_ostream_in_sight() {
+      ostringstream os;
+      OutParser::generate(os);
+      return os.str();
+    }
+
+-- NeilGall
+
+----
+
+Christian Sepulveda, on the XpMailingList:
+
+We have been re-writing sub-systems using XP. We elect sub-systems by user workflow / features, not code design/architecture. That way, we are building "vertical" sections of healthy code that satisfy collections of stories, where the implementation is from the UI to the database.
+
+The result is some duplication, when comparing the healthy code sections to the legacy code sections. No duplication in the healthy, we think...;)
+
+We then remove the legacy code/sub-system we replaced.
+
+The general guideline is that all code changes, be it new features or changes, are to be done TDD. We look for opportunities where the changes are logical subsystems so we can replace significant sections of code.
+
+So far it has been working pretty well. There have been some challenges, such as writing a variety of mocks, wrappers and utilities to support TDD with so much legacy code, such as removing actual database commits from the test suite.
+
+Overall, the benefits have been that we can proceed incrementally and can continue to ship an existing product. The downside has been some overhead (compared to GreenField), but this is much better than having nothing to ship or continually patching a branch.
+
+----
+
+Contrast: RefactorLowHangingFruit
+
+----
+CategoryRefactoring

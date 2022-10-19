@@ -1,0 +1,143 @@
+I'm building a new class running Kent's tests (with a few added).
+
+We decided to steal the notion of building the collection by reading a chunk of values from a readStream on the collection.  We'll use the "Fair Share" algorithm, which gives the first participant 1/Nth of the collection, the next 1/(N-1) of what's left, and so on down to (1/1) for the last participant.
+
+We'll keep track of the number of shares as yet undelivered, and the number of items left to share out, and of course the reader:
+
+ Object subclass: #FairPartitioner
+	instanceVariableNames: 'numberOfShares amountRemaining reader '
+	classVariableNames: ''
+	poolDictionaries: ''!
+
+We build a CLASS creation method to make an instance ...
+
+ collection: aCollection shares: anInteger
+	^self new
+		setCollection: aCollection
+		shares: anInteger
+
+And a CLASS method to answer the collected shares ...
+
+ segment: aCollection into: anInteger
+	| partitioner |
+	partitioner := self
+		collection: aCollection
+		shares: anInteger.
+	^(1 to: anInteger) collect: [ :each | partitioner nextCollection]
+
+Now for the INSTANCE side.  Our private set method initializes the variables:
+
+ setCollection: aCollection shares: anInteger
+	reader := aCollection readStream.
+	numberOfShares := anInteger.
+	amountRemaining := aCollection size
+
+Below, in #nextAmount, we compute the number of items to give to the current shareholder.  That number is just 1/N of the amount remaining, where N is the number of shares left to give out.  Having allocated those items, we reduce the amount remaining and the number of shares left to give out.
+
+ nextAmount
+	|result |
+	result := amountRemaining // numberOfShares.
+	amountRemaining := amountRemaining - result.
+	numberOfShares := numberOfShares - 1.
+	^result
+
+Finally we answer the next collection, by reading the correct number of items from the reader.
+
+ nextCollection
+	^reader next: self nextAmount
+----
+'''Assessment:''' In my opinion, the key method, in this version #nextAmount, now contains all the magic.  However, that method remains surprising and hard to understand.  Without a comment about FairShare, the reader, once he decodes what the method does, will be at a loss as to why it happens.  I'm still not satisfied ... but I've invested more than enough were it not for the learning experience.  --RonJeffries
+
+----
+
+Here, for the record, is the test case class:
+
+ "Filed out from Dolphin Smalltalk/98 release 1.1"!
+
+ TestCase subclass: #BetterSegmenterTestCase
+	instanceVariableNames: ''
+	classVariableNames: ''
+	poolDictionaries: ''!
+
+!BetterSegmenterTestCase methodsFor!
+
+ classToTest
+	^FairPartitioner!
+
+ testBigger
+        | input result |
+        input := 1 to: 20.
+        result := self classToTest segment: input into: 3.
+        self should: [result asArray = #(#(1 2 3 4 5 6 ) #(7 8 9 10 11 12 13 ) #(14 15 16 17 18 19 20 ) ) ]!
+
+ testBigger2
+        | input result |
+        input := 1 to: 20.
+        result := self classToTest segment: input into: 5.
+        self should: [result asArray = #(#(1 2 3 4 ) #(5 6 7 8 ) #(9 10 11 12 ) #(13 14 15 16 ) #(17 18 19 20 ) ) ]!
+
+ testOneOne 
+        | input result |
+        input := #(1).
+        result := self classToTest segment: input into: 1.
+        self should: [result asArray = #((1))]!
+
+ testRon 
+        | input result |
+        input := #(1 2 3 4 5 6 7 8 9 10).
+        result := self classToTest segment: input into: 3.
+        self should: [result asArray = #(#(1 2 3 ) #(4 5 6 ) #(7 8 9 10 ) ) ]!
+
+ testThreeTwo 
+        | input result |
+        input := #(1 2 3).
+        result := self classToTest segment: input into: 2.
+        self should: [result asArray = #(#(1 ) #(2 3 ) ) ]!
+
+ testTwoOne 
+        | input result |
+        input := #(1 2).
+        result := self classToTest segment: input into: 1.
+        self should: [result asArray = #((1 2))]!
+
+ testTwoTwo 
+        | input result |
+        input := #(1 2).
+        result := self classToTest segment: input into: 2.
+        self should: [result asArray = #((1) (2))]! !
+
+----
+How about changing the test cases so they will work for any partitioning algorithm:
+
+  testAllCombinationsLessThan20
+	 0 to: 20    
+		do: 
+			[:each | 
+			 1 to: 20
+				do: 
+					[:segSize | 
+					| result |
+					result := self classToTest segment: (1 to: each) into: segSize.
+					self testResults: result isIncludedIn: (1 to: each).
+					self testSegmentSizes: result]]
+
+With textResults:isIncludedIn: and testSegmentSizes: defined as:
+
+  testResults: aCollectionOfSegments isIncludedIn: aCollection 
+	| reader |
+	reader := aCollection readStream.
+	aCollectionOfSegments 
+		do: [:segment | segment do: [:each | self should: [reader next = each]]]
+
+  testSegmentSizes: aCollectionOfSegments 
+	| min max |
+	aCollectionOfSegments isEmpty ifTrue: [^self].
+	min := aCollectionOfSegments inject: aCollectionOfSegments first size
+				into: [:sum :each | sum min: each size].
+	max := aCollectionOfSegments inject: 0
+				into: [:sum :each | sum max: each size].
+	self should: [min + 1 >= max]
+
+--JohnBrant
+
+''Yes, if I had come up with any more algorithms that generated slightly different but conformant partitions, I would have!  It was starting to tick me off changing to another legal answer!''

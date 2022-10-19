@@ -1,0 +1,520 @@
+----
+Prev: BlocksInJavaAst
+Next: BlocksInJavaPuttingItTogether
+----
+
+'''Compositors and Binders'''
+
+Here is where we start to attack my second reason for this package - ''expression composition''. I have a desire to use these interfaces as more than just simple blocks or anonymous inners. For example, I would like to be able to use them as objects each of which can represent a composable chunk of logic, I would also like to be able to aggregate them into efficient expressions. For this, I did go to the work of Alexander Stepanov and David R. Musser (see: STL functors). This approach seemed much simpler and more intuitive to me than the InterpreterPattern, but your mileage may vary. The STL constructs allow me to create executable logic without having to create new specializations. These could then be used in a variety of ways. While it is usually easier to simply create an anonymous inner that implements one of the interfaces for in-code use, the composable functors are great for something like a Rule Language whose bits and pieces of logic can be visually arranged into expressions that can be persisted and executed. 
+
+Toward this end, I wanted to be able to create generic constructs such as the following:
+
+ U''''''naryPredicate inRange = 
+     new B''''''inaryCompose(
+         new And(),
+         new B''''''inderSecond(
+             new Greater(),
+             new Long(00) ),
+         new B''''''inderSecond(
+             new Less(),
+             new Long(11) ) ) );
+This object can then be passed around as a unary predicate that checks to see if some variable is within the range [1,11) (i.e. [1,10]). Now that it is in object form, it can be used as an assertions like so:
+
+ public void foo( Long value )
+ {
+     Dbg.assert( inRange.is( value ) );
+     .
+     .
+     .
+ }
+Or with something more complex like a ''detect'' iterator to find the first element in a collection of Long objects that is in the specified range:
+
+ Long item = (Long)numbers.detect( inRange );
+Of course, if this is a one time thing, you can simply do the following:
+
+ Long item = (Long)
+     numbers.detect( new U''''''naryPredicate() {
+         public boolean is( Object each ) {
+             long value = ((Long)each).longValue();
+             return value > 0 && value < 11; } } );
+The only problem with this is that it requires ''a priori'' knowledge about the logic and does not allow that logic to be dynamically composed such as by a user using a visual logic builder. If you are not familiar with STL, B''''''inaryCompose aggregates a Binary Predicate with two Unary Predicates into a single Unary Predicate. For example, if "bp" is the binary predicate with "up1" and "up2" as unary predicates, B''''''inaryCompose can be used to create "bc" such that:
+
+ bc.is( value );
+is the same as evaluating:
+
+ bp.is( up1.is( value ), up2.is( value ) );
+The Binder predicates bind the first or second argument of a Binary Predicate so that it acts as a Unary Predicate. So, a Binary Predicate such as ''Equals'' can have one of its arguments bound like so:
+
+  U''''''naryPredicate equalsJohn =
+      new B''''''inderFirst( new Equals(), "John" );
+
+  Dbg.assert( equalsJohn.is( sName ) );
+This is the same as saying:
+
+  B''''''inaryPredicate equal = new Equals();
+
+  Dbg.assert( equals.is( "John", sName ) );
+If you are interested in this stuff, I suggest you read the link I placed in this section on programming with generic algorithms. It's interesting stuff and was implemented in Ada before it ever showed up in C++.
+
+'''Concrete Building Blocks'''
+
+Before we can create the classes that adapt and compose functors into expressions, we have to define the building blocks they work on. These are the atomic unary and binary building blocks we all use in expressions. We know them very well, relational (>,<), equality (==,!=), conditional (and,or), arithmetic (*,/,+,-,%), and so on. These are extraordinarily easy to implement so I will just show enough here to get you going. In this document, I am only going to cover what I call the ''logical'' operators -- i.e. relational, equality, and conditional.
+
+While it may not be a perfect name, I will first create two classes - U''''''naryLogicalFunctor and B''''''inaryLogicalFunctor. These classes allow the logical operators to be called either as Functions (ala U''''''naryFunction) returning a Boolean ''object'' or as Predicates (ala U''''''naryPredicate) returning a boolean ''primitive''. For example, a binary ''Equal'' FunctorObject can then be used in the following ways:
+
+	1. Use class ''Equal'' as a ''B''''''inaryFunction'':
+        B''''''inaryFunction equal = new Equal();
+        Boolean b = (Boolean)equal.'''eval'''( new Long(1), new Long(1) );
+	1. Use class ''Equal'' as a ''B''''''inaryPredicate'':
+        B''''''inaryPredicate equal = new Equal();
+        boolean isEqual = equal.'''is'''( new Long(1), new Long(1) );
+Maybe the abstract class that ''Equal'' implements might be better named ''B''''''inaryPredicateFunction'', but ''B''''''inaryLogicalFunctor'' seemed more appropriate at the time.
+
+Because Java does not have generic types or variants that do not require casts, this feature (calling logical operators as functions or predicates) becomes very important in RealWorld scenarios such as when relational and arithmetic FunctorObject''''''s are composed together. I suppose I could have just eliminated the predicates altogether, but they are so elegant and straightforward (and used often enough) that I figured the simpler interface was worth the more complicated implementation (see: the MIT approach versus the New Jersey approach).
+
+The two logical functor classes have only one purpose - mapping between predicate usage and function usage. Note that these abstract classes would not be required by something like arithmetic operators that should always be implemented as functions. 
+
+ public
+ abstract
+     class      B''''''inaryLogicalFunctor
+     implements B''''''inaryPredicate,
+                B''''''inaryFunction
+ {
+     ''//* Subclass must implement''
+     abstract 
+     public boolean is( Object arg1, Object arg2 );
+     ''//* Call predicate interface and map to object result''
+     public Object eval( Object arg1, Object arg2 )
+     {
+         return
+             is( arg1, arg2 ) 
+                 ? Boolean.TRUE
+                 : Boolean.FALSE;
+     }
+ }
+
+ public 
+ abstract
+     class      U''''''naryLogicalFunctor
+     implements U''''''naryPredicate,
+                U''''''naryFunction
+ {
+     ''//* Subclass must implement''
+     abstract 
+     public boolean is( Object arg );
+
+     ''//* Call predicate interface and map to object result''
+     public Object eval( Object arg )
+     {
+         return
+             is( arg ) 
+                 ? Boolean.TRUE
+                 : Boolean.FALSE;
+     }
+ }
+That's all there is to 'em. Now, lets dig into some concrete classes that build on these abstract classes. These are the classes one would most often use when constructing ''constraints''.
+
+----
+
+'''Conditional: ''And'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ final
+ public 
+     class   '''And''' 
+     extends B''''''inaryLogicalFunctor
+ {
+     public boolean is( Object arg1, Object arg2 )
+     {
+         return
+             ((Boolean)arg1).booleanValue()
+                 && ((Boolean)arg2).booleanValue();
+     }
+ }
+----
+
+'''Conditional: ''Or'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ final
+ public
+     class   '''Or''' 
+     extends B''''''inaryLogicalFunctor
+ {
+     public boolean is( Object arg1, Object arg2 )
+     {
+         return
+             ((Boolean)arg1).booleanValue()
+                 || ((Boolean)arg2).booleanValue();
+     }
+ }
+----
+
+'''Equality: ''Value'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ final
+ public
+     class   '''Equals'''
+     extends B''''''inaryLogicalFunctor
+ {
+     public boolean is( Object arg1, Object arg2 )
+     {
+         return arg1.equals( arg2 );
+     }
+ }
+----
+
+'''Equality: ''Reference'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ final
+ public
+     class   '''Same'''
+     extends B''''''inaryLogicalFunctor
+ {
+     public boolean is( Object arg1, Object arg2 )
+     {
+         return arg1 == arg2;
+     }
+ }
+----
+
+'''Relational: ''Less'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ final
+ public
+     class   '''Less'''
+     extends B''''''inaryLogicalFunctor
+ {
+     public boolean is( Object arg1, Object arg2 )
+     {
+         return ((Comparable)arg1).compareTo( arg2 ) < 0;
+     }
+ }
+----
+
+'''Relational: ''Greater'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ final
+ public
+     class   '''Greater'''
+     extends B''''''inaryLogicalFunctor
+ {
+     public boolean is( Object arg1, Object arg2 )
+     {
+         return ((Comparable)arg1).compareTo( arg2 ) > 0;
+     }
+ }
+----
+
+'''Logical: ''Not'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ final
+ public
+     class   '''Not'''
+     extends U''''''naryLogicalFunctor
+ {
+     public boolean is( Object arg )
+     {
+         return ((Boolean)arg).booleanValue() == false;
+     }
+ }
+You get the idea. ''Please note'' that I define these building block operators as ''final classes''. You may not like this restriction. My rationale is that one cannot extend the implementation of ''And'' or ''Equals''. If one needs a specialized ''And'' (whatever that may be), one should simply implement a new B''''''inaryLogicalFunctor. However, this detail is up to you and is not a major issue in the design of the AST package.
+
+----
+
+'''Implementing Composers and Binders in Java'''
+
+We can use this as is. However, if we really want to be able to dynamic construct expressions without writing code, we will need some adaptors that will help us construct these bits into expressions. In this document, I am going to show two specific types of adaptors -- Composers and Binders. The compositors take two functions and chains them together, as if to curry them. As with everything else, they come in Unary and Binary flavors. 
+
+The first is called B''''''inaryCompose. It is a unary functor that uses a binary functor to evaluate two unary functors. Think of a simple range constraint checker:
+
+ U''''''naryPredicate inRange = 
+     new B''''''inaryCompose( new And(),
+         new U''''''naryPredicate() {
+             public boolean is( Object arg ) {
+                 return ((Long)arg).longValue() >= LONG_START; } },
+         new U''''''naryPredicate() {
+             public boolean is( Object arg ) {
+                 return ((Long)arg).longValue() < LONG_END; } } );
+
+ Dbg.assert( inRange.is( new Long( 10 ) ) );
+The name is misleading, while it does perform a ''binary'' compose, it actually instantiates ''unary'' FunctorObject''''''s. In this example, we are still not free from writing code since we had to ''bind'' the second arguments of the range check manually as well as some other binary compositions.
+
+If we were to really pick this expression apart, we could see that we are currying 5 FunctorObject''''''s, all of which are logical binary operations. 
+
+	1. A := '''Greater'''.is( 10, LONG_START )
+	1. B := '''Equal'''.is( 10, LONG_START )
+	1. C := '''Or'''.is( ''A'', ''B'' )
+	1. D := '''Less'''.is( 10, LONG_END )
+	1. E := '''And'''.is( ''C'', ''D'' )
+
+The ''10'' was our unary argument for the aggregate functor ''inRange.is( arg )''. Using composition prevents us form having to define both ''Equal'' and ''NotEqual'', ''Greater'' as well as ''GreaterOrEqual'', and so on.
+
+Once we go over ''binders'' we will come back to this example and see how we can eliminate all manual coding from this expression object. In other words, have a completely dynamic system to create something like the Visual Rule Builder or Visual Constraint Builder we talked about earlier. For now, here is the implementation of the compositors.
+
+	 :	''NOTE: You will need to create both Logical''''''Functor as well as regular (dedicated) Function versions of these composers and binders. The following will only work with logical operators. The '''is''' method will fail for arithmetic expressions if you only implement the logical versions.''
+
+----
+
+'''Binary''''''Compose  Implementation'''
+
+ package com.tripwire.rdifalco.''ast'';
+
+ public 
+     class   B''''''inaryCompose
+     extends U''''''naryLogicalFunctor
+ {
+     /// Implementation.
+
+     private B''''''inaryPredicate m_binary;  ''// is( unaryL.is, unaryR.is )''
+     private U''''''naryPredicate  m_unaryL;
+     private U''''''naryPredicate  m_unaryR;
+
+     /// Interface.
+
+     /**
+      * @param binary Any subclass of <code>B''''''inaryPredicate</code> called in
+      *               response to is with the result of <code>unaryL</code> and
+      *               <code>unaryR</code>.
+      * @param unaryL A subclass of <code>U''''''naryPredicate</code> whose result
+      *               will be used as the first argument to <code>binary</code>
+      *               when evaluating <code>is</code>.
+      * @param unaryR A subclass of <code>U''''''naryPredicate</code> whose result
+      *               will be used as the second argument to <code>binary</code>      *               when evaluating <code>is</code>.
+      */
+     public
+     B''''''inaryCompose(
+         B''''''inaryPredicate binary,
+         U''''''naryPredicate  unaryL,
+         U''''''naryPredicate  unaryR )
+     {
+         m_binary = binary;
+         m_unaryL = unaryL;
+         m_unaryR = unaryR;
+     }
+
+     /**
+      * @param   arg The value is sent the member <code>is</code> of the two
+      *              unary predicate sent to the constructor.
+      * @returns A boolean value equivalent to evaluating:<p>
+      * <code>       bResult = binary.is( unaryL.is( arg ), unaryR.is( arg ) );</code>
+      */
+     final
+     public boolean is( Object arg )
+     {
+         return  ''// NOTE: arguments must be objects!!''
+             m_binary.is(
+                 m_unaryL.is( arg ) ? Boolean.TRUE : Boolean.FALSE,
+                 m_unaryR.is( arg ) ? Boolean.TRUE : Boolean.FALSE );
+     }
+
+     '''''//..Some convenient factory methods'''''
+
+     //* And two unary predicates
+     static
+     final
+     B''''''inaryCompose and( U''''''naryPredicate u1, U''''''naryPredicate u2 )     {
+         return new B''''''inaryCompose( new And(), u1, u2 );
+     }
+
+     //* Or two unary predicates
+     static
+     final
+     B''''''inaryCompose or( U''''''naryPredicate p1, U''''''naryPredicate p2 )
+     {
+         return new B''''''inaryCompose( new Or(), p1, p2 );
+     }
+
+     //* Create half-open range constraints
+     static
+     final
+     B''''''inaryCompose inRange( Comparable start, Comparable end )
+     {
+         return
+             B''''''inaryCompose.'''and'''(
+                 B''''''inaryCompose.'''or'''(
+                     new B''''''inderSecond( new Greater(), start ),
+                     new B''''''inderSecond( new Equals(), start ) ),
+                 new B''''''inderSecond( new Less(), end ) );
+     }
+ }
+----
+
+'''U''''''naryCompose Implementation'''
+
+Just like Binary Compose but for two Unary Functors.
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ public 
+     class   U''''''naryCompose
+     extends U''''''naryLogicalFunctor
+ {
+     /// Implementation.
+
+     private U''''''naryPredicate m_pred1;
+     private U''''''naryPredicate m_pred2;
+
+     /// Interface.
+
+     public U''''''naryCompose( U''''''naryPredicate pred1, U''''''naryPredicate pred2 )
+     {
+         m_pred1 = pred1;
+         m_pred2 = pred2;
+     }
+
+     final
+     public boolean is( Object arg )
+     {
+         return  ''// Convert boolean to Boolean''
+             m_pred1.is(
+                 m_pred2.is( arg )
+                     ? Boolean.TRUE
+                     : Boolean.FALSE );
+     }
+
+     '''''//..Factor Methods'''''
+
+     //* compose negation
+     public static U''''''naryCompose not( U''''''naryPredicate pred )
+     {
+         return new U''''''naryCompose( new Not(), pred );
+     }
+ }
+----
+
+'''A''''''bstractBinder Implementation'''
+
+This helps us build the two other binders.
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ public
+ abstract 
+     class   A''''''bstractBinder
+     extends U''''''naryLogicalFunctor
+ {
+     private B''''''inaryPredicate m_predicate;    // B''''''inary Predicate
+     private Object          m_bound;        // Bound Value
+
+     //..State
+
+     final
+     public boolean isBound()
+     {
+         return m_bound != null;
+     }
+
+     //..Bind Values
+
+     /** Rebind the l-value */
+     final
+     public void bind( Object arg )
+     {
+         m_bound = arg;
+     }
+
+     /** Readapt this instance to a new binary predicate */
+     final
+     public void adapt( B''''''inaryPredicate pred )
+     {
+         m_predicate = pred;
+     }
+
+     /// Implementation
+
+     final
+     protected boolean doIsAsFirst( Object arg )
+     {
+         return m_predicate.is( arg, m_bound );
+     }
+
+     final
+     protected boolean doIsAsSecond( Object arg )
+     {
+         return m_predicate.is( m_bound, arg );
+     }
+ }
+----
+
+'''B''''''inderFirst Implementation'''
+
+ public
+     class   B''''''inderFirst
+     extends A''''''bstractBinder
+ {
+     //..Constructors
+
+     public B''''''inderFirst( B''''''inaryPredicate predicate )
+     {
+         this( predicate, null );
+     }
+
+     public B''''''inderFirst( B''''''inaryPredicate predicate, Object arg1 )
+     {
+         super.adapt( predicate );
+         super.bind( arg1 );
+     }
+
+     //..Unary''''''Predicate Responsibility
+
+     /**
+      * Evaluates the specified argument agains the bound argument using
+      * the currently adapted predicate.
+      */
+     public boolean is( Object arg2 )
+     {
+         return super.'''doIsAsSecond'''( arg2 );
+     }
+ }
+----
+
+'''B''''''inderSecond Implementation'''
+
+ public
+     class   B''''''inderSecond
+     extends A''''''bstractBinder
+ {
+     //..Constructors
+
+     public B''''''inderSecond( B''''''inaryPredicate pred )
+     {
+         this( pred, null );
+     }
+
+     public B''''''inderFirst( B''''''inaryPredicate pred, Object arg2 )
+     {
+         super.adapt( pred );
+         super.bind( arg2 );
+     }
+
+     //..Unary''''''Predicate Responsibility
+
+     /**
+      * Evaluates the specified argument against the bound argument using
+      * the currently adapted predicate.
+      */
+     public boolean is( Object arg1 )
+     {
+         return super.'''doIsAsFirst'''( arg1 );
+     }
+ }
+
+----
+BlocksInJava: RobertDiFalco
+----
+Prev: BlocksInJavaAst
+Next: BlocksInJavaPuttingItTogether
+

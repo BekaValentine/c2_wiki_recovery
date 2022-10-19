@@ -1,0 +1,215 @@
+''[Voting on JavaDesignFlaws page.]''
+
+Two aspects of any exception, including NullPointerException, are the motivation for raising it and the desired way to handle it. The trouble with an approach like the Java exception system is that it gloms these two different aspects together; by the time the handler catches the exception, it's too late to say, in effect, "oh that wasn't an error, just do frabiz instead". That shortcoming creates the dilemma that spawns discussions like NullIsBenign.
+
+Suppose, hypothetically speaking, that an exception handler could do any of the following in addition to the current behavior:
+
+* Restart execution at the statement/try-block where the exception was raised (presumably after changing some relevant state)
+* Resume execution where the exception was raised. If an expression was being evaluated, this includes specifying a return value.
+* Continue execution after the exception where the expression was raised
+* Continue execution after the tryblock where the expression was raised (presumably after changing some relevant state)
+
+I think most of the issues being debated on NullIsBenign are readily resolved in a clean way with this added functionality. Perhaps the debate might motivate a change in what we expect of our exception systems, instead of a change to our type/class system.
+
+''It is not clear that this set of extra features provides added value in the context of Java. I've seen it at work in CommonLisp and never care too much about it (actually, I was annoyed by the fact that the program prompted me instead of crashing). Its main thrust is to support ProgrammingInTheDebugger, a style which has had its adepts mainly amongst the Lisp and Smalltalk communities, but on the other hand goes contrary to the classical approach to programming (see for example, DisciplineOfProgramming, TheScienceOfProgramming). Java's decision with respect to throwing NullPointerException versus NullIsBenign is absolutely correct from the point of view of this design philosophy: when the program goes astray, LetItCrash. It's true that when your development environment is image-based (like Smalltalk and many instances of Lisp), letting it crash is not exactly an appealing option, so probably this exception handling functionality makes a lot more sense in the context of Smalltalk and Lisp.''
+
+''Undoubtedly, Sun's Java can implement a special mode of running the VM (they already have more a lot of modes) that has this kind of behavior with regards to exception. They already provide one of the most sophisticated runtime platforms in the world, for free. Whether such an addition would justify as return on investment is very much unclear. Enough to say that after 8 years of Java programming I never once wished the Java VM behaved like a Lisp interpreter with regards to exceptions. -- CostinCozianu''
+
+I'm not sure CostinCozianu understands the proposal. If it were implemented, then NullPointerException would still be thrown just like it is today. If CostinCozianu, or anyone else, prefers the coding style in use today they can still code that way. The point of the proposed new functionality is to allow some of us to write a '''handler''' for NullPointerException that does something more interesting than barfing and quitting.
+
+''I understand it all right, except that I cannot think highly of such a proposal in the absence of a minimal exposition as to what this would be good for (other than ProgrammingInTheDebugger in the style of Lisp or Smalltalk), and given that such an "addition" to the VM runtime cannot be presumed to come for free, the claim that JavaExceptionLacksFunctionality is entirely unimpressive. Every other Java user or Lisp user or language X user wished some functionality was added. What you call "Barfing and quiting" is presumably the right thing to do (conform LetItCrash), while doing something interesting in the presence of logical errors in the program may only seem like a smart idea. It interferes blatantly with ProofObligation and the need to structure the code such that it facilitates reasoning about its properties. -- CostinCozianu''
+
+There is no expectation that any of the items in JavaDesignFlaws "come for free". There are certainly circumstances where LetItCrash is how we DoTheRightThing. However, there are many circumstances where it is NOT the right thing. For example, many libraries return null (or some other exception) in situations analogous to attempting to open a filesystem when the removable media is missing (like when the Windows user mistakenly clicks drive a: from the standard file chooser while no floppy is inserted). The "right thing", in that situation, is to gracefully let the user know that they (probably mistakenly) attempted to open a non-existing media, and let them try again -- without blowing away the rest of the state in their user interface. In a Smalltalk or Lisp environment, this is readily accomplished with a strategically placed handler (a handler that would post a dialog and, if the user chooses, restarts the file open request that prompted the exception). It is often the case, especially in building modules that get integrated into other applications (which you have no control over), that sometimes you want this kind of behavior and other times you want to do something else (such as log the failed attempt). The proposed exception system functionality provides this capability while preserving the LetItCrash option for any developer who decides it is best.
+
+''Try a better example. If item= Hashmap.get(key) returns null, and the developer needs to tell the user something about it, then a simple "if (item != null) { ... }" will suffice. There is no case to be made that somebody calls a library function that '''can''' return a null value (most IO framework does not do this) and continue as if nothing happens, with the expectation that a complicated exception handling mechanism (complicated from the point of view of semantics of the language and ProofObligation) will be able to restart cleanly on auto-pilot. NiceLanguage already has a much more elegant mechanism for isolating null values (let alone that functional languages like ML, Haskell, etc., don't have any null value at all, which is maybe the ultimate solution to NPE). Again, generalities are misleading, a code sample would be edifying. Let's try the IO example''
+ static void copy (InputStream is, OutputStream os) throws IOException {
+   byte buffer[]= new byte[512];
+   int lastReadCount= 0;
+   while ((lastReadCount= is.read(buffer))!=-1)
+	os.write( buffer, 0, lastReadCount);
+ }
+''So let's hear how a handler of IOException placed outside or inside this code would be able to deal with the case when the user removes the floppy, SD card, CD or whatever in the middle of the loop. The solution using simple procedural techniques and current Java language is actually quite trivial, but what would the new exception handling technique do for us? Or if the above sample is not edifying, surely there must be some kind of code that we can see.''
+
+The complexity of a restartable condition system is useful for debugging, or when code is involved which may be re-used in very different contexts, with different needs. And of course, you need to be able to identify errors that can be usefully handled in some fashion. A toy example probably won't illustrate anything useful. For a thorough introduction to Lisp's condition system, with a fairly good motivating example involving code that is reusable in different contexts, see this chapter from Peter Seibel's book: http://www.gigamonkeys.com/book/beyond-exception-handling-conditions-and-restarts.html. -- DanMuller
+
+I agree, but furthermore: The challenge above is at first apparently irrefutable; what can be done if the critical data source is removed? But actually it is answerable: what if the restartable condition system notes that the critical data source has been replaced since the exception was originally thrown? Then the origin of the error condition turned out to be temporary, and there are no troubles simply retrying. Classically retries are done inline, but in some circumstances code can be cleaner when the error test is not inline, and logic to handle e.g. retries is exterior to the throw. That is not always the case, but sometimes it is. -- DougMerritt
+
+''Finding Lisp examples is easy; finding convincing Lisp examples is more difficult. And in particular the trick with letting exception handler being supplied by higher level code and happening down the stack, is eminently doable (and conveniently doable) in Java and other languages (including LISP) with normal flow of control mechanisms. Besides, I'd like to see an article discussing the formal semantics of all the signaling/restarting mechanism in LISP, because all the up the stack down the stack non-local transfers is surely not friendly to reasoning about programs. If such a refined contract between the caller and the callee is needed, there's nothing wrong with making it more explicit -- add an argument or two, make such arguments optional, use the popular Scheme of passing continuations, etc. The fact that no framework for complex condition handling mechanisms has evolved in languages which don't support all the features present in LISP is further evidence that nobody's seriously missing such features. And certainly the trouble such features may introduce in the HotSpot runtime may not be worth the marginal gain. ProgrammingInTheDebugger is acknowledged as a feature of this mechanism, but outside the Lisp/Smalltalk culture, it is not a very popular sport. So from my perspective, a convincing case that JavaExceptionSystemLacksFunctionality has not been made. Java ain't Smalltalk and Java ain't Lisp, we all know that. -- CostinCozianu''
+
+Certainly, in a language that supports closures and first-class functions, it's even relatively easy to achieve many of these effects through more explicit, task-specific techniques. In a sense, a restart system is a way for two layers of software that may be separated by several other layers to interact, in specific situations defined by the lower-level software, without needing the explicit permission and participation of the intervening layers. The problem with the simpler ad hoc approaches is that you will need this explicit participation, and (optional arguments notwithstanding) such embellishments will tend to accrue across layers, making the interfaces complex. I realise that this is not a strong argument; arguably, the interfaces ''should'' be explicitly complex in such cases.
+
+As far as the formal semantics go, there is of course the CommonLisp standards document, which at least attempts to be a complete description of these features. (http://www.lispworks.com/documentation/HyperSpec/Body/09_.htm) Whether it succeeds or not at completely and unambiguously specifying it, I can't say. -- DanMuller
+
+''I don't think ad-hoc approaches are any more ad-hoc than the standard Lisp condition system. Look, Lisp has a form of GoTo statement. You could argue that where a Lisp programmer might invoke a '''go''', a Java programmer will use an ad-hoc approach. I simply don't buy that, and certainly GoTo is not missing functionality from Java. The CommonLisp standard is the poster child for tons of language features being put together. You can look at this situation and claim that other languages are "missing" functionality, but in many cases it just means that other languages are less bloated, and/or chose to have features that give the developer more bang for the buck.''
+
+''Non-explicit parameter passing is not only possible in Java but it's being done in several popular frameworks as well in the day to day work of many Java programmers (in my current project I have three major implicit objects), so the argument with embellishments that accrue across the layers is essentially null. Another way to send stuff across layers of invocation is to pass arguments to the constructor of the low-level object, and/or eventually use DecoratorPattern to create a new kind of low level object -- say FileInputStreamWithRestart, and then pass this object to the middle level object. For example: parser.parse(new FileInputStreamWithRestart(file, testBeforeRestart)).''
+
+''I have to say again, arguments without code or without a well specified design problem that exhibits the stringent need for Lisp-style exception handling have very little traction. -- CostinCozianu''
+
+This all seems to miss the criteria, for any system, that "simple (or frequent) things should be simple and hard (or rare) things possible." In the cases cited here, our discussion seems to miss the reality that the inner layer is often not accessible (as code) from the outer layer. In the Java definition, it means that the CONSUMER of the module (such as the IO code above) is dependent on the possibly unknown author of the module to do the right thing. The way the above code fragment might be handled in pseudo-java using the proposed functionality looks something like this:
+
+ public void someCopyConsumer(String anInputName, String anOutputName)
+   {
+     Input''''''Stream in = null;
+     String theInputName = anInputName;
+     String theOutputName = anOutputName;
+     try
+       {
+         in = new File''''''Input''''''Stream( theInputName );
+         out = out File''''''Output''''''Stream( theOutputName );
+         someObject.copy(in, out);
+       }
+     catch (File''''''Not''''''Found''''''Exception f)
+       {
+         theInputName = getBetterInputNameFromUser();   /* Throws different exception to quit
+         theOutputName = getBetterOutputNameFromUser(); /* Throws different exception to quit
+         if (isLogging) {                               /* Choose your favorite way to do this
+           log(f);
+           {
+         retry;
+       }
+     finally 
+       {
+         try
+           {in.close();}
+         catch (IOException ignore) {}
+         catch (Null''''''Pointer''''''Exception ignore) {}
+
+         try
+           {out.close();}
+         catch (IOException ignore) {}
+         catch (Null''''''Pointer''''''Exception ignore) {}
+       }
+   }
+
+Please note that I can put the File''''''Not''''''Found exception '''handler''' anywhere in the call chain I want, making it straightforward to use OnceAndOnlyOnce to describe how to handle this situation from any call site. Similarly, the decision of whether or not log the event is cleanly provided in one place.
+
+I still don't understand the objection to something that helps address a large and common class of problems and has minimal impact on current-style code. -- TomStambaugh
+
+''The criteria is just fine: simple things are simple, rare things are possible. The functionality of the above pseudo-code is possible using very straightforward Java code in quite a number of ways. Just for example you can write a utility method somewhere:''
+  class  FileUtils {
+    /**
+     * opens a input stream for the given file,
+     * and in case of media error it calls a handler
+     * waiting for a decision to abort or retry
+     */
+   FileInputStream openWithRetry(File file, FileErrorHandler handler) {
+    IOException ex= null
+    final File [] fileCapsule = new File[] {file}; // common trick for IN OUT parameters
+    do { try {
+     // pre-confition checks like file.canRead() and stuff like that
+     FileInputStream result= new FileInputStream(fileCapsule[0]);
+     // whatever other checks here
+     return result;
+     } catch (IOException e)( ex= e;)
+    } while (handler.onError(ex, fileCapsule))
+    throw ex;
+   }
+  }
+
+''Please note that FileNotFoundException can only be thrown by the constructor to FileInputStream. If a subsequent read operation fails, there's no guarantee that retrying it makes any sense (most likely the OS file descriptor is invalid), but if you want to handle that condition (say a dirty CD that can be cleaned up by the user) you can do it with DecoratorPattern creating a FileInputStreamWithRetry quite trivially, by discarding the old stream and trying to create it a new, and continuing from the remaining offset.''
+
+You asked for an example of how to use the proposed functionality and I offered it.
+
+* What you offered is indeed how to use this functionality, you haven't offered something that shows how this new functionality is '''missing'''.
+
+** You asked ''So let's hear how a handler of IOException placed outside or inside this code would be able to deal with the case when the user removes the floppy, SD card, CD or whatever in the middle of the loop.'' I answered your request.
+
+**''Ah, but it was implied that it would have to be something new and interesting that can't be easily done with existing mechanism. Something to justify the need for the proposed extension.''
+
+''That there's a large common class of problem that cannot be handled by existing mechanism is a subjective assessment that leaves me puzzled: in 8 years of Java programming I never missed such functionality (though I miss other language features). Presumably not a lot of people miss such a feature since it is the first time that I come across this complaint. ''
+
+The observation that you haven't missed this functionality doesn't mean it isn't needed or useful. It means only that, as you said, in eight years of Java programming you've not missed it. If you aren't aware of the discussions about resumable exceptions, then it sounds like you've been in a different segment of the community than me. Here are some hits from a quick google search ("resumable exception system java"):
+
+** http://www.object-arts.com/Lib/EducationCentre4/htm/resumablevsnon.resumableexceptions.htm)
+** http://www.cincomsmalltalk.com/blog/blogView?showComments=true&entry=3238918257
+** http://www.daimi.au.dk/~beta/News/volume1996/news/10679.txt
+** http://lists.squeakfoundation.org/pipermail/squeak-e/2003-February/000026.html
+
+* Yep, smalltalk people complaining that Java isn't Smalltalk in this regard. To quote from one of the links: ''"This is clearly essential for resumption and is certainly useful for debugging. I can speculate that there are non-debugging situations where it is useful for a non-resuming handler to have the computation state at the exception point available (or at least preserved) but I don't have a canonical example at my finger tips."''. I am afraid to say that for all the long history of this page, we still go round in circles based on '''speculation only'''.
+
+** You made a claim -- ''not a lot of people miss such a feature'' -- based on the observation that ''[This] is the first time that I come across this complaint''. I merely demonstrated that the complaint has been made for a very long time, whether or not you are aware of it.
+** ''Your demonstration is unimpressive. So what if the complaint was made for a very long time and the debate never made it farther than the circle of discontent Smalltalkers cursing their way through Java? It's not like any particular person can be aware of the vast amount of discussion going on in the Java world, but I was aware of the major things -- this proposal didn't make it to prime time.''
+
+''As to the claim of minimal impact on existing Java semantics I have yet to see how this proposal impacts the efficiency of HotSpot runtime and (more importantly ) the semantics of synchronised blocks, for example -- and this is just at a very summary look. The case for "minimal impact" has yet to be made. -- Costin''
+
+Ah, so HotSpot is finally, in 2005, catching up to where the Smalltalk VM was in 1982? The problem was solved in Lisp, Smalltalk, and presumably other environments. When I said "minimal impact", I meant on the current coding style. It might well be the case that such functionality is not only hard, but impossible for the VM. It is functionality provided by prior art. It is functionality desired and requested by the developer community. It is functionality with minimal adverse impact on alternative programming styles. If it is functionality that literally ''cannot'' be provided by current Java VM technology (a claim that I most seriously doubt, by the way), then I would say that it confirms my original claim that the absence of this functionality is a JavaDesignFlaw. By the way, the IBMSmalltalk virtual machine, acquired by ObjectTechnologyInternational (creators of EnvyDeveloper), supported this capability in 1995 (a decade ago) and also ran IBM's VisualAgeJava until IBM cancelled the project.
+
+-- TomStambaugh
+
+* The claim that HotSpot is catching up where Smalltalk VM wasd in 1982 is extremely misleading. HotSpot has a very different set of features and design trade-offs. The "prior art" provided such functionality under a different set of circumstances. Please note, that in the design and evolution of of the Java language and its VM you have a host of the brightest minds from the CS community with more than enough background in language design (including Lisp/Scheme). So nobody can in all seriousness sugest that Java is lacking this "prior art" because its designers were not aware of it. It is more plausible to assume that they deemed such functionality as either unimportant, or that the trade-offs for supporting such thing within the Java context are not worth the costs. Anything whatsoever '''can be provided''' in the current VM, including Lisp style exception handling, because it's turing complete. That doesn't mean that anything at all '''should''' be provided.
+
+** I think we agree -- the designers did, in fact, deem ''such functionality as either unimportant, or that the trade-offs for supporting such thing within the Java context are not worth the costs''. I claim that THAT '''choice''' was a JavaDesignFlaw.
+** ''You claim all you want, Tom. I am still waiting for sensible arguments to back up such a claim.''
+
+* The lack of such functionality cannot be deemed a JavaDesignFlaw anymore than one can say that the lack of a host of features found in say MozartProgrammingSystem is a Smalltalk design flaw. Java isn't Smalltalk which isn't Mozart which isn't Erlang which isn't Lisp which isn't Java. Unless you can indicate the major problems that the lack of such a feature bestows on the poor Java programmers, you have no case to claim it as a JavaDesignFlaw.
+
+** Why not? The Java exception system has been problematic for large parts of the community since Java was introduced. The result has been hours and hours of wasted developer time, bloated code, and badly-behaving applications. The pages and pages of debate and discussion here, about checking exceptions, tunneling exceptions, null object randomness (intended to handle or avoid NullPointerException) and so on is a CodeSmell resulting from this JavaDesignFlaw. If you don't smell it, or don't mind the smell, then you can freely choose to not use the functionality. I find it striking that you, nevertheless, apparently argue against making it available to those who DO want it.
+
+** ''Now really. Java Exceptions, in my humble opinion, have exactly one major flaw and that has to do with the '''static typing''' of checked exceptions -- not with the runtime. See TheProblemWithCheckedExceptions. Other than that, debates don't waste the time of programmers unless programmers want to. Even working around TheProblemWithCheckedException is petty nothing in the grand scheme of things in a serious Java project. But your claim should be that the lack of this Lisp style exception handling results in bad smells and hours lost, and so on so forth. If you can make that claim, I'm still waiting for '''the code to back it up.'''''
+** ''So you find it striking that I, "nevertheless", "oppose" such functionality. Look, I'm not standing in the way of your happiness. Write an email to any of James Gosling, Gillad Bracha, Guy Steele, and try to make your case. If you think your arguments are strong, it really matters nothing at all that one Costin on c2 is unimpressed. As a bonus point, if you can wave your magic wand and put such functionality inside Java '''for free''' (meaning at a negligeable cost), then I'm all for such a proposal.''
+
+* And by the way, do you have a plausible explanation as to why not only Java, but practically all other modern language designs do not support this feature either ? I'm at a loss naming one language other than Smalltalk, Lisp and Dylan (which was targeted to replace Lisp) that supports such a feature. -- Costin
+
+** Of course. JavaLanguage doesn't have it because CeePlusPlus doesn't have it. It doesn't have it because providing it requires both a sane metastructure and a runtime-available execution model, which neither the CeePlusPlus nor Java developers thought important or necessary. By the time they came to their senses, it was too late to add. You'll note, for example, the early versions of Java also lacked closures -- another similar functionality. "Anonymous inner classes" were hacked into Java because they weren't so hard to provide. Resumable exception behavior is MUCH harder. Both languages are, in fact, FILLED with such hacks. The later "modern languages" emulate the bad example set by CeePlusPlus and Java.
+
+** ''I almost believe you. The universe of good language design started and ended with Alan Kay. Other than that we have Erlang, Standard ML, OCAML, Mozart/Oz, C#, ADA (- not to mention here the languages with no exception support at all), and all those bright computer scientists have been brainwashed to "emulate" the bad example set by C++ and Java. It's not like they could have looked at the "prior art" and decided on their own that such a mechanism is not worth the cost of implementation.''
+
+*** Coming from you, an "I almost believe you" is more than I could have hoped for. I'm not willing to put more energy into this exchange. I think you understand my position and I understand yours. -- TomStambaugh
+
+And I already started to wonder if you would ever AgreeToDisagree. :-)
+----
+''Discussion Moved from NullIsBenign (and needing refactoring for this context)''
+
+It seems to me that most, if not all, of this debate about null/Nil/NullObject might be misplaced from a more fundamental problem -- an exception system that doesn't allow execution to resume near the code that raised the exception. The two languages that use "regular" classes for null -- SmalltalkLanguage (which uses a singleton instance of UndefinedObject) and LispLanguage (which has a special value "nil") -- each also have an exception system that allows a NullPointerException to be '''resumed''' -- among other options -- once caught.
+
+Two aspects of any exception, including NullPointerException, are the motivation for raising it and the desired way to handle it. The trouble with an approach like the Java exception system is that it gloms these two different aspects together; by the time the handler catches the exception, it's too late to say, in effect, "oh that wasn't an error, just do frabiz instead". That shortcoming creates the dilemma that spawns discussions like this.
+
+Suppose, hypothetically speaking, that an exception handler could do any of the following in addition to the current behavior:
+
+* Restart execution at the statement/try-block where the exception was raised (presumably after changing some relevant state)
+* Resume execution where the exception was raised. If an expression was being evaluated, this includes specifying a return value.
+* Continue execution after the exception where the expression was raised
+* Continue execution after the tryblock where the expression was raised (presumably after changing some relevant state)
+
+I think most of the issues being debated here are readily resolved in a clean way with this added functionality. Perhaps the debate might motivate a change in what we expect of our exception systems, instead of a change to our type/class system.
+
+-- TomStambaugh
+
+I implemented precisely those features, plus a few more, on top of C++ circa 1990, and had a hell of a time talking anyone in the company into using it. They looked at me funny, ignored the manifesto I wrote explaining what the point was, and insisted on doing '''nothing''' but catching each exception as it went up each level, so as to push another level of debug info onto the error token, then rethrow so that it eventually propagated to the top level with a big stack of debug info/exception translation to display to the user. Sigh. -- DougMerritt
+
+Wow, that's weird. Just a few weeks ago, I spent some time thinking about implementing such a system for C++ and/or C# for use here at work. (I was inspired by Lisp's condition system. Greenspunning is fun when you can get away with it.) I'm sure I'd have trouble getting it to be used here, too. -- DanMuller
+
+In retrospect it probably would have paid off better to spend the time developing real examples based on real work at the company rather than on persuasive prose; there were a number of roadblocks in the way of doing so, but nonetheless people grasp small but non-toy examples better than toy abstract examples (e.g. the notorious circle/ellipse/etc. approach).
+
+In C++ for a complete feature set one must either modify the compiler, write a preprocessor, or invent a set of macros that present a clean API while being arguably nasty in implementation (maintenance-programmer unfriendly in requiring more expertise than average -- mostly small macros, fortunately); the latter is what I did. I thought that e.g. resuming (after repairing troublesome data) at the point where a throw had happened was pretty cool. -- DougMerritt
+
+''I wrote an exception system for Smalltalk (before it had one) that used Smalltalk's block return semantics in a way that emulated the "setjump" stuff from C/C++. I know it's hard to get people to use these things -- it's SO much easier to have arguments like this. Anyway, NullPointerException is one of the ones where a real exception makes life IMMENSELY easier.''
+
+Good for you, and agreed on all counts -- and actually, I too had to emulate exceptions, since they didn't exist in C++ yet (although the ARM did discuss some possible architectures for them in the then-future).
+
+That may have been another part of the problem, that the whole notion of exceptions was too unfamiliar -- although they claimed differently; everyone there knew hardware (the product was software and IntellectualProperty to support a fancy new kind of BuiltInSelfTest in custom ICs), and no doubt they all just took "exception" to be a synonym for "interrupt", and "everyone knows interrupt handling is dead simple". Well, of course interrupts are simple (from the software viewpoint); RISC vs CISC settled that the place to put complexity is in the software, not the CPU; but the two terms are not synonyms.
+
+I wish I could boost my RealityDistortionField a couple orders of magnitude. There are none so blind as those who will not see. Pearls before swine? '''Something'''. It was very frustrating. I jumped ship for a more open-minded environment; my (supportive) manager did likewise. The company died eventually, despite having a truly sweet technological innovation for hardware test; I've never heard of its equal, to this day. Naturally I've always suspected that closed-mindedness in a company culture may contribute strongly to business failure.
+
+Anyway, I suspect that most programmers even today file the entire topic of exceptions under a single mental Pattern, and for various reasons resist adding additional Patterns to that first one. "One thing to rule them all, one thing to wind them, one thing to bring them all, and in the Darkness unwind them." As they say. Or to coin a phrase. :-) -- Doug
+----
+If you have code that knows how to "[r]estart execution at the statement/try-block where the exception was raised (presumably after changing some relevant state)" or "[r]esume execution where the exception was raised" then put it near the code it knows how to restart/resume. Instead of throwing an exception, test for the exceptional condition. It doesn't sound like a good idea for code n levels up the call stack to be that tightly coupled. -- EricHodges
+* You're right, coupling is a concern, but the idea is usually to indeed put the handler nearby, but to (A) allow it to be removed from inline code, to unclutter things, and (B) allow for OnceAndOnlyOnce handling.
+* Both of those are common reasons to use exceptions at all, the only issue here is generalizing exception handling to be more like Lisp/Scheme continuations; whether an exception '''must''' always mean a fatal error at the point of the throw, or whether it sometimes can be repaired.
+* Certainly the extra ability could be used inappropriately. All constructs can be misused.
+----
+I agree, the true value of exceptions is their capability to walk the CallStack backward and to separate the main execution flow from the error handling. Being able to move the instruction pointer back to the throw statement violates these two principles : not only the error handling becomes tightly coupled with the throwing code, but once you've left a block it's almost impossible to move back inside. What if your block was a synchronised statement, for instance? What if the throwing object already got garbage collected? Interrupts and Exceptions are definitively two distinct concepts. -- PhilippeDetournay
+* True, it's not always feasible. But it's certainly not always infeasible, either.
+* The idea is that the extra ability is used as a replacement for inline error checks. If you have already decided you don't want to walk the CallStack backwards, then without this, you cannot use exceptions, you have to go back to the ugly cluttering inline error checks. With this, you can use exceptions when/if appropriate after all.
+* I find it odd that so many people are always so willing to permanently forbid new abilities simply because they don't make sense in all contexts. Try fiddling with continuations. -- DougMerritt
+
+Then don't call them exceptions, use a new name instead. This new feature might be useful in some situations, but adding new semantics to an existing concept can be dangerous. -- PhilippeDetournay
+----
+The above was moved from NullIsBenign, but since it's about exceptions in general, not just Java exceptions, it's not clear that this is the best new home for it.
+
+''I agree, and I wish there was a way to put it in both places -- that's why I linked to this page from NullIsBenign. I think it clearly belongs in the list of JavaDesignFlaws, and I didn't see any clean way to do that without factoring it out of NullIsBenign.''
+----
+AugustZeroFive
+
+CategoryJava

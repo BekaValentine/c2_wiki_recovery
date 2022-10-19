@@ -1,0 +1,411 @@
+''from EconomyOfExecution ...''
+
+Try writing a ComplexNumbers package (ComplexNumberPackage) in Java as an exercise. Write the same package in Smalltalk. Measure its performance. Ask the best Java, C++ and Smalltalk programmers you know to do the same. Compare their results.
+
+-----
+
+This is an interesting challenge because most languages do so poorly with complex numbers. Consider the FORTRAN statement ...
+
+	A = A * B + C
+
+where A, B and C are complex numbers. What does this mean? Consider the case where ...
+
+	A = (2 + 3i)
+	B = (1 + 2i)
+	C = (3 + 2i)
+
+The new value of A would be ...
+
+	A = (2 + 3i) * (1 + 2i) + (3 + 2i)
+	= (-4 + 7i) + (3 + 2i)
+	= (-1 + 9i)
+
+Fortran will convert the statement A = A * B + C into a string of floating point multiplies and adds with fetches and stores to static memory locations as needed. Fortran will allocate temporary registers in the floating point unit to store results from the complex multiply. I know of no language other than FORTRAN where this expression can be written so simply and optimized so well.
+
+I suggest we explore how we would approach this calculation in a variety of languages. Let's assume that we want to exploit the abstraction mechanisms of each language as if we were writing a program with lots of complex number calculations that we want to read well. Then let's find out what actual instructions a machine will execute to evaluate the various expressions. This will depend on compiler/interpreter implementations, of course, but probably less so than they vary with language choices.
+
+We want to count instructions so be sure to include those of any subroutines that may be called during evaluation. I suggest the Intel Pentium as the reference machine, though I'd be happy to look at instruction sequences for other machines if they are either instructive or all that is available. Finding the actual machine instructions might be hard for interpreted languages. Listing the byte codes executed would be a step along the way to our goal, but not the goal itself. -- WardCunningham
+
+''And the purpose of the above exercise is?''
+
+To explore the costs of various language design choices (types, abstractions, allocation) by quantitative means.
+
+-----------
+
+Summary of results on the remainder of this page.
+
+	* Smalltalk -- 430 to 860 plus GC (estimate from bytecodes)
+	* Smalltalk -- 110 plus GC (estimate with machine code primitives)
+	* Java -- 640 plus GC (estimate from bytecodes)
+	* C++ -- 0 (literal values collapsed at compile time)
+	* C++ -- 23 (using non-literal values)
+----
+http://www.ping.be/math/complget.htm
+
+------------
+
+SmalltalkLanguage
+
+Smalltalk's Point class is very similar to complex numbers except that * is defined as scaling rather than complex product. In SqueakSmalltalk I defined complex product as follows ...
+
+	product: arg 
+	"Answer a Point that is the complex product of the receiver and arg."
+	arg isPoint ifTrue: [^ ((x * arg x)-(y * arg y)) @ ((x * arg y)+(y * arg x))].
+	^ arg adaptToPoint: self andSend: #product:
+
+Using this abstraction the equivalent Smalltalk test code is ...
+
+	a := (a product: b) + c.
+
+Using an obvious variation of "tallyInstructions:" I found that evaluation of this expression required the execution of 43 bytecodes ...
+
+[] in UndefinedObject>>DoIt ...
+  1. 35 <43> pushLit: a
+  2. 36 <44> pushLit: b
+  3. 37 <E2> send: product:
+Point>>product: ...
+  4. 17 <10> pushTemp: 0
+  5. 18 <D0> send: isPoint
+  6. 19 <AC 14> jumpFalse: 41
+  7. 21 <00> pushRcvr: 0
+  8. 22 <10> pushTemp: 0
+  9. 23 <CE> send: x
+  10. 24 <B8> send: *
+  11. 25 <01> pushRcvr: 1
+  12. 26 <10> pushTemp: 0
+  13. 27 <CF> send: y
+  14. 28 <B8> send: *
+  15. 29 <B1> send: -
+  16. 30 <00> pushRcvr: 0
+  17. 31 <10> pushTemp: 0
+  18. 32 <CF> send: y
+  19. 33 <B8> send: *
+  20. 34 <01> pushRcvr: 1
+  21. 35 <10> pushTemp: 0
+  22. 36 <CE> send: x
+  23. 37 <B8> send: *
+  24. 38 <B0> send: +
+  25. 39 <BB> send: @
+  26. 40 <7C> returnTop
+[] in UndefinedObject>>DoIt ...
+  27. 38 <45> pushLit: c
+  28. 39 <B0> send: +
+Point>>+ ...
+  29. 17 <10> pushTemp: 0
+  30. 18 <D0> send: isPoint
+  31. 19 <AC 0A> jumpFalse: 31
+  32. 21 <00> pushRcvr: 0
+  33. 22 <10> pushTemp: 0
+  34. 23 <CE> send: x
+  35. 24 <B0> send: +
+  36. 25 <01> pushRcvr: 1
+  37. 26 <10> pushTemp: 0
+  38. 27 <CF> send: y
+  39. 28 <B0> send: +
+  40. 29 <BB> send: @
+  41. 30 <7C> returnTop
+[] in UndefinedObject>>DoIt ...
+  42. 40 <81 C3> storeIntoLit: a
+  43. 42 <7D> blockReturn
+
+Smalltalk interpreters typically execute 10 to 20 instructions per bytecode so this is the equivalent of 430 to 860 machine instructions. Of course a JustInTime interpreter would do somewhat better. The sequence also allocates two new objects so there will be additional instructions defered until the two objects are collected. -- WardCunningham
+
+Ok, let's assume the overhead is zero. We still need to check the type of the argument and the types of the fields within the receiver and the argument. If each check takes two instructions (fetch and test) then that is 10 instructions. Also, let's assume that we can write the primitive in as many machine instructions as Smalltalk wrote bytecodes. Then product is 30 instructions and + is 20. There are still six or seven bytecodes to execute so we will count them at 10 instructions per, for a total of 60+30+20 = 110. -- WardCunningham
+
+-------
+
+PascalLanguage
+
+We would like to write the expression as functions something like ...
+
+	a := cSum(cProd(a,b),c);
+
+But to avoid side effects we would need to allocate new complex objects in each function and remember to free them when unused. This then codes out as ...
+
+	t := cProd(a,b);
+	free(a);
+	a := cSum(t,c);
+	free(t);
+
+Alternatively we could write cProd and cSum as procedures that modify their first argument which would be passed by "Var" ...
+
+	cProd(a,b);
+	cSum(a,c);
+
+-------
+
+CeePlusPlus
+
+We can write the expression in a very natural syntax by overloading * and + ...
+
+	a = a * b + c;
+
+Here a, b and c are "envelopes" that hold and reference count "letters" that are dynamically allocated tuples of floats. (See EnvelopeLetter.)
+
+''We don't need no temporaries and no reference count or customized smart pointers, unless we want to keep the elegance of Fortran. No other language on this page does, though an Ada'95 exercise might be fun. A C++ code written with EconomyOfExecution in mind, but not exaggerated might look like this:''
+
+ class Complex {
+ public:
+
+	double x, y;
+
+	inline Complex (double a1, double a2)	{ x= a1; y= a2;	};
+
+	inline Complex& operator +=( const Complex& c2)
+	{
+		x += c2.x;
+		y += c2.y;
+		return *this;
+	}
+
+	inline Complex& operator *=( const Complex& c2)
+	{
+		double temp= x; 
+		x = temp * c2.x - y * c2.y;
+		y = temp * c2.y + y * c2.x;
+		return *this;
+	}
+
+	friend ostream& operator << ( ostream& out, const Complex& c);
+
+ } ;
+
+ inline ostream& operator << ( ostream& out, Complex& c1)
+ { 
+	out << c1.x << ' ' ;
+	if (c1.y > 0) out << "+ " ;
+	out << c1.y <<'i';
+	return out;
+ };
+
+ int main(int argCount, char *argValues[]) 
+ {
+	Complex a(2,3), b(1,2), c(3,2);
+	(a *= b) +=c;
+	 cout << a ;
+	 return 0;
+ }
+
+''The result is no temporary, no garbage collection, no allocation, just what needs to be done. And that's not all there is to CeePlusPlus, the greatest feature is the satisfaction it gives you after an all too long Java suffering. -- CostinCozianu''
+
+''Now, another cool thing, if you run your favorite compiler in full speed optimization (/O2 or -O2), here's what happens:''
+
+ _main	PROC NEAR					; COMDAT
+ ; File main.cpp
+ ; Line 11
+	push	-1074790400				; bff00000H
+	push	0
+	mov	ecx, OFFSET FLAT:?cout@@3Vostream_withassign@@A ; cout
+	call	??6ostream@@QAEAAV0@N@Z			; ostream::operator<<
+	push	32					; 00000020H
+	mov	ecx, eax
+	call	??6ostream@@QAEAAV0@E@Z			; ostream::operator<<
+	push	OFFSET FLAT:??_C@_02JBJ@?$CL?5?$AA@	; `string'
+	mov	ecx, OFFSET FLAT:?cout@@3Vostream_withassign@@A ; cout
+	call	??6ostream@@QAEAAV0@PBD@Z		; ostream::operator<<
+	push	1075970048				; 40220000H
+	push	0
+	mov	ecx, OFFSET FLAT:?cout@@3Vostream_withassign@@A ; cout
+	call	??6ostream@@QAEAAV0@N@Z			; ostream::operator<<
+	push	105					; 00000069H
+	mov	ecx, eax
+	call	??6ostream@@QAEAAV0@E@Z			; ostream::operator<<
+ ; Line 13
+	xor	eax, eax
+ ; Line 14
+	ret	0
+ _main	ENDP
+
+Of course these aren't the instructions this page was asking to examine so I modified the source code so that the constructors of a,b,c get all their parameters through a call to rand().
+The result is that the line:
+	(a *= b) += c;
+gets translated to the following:
+
+; Line 16
+	mov	eax, DWORD PTR _a$[esp+64]
+	fild	DWORD PTR -64+[esp+64]
+	fld	QWORD PTR _b$[esp+64]
+	fmul	QWORD PTR _a$[esp+64]
+	fld	QWORD PTR $T1677[esp+64]
+	fmul	QWORD PTR $T1672[esp+64]
+	mov	ecx, DWORD PTR _a$[esp+68]
+	mov	DWORD PTR _temp$1685[esp+64], eax
+	mov	DWORD PTR _temp$1685[esp+68], ecx
+; Line 18
+	mov	ecx, OFFSET FLAT:?cout@@3Vostream_withassign@@A ; cout
+	fsubp	ST(1), ST(0)
+	fld	QWORD PTR _temp$1685[esp+64]
+	fmul	QWORD PTR $T1677[esp+64]
+	fld	QWORD PTR _b$[esp+64]
+	fmul	QWORD PTR $T1672[esp+64]
+	faddp	ST(1), ST(0)
+	fstp	QWORD PTR _a$[esp+72]
+	fxch	ST(1)
+	fadd	ST(0), ST(1)
+	fstp	QWORD PTR _a$[esp+64]
+	mov	edx, DWORD PTR _a$[esp+68]
+	mov	eax, DWORD PTR _a$[esp+64]
+	fstp	ST(0)
+	fld	QWORD PTR _a$[esp+72]
+
+Well, I guess that now have 23 machine intructions (I skipped moving the pointer to cout into register ecx). -- CostinCozianu
+
+-------
+
+JavaLanguage
+
+In Java we would create a class to hold the real and imaginary parts of a complex number. We would then write side-effect free methods to perform sum and product.
+
+	a = (a.product(b)).sum(c);
+
+These methods would allocate new objects (like Smalltalk) and they would be collected without reference counting (unlike c++). Some GCs will out perform reference counting, but only with lots of short-lived allocations.
+
+Here are the bytecodes disassembled from a class file (source at http://c2.com/wiki/Complex.java.) I count 64 bytecodes (counting the constructor twice). Assuming JVMs are on the efficent side of the 10 to 20 instructions per bytecode then this should run about 640 machine instructions.
+
+	public class Complex 
+	{
+		double i;
+		double r;
+
+		Complex(double a1, double a3)
+		{
+				// aload_0 this
+				// invokespecial Object
+		super();
+
+				// aload_0 this
+				// dload_1 a1
+				// putfield r
+		r = a1;
+
+				// aload_0 this
+				// dload_3 a3
+				// putfield i
+		i = a3;
+
+				// return
+		return;
+		} // End of Complex
+
+		Complex sum(Complex a1)
+		{
+				// new Complex
+				// dup
+				// aload_0 this
+				// getfield r
+				// aload_1 a1
+				// getfield r
+				// dadd
+				// aload_0 this
+				// getfield i
+				// aload_1 a1
+				// getfield i
+				// dadd
+				// invokespecial Complex
+				// areturn
+		return new Complex(r + a1.r, i + a1.i);
+		} // End of sum
+
+		Complex product(Complex a1)
+		{
+				// new Complex
+				// dup
+				// aload_0 this
+				// getfield r
+				// aload_1 a1
+				// getfield r
+				// dmul
+				// aload_0 this
+				// getfield i
+				// aload_1 a1
+				// getfield i
+				// dmul
+				// dsub
+				// aload_0 this
+				// getfield r
+				// aload_1 a1
+				// getfield i
+				// dmul
+				// aload_0 this
+				// getfield i
+				// aload_1 a1
+				// getfield r
+				// dmul
+				// dadd
+				// invokespecial Complex
+				// areturn
+		return new Complex(r * a1.r - i * a1.i, r * a1.i + i * a1.r);
+		} // End of product
+
+		public static void main(String a1[])
+		{
+		Complex complex1 = new Complex(2.0D, 3.0D);
+		Complex complex2 = new Complex(1, 2.0D);
+		Complex complex3 = new Complex(3.0D, 2.0D);
+
+				// aload_1 complex1
+				// aload_2 complex2
+				// invokevirtual product
+				// aload_3 complex3
+				// invokevirtual sum
+				// astore_1 complex1
+		complex1 = complex1.product(complex2).sum(complex3);
+
+		System.out.println(complex1.r + " " + complex1.i);
+		} // End of main
+	}
+
+I disagree with the evaluation. There is nothing to prevent a good (jit) compiler to figure out that the temporary objects do not outlive the current stack frame, thus can be safely allocated on stack, not heap, then perform the very same optimisations a c++ compiler would perform. -- cristipp
+
+---------
+
+ForthLanguage
+
+In forth one would create words, c* and c+, that would do the calculation on the stack. Also c@ and c! would fetch and store these large quantities. Then the expresson becomes ...
+
+	A c@ B c@ c* C c@ c+ A c!
+
+The stack seems a natural enough place to store temps, but it isn't the registers of the floating point unit so we won't see that efficency from forth.
+
+''Actually, AnsForth has a floating point wordset which operates on a separate floating point stack. Most implementations use the CPU FP unit's stack or register set for the upper portion of the fp-stack. For example:''
+
+ \ let '''c''' designate a complex number on the fp-stack: ( bi a -- )
+
+ : C+ ( c1 c2 -- c1+c2 ) FROT F+ -FROT F+ FSWAP ;
+ : im* ( di c bi a -- ad+bc ) -FROT F* -FROT F* F+ ;
+ : re* ( di c bi a -- ac-bd ) FROT F* -FROT F* F- ;
+ : C* ( c1 c2 -- c1*c2 ) F2OVER F2OVER re* F>R im* R>F ;
+
+ : test ( c b a -- a*b+c ) C* C+ ;
+
+''Recent standardization efforts are attempting to make the separate fp-stack mandatory, instead of optional.''
+
+----------
+
+PythonLanguage
+
+Python brags mostly about its readability, not its speed. I don't think you can beat it for readability in this case since, like FORTRAN, complex numbers are built in ...
+
+ >>> a = 2+3j
+ >>> b = 1+2j
+ >>> c = 3+2j
+ >>> a = a * b + c
+
+ >>> def f(a=2+3j, b=1+2j, c=3+2j):
+	a = a * b + c
+
+ >>> dis.dis(f)
+  2           0 LOAD_FAST                0 (a)
+              3 LOAD_FAST                1 (b)
+              6 BINARY_MULTIPLY     
+              7 LOAD_FAST                2 (c)
+             10 BINARY_ADD          
+             11 STORE_FAST               0 (a)
+             14 LOAD_CONST               0 (None)
+             17 RETURN_VALUE
+
+So - six relevant bytecodes (the last two are in every function)
+
+''Also of interest would be including psyco profiling (roughly the equivilent of compiling with optimization). I believe there is a way of getting the resulting opcodes, but I'll have to look at it to see.''
+----
+CategoryMath CategoryTesting

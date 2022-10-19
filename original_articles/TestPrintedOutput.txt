@@ -1,0 +1,106 @@
+How do you UnitTest the printed output?  In the ChryslerComprehensiveCompensation project, how do UnitTest''''''s check that paychecks are printed with the right numbers in the right boxes?  How do UnitTest''''''s check that summary reports contain the right data and right totals?  How can UnitTest''''''s check page headers, page breaks, etc.?
+
+Some of the issues are:
+	* To generate even one page of output (a paycheck), you probably need to  setup lots of interrelated objects.
+	* The output can be captured before it is printed in some system dependent way.  Ideally, the printChecks method accepts an outputStream as a parameter.
+	* Once the output is captured, how should be checked?  When a GuruChecksOutput, he or she ...
+		* Scans the overall report
+		* Looks for information in the wrong place (e.g., misaligned columns)
+		* Looks for information in the wrong format (e.g., wrong number of decimal places)
+		* Checks some specific detail values and totals
+		* Looks at headers and footers
+		* Probably does not check every line against its source information
+		* Checks changeable information, like the report date
+	* How can these steps be automated?
+		* Need some representation of the expected output
+		* As the system evolves, the expected output (and possibly its representation) will change
+		* Typical expectations include:
+			* static text
+			* data from objects
+			* data from computations (e.g., totals)
+			* data from the environment (e.g., date/time)
+		* The location of the information can be:
+			* fixed (e.g., heading at top of page)
+			* relative to some other data (e.g., last name follows first name)
+			* embedded within a paragraph (e.g., "You, John Smith, may already be a winner!")
+			* located after earlier information (e.g., the 401K payroll deduction follows some other deductions)
+	* Generating expected output is tedious for humans; recognizing expected output is easier
+
+----
+
+The trick is to test your print routines on known data, not on variable data. So you can print once, have multiple humans check the output, then save it. Thereafter, use a file-compare program to check it.
+
+With UnitTest''''''s, there's no need for great variability in the testing over time. Sometimes the format may change, so you have to recheck the file. I'd not go to creating the expected report manually, but there is the risk that the human will miss an error and record a bad file as correct, preserving the defect for all time. If you have higher fear on this, I think you have to create the expected output by hand.
+
+We're just now putting in the code to generate checks in PostScript. We'll probably build some little pattern recognition thing that scans the file for certain print names and then sucks out the next value and compares it. That will let our AcceptanceTest''''''s compare any check that the users want to. I'll try to remember to report what we do when we do it.
+
+----
+
+Your UnitTest''''''s should of course test all the values that will be used to produce the printed output.  One concept I have not noticed mentioned here before is the idea of having UnitTest''''''s that are very expressive when they fail.  That is, scanning the list of failed tests you can accurately pin point the problem.  It's a good goal to shoot for though tough to do well.  Testing what goes into the report will tell you when the problem is not in the actual printing routine.  (As a side bar: I would much rather have the UnitTest''''''s score 50% pass than 99% pass.  Anyone guess why?)  
+
+But you must then also test your printing routines themselves.  It is possible to write out the report as a file and then compare it to a file of known quality.  We decided not to do this because it was not very expressive to know that somewhere in the file one or more characters are different.  We also did not like the prospect of keeping track of several different versions of our output files.  
+
+So instead during testing we substitute a write stream on a string for the write steam on a file within the printing routines.  We can then get the contents of the file as a string.  We save our known good output as methods that return string constants.  We compare sub-strings of the report to the strings that it should match.  We could then divide up our reports into logical sections.  When a test failed it would tell us what sub-section of the report was different.  In some cases the report was sectioned down to single lines of text.  
+
+Storing our known-good output as methods also allowed us to use EnvyDeveloper to manage the different versions of correct output in a way that was consistent with the different versions of the code itself.
+
+We found that maintaining the output strings was expensive.  Non-changes such as blanks changing to tabs were flagged as errors.  Changes in ordering were flagged as errors even if the ordering was not significant.  In some cases we imposed an arbitrary ordering to help us test the output.  An obvious violation of YouArentGonnaNeedIt for the sake of DesignForTestability.  But the bottom line in this case was that it was not so expensive that we felt the need to fix it.
+
+For phase 2 of the VcapsProject we insisted that all printed output take on a consistent intermediate form.  In this case that form was a MicrosoftExcel worksheet pasted into the clipboard.  We then extended the TestingFramework to be able to parse the excel data into a matrix of values.  We further wrote a general framework to turn excel data into printed output.  We could then run our code, parse the data that was left in the clipboard and test its contents easily with indexed accessing.  A separate set of UnitTest''''''s checked the excel-to-print framework in a general way by comparing strings as above. -- DonWells
+
+----
+
+PostScript update. Chet and I want to test a check-printer that formats a check in PostScript. We print some checks to a file, wrote a simple object called PostscriptParser that reads a PS file, looks for some simple patterns, and pulls the values out into an array:
+
+ 110.0,31 (Base Pay) MS
+ 120.0,31, ( ) MS
+ 131.0,31 ($123.45) MS
+ 110.0,41 (Overtime) MS
+ 124.0,41 ( ) MS
+ 131.0,41 ($234.56) MS
+
+becomes
+
+ 'Base Pay'
+ '$123.45'
+
+etc. The PostscriptParser answers 
+
+ currentValue: aString
+	| index |
+	index := array indexOf: aString.
+	index isZero ifTrue: [^'Not Found'].
+	^array at: index + 1
+
+which we put into our should clauses thusly:
+
+ self should: [(parser currentValue: 'Base Pay') = '$123.45'].
+
+Elapsed time to implement: about an hour. We can see how we'd use it to handle multiple checks per file, how we could check specific areas of the page for certain values, etc etc. But all we need right now is to see that the right values are embedded correctly in the PostScript.  So we stopped. Going home now. -- RonJeffries
+
+----
+
+Testing the printed output with known values may require that the TestOverridesNow.
+
+''On the contrary. In most cases, to test with known values, the input dates must in fact NOT change.''
+
+Can you give an example of this?
+----
+SeparateFormFromContent. Use XML as the system's output format; render that via XSL to XSL:FO, thence to PDF, or possibly LaTeX or whatever. UnitTest your XML serialization, for correctness and completeness; UnitTest your XSL stylesheets, for appropriate presentation semantics. XSLT and XPath have sufficient expressive power that you can specify just about any tests concerning document structure or content.
+
+----
+
+''moved from UnitTest''''''s''
+
+Similarly [to testing GUI code], how do you TestPrintedOutput? -- JoelShprentz ''Print to a file, compare the file with a standard one for equality.''
+
+Another way to TestPrintedOutput is unplug the printer from its port and plug in a computer emulating a printer.  
+When I worked for a telco, the operations guys used to periodically print out the internal tables from electronic exchanges, and capture the output on a laptop connected to the printer port.
+
+Now could we substitute the screen, mouse, and keyboard, to do GUI tests?
+
+-- NickBishop
+
+----
+CategoryTesting
+

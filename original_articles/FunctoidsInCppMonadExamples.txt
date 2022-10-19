@@ -1,0 +1,64 @@
+There are facilities in FC++ (see FunctoidsInCpp) for programming with Monads in C++. These were designed by the original authors as a way to implement the facilities of the Haskell prelude within C++.
+
+There are some brief examples on the web pages at http://www.cc.gatech.edu/~yannis/fc++/
+
+This page discusses some examples of use to see if the ideas discussed on ResumableException can be implemented. -- JohnFletcher
+
+----
+'''Divide by Zero'''
+
+FC++ defines a templated variable type called a Maybe<T> which can hold either a value of type T or a failure code which is defined as NOTHING.  Instances can be initialised to a value.
+
+  Maybe<int> mz;
+  Maybe<int> m4 = just(4);
+  Maybe<int> m0 = just(0);
+
+  // Using Maybe to detect a divide by zero.
+  Maybe<int> mdiv(Maybe<int> const &mx, Maybe<int> const &my)
+  {
+    if (mx.is_nothing() ) return mx;
+    else if (my.is_nothing() ) return my;
+    else if (my.value() == 0) return NOTHING;
+    else return just(mx.value() / my.value() );
+  }
+
+  mdiv(m4,m4); // 1
+  mdiv(m4,m0); // NOTHING
+
+This can be used to capture a failed state in a similar way to an exception. At the moment there is only one type of exception, but this could be extended. This is the simplest use, it can be extended to work with Monads.
+
+--------
+
+I'm pretty certain that the ability to return a dedicated error-value is insufficient for acting as an exception, much less a resumable one. At best it allows the caller to eventually peek at the result and throw an unResumableException. A ResumableException in the case you describe should allow an exception handler (defined lower in the call stack) to decide policy on what to do after a divide-by-zero event, potentially including the ability to resume the computation with '0' or 'x'.  I know that Haskell has implemented ExceptionHandling with monads, likely even ResumableException''''''s, but it probably involved passing around some big continuations made efficient only by TailCallOptimization and structure-sharing.
+
+''O.K. I am missing the point, it needs to go back into the routine with a revised action plan. I am familiar with the internals of FC++ and see if anything can be done along the lines of our previous discussions. I am concerned to establish possibilities, rather than worried about efficiency of implementation.'' -- JohnFletcher
+
+Perhaps you might better understand the problem if you had a less trivial example. I'll provide one: You are iterating through a large structure, and for each item in that structure you are executing a procedure that is performing some sort of complicated IO task that might fail due to timing issues. On failure, you throw an exception that doesn't really know such details as how far along the programmer was in iterating through the list. We want to make this exception "resumable" by allowing the exception handler to, among other things, choose to "abort" the effort (exiting the iteration loop and continuing on), "retry" that entry (i.e. restart just that entry), or "ignore" and just move on to the next entry. The exception handler will then raise a dialog box for the user of the program, indicating the options to abort, retry, or ignore, and taking an input. Upon selection, the appropriate resumption path is chosen.
+
+The basic algorithm:  
+   for(Structure::iterator it = myBigStructure.begin(); myBigStructure.end() != it; ++it)
+     applyFunctor(*it); // might throw exception. Does not know iterator.
+
+Modified for resumption:
+    bool bAbort = false;
+    reset(std::abort&) { bAbort=true; }
+    try {
+      if(!bAbort) {
+        for(Structure::iterator it = myBigStructure.begin(); myBigStructure.end() != it; ++it) {
+           reset(std::retry&) { /* NOP; just continue into 'try' */}
+           reset(std::ignore&) { continue; }
+           try {
+             applyFunctor(*it); // might throw exception. Does not know iterator.
+           }
+        }
+      }
+    }
+
+
+Some critical points are that the exception handler ''does not know how'' to go back into the routine and get it running again (it doesn't know, for example, how many entries had the functor successfully applied), and that the exception handler ''does not NEED to know how'' to go back into the routine and get it running again. The exception handler chooses what to do (e.g. 'resume std::retry()'), but does not "revise an action plan" on how to do it. In this particular case, one could wrap an exception handler directly around 'applyFunctor' in the basic algorithm, but doing so would mean that this algorithm would not be reusable: one would need to rewrite the loop for each unique exception handler... for each specific "action plan".
+
+If this isn't up your alley, then I apologize for bringing your attention to it.
+
+''There is no need to apologize for stimulating me to think of new ways of doing things. I will have a look and see if there is any way to do the above example with the technology available to me here.'' -- JohnFletcher
+----
+CategoryCpp CategoryFunctionalProgramming

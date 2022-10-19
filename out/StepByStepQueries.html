@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Step By Step Queries
+      </h1>
+      <p>
+        I am reading the book <a href="SqlAndRelationalTheory.html">SqlAndRelationalTheory</a>, and I found the section with the title “Formulating Expressions a Step at a Time” particularly interesting:
+      </p>
+      <p>
+        First, they book shows you this the query for the sentence "Get pairs of supplier numbers such that the suppliers concerned are colocated (i.e., are in the same city)" written in Tutorial D:
+      </p>
+      <code>
+        ( ( ( S RENAME ( SNO AS SA ) ) { SA , CITY } JOIN<br/>
+        ( S RENAME ( SNO AS SB ) ) { SB , CITY } )<br/>
+        WHERE SA < SB ) { SA , SB }<br/>
+      </code>
+      <p>
+        And then it proceeds to show you how to write this query in a more readable (step by step) way:
+      </p>
+      <code>
+        WITH ( S RENAME ( SNO AS SA ) ) { SA , CITY } AS R1 ,<br/>
+        ( S RENAME ( SNO AS SB ) ) { SB , CITY } AS R2 ,<br/>
+        R1 JOIN R2 AS R3 ,<br/>
+        R3 WHERE SA < SB AS R4 :<br/>
+        R4 { SA, SB }<br/>
+      </code>
+      <p>
+        Finally, it shows you how to write this query in SQL:
+      </p>
+      <code>
+        WITH T1 AS ( SELECT SNO AS SA , CITY<br/>
+        FROM   S ) ,<br/>
+        T2 AS ( SELECT SNO AS SB , CITY<br/>
+        FROM   S ) ,<br/>
+        T3 AS ( SELECT *<br/>
+        FROM   T1 NATURAL JOIN T2 ) ,<br/>
+        T4 AS ( SELECT *<br/>
+        FROM   T3<br/>
+        WHERE  SA < SB )<br/>
+        SELECT SA , SB<br/>
+        FROM   T4<br/>
+      </code>
+      <p>
+        Thanks to the “with” keyword, both in SQL and in Tutorial D, it is possible to deal with this query in a “step by step” way, instead of having to deal with it a single hard to write and hard to read expression(note that this is not a recursive query, so the with  keyword is not being used for that in this examples) Sadly, so far I have been unable to find a equivalent for this syntax in Dataphor… While it is possible to write something like (I am not 100% confident the syntax is right, but I think it should give you the general idea):
+      </p>
+      <code>
+        var R1 := S {SNO SA, CITY}<br/>
+        var R2 := S {SNO SB, CITY}<br/>
+        var R3 := R2 JOIN R3 <br/>
+        var R4 := R3 WHERE SA < SB <br/>
+        select R4 {SA, SB}<br/>
+      </code>
+      <p>
+        In <a href="AlphoraDataphor.html">AlphoraDataphor</a>, the variables (R1, R2, etc) are not lazily evaluated, and therefore the performance is not as good, as in, for example, the SQL case (I ran a similar example in <a href="SqlServer.html">SqlServer</a>, and the expressions were evaluated lazily, at the end, instead of one by one, resulting in far better performance). I wonder if in <a href="RelProject.html">RelProject</a> the expressions are evaluated lazily (if they are  (or not) will become very important when (if? ;-)) Rel finally gets support for external datasources: The more Rel waits before sending a query to the external data source, the more specific it will be, and therefore, it will use less bandwidth, and run faster.
+      </p>
+      <p>
+        This kind of "lazy evaluation" reminds me of functional language (AFAIK Haskell evaluates everything lazily). Does that mean that the best match for a relational database language is a functional language?
+      </p>
+      <p>
+        <em>The </em><a href="RelProject.html">RelProject</a> uses <a href="LazyEvaluation.html">LazyEvaluation</a> and pipelining for all relational expressions. Rel's internal architecture is quite influenced by functional programming, and in addition to the <a href="LazyEvaluation.html">LazyEvaluation</a> already mentioned, internally makes extensive use of functions, higher-order functions, fold and map.  Its use of assignment and allowance of side-effects makes it impure, of course. Almost every internal processing mechanism employed to process a query is defined at run-time as functions.  The WITH construct mentioned above, for example, is currently implemented via nested function definitions. However, WITH will be re-implemented at some point to not use nested function definitions, because the nested-function approach precludes (or at least complicates) certain desirable optimisations.  To facilitate query optimisation, the WITH construct's steps should be internally expanded into a single expression.<em></em>
+      </p>
+      <p>
+        And how about the ability to use operations to wrap queries? In <a href="AlphoraDataphor.html">AlphoraDataphor</a> I can write:
+      </p>
+      <code>
+        create operator GetR4(ACityName:String):table<br/>
+        begin<br/>
+        var R1 := S {SNO SA, CITY} where CITY = ACityName<br/>
+        var R2 := S {SNO SB, CITY} where CITY = ACityName<br/>
+        var R3 := R2 JOIN R3 <br/>
+        var R4 := R3 WHERE SA < SB <br/>
+        result:= R4 {SA, SB}<br/>
+        end;<br/>
+      </code>
+      <p>
+        and then:
+      </p>
+      <code>
+        select GetR4('Tokyo');<br/>
+      </code>
+      <p>
+        In SQLServer, I can do something very similar using UserDefinedFunctions  (the advantage of operators and UDF over views is that I can pass parameters to change the conditions of the query), but again, performance (and lazy evaluation) is the key difference, SQLServer evaluates lazyly, and therefore turns out to be much faster than Dataphor... what is the  Rel approach to deal with this kind situation? (the <a href="AlphoraDataphor.html">AlphoraDataphor</a> authors tell me that it will be easier for them to create parametrized views than to make operators work in lazy evaluation mode)
+      </p>
+      <p>
+        <em>In Rel, the above (with some mistakes corrected) is this:</em>
+      </p>
+      <code>
+        OPERATOR GetR4(ACityName CHAR) RETURNS RELATION {SNO SA, SNO SB};<br/>
+        RETURN WITH S {SNO SA, CITY} WHERE CITY = ACityName AS R1,<br/>
+        S {SNO SB, CITY} WHERE CITY = ACityName AS R2,<br/>
+        R1 JOIN R2 AS R3,<br/>
+        R3 WHERE SA < SB AS R4:<br/>
+        R4 {SA, SB};<br/>
+        END OPERATOR;<br/>
+      </code>
+      <p>
+        <em>Invoke the above as:</em>
+      </p>
+      <code>
+        GetR4('Tokyo')<br/>
+      </code>
+      <p>
+        <em>It evaluates lazily.  No evaluation occurs until the caller of GetR4 starts requesting tuples.  The results are pipelined so there are no temporary tables and only as many tuples are retrieved as are requested by GetR4's caller.</em>
+      </p>
+      <p>
+        <em>By the way, the use of capitalised keywords is a convention, not a requirement.</em>
+      </p>
+      <hr/>
+      <p>
+        <a href="RelationalDatabase.html">RelationalDatabase</a>, <a href="RelationalLanguage.html">RelationalLanguage</a>, <a href="CategoryRelationalDatabase.html">CategoryRelationalDatabase</a>, <a href="TqlRoadmap.html">TqlRoadmap</a>, <a href="TutorialDee.html">TutorialDee</a>
+      </p>
+    </div>
+  </body>
+</html>

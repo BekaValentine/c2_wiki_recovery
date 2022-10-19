@@ -1,0 +1,222 @@
+The idea here is that in many, many cases you always want to use a finally clause to perform cleanup whether or not the try block succeeded or failed. My favorite example of this involves JDBC. One of the things you're always going to want to do is to close any JDBC Connection and Statement objects when you're finished with them. Not closing them is a sure way to resource leaks.
+
+So, my code generally always looks like the following:
+
+ Statement sqlStatement = null;
+ Connection jdbcConn = null;
+
+ try {
+
+     // obtain the jdbcConnection and your Statement and do stuff.
+
+ } catch (SQLException e) {
+            // Handle the exception
+ } finally {
+ 		try {
+ 			if (sqlStatement != null) sqlStatement.close();
+ 			if (jdbcConn != null) jdbcConn.close();
+ 		} catch (SQLException e1) {
+ 			System.out.println("Exception caught -- failure to close connection");
+ 		}
+ }
+----
+Or even better:
+	Something x = null;
+	Something y = null;
+	// etc.
+	try
+	{
+		x = new Something();
+		y = new Something();
+		// etc.
+	}
+	finally
+	{
+		if (x != null)
+		{
+			try
+			{
+				x.close();
+				x = null;
+			}
+			catch (Exception e)
+			{
+			}
+		}
+
+		if (y != null)
+		{
+			try
+			{
+				y.close();
+				y = null;
+			}
+			catch (Exception e)
+			{
+			}
+		}
+		// etc.
+	}
+This way if one close fails, the following ones still get a chance to run.
+
+''Good heavens. That looks huge even taking your indentation style into account.''
+
+Huge, but necessary.
+
+----
+In Java, I tend to use this pattern:
+
+  // ...
+  ResourceA a = ResourceA.acquireInstance();
+  try {
+    // ...
+    ResourceB b = ResourceB.acquireInstance();
+    try {
+      // ...
+    } finally {
+      b.release();
+    }
+  } finally {
+    a.release();
+  }
+  // ...
+No need to check for null in the finally. No trys in the finallys. (If an exception gets thrown in the acquire or release they get propagated up to the code that needs to know.)
+
+Typically, I don't ''actually'' have more than one try/finally in a single method. e.g. The inner part dealing with ResourceB would be wrapped in another method. But that's usually a nature organization of the code rather than something I do to prevent multiple trys in one method. I prefer multiple finallys in one method to trying to put multiple releases in a single finally.
+
+Also, note the lack of catches. My catches tend to be as high up the call stack as I can push them. (Unless I'm wrapping/replacing a low-level exception with a more abstract, higher-level one.)
+
+-- RobertFisher
+
+''The trys in the finallys are there for one reason: if the outermost try (with "etc" in it) throws an exception and then x.close() throws an exception, that second exception will mask the original exception unless it is surrounded with a try/catch. I am assuming the original exception is important enough for us to want to see it.''
+
+-- ChrisMosher
+
+----
+'''Q:''' How does...
+
+ try { doSomething(); }
+ catch ( Something''''''Exception se ) { recover(); }
+ finally { cleanup(); }
+differ in operation from
+
+ try { doSomething(); }
+ catch ( Something''''''Exception se ) { recover(); }
+ cleanup();
+? -- KarlKnechtel
+
+'''A:''' In these ways:
+
+* If doSomething() throws a Throwable other than Something''''''Exception, then cleanup() won't be called.
+* If recover() throws something, cleanup() won't be called.
+
+(Also keep in mind that javac won't bug you about catching or declaring that you throw exceptions extending Runtime''''''Exception.)
+
+The other nice thing about finally is that it keeps you covered from early returns as well. e.g:
+
+ try { return doSomething(); }
+ catch ( Something''''''Exception se ) { return null; }
+ finally { cleanup(); }
+'''Q:''' Doesn't the JDBC connection class have a finalize() method?
+
+'''A:''' It might depending on the JDBC driver implementation which will vary. the JDBC API states that you should close connections when you're through with them. Beyond that, you're really taking chances.
+
+If the Connection, Statement, & Result''''''Set object of the driver aren't final, you could subclass them & add finalize() methods to close them. It's generally bad form to write code that is so closely tied to a specific JDBC driver, though.
+
+Also, you generally want to free up (non-memory) resources when you're done with them rather than waiting until the GC runs. Especially since there are usually limits on resources like sockets, open files, &c.
+
+'''Q:''' The approach shown above involves acquiring a connection within each site that connect to the database. Unless they're obtained via a connection pool, the performance costs can be ghastly, and either way, you need to replicate the logic for acquiring connections (url, user name, password, etc) into every calling site. Doesn't this violate OnceAndOnlyOnce?
+
+'''A:''' Yes, you are acquiring a connection within each site that connects to the database. However, JDBC 2.0 Connection pooling now makes that a fairly trivial task from a runtime overhead perspective. And it doesn't necessarily violate OnceAndOnlyOnce if you call a utility method (in this class or another) that obtains the connection. You're inferring an implementation from too few details :)  In fact, my programs very nearly always obtain a JDBC 2.0 Data''''''Source object and then cache it. Obtaining the connection from the Data''''''Source doesn't even really require a userid and password, although you can optionally pass those in.
+
+At that point, you've come about as far as you can in Java. If you had Lispy macros or C++ish automatic (aka stack) objects with dtors then you could ReFactor further.
+----
+Rather than depending on application writers to do all this correctly, I took a different approach in the http://virtualschool.edu/wap [BrokenLink - perhaps http://virtualschool.edu/jwaa now?] infrastructure. Applications receive a Ctx (context) object from the infrastructure that provides access to the application's run-time context. The Ctx object is responsible for obtaining and releasing connections as instructed by the infrastructure. The applicatication is only responsible for closing any statements it creates via ctx.createStatement() or ctx.prepareStatement(sql) and has no responsibility for connections or connection pooling. That's the infrastructure's responsibility. -- BradCox
+
+''That's an interesting design Brad. So what you've done is (in effect) wrapped the JDBC subsystem in a Facade you're calling a Context. That's good because the Context can handle the resource issues you've described. However, I've got a bone to pick with your assessment of the above design.'' -- anonymous
+
+With most connection pool implementations, you still need to return the connection to the pool. Thus, the finally block to do so is even more important without a finalize to back it up. It seems like this may not be the case in Brad's implementation, but the application still needs to use finally to ensure closure of the Statement & the Result''''''Set objects. -- RobertFisher
+----
+I love the ResourceReleasesResource design. I implemented it extensively as an explicit resource/resource manager pair in a framework at my last employer. All resources could be declaratively specified in a configuration file. The upside is that the application developer (the programmer using the framework) did not have to worry about getting the cleanup semantics right, or even know what the right way was for JDBC. The downside is that there were too many programmers that didn't get the inversion of control at all. They were experienced but very unsophisticated, and expected to declare, acquire and release resource procedurally within their own scope of control. -- StevenNewton
+----
+'''Q:''' And CeePlusPlus doesn't have finally. What to do?
+
+'''A:''' Use ResourceAcquisitionIsInitialization.
+
+'''Note well:''' Putting clean up code outside the catch in C++ is ''not'' sufficient. You really need clean up to be done in a dtor.
+
+  bool bad_cpp_example()
+  {
+    resource_t resource = acquire();
+    try {
+      bool ok = use1(resource);
+      if(!ok) return false;
+      use2(resource);
+    } catch(foo_exception& foo) {
+      return false;
+    } catch(bar_exception& bar) {
+      report(bar);
+    } catch(baz_exception& baz) {
+      throw;
+    } catch(...) {
+      report_unexpected_exception();
+    }
+    release(resource);
+    return true;
+  }
+The release call won't be called if:
+* use1() returns false.
+* use1() or use2() throws a foo_exception or a baz_exception.
+* report() or report_unexpected_exception() throws an exception.
+
+An easy solution is to create a sentinel class whose dtor does the cleanup:
+
+  class sentinel {
+    resource_t& r;
+  public:
+    sentinel(resource_t& resource): r(resource) {}
+    ~sentinel() { release(r); }
+  }
+
+  bool better_cpp_example()
+  {
+    resource_t resource = acquire();
+    sentinel s(resource);
+    try {
+      bool ok = use1(resource);
+      if(!ok) return false;
+      use2(resource);
+    } catch(foo_exception& foo) {
+      return false;
+    } catch(bar_exception& bar) {
+      report(bar);
+    } catch(baz_exception& baz) {
+      throw;
+    } catch(...) {
+      report_unexpected_exception();
+    }
+    return true;
+  }
+The code is now exception & early return safe.
+
+Best would be to wrap the resource completely in a class with release() called in the dtor rather than having a separate sentinel class.
+
+'''Note well:''' This kind of thing is needed to keep your C++ code exception safe even if there wasn't a try or catch in the example function!
+
+'''FWIW:''' It wouldn't hurt C++ to have finally. Those who want to use ResourceAcquisitionIsInitialization everywhere all the time still could & the rest of us would be able to choose the best option in each case.
+
+''Arguably, this page is about Java & I've said too much about C++ here. I could've just said, "See ResourceAcquisitionIsInitialization & the answer to Karl's question above." I thought it was worth going through, though.''
+
+-- Robert Fisher
+----
+
+In C#, one can use a UsingBlock, which is CsharpLanguage's impersonation of ResourceAcquisitionIsInitialization. That is
+
+ using (MyManagedClass mnObj = new MyManagedClass())
+ {
+   …
+   mnObj.Use();      //use the mnObj object
+   …
+ }        //The compiler will dispose the mnObj object now
+----
+I've tried to do some clean up of this page. Hope I didn't do anything wrong. -- RobertFisher

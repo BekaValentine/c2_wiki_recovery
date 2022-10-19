@@ -1,0 +1,151 @@
+Most TestFrameworks use TestAssertions.
+E.g.
+  CPPUNIT_ASSERT( m_1_2 == m_1_2 );
+  TEST_ASSERT( Complex(1,2) == Complex(1,2) );
+  test_assert( m_1_2 == m_1_2 );
+or even the standard
+  assert( m_1_2 == m_1_2 );
+
+It is probably best NOT to use the standard assert().
+	* by default it aborts the entire program. This means that subsequent tests do not run. Also, coredumping, if you have a lot of test failures, may take a LOOONNNNGG time, and in at least one case has led to developers giving up on test suites.
+	* the C/C++ standards say that it is illegal to redefine abort() to take less drastic action. It's common, yes, but not necessarily portable.
+
+Better to define your own assert-like macro, 
+and allow it to be #defin'd to standard assert() if you wish.
+
+I prefer a generic name like TEST_ASSERT,
+rather than a specific name like CPPUNIT_ASSERT,
+since my tests usually are for libraries that may have
+to coexist with several different test suites.
+
+'''Printing the Assert Condition and Coordinates'''
+
+One nearly always wants to print a message like
+
+	file.cc line 25: in function test_complex_numbers: assertion "Complex(1,2) == Complex(1,2)" failed
+
+The standard C/C++ __FILE__ and __LINE__ give you the filename and linenumber,
+allowing your IDE or GNU EMACS to jump to the failure.
+
+Unfortunately C/C++ do not have a standard way of obtaining the function name,
+although GNU C/C++ has __FUNCTION__ and __PRETTY_FUNCTION__,
+and many other compilers have __func__.
+Note that the fully adorned name may be desirable,
+since simply printing "test" rather than "TestComplexAdd.test()" 
+is disappointing.
+
+The final part is typically the text of the assertion condition.
+In C/C++ this is typically obtained by a macro like
+(omitting the other coordinates for simplicity):
+
+	#define TEST_ASSERT(cond)	{ 	if( !(cond) ) { 	printf("%s failed\n",##cond); 
+	} 	} // end macro TEST_ASSERT
+
+As a result, it is therefore traditional for
+asserts to be a macro.
+
+Unfortunately, this often produces macro wars,
+as the exact definition of the macro,
+whether it attempts to plug into a different
+test object, is up to question.
+
+
+
+'''TestAssert variants'''
+ 
+Simply printing the assert condition is not always the 
+most effective message.  For example
+	retval_t ret = BigFunctionWithComplexReturn();
+	TEST_ASSERT( ret.code == 1 );
+	TEST_ASSERT( ret.vale = "1234" );
+
+Therefore, several variants of assert are somewhat common:
+	TEST_ASSERT_MSG( ret.code = 1, ("BigFunctionWithComplexReturn returned %d, expected 1\n",ret.code))
+The reader may recognize the common C/C++ idiom of a parameterized argument
+for the printf-like string.
+
+Other variants include
+	TEST_ASSERT_EQUALS( foo(), 1 )
+producing a message like
+	TEST_ASSERT_EQUALS failed: foo() == 55, expected 1
+
+and variants for common things, like
+	TEST_ASSERT_RANGE( fp_number, 1.5,.16)
+
+Although producing pleasant error messages, such variants 
+quickly proliferate, and are not ubiquitous.
+They may hinder peaceful coexistence of your tests with a different test suite.
+
+
+
+'''Connecting TestAssert to the TestingFramework'''
+
+The test framework probably wants to do special things
+with the test assertions, including
+	* changing output format
+	* redirecting output
+	* counting number of assertions run/passed/failed
+and so on.
+
+Redefining the TEST_ASSERT macro works,
+but note that you only get to do this once
+per compilation of the object files(s)
+that contain the TEST_ASSERTs.
+
+Therefore, you must arrange so that the definition
+of TEST_ASSERT does what you want.
+E.g. hardwiring output to cout rather than cerr is bad,
+if you may later want to have some tests that
+are expected to fail and whose output needs to be redirected
+to /dev/null.
+
+Therefore, typically TEST_ASSERT is #defined to call 
+	#define TEST_ASSERT(cond) {(if(!(cond)) ) tester.test_assert(__FILE__,__LINE__,##cond); }}
+
+''Coords''
+
+As you can see, the tester.test_assert() method must expect all of the
+arguments that are used to create meaningful coordinates.
+These may be factored out into another macro
+	#ifdef GNU_C
+	#  define FILE_COORDS file_coords(__FILE__,__LINE,__FUNCTION__)
+	#else
+	#  define FILE_COORDS file_coords(__FILE__,__LINE,"function name not available")
+	#endif
+
+	#define TEST_ASSERT(cond) {(if(!(cond)) ) tester.test_assert(FILE_COORDS,##cond); }}
+
+but this begins the slippery slope of depending on more and more stuff.
+
+''Global tester''
+
+When TEST_ASSERT is defined to call a test object
+	#define TEST_ASSERT(cond) {(if(!(cond)) ) tester.test_assert(##cond); }}
+the object is, unfortunately, usually a global.
+
+Some test suites pass a tester object around, but that
+is framework specific.
+Better code, but harder to live with
+in a heterogeneous environment.
+
+So, fall back to making the global a delegator, overriding, when redirection is necessary.
+Care must be taken to restore the old delegate after an exception
+- the usual C++ idiom for resource allocation applies.
+
+The global tester object needs to have a unique and well known name.
+Also, there may arise initialization ordering issues.
+Therefore, using the C++ singleton function idiom is desirable.
+
+	class test_c {
+	static tester_c& delegate;
+	public:
+	virtual void set_delegate( tester_c& arg_delegate ) ... 
+	virtual void print( ... ) ...
+	};
+
+	tester_c global_tester_singleton() {
+	static tester_c tester;
+	return tester;
+	}
+----
+CategoryAssertions

@@ -1,0 +1,421 @@
+I've been trying to balance CostOfChange in C++ for XP.  How do you
+DoTheSimplestThingThatCouldPossiblyWork and still end up with with a nimble system?  You can make incremental changes to speed up compilation, but code in various stages of optimization is confusing.
+
+Is there an easier way?
+
+I've been playing with the idea of two forms for XP C++ classes.  I call them the "packed form" and the "unpacked form."  Bear in mind that this idea hasn't been tested on any scale, but I am writing it up to start a dialog.  I do think that if C++'s bag of tricks is reduced, we can have more flexible development with minimal fuss.
+
+''So..''
+
+Suppose I have to write a class.  I write it in the header file and I play with it and its collaborators in the initial episode of development.  Here is a tiny one:
+
+	...
+
+	// begin -- Test_Result.h
+
+	#ifndef TEST_RESULT_H
+	#define TEST_RESULT_H
+
+	#include <vector>
+	#include "Test_Failure.h"
+
+	// Using underscored identifiers to avoid creating Wiki links. 
+	// I wish I could make it clearer. (argh!)
+	// [Try using SixSingleQuotes (Six''''''Single''''''Quotes)]
+
+	class Test_Result
+	{
+	private:
+		std::vector<Test_Failure> m_errors;
+		std::vector<Test_Failure> m_failures;
+	public:
+			Test_Result () {}
+			~Test_Result () {}
+		void	addError (Test_Failure& error)
+			{ m_errors.push_back (error); }
+		void	addFailure (Test_Failure& failure)
+			{ m_failures.push_back (failure); }
+	...
+	};
+
+	#endif
+
+	// end -- Test_Result.h
+
+I test, I refactor, I move things around, I get happy.  Afterwards, I move the class into "packed form."  To do this, I:
+	* Copy the whole class into a .cpp file
+	* Make a pure interface class named Test_Result in the .h file
+	* Add Test_Result_Impl as the implementation of Test_Result in the .cpp file
+	* Change as many #includes in the header to forward declarations as I can putting the original #includes into the .cpp file as I go.
+	* Add a teeny little factory class to the .h and .cpp
+
+The code ends up looking like this:
+	
+
+Header:
+
+	#ifndef TEST_RESULT_H
+	#define TEST_RESULT_H
+
+	class Test_Failure;
+
+	class Test_Result
+	{
+	public:
+			Test_Result ();
+		virtual  ~Test_Result () = 0;
+		virtual void	addError (Test_Failure& error) = 0;		
+		virtual void	addFailure (Test_Failure& failure) = 0;
+		...
+	};
+
+
+	class Test_Result_Factory
+	{
+	public:
+		static Test_Result *create ();
+	};
+
+	#endif
+
+
+
+
+Source:
+
+	#include "Test_Result.h"
+
+	#include <vector>
+	#include "Test_Failure.h"
+
+	class Test_Result_Impl : public Test_Result
+	{
+	private:
+		std::vector<Test_Failure> m_errors;
+		std::vector<Test_Failure> m_failures;
+	public:
+			Test_Result_Impl () {}
+			~Test_Result_Impl () {}
+
+	void		addError (Test_Failure& error)
+			{ m_errors.push_back (error); }
+
+	void		addFailure (Test_Failure& failure)
+			{ m_failures.push_back (failure); }
+		...
+	};
+
+
+	Test_Result *Test_Result_Factory::create ()
+	{ return new Test_Result_Impl; }
+
+	// end
+
+There are a few cool things to notice here:
+	* Refactoring the packed form is not much tougher than refactoring the unpacked form.
+	* The header could not possibly be skinnier.
+	* Moving between unpacked and packed form is pretty easy.
+	* Developers only have to remember the two forms.
+	* I didn't show reference counting smart pointers, but I should have. 
+	* Also, the packed form has as resilent an interface as you'd want in XP.  You can do all of the following without triggering massive recompilation:
+		* Substitute in alternate classes. 
+		* Add private methods to the implementation class.
+		* Change the implementation of any interface method.  They are all non-inline virtual.
+		* Easily change your mind about whether methods modify your object's data.
+
+Some not so noticable things about the example:
+	* Includes in .cpp files are like import statements in Java.  They include exactly and precisely the interfaces you need.
+	* Implementation inheritance can be handled in a nice way also, but that is another story.
+	
+And, the big one:
+
+''In C++, you usually have to write a signature twice.  Once in the .h and once in the .cpp.  This is true for all methods except inlines, but we know that inlines have a heavy CostOfChange. In this scheme, we do the signature exactly twice also.  Once in the .h and once in the .cpp. It is no worse than what we currently do, it just takes discipline.''
+
+You end up with code that is both simple and clear.  The simplicity here comes from the idea that a class is either in packed form or unpacked form; no in-betweens.  This makes the design more cogent and recognizable. Packed form may look ugly, but I think that it is less ugly than code in various states of undress for compile-time optimization.
+
+You can hold off on going to packed form.  TestFailure in the example above is in unpacked form.  If you hold off too long for a class with many dependents, it will be painful.  However, if most of your project is in the packed form, change should be quick.
+
+You can have classes in about 20 different forms to optimize compilation as you need to, or you can just go to packed form.  If you have to change the header anyway, why not?  It is just a code formatting convention.  It isn't tough, and it squeezes the juice from COM without being as severe.  Think about how much you can do with an interface that has been defined in packed form.
+
+Is this the simplest thing that could possibly work?  I think it is if you take into account the fact that XP hinges on low CostOfChange.  If you don't have low CostOfChange, you don't have much. 
+
+-- MichaelFeathers
+
+''I hate to say this, Mike, but ... I like it!'' --PeterMerel
+
+----
+	* There's no implemenation inheritance story (is there?)
+
+''Also unpack mixins. If I understand Mike here, packing is what you do when you can afford it.''
+
+	* Inlined or non-virtual methods are not available
+
+''So unpack classes whose performance causes bottlenecks.''
+
+	* All the memory ends up getting allocated on the heap instead of the stack
+
+''So either unpack ValueObject(s) or use smart pointers to ref-count 'em.''
+
+	* Each compilation unit (.o or .obj) gets a copy of any unpacked classes that it references. That will make compilation and link times slow, my executable will be huge, and as a result my program will be slow.
+----
+
+'''It won't work because...'''
+	* It goes from one extreme to the other. Maybe I ''want'' my code to be in a form that's partially insulated and partially exposed.
+	* The cost of refactoring the clients is very high.
+		* Clients that use instances through a pointer or reference are fine.
+		* Clients that create instances on the heap must be edited to use the factory. There must be one factory method for each constructor so the factory will get complex.
+		* Clients that create instances on the stack have to get a new story for memory management because the class can now only be created on the stack. Smart pointers can help here.
+		* Clients that create instances as members '''really''' have to get a new story because they now have to allocate and deallocate the instance as well as changing all the direct accesses in the source code to indirect accesses through the new pointer. Using reference members might help (I haven't tried this):
+	 class MyClass
+	 {
+		Thingie &thingieMember;
+		MyClass():thingieMember(*factory::createThingie()){}
+		~MyClass(){delete &thingieMember;}
+	 };
+
+----
+'''It won't help because...'''
+	* The difference between this and the "normal" form is that it hides the data elements. That isn't a very big improvement as far as compile dependencies go since the data tends to change more slowly than method implementations.
+	* I can't afford to use it in the places I most need it -- at the very lowest levels of my program where dependencies are most expensive but efficiency is most critical.
+
+''So ... why can't you use it at those levels?''
+
+I can't pack things because I need efficiency and I can't unpack because I need freedom from dependencies. -- pg
+
+----
+'''It will back me into a corner because...'''
+	* The factory is in the same header as the abstract base class -- you always get it whether you want it or not.
+
+''No big deal, surely?''
+No -- but it's annoying nonetheless.
+
+	* You've traded compiler performance for runtime performance. You're doing tons of memory allocation and deallocation and even the simplest of operations goes through a virtual function call.
+
+''Make it run, make it run well, make it run fast, in that order. Unpack the bottlenecks when you get to the make it run fast bit. If you do this, you'll run every bit as fast as a fully unpacked version.'' --PeterMerel
+
+''Sure, as long as you still have the option to optimize when you're done. -- pg''
+----
+
+'''It's still pretty cool because...'''
+	* The abstract base class plus factory makes it easy to define a NullObjectForEveryClass. Imagine a program with no NULL pointers -- and no checks for NULL pointers. I got this idea last night from a Smalltalker.
+	* I can still write all my methods inline, Java style. I don't have to write each and every method signature a third time just to have an abstract base class.
+	* The price -- performance -- isn't as hard to pay as most people think it is.
+
+''Outstanding! Sure there are tradeoffs, but when the biggest objection is a swag at performance, you're on the right track!  --rj''
+
+	* The factory method opens the door to pool allocation and other memory management techniques that could make the memory allocation arguments moot.
+-----
+Aren't your Thing_If and Thing classes reversed?  You wouldn't want your client to write code filled with _If all over the place - that's a DesignBurp.  That suggests to me that your two classes should be Thing as the base class and Thing_Impl as the derived class.  -- AlistairCockburn
+
+-- the _If burps have been removed from example above.
+
+That makes perfect sense.  I haven't thought it through yet, but I suspect that that you'd just have to prevent assignment in the interface class so that people don't think that they are value-copying when they aren't. -- MichaelFeathers
+
+
+-----
+
+More than anything else, I need to try this.  Right now, it is just talk in the wind.
+
+About the other comments, I'll just preface my response with my position.
+
+C++ is a complex language.  You do not have to use everything.  You can write damned good software without using everything.  Compilation costs hurt.  I've worked on systems where changes are simply too painful to make.  You typically don't see the pain until you consider a change.  I don't like those regrets. I've also been at the client-end of OtherPeoplesFrameworks and had to perform horrible hacks because certain functions were not virtual.  It doesn't have to be that way.  The packed form is there to maximize flexibility at the expense of cool features and the implicit overcommitment of strongly typed languages.
+	* I don't believe it when people say that ConstCorrectness is necessary.  There are too many counter-examples and I do know that it reduces flexibility. 
+	* I may be a complete bastard, but I would even sacrifice using STL in header files if helped keep the system nimble and made ConstCorrectness moot. ''[No reason to sacrifice ConstCorrectness or StlStyle to do this. Keep the form simple, Mike - you might not use those things, but lots of us do. If you don't conflate the two, then we can all get along more easily. --PM]''
+	* When multiple inheritance is the simplest thing that could possibly work, I'd use it.
+	* Inline functions are fine for optimization, but I'd hold off as long as possible.
+	
+And that sums it up.  I'd start with a disciplined coding style like this until changes prove themselves necessary.  This is a starting point, not an ending position. I'd also know that I am keeping the cost low enough that changes will be easier than if I hadn't adopted the style.
+
+-- MichaelFeathers
+
+''Another advantage in this: you can actually make the foo_impl class a struct so that the associated test cases can be totally invasive without breaking I/F encapsulation''
+
+Can't you just make test cases friends of the class, and not worry about private vs. public?
+
+''The abstract base class enforces public/private better than even the compiler can. There's no reason that the implementation class can't be completely public. The test cases could live in the same file and get compiled out conditionally. Alternatively the test case could #include the source file. Both are a little messy, but I can't think of why they wouldn't work. -- PhilGoodwin''
+
+Cool, Phil.  I was thinking of something like that too.  You either compile your sources or compile your tests (which include your sources).  -- mf
+
+----
+
+As far as const correctness goes -- if you can't eliminate const from your code entirely you're better off using it properly. Literally every time I've given short shrift to const correctness I've been burnt by it. The reverse is also true -- when I use const correctly it never seems to cost me anything. But all of that is really tangental to the idiom that you are proposing.
+
+You could stick the factory method in the interface class. Of course you'd always inherit it which might be weird. That little factory bugs me but I don't quite know why. Maybe I'll just get over it. -- mf
+
+''I know what you mean, but I think that it is worth it.  I'm seaching for the words. - mf''
+
+Maybe it should get refactored into a different file as soon as there is more than one implementation.
+
+I prefer "insulated" and "uninsulated" to "packed" and "unpacked" (I don't know which way is "packed"). -- PhilGoodwin
+
+''I agree that packed is confusing, but I wonder whether either packed or  insulated send the right message.  It'd be great if the packed (or insulated) form had a very open name that indicates that it is open to more efficient change, but words escape me. Maybe just open and closed?  It would be very counter-intuitive to call the packed form "open form" but it could really be a tool for highlighting the issue. Wow.  Imagine calling this stylised form "open form" that would mess with people's minds. -- mf''
+
+A good thing only if the goal is to mess with peoples minds. -- pg
+
+-----
+
+I believe I have a way to remove the factory from the .h and also to get rid of the bogus virtuals and accessibility specs. Voila:
+
+In foo.h:
+
+ template <int> struct FooIF
+ {
+	// public members of Foo
+ };
+ typedef FooIF<0> Foo;
+
+Then in foo.cpp
+
+ #include <foo.h>
+
+ struct FooIF<0> // an overloaded template, though it works like any old class
+ {
+	// Class-inline implementation of Foo - note that this class
+	// can have new members and otherwise extend the public interface
+	// however you wish.
+ };
+
+And the user would simply say
+
+ #include <foo.h>
+ Foo * myFoo = new Foo(...); // You can have multiple c'tors ...
+
+This is StlStyle(ish). And no vtable. Heh. --PeterMerel
+
+
+''This doesn't seem to work, unfortunately. See ExtremeCppFormExample for examples and discussion -- PhilGoodwin''
+
+-----
+
+Here's a version that uses HerbSutter's PimplIdiom. It has some uglyness but it also has some advantages:
+
+
+Header:
+	#ifndef TEST_RESULT_H
+	#define TEST_RESULT_H
+
+	class Test_Failure;
+	
+	class Test_Result
+	{
+		class Impl;
+	private:
+		Test_Result::Impl *pImpl;
+		
+	public:
+		Test_Result ();
+		~Test_Result ();
+		void	addError (Test_Failure& error);
+		void	addFailure (Test_Failure& failure);
+		...
+	};
+
+	#endif
+
+
+Source:
+
+	#include "Test_Result.h"
+
+	#include <vector>
+	#include "Test_Failure.h"
+
+	class Test_Result::Impl
+	{
+	public:
+		std::vector<Test_Failure> m_errors;
+		std::vector<Test_Failure> m_failures;
+		
+	};
+	
+	class Test_Result
+	{
+	public:
+			Test_Result () {pImpl = new Test_Result::Impl;}
+			~Test_Result () {delete pImpl;}
+
+	void		addError (Test_Failure& error)
+			{ pImpl->m_errors.push_back (error); }
+
+	void		addFailure (Test_Failure& failure)
+			{ pImpl->m_failures.push_back (failure); }
+		...
+	};
+
+That gets rid of the factory, gives you a choice about what to make virtual and what to make inline, and can be used as a mixin or for other implmemenation inheritance. I don't think that it's a replacement for Michaels technique but a good companion for when you need a different kind of flexibility. Maybe I'm nuts, but I '''like''' having lots of choices. -- PhilGoodwin
+----
+
+''So have you guys thought about using a preprocessor to automate this stuff?''
+
+That would make it a different language. -- PhilGoodwin
+
+SecondThat --PeterMerel
+
+On second thought: it might be possible to create a tool that was smart enough to recognize and translate between the different forms. That would be really useful! Isn't that the kind of thing that the RefactoringBrowser does? -- PhilGoodwin
+
+----
+I'm glad I came across this page!  For the past week or so I've been working on a project using some of the ideas from here (primarily gotten from ScottMeyers and JohnLakos, though.  I've been developing my application using primarily the packed form, only using unpacked form for my test cases (one for each class). 
+
+I began the project using the PimplIdiom, but ended up refactoring to a form similar to mf's form.  My reason for making the change was that I ran into difficulties developing testcases for the classes.  since the SystemMetaphor classes collaborate greatly, I wished to use stubs to replace the classes I was not testing at the time.  By using abstract base classes, I could create stub classes which my class-to-be-tested could be interfaced with.  This made testing the results of the collaborations easier.  My personal version for packed form has been:
+
+Header:
+
+	class Foo
+	{
+	  class Impl;
+	public:
+	  Foo() {}
+	  virtual ~Foo() {}
+	  static Foo* newFoo();
+	
+	  virtual Retval method1(Parm param1) = 0;
+	  /* ... */
+	};
+
+
+Source:
+
+	class Foo::Impl : public Foo
+	{
+	  Impl();
+	  ~Impl();
+	  Retval method1(Parm param1);
+	};
+
+	Foo::Impl::Impl()
+	{
+	// ...
+	}
+
+	Foo::Impl::~Impl()
+	{
+	// ...
+	}
+
+	Foo* Foo::newFoo()
+	{
+	  return new Foo::Impl();
+	}
+
+	Retval Foo::Impl::method1(Parm param1)
+	{
+	// ...
+	}
+
+I implemented the Foo constructor inline because I did not want to link Foo.o into testcases that use the Foo interface but not the implementation.  So far, using the Foo::newFoo() form instead of an explicit factory has been effective.  My intent is to remove the factory and class Impl as I later make the interface refer to more than one class.  The upside of declaring the Impl within the Foo class namespace is that the global namespace isn't polluted.  The downside is that I'll probably have to do some renaming within the .cc file if I decide to change forms.  I figure that was my attempt at Yagni.  
+
+By the way, I couldn't get CppUnit to compile with my copy of egcs, so I've been using a makeshift testing framework to test my programs.  I am still creating test classes with setup, run, and cleanup in a header file (TestFoo.h), followed by a TestFoo.cc which executes it.  I rely on standard library asserts in my test executions, and have a Tcl script that reports when tests fail (each test is a separate executable).
+--RonGarcia
+
+''Doesn't Foo::Impl have to inherit from Foo in order for this to work? Declaring the implementation class inside the interface class would be especially effective in the PimplIdiom. I've changed my code to reflect that. It seems likely that the abstract base class form will be the preferable to the pimpl form in most cases since interface inheritance is so much more valuable that implementation inheritance. Sorry about your curly braces.'' -- PhilGoodwin
+
+oops. I corrected the inheritence above, thanks. BTW, my brace habits come from a lot of TCL programming :) -- rg
+
+-- see BracesAroundBlocks for arguments about braces style.
+
+----
+CategoryCpp CategoryExtremeProgramming
+----
+Are your compilers that slow or is your codebase huge? -- EricHodges
+
+See Also: CppHeresy

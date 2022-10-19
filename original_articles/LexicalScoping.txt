@@ -1,0 +1,83 @@
+From The FreeOnLineDictionaryOfComputing:
+
+	lexical scope:	<programming> (Or "static scope") In a lexically scoped language, the {scope} of an {identifier} is fixed at {compile time} to some region in the {source code} containing the identifier's declaration. This means that an identifier is only accessible within that region (including procedures declared within it).
+	 :	This contrasts with {dynamic scope} where the scope depends on the nesting of {procedure} and {function} calls at {run time}.
+	 :	Statically scoped languages differ as to whether the scope is limited to the smallest {block} (including {begin}/end blocks) containing the identifier's declaration (e.g. {C}, {Perl}) or to whole function and procedure bodies (e.g. ?), or some larger unit of code (e.g. ?).
+	 :	(2001-09-07)
+
+----
+Also note that in Lisp, a symbol's binding has lexical scope, not the mapping from an identifier to a symbol. That mapping transcends scope. For instance in (let ((x 3)) (let ((x 4)) ..)) the identifier X in the source is mapped to a symbol object when the source is scanned and turned into a nested list, at what is known as "read time". Both occurrences of X map to the same symbol object, even though each one denotes a local variable in a different lexical scope. A symbol object is a concrete data structure in the address space; every X in the internal representation of the form is a pointer to that object.
+
+In languages that don't treat symbols as first-class abstractions, terms like ''symbol'', ''name'' or ''identifier'' are used interchangeably, and basically just refer to a text-string-like entity that is not a real object. Compilers for these languages typically use quite a different symbol-table structure; each lexical scope creates a new symbol table, and nested lexical scopes are represented as a SpaghettiStack of these tables (a structure constructed by pushing and popping, in which the popped frames remain in place and refer to the parent frames). In the Lisp approach, the symbol table is global (and is known as a "package"). The nested stack of lexical bindings that may be constructed by the compiler internally is something other than a symbol table; it's known as an "environment"---a context object that establishes a mapping from symbols to various entities. LexicalClosure objects capture such environments.
+
+LexicalScope has several advantages. Firstly, it allows for LexicalClosure. But even in the absence of lexical closures, lexical scope is useful because it allows for compilation of functions to efficient, reentrant machine code. If lexical closures are not supported by a language, then local variables can be implemented as global entities that are saved and restored. This is called DynamicScoping. However, such saving and restoring must be made thread-safe at some expense, and is even harder to make interrupt-safe. True lexical variables can be stored in stack frames that support reentrancy in a trivial way, and can be placed in memory location or optimized into registers such that the symbols which refer to them in the source code completely go away upon compilation. Data flow analysis can tell the compiler that a lexical variable is only ever manipulated by code that is all under one scope, and such it has complete control over optimizing its representation.
+----
+
+More on LexicalScoping; an argument that it isn't always a GoodThing.
+
+A language with LexicalScoping has the following characteristics:
+
+	* Functions (and procedures, etc.) can be defined within other functions
+	* Such inner functions have access to the local variables defined in the enclosing scope.
+
+[It is possible to have the first without the second; what languages do this? -- UpValues: Lua did that in a way up to Version 5.0. Lexical closures were only allowed to read variables in the enclosing scope, but no to write to them]
+
+The paper GlobalVariablesConsideredHarmful gives some reasons why this might be a bad idea (but see that page for counterarguments). In general, any instance of this can be ReFactor''''''ed in one of two ways:
+
+'''Use explicit parameters'''. Sometimes, accessing outer scope variables is done for the sake of convenience--not because of any necessary coupling between the two. In this case, rewrite the inner procedure so that the values it needs from the outer procedure are ''arguments'' to the inner function--when the outer function (or some other function defined in the outer function's scope) calls the inner function, it supplies these as actual arguments. This will make the inner function independently testable--as it no longer depends on the outer function's state for its behavior. And you may find that once the inner function is decoupled from the outer--it becomes a useful function on its own.
+
+''It is indeed only '''sometimes''' the case that accessing outer scope variables is done only for convenience -- and so this is a weak argument for saying that a language should not support it. (And even if it was done "for the sake of convenience", what is wrong with that?)''
+
+'''Use objects, not closures'''. ''Since ObjectsAndClosuresAreEquivalent, this doesn't make sense. Refactored discussion about this below.''
+
+----
+ObjectsAndClosuresAreEquivalent. However, closures are better for one shot objects declared inline. You use closures for things you wouldn't want to use classes for, like this JavaScript:
+
+  var outerValue = new Something()
+  aList.For''''''Each(function(each){each.Do''''''Something(outerValue)});
+
+or Smalltalk
+
+  |outerValue|
+  outerValue := Something new.
+  aList Do: [:each | each Do''''''Something: outerValue].
+
+The whole point is that for those little one liners, using classes would be silly. I.e. use a closure (or equivalent, such as a Smalltalk block) when you want anonymous objects, and don't want to declare a class.
+
+LexicalScoping has a great impact on closures, it prevents you from having to declare a class to use a closure. Without lexical scope, as in Java, you must declare an inner class to create a closure, making the syntax very heavy. LexicalScoping allows a very light syntax for creating closures. And without a light syntax for closures, use of HigherOrderFunctions would be rare, as they all take closures as arguments. Closures and HigherOrderFunctions are a pair best used together. Objects work well at the Domain level, Closures and HigherOrderFunctions work well at the language level. Both are often needed.
+
+----
+From the perspective of a reader of an implemented process' source code, I find scope adds a level of thought which is unnatural. If I have to decide that the variable thisvar is being used, I have to do more than look for other references to it in the source code - I have to consider each individual occurrence in terms of scope. And if I get that wrong, I can be very misled for a while. This is superfluous thought, imposed because the structure of the source contains more than one level of process.
+
+To quote the above -
+* "The whole point is that for those little one liners, using classes would be silly. I.e. use a closure (or equivalent, such as a Smalltalk block) when you want anonymous objects, and don't want to declare a class."
+
+The communal error in agreeing with this statement is that there is no such thing as a class (used in the broadest sense - as an encapsulation of functionality) which is silly. If all the LispWeenies are constantly ignoring the small encapsulations because they can, then the entire Lisp community is missing out on the lowest level important often used encapsulations. 
+
+The answer, I believe, is to make each level of scope discrete - one complete piece of source text is one scope. 
+
+Then this quote from above -
+* And you may find that once the inner function is decoupled from the outer--it becomes a useful function on its own.
+will be fulfilled always, by design.
+-- PeterLynch
+
+There is a such thing as a class which is silly. Smalltalk makes heavy use of [] for a reason, it isn't always practical to declare a class, to make use of a higher order function, one "needs" to be able to pass anon functions inline, not forced to declare them. This ability is what makes Smalltalk, Smalltalk, it allows the language itself to be part of the library. Languages that ignore this lesson, Java for example, are quite ugly in comparison, and quite repetitive as a result. [] is a functional idiom that fits well with OO, together, OO and functional make for a great language, ask any Smalltalker, or Lisper.
+
+----
+One thing that really surprised me is this ActionScript behaviour:
+
+  function makeClosure(outerValue) {
+	return function() {} 
+  }
+  
+  var outerValue = new Something()
+  var closure = makeClosure(outerValue)
+  outerValue =  null  //won't be collected, closure keeps reference to outerValue
+  
+This felt really odd to me since my only previous experience with closures was in LuaLanguage scripts, where closures keep references only for something they actually use not for entire lexical environment where they are created.
+How common is this behaviour? Does it make storing closures a little risky?
+
+----
+See also DynamicScoping, NestedScopes, ScopingRules, ScopeAndClosures, GlobalVariablesConsideredHarmful.
+----
+CategoryCodingConventions

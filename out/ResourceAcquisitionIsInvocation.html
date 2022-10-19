@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Resource Acquisition Is Invocation
+      </h1>
+      <p>
+        External resources, such as opened files, need to be released in a timely manner. We want to guarantee that for every acquire_resource we have a release_resource. We want this even to be the case when exceptions are thrown
+        and caught.
+      </p>
+      <p>
+        <strong>Therefore:</strong>
+      </p>
+      <p>
+        Rather than having two functions <strong>acquire_resource</strong> and <strong>release_resource</strong>,
+        we have one function <strong>with_resource_do</strong>. <strong>with_resource_do</strong> takes
+        as argument a function of one argument, the action. <strong>with_resource_do</strong> then does the following:
+      </p>
+      <ul>
+        <li>
+           It acquires the resource
+        </li>
+        <li>
+           It calls <strong>action</strong> with the resource as argument.
+        </li>
+        <li>
+           It releases the resource.
+        </li>
+      </ul>
+      <p>
+        I.e., <strong>with_resource_do</strong> looks like this:
+      </p>
+      <code>
+        with_resource_do action =<br/>
+        let resource = acquire_resource ()<br/>
+        in <br/>
+        action resource;<br/>
+        release_resource resource<br/>
+      </code>
+      <p>
+        Well, actually it's slightly more complicated, because we also want to make
+        sure that the resource is released when an exception is thrown. So we do:
+      </p>
+      <code>
+        with_resource_do action =<br/>
+        let resource = acquire_resource ()<br/>
+        in <br/>
+        try<br/>
+        action resource;<br/>
+        release_resource resource<br/>
+        with x -><br/>
+        release_resource resource;<br/>
+        raise x<br/>
+      </code>
+      <p>
+        This makes sure that the resource is released, whatever happens.
+        We could then use <strong>with_resource_do</strong> in all client code, like this:
+      </p>
+      <code>
+        with_resource_do (fun resource -> <br/>
+        do_something resource;<br/>
+        do_something_more resource)<br/>
+      </code>
+      <p>
+        I.e. no explicit deallocation is required. The resource is acquired just
+        before the action is invoked, hence the name of the pattern.
+      </p>
+      <hr/>
+      <p>
+        Of course, this is not the easiest technique to use in Java, C#, and C++, primarily because these languages do not treat FunctionsAsFirstClassObjects, but also because it is extremely difficult to get <a href="CoRoutine.html">CoRoutine</a>s working in these languages (in most languages, for that matter), and this is a technique that just begs for coroutines.  Thus it is not surprising that this technique works extremely well in the <a href="LispLanguage.html">LispLanguage</a>, and moderately well in the <a href="PythonLanguage.html">PythonLanguage</a>.
+      </p>
+      <p>
+        Incidentally, I think there is very little theoretical difference between <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a> and <a href="ResourceAcquisitionIsInvocation.html">ResourceAcquisitionIsInvocation</a>.  I see C++ RAII objects as being limited covariant <a href="FunctorObject.html">FunctorObject</a>s.
+      </p>
+      <p>
+        -- <a href="DavidKeithTurner.html">DavidKeithTurner</a>
+      </p>
+      <p>
+        Hmm, not sure why you think this, but I've been using this pattern in C and in Forth for some time.  I absolutely love it, and I'm shocked that it hasn't been formally recognized as a coding pattern before.  However, using a language that lets you pass function pointers around makes this technique just as valuable, because (a) it requires you to factor your code better, and (b) it typically makes the code easier to read (assuming you name your "lambda" function correctly).  --SamuelFalvo
+      </p>
+      <p>
+        <a href="ScalaLanguage.html">ScalaLanguage</a> calls it the Loan Pattern.  R.A.I. Invocation sounds better, though.
+      </p>
+      <hr/>
+      <p>
+        The problem in Java is not the absence of FunctionsAsFirstClassObjects, but Resources not sharing a common interface. There are hundreds of resources implementing <strong>close()</strong> but there is no <strong>Closable</strong> interface.
+      </p>
+      <p>
+        Given this i would implement:
+      </p>
+      <code>
+        public abstract class ResourceInvocation <br/>
+        {<br/>
+      </code>
+      <code>
+        abstract protected void acquire() throws Exception;<br/>
+        abstract protected void release() throws Exception;<br/>
+        abstract protected Object do() throws Exception;<br/>
+      </code>
+      <code>
+        private Object invoke() throws Exception<br/>
+        {<br/>
+        acquire();<br/>
+        try {<br/>
+        return do();<br/>
+        }<br/>
+        finally {<br/>
+        release();<br/>
+        // Shall we catch Exceptions from release here?<br/>
+        // Your pseudo code didn't, so i won't.<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        public static Object doSomethingWith(ResourceInvocation ri) throws Exception {<br/>
+        return ri.invoke();<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        abstract public class FileReaderInvocation extends AbstractResourceInvocation() <br/>
+        {<br/>
+        protected LineNumberReader lr;<br/>
+        protected final String fileName;<br/>
+      </code>
+      <code>
+        public FileReaderInvocation(String aName) <br/>
+        {<br/>
+        fileName = aName;<br/>
+        }<br/>
+      </code>
+      <code>
+        protected acquire() throws FileNotFoundException<br/>
+        { <br/>
+        lr = new LineNumberReader(new FileReader("myfile")); <br/>
+        }<br/>
+      </code>
+      <code>
+        protected release() throws IOException<br/>
+        { <br/>
+        fr.close(); <br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        // now we can use it <br/>
+        ...<br/>
+        Object res = <br/>
+        ResourceInvocation.doSomethingWith(<br/>
+        new FileReaderInvocation("myFilename") {<br/>
+        protected Object do() throws IOException {<br/>
+        return lr.readLine(); <br/>
+        }<br/>
+        }<br/>
+        );<br/>
+      </code>
+      <p>
+        The existence of <strong>FileReaderInvocation</strong> is required only because there is no common <strong>Resource</strong> interface,
+        so this wrapper is needed.
+      </p>
+      <p>
+        This would be even easier if the acquire() part would be left out, as there is no gain in adding it.
+        Just create the <strong>Resource</strong> and pass it to the <strong>ResourceInvocation</strong>.
+      </p>
+      <hr/>
+      <p>
+        See: <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a>, <a href="ResourceReleasesResource.html">ResourceReleasesResource</a>
+      </p>
+      <p>
+        <a href="CategoryObjectFunctionalPatterns.html">CategoryObjectFunctionalPatterns</a>
+      </p>
+    </div>
+  </body>
+</html>

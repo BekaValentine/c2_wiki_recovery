@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Moving Broken Unit Tests
+      </h1>
+      <p>
+        <em>Here's the problem. You have written unit tests, both to help you understand your design and to find bugs. In due time, you refactor your code, which causes tests to break. The interface they communicate with has changed, so they must change to match. Are there reasonable alternatives to </em><a href="RefactorBrokenUnitTests.html">RefactorBrokenUnitTests</a>?<em></em>
+      </p>
+      <p>
+        See also <a href="DeletingBrokenUnitTests.html">DeletingBrokenUnitTests</a>.
+      </p>
+      <hr/>
+      <p>
+        You can reduce the cost of refactoring broken tests by deleting them and recreating them somewhere else. Suppose you're testing a class C. You write unit tests before the code as an aid to getting class C right. Time passes. You make a change to C's interface and break some tests. You could fix the tests. But you notice that C is used by B, which is in turn used by A. A is a class with a more stable interface. Perhaps it's part of a published API. It may be easy to write tests that talk to A's interface but exercise C's code in the same way that the now-broken tests did. Rather than fix the C tests, "promote" them to the A interface. That reduces predicted future maintenance costs. There are some losses (debugging is harder, it's more likely that you won't be testing what you think you're testing, etc.). But this indirect testing approach has worked well for me. -- <a href="BrianMarick.html">BrianMarick</a>
+      </p>
+      <hr/>
+      <p>
+        Question added to <a href="DeletingBrokenUnitTests.html">DeletingBrokenUnitTests</a>.
+      </p>
+      <hr/>
+      <p>
+        Here are two concrete near-examples of moved unit tests. A real
+        example would start with a conventional unit test (one that calls
+        methods-under-test directly). I would describe how that test was broken by a code change, then how it was moved to a more distant and
+        stable interface. In both of these cases, though,
+        I started out by testing through the more distant interface. I did
+        that because it made my life easier. The tests were easier to write in the first place,
+        as well as being more resistant to change. 
+      </p>
+      <p>
+        So perhaps these are not the best examples. But they're easy to
+        explain. And generic discussions like this one often desperately need
+        some concreteness.
+      </p>
+      <p>
+        <strong>Please</strong> note that I have not claimed that <strong>all</strong> tests should
+        be written against distant interfaces. --<a href="BrianMarick.html">BrianMarick</a>
+      </p>
+      <p>
+        <strong>Example 1:</strong>
+      </p>
+      <p>
+        I have some Java code that takes mixed boolean and relational
+        expressions and generates variant expressions. For example, it converts "(a&&b)||c" to "a&&(b||c)". 
+      </p>
+      <p>
+        I began the project by creating
+        classes for the different types of nodes in a conventional parse tree. Those
+        classes came with a variety of conventional unit tests (that check
+        that equals() works, etc.).
+      </p>
+      <p>
+        However, I soon moved to code (and tests) that worked with more
+        substantial expressions. Testing code that manipulates parse trees is
+        a pain. I don't want to build parse trees by hand. And I don't want to
+        write result-checking code like this:
+      </p>
+      <code>
+        assert(result instanceof ExprAnd);<br/>
+        assert(result.leftChild() instanceof ExprBooleanVariable);<br/>
+        assert(result.rightChild() instanceof ExprOr);<br/>
+        ...<br/>
+      </code>
+      <p>
+        So I next implemented parsing code (which I'd need eventually, anyway). The bulk of my tests look something like this:
+      </p>
+      <code>
+        expr = Parser.parse("a && b || c");<br/>
+        result = mutator.mutate(expr);<br/>
+        assertEquals(Parser.parse("a&&(b||c)"), result);<br/>
+      </code>
+      <p>
+        There's some danger that a bug in the parser could mask a bug in the
+        mutator. Something like that happened once, but I caught it not much
+        later. As far as I know, it only happened once. The small perplexity
+        it caused - "how could this test be failing when those others worked?"
+        - was well worth it. 
+      </p>
+      <p>
+        <strong>Example 2. </strong>
+      </p>
+      <p>
+        I was writing a C code coverage tool, GCT [1]. GCT, like many coverage
+        tools, works by parsing source code, transforming the parse tree, then writing the transformed tree as
+        source code again. So, for example, to measure which branches are
+        taken in which direction, it would convert code like this:
+      </p>
+      <code>
+        if (b)...<br/>
+      </code>
+      <p>
+        into something like this:
+      </p>
+      <code>
+        if ( (b?covarray[121]++:covarray[122]++), b )...<br/>
+      </code>
+      <p>
+        For more about coverage, see [2]. 
+      </p>
+      <p>
+        One type of coverage is called weak
+        mutation coverage. Suppose you refer to a variable's value:
+      </p>
+      <code>
+        ... J = VAR + 1 ...<br/>
+      </code>
+      <p>
+        At the point of reference to VAR, weak mutation coverage asks that you
+        compare the value of VAR to all type-compatible variables. So you end
+        up generating code like this: 
+      </p>
+      <code>
+        ... VAR!=otherVAR ... VAR!=yetanotherVAR ... <br/>
+      </code>
+      <p>
+        So GCT must know what variables are in scope at each
+        variable reference. Now consider this code. 
+      </p>
+      <code>
+        {<br/>
+        int otherVAR;<br/>
+        ...<br/>
+        {<br/>
+        struct mumble otherVAR;<br/>
+        int VAR...<br/>
+        ...<br/>
+        J = VAR + 1;<br/>
+        ...<br/>
+      </code>
+      <p>
+        At the point where VAR is used, the <em>integer</em> otherVAR is not in
+        scope. It is shadowed by the <em>struct</em> with the same name. It would
+        be incorrect to generate code comparing VAR to otherVAR.
+      </p>
+      <p>
+        I could have tested the scope-handling routines directly. Instead, I
+        wrote a little C program like the above, fed it to GCT,
+        then compiled the resulting C code. If GCT had
+        incorrectly used otherVAR, the C compiler would have choked on the
+        result. I think that was the right way to create the test: 
+      </p>
+      <ul>
+        <li>
+           I already had a framework for such tests, so the typing was minimal. 
+        </li>
+        <li>
+           No matter what changes about GCT's implementation, the above code is a "corner case" C program that a weak mutation coverage tool must handle. This test will never go out of style. 
+        </li>
+        <li>
+           Given that C is a ubiquitous standard, this test should never break. It will never need maintenance. 
+        </li>
+        <li>
+           The test serves as pretty understandable documentation of the need for the feature; arguably more understandable than a code-level test. (But likely harder to find.)
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        Both your examples are really about representation. The idea here is something like, "Unit tests are easier to write, and less fragile, if we have a nice representation for the before- and after- data." When I first read the "move" description I thought it was much more indirect (along the lines of defining multiplication in terms of addition and then assuming that a test of multiplication will verify addition too). If we think of the switch from C to A as a change of representation then we ca see that "niceness" includes ideas like isomorphism and fidelity.
+      </p>
+      <p>
+        This form, about representation, is something I've found myself. In other words, I <a href="HaveThisPattern.html">HaveThisPattern</a>. Albeit reversed: I have XML import and export for my data structures, and instead of comparing the data structure I compare the XML text. In other words, like:
+      </p>
+      <code>
+        expr = Parser.parse("a && b || c");<br/>
+        result = mutator.mutate(expr);<br/>
+        assertEquals(result.asString(), "a&&(b||c)" );<br/>
+      </code>
+      <p>
+        This means I have to write asString() instead of equals(), which just happened to be more convenient for me. -- <a href="DaveHarris.html">DaveHarris</a>
+      </p>
+      <p>
+        That's a good point. It's ideal if the more distant interface maps nicely (one-to-one) onto the interface of the class. But sometimes I do the equivalent of testing addition via multiplication. 
+      </p>
+      <p>
+        Note that my tests <em>implemented</em> through multiplication would be <em>designed</em> to exercise addition in the same way as direct tests would. That is, I'd think about what to test about addition, <em>then</em> think about how to exercise it via the distant interface. (Let me hasten to add again that indirect test implementation isn't always the right answer - it's a sometimes-useful tool.)
+      </p>
+      <p>
+        Now, this seems crazy. What if the addition code changes? What reason do I have to believe that these indirect tests will exercise the changed code in any useful way? Maybe none. Two comments:
+      </p>
+      <ul>
+        <li>
+           No existing suite will be adequate to test changed code. Whenever I change code, I must first create tests designed to test the change.  
+        </li>
+        <li>
+           The tests do lose some power because they're distant. That's a tradeoff I'm willing to make to avoid a maintenance burden.
+        </li>
+      </ul>
+      <p>
+        Nowadays, I tend <strong>not</strong> to implement my tests through a distant "safe" interface when I create them. They're first implemented by exercising a class's methods directly. When they later break, I consider whether I want to fix them in place or move them to a more stable interface. The new tests - those specific to the change that broke the old ones - are directly implemented. My mental picture is of old tests "bubbling up" to some stable interface, constantly being replaced by tests targeted at changes.
+      </p>
+      <p>
+        I lack enough experience to make sweeping claims about this approach, but it seems like a reasonable one to try. --<a href="BrianMarick.html">BrianMarick</a>
+      </p>
+    </div>
+  </body>
+</html>

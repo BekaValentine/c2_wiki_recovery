@@ -1,0 +1,192 @@
+"An InnerClass is a NestedClass that is not explicitly or implicitly declared static." -- Java Language Specification, Second Edition [1]
+
+An inner class, as used in JavaLanguage, is a class nested within another class:
+
+  class C {
+    class D {
+    }
+  }
+Like a C++ nested class, a Java inner class lives within the namespace of its enclosing outer class.
+
+Unlike a C++ nested class, an instance of a Java inner class contains an implicit, hidden reference to an instance of the outer class. (Note that this reference is real for garbage collection purposes.) You can actually obtain this reference from within the inner class, with syntax "OuterClassName.this", though this is rarely necessary:
+  C.this
+
+An instance of an inner class can only live attached to an instance of the outer class. Within instance methods of the outer class, you can simply use "new D()" to create it and it will implicitly take that current outer class instance as the enclosing instance. However, if you want to create an instance of the inner class from outside the outer class, or from within a static method, you need to explicitly give the enclosing instance reference:
+
+  C c = new C();
+  C.D d = c.new D();
+Because the inner class is considered part of the implementation of the outer class, it has access to ''all'' of the outer class's instance variables and methods.
+
+When name conflicts arise (i.e., the inner class declares a variable with the same name as a variable in the outer class, or when using the '''this''' keyword), prefix the identifier with the name of the outer class for static variables, and prefix it with the name of the outer class plus '''.this.''' for non-static variables:
+
+  class A {
+    private boolean fuzzy;
+    class B {
+      private boolean fuzzy;
+
+      //These two methods act on this object's variable.
+      public boolean isFuzzy() {
+        return fuzzy;
+      }
+      public void makeFuzzy() {
+        fuzzy=true;
+      }
+
+      //These two methods act on ''whatever instance of A'' to which this
+      //object of type B was attached.
+      public boolean isAFuzzy() {
+        return A.this.fuzzy;
+      }
+      public void makeAFuzzy() {
+        A.this.fuzzy=true;
+        getOuter().fuzzy=true;     //equivalent; see next method
+      }
+
+      //This method returns the object to which "A." refers, above.
+      public A getOuter() {
+        return A.this;
+      }
+    }
+  }
+''Warning:'' After compilation, inner classes are just like any other class; the hidden reference has been made real, and the only tie to the outer class is the inner class's name (i.e. Outer''''''Class$Inner''''''Class, or Outer''''''Class$1 for AnonymousInnerClass''''''es). Since an inner class is obviously in the same package as the outer class, it can already see all non-private members (remember that protected can be accessed from anything in the package). However, '''any private members accessed by an inner class are silently changed to default (package) access!''' This can be important from a security standpoint, particularly since it's not obvious to the programmer. The Reflection''''''Test class distributed with the Core Java books (available in a 1.87Mb zip file at http://horstmann.com/corejava/corejava.zip, or from numerous less-official locations) can be used to show the NewAndExciting results of inner class use.
+
+The visibility of the class's ''name'' is of some importance. Inner classes can have accessibility restrictions (see below), or they can be local to a function (see below). While references to an object can exist outside the scope (or away from the visibility) of its name, they must be of a more-generic type - if you can't see class Foo, you can't declare "Foo f=...", nor can you do "Object o=...; ((Foo)o).fooFunction()". There is one exception; a method might be defined to return an object of the type in question, and then its return value would be of that exact type (despite the fact that the client might not be able to say what it was).
+
+As a result, any members not accessible through a superclass of the class in question (this includes overridden methods; virtual functions don't care if you can see their class's name) are completely uncallable. This can be useful as a form of extreme encapsulation (although remember to DoTheSimplestThingThatCouldPossiblyWork), but is not useful for security because of access through reflection. Similarly, it should be impossible to instantiate such an object (you can't do "new Foo(...)", either); however, if you have a reference already, object_which_is_really_a_foo.getClass().newInstance() will make you a new one, and you could again do more complicated tricks with reflection. And of course, clone() could make more objects if it's supported.
+
+Inner classes (which are not themselves static; see below) cannot have static members.
+
+'''Local inner classes'''
+
+An inner class may be declared within a method. All of the above applies, except that (as you would expect) the class can be referenced (by name) only within that method. As well as having access to all of the outer class's instance variables, a local inner class has access to all final parameters of the method that created it. (They have to be final because the inner class must have a copy of the variable - the object could easily outlive the function and thus the scope of its variables - and it would be a semantic nightmare to allow changes to the multiply-extant variable.)
+
+'''AnonymousInnerClass''''''es'''
+
+A local inner class may be defined and an instance created at a stroke, without giving the new class definition a name. The result is an anonymous inner class (AIC hereafter):
+
+  interface I {
+    public void doSomething();
+  }
+
+  class B {
+    private final int factor;
+    public B(int f) {factor=f;}
+
+    public void scale(int x) {return x*f;}
+  }
+
+  class C {
+    public void anonymousInnerClassExample() {
+      //One with the interface:
+      final String s = "boo";
+      new I() {
+        public void doSomething() {
+          System.out.println(s);          //note use of final local variable
+        }
+      }.doSomething();
+
+      final int bonus=10;
+      //And one with the class:
+      B b=new B(2) {
+        //And now for a NewAndExciting definition of scaling (again using a
+        //final local variable):
+        public void scale(int x) {return super.scale(x)+bonus;}
+      };
+      //This is being done here, but could be done at any other time so long
+      //as a reference to b is available:
+      System.out.println(b.scale(5));     //returns (5*2)+10=20
+    }
+  }
+AICs which are created using the name of an interface extend Object directly and implement the named interface; those created using the name of a class extend that class.
+
+AICs cannot have constructors, as they have no name. Arguments passed to the "new" expression (above, the number 2 in "new B(2)") are in fact passed to the (appropriate) constructor for the AIC's superclass; in particular, you cannot pass arguments when constructing an interface-based AIC, because there are no Object constructors which take arguments.
+
+There is no requirement for constructor parameters apart for those of super classes, however. Anything visible where the AIC is implemented and created is visible throughout the whole of the implementation, e. g.:
+
+   interface I {}
+
+   class C 
+   {
+      int x; // can be accessed from AIC
+      void method(int y) // y cannot be accessed from AIC...
+      {
+         final int z = y; // ... but we can make a final copy
+         I i = new I() {
+               int a = x + 1;
+               int b = z - 1;
+            };
+      }
+   }
+Hence, there is no need to pass x or y as a parameter of a constructor. ''Nor in fact to copy y - if declared final, it is directly visible to the AIC.''
+
+AICs are local inner classes in every respect (except for the constructor weirdness); in practice, AICs make up the majority of local inner classes.
+
+'''Static Inner Classes'''
+
+It is also possible to make a Java inner class behave like a C++ nested class (in fact, static inner classes are sometimes called "nested" instead of "inner" classes), so that the inner class has no reference to the outer class and has a life of its own:
+
+  public class C {
+    public '''static''' class D {
+    }
+  }
+
+  C.D d=new C.D();
+The resulting class is bound only by namespace and accessibility rules to the outer class; no hidden references exist.
+
+Static inner classes (unlike other inner classes) can themselves have static members.
+
+'''Inner Classes Accessibility'''
+
+Inner classes follow normal accessibility rules: they may have ''public'', ''private'', ''protected'', or ''package'' (default) access.
+
+  public class Outer {
+    public class A {}
+    protected class B {}
+    class C {}
+    private class D {}
+  }
+----
+
+InnerClass''''''es are Sun's answer to Java developers' cries for Smalltalk/Scheme-like blocks/closures. ''[see: BlocksInJava]'' Unfortunately, they aren't as nice as blocks/closures, because of their extremely heavy syntax. Also, they cannot directly mutate method-local variables (but you can fake this with a const array, a simple trick every half-decent compiler should be able to do for you. But then again, Sun's javac still seems to be from the 70's school of compiler design).
+
+It's better than nothing, though. -- StephanHouben
+
+----
+
+Fixed some code and its surrounding text to use A.this.fuzzy instead of A.fuzzy. -- RickyClarkson
+
+-----
+Can we declare array of inner class?
+
+''Certainly, if you mean something like''
+
+  Object[]AICs={
+    new Object(){
+        public String toString(){return "An AIC";}
+    },
+    new Object(){
+        public String toString(){return "Another AIC";}
+    },
+    new Object(){
+        public String toString(){return "Yet another AIC";}
+    }
+  };
+''The compiler will turn each member of the array into an instance of a new subclass of Object.''
+
+See:
+	* InnerClassesAreSecondaryAbstractions
+	* InnerClassesAsEventHandlers
+	* NoPublicInnerClasses
+	* UsageOfInnerClasses
+	* WhenToUseInnerClasses
+	* InnerClassInInterface
+	* AnonymousInnerClass''''''es
+	* BlocksInJava
+	* InnerClassesForTree
+	* ReflectionOnInnerClasses
+
+* http://java.sun.com/products/jdk/1.1/docs/guide/innerclasses/spec/innerclasses.doc.html
+* http://www.javaranch.com/campfire/StoryInner.jsp - Getting in Touch with your Inner Class
+
+----
+CategoryJava CategoryClosure

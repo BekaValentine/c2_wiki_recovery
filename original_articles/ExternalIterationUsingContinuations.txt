@@ -1,0 +1,98 @@
+Occasionally you see discussions (like on the IwannaLearnRuby page) about InternalIteration vs. ExternalIteration. I think those discussions are evidence of a LanguageSmell. In a language that supports CallWithCurrentContinuation, you don't need to choose; you can build a general-purpose ExternalIterator.
+
+For example, in the RubyLanguage:
+
+ # A class that transforms an InternalIterator
+ # (like :each or :each_index) into an object
+ # that you can call :next on to keep getting
+ # successive values.
+ class ExternalIterator
+   def initialize(iterationMethod)
+     @iterationMethod = iterationMethod
+     startLooping
+   end
+   
+   def startLooping
+     # Don't do anything yet - just save the current
+     # context and return.
+     callcc { |@context_of_looping_method|
+       return
+     }
+     
+     # If we got here, it's because someone called the
+     # "next" method. Start running the iteration method,
+     # but after each iteration, save the current context
+     # and jump back to the context of the "next" method.
+     @iterationMethod.call { |nextValue|
+       callcc { |@context_of_looping_method|
+         @context_of_next_method.call(nextValue)
+       }
+     }
+     
+     doneLooping!
+   end
+   
+   def doneLooping!
+     @context_of_looping_method = nil
+     @context_of_next_method.call
+   end
+   
+   def doneLooping?
+     @context_of_looping_method.nil?
+   end
+   
+   def next
+     if not doneLooping?
+       # Jump back to the looping method. (The
+       # looping method will then go one more
+       # time through the loop and then jump
+       # back here.)
+       callcc { |@context_of_next_method|
+         @context_of_looping_method.call
+       }
+     end
+   end
+ end
+ 
+ class Object
+   # Just a convenience method.
+   def iterator(methodName)
+     ExternalIterator.new(method(methodName))
+   end
+ end
+ 
+ # Some simple tests.
+ if __FILE__ == $0
+   def fibonacci
+     yield 1
+     a, b = 1, 1
+     loop {
+       yield b
+       a, b = b, a+b
+     }
+   end
+   
+   f = iterator(:fibonacci)
+   
+   puts "Printing the first six Fibonacci numbers..."
+   puts f.next   # => 1
+   puts f.next   # => 1
+   puts f.next   # => 2
+   puts f.next   # => 3
+   puts f.next   # => 5
+   puts f.next   # => 8
+   
+   puts "Printing the indices of a four-element array..."
+   g = ['a', 'b', 'c', 'd'].iterator(:each_index)
+   puts g.next   # => 0
+   puts g.next   # => 1
+   puts g.next   # => 2
+   puts g.next   # => 3
+   puts "And here's what happens if we keep going off the end of the array..."
+   puts g.next   # => nil
+   puts g.next   # => nil
+   puts g.next   # => nil
+ end
+
+----
+CategoryContinuation

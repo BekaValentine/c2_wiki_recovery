@@ -1,0 +1,199 @@
+C LanguageLawyer needed to answer the following question:
+
+	* int a,b,c; a=b=c=0;
+		* Does ''b'' get read?
+	* int a,c; volatile int b; a=b=c=0;
+		* Now does ''b'' get read?
+
+----
+
+'''Summary'''
+
+With a standards-compliant compiler:
+
+Without "volatile", ''b'' might get written to, and then later read. Or ''b'' might only be written to. Or the entire statement might be optimized away, and ''b'' is never written or read.
+
+With ''volatile int b'', ''b'' will be written to, but ''b'' will *not* be read from. (The "value" of an assignment operator is the value that "has been" written to the left operand.)
+
+(Unfortunately, the standard is confusing, so many otherwise fine compilers force you to break up the statement to force them to do what a truly standards-compliant compiler would do:
+	* int a,c; volatile int b; a=c=0; b=0;
+		* (emphasize that the volatile b is written once, but not read).
+)
+
+''Is GCC therefore compliant, or non-compliant? And are you basing the above on the standard? If so, could you quote chapter and verse please. - Thanks.''
+
+At least one version of GCC is non-compliant. I hope that will be fixed soon (perhaps it has already been fixed?). See below.
+
+----
+
+The following is based on the widely-circulated C9x draft. I don't guarantee its correctness for any of the actual standardizations of C.
+
+According to section 5.1.2.3 #6, the only requirements actually imposed on an implementation are (1) that volatile objects be stable at sequence points, and (2) that externally visible behaviour be the same as that of the abstract machine described by the standard, in a rather weak sense. In my opinion, this is actually weaker than what is required elsewhere, e.g., in 5.1.2.3 #2 as supplemented by annexes C and D.
+
+Accordingly, in the first fragment (without ''volatile'') there is no requirement for ''b'' to be read. Nor indeed for anything else to happen; the whole thing could get optimized away. In the second fragment, however, the description in annex D guarantees that ''b'' will be read exactly once. (The standard uses the term "access" instead of "read".)
+
+-- GarethMcCaughan
+
+Wow, thanks Gareth.  How does that compare with http://gcc.gnu.org/ml/gcc/1999-10n/msg00201.html which resultant discussion seems to disagree with your interpretation?
+
+(Added later) I refer you to http://gcc.gnu.org/ml/gcc/1999-10n/msg00258.html in which a member of the standard committee says that it's unspecified. Conclusion seems to be that it's implementation defined, although the standard doesn't actually say so.  Perhaps the value is '''''not''''' read back. The alternative behaviour can be forced by re-writing it into two assignments: ''b=c; a=b;'' whereas not re-reading cannot be forced. Comments welcome, but it should probably be flagged as a strong warning.
+
+Hmm. Having gone over this again, I now think that (1) I was wrong, and (2) that member of the standard committee was wrong too, in so far as annex D is normative. (Which is to say: not at all, in theory.) Specifically, I think that ''b'' should not be read by any implementation. Here's the whole analysis, in gruesome detail.
+
+Annex D, section D.1, says (emphasis mine):
+
+''[#2] An implementation is not required to follow the model defined in this annex. In particular, the model assumes serial evaluation, but parallel evaluation is equally valid. However, '''an implementation should ensure''' -- for all expressions that are not determined to be undefined in this model -- that expressions are evaluated in a way that will yield one of the results specified by this model, and '''that each volatile object is accessed exactly the number of times determined by the model'''.''
+
+It goes on to define a pile of notation, of which all we need here is the following: (1) [D.2.1 #1] an ''event'' is one of 5 things including (a) reading the value of a byte, (b) writing a value to a byte, (c) identifying a particular address as somewhere to be read or written, (d) a sequence point. (2) [D.2.4 #1] These are written as ''R(a)'', ''W(a)'', ''L(a)'' and ''S'', respectively. (3) [D.2.4 #4] The ''R''/''W''/''L'' notation is extended so that, e.g., ''L(a,n)'' means ''L(a)'', ''L(a+1)'', ..., ''L(a+n-1)''. (4) [D.2.4 #4] When one event has to occur before another, we write that as ''E1 < E2''. (5) [D.2.4 #4] The events and ordering constraints associated with an expression ''e'' are denoted ''E(e)''.
+
+The first thing you do with any expression is to transform it by marking lvalues that are going to be read. The exact text of the relevant bit (from [D.3.1 #3]) is as follows:
+
+''Finally, wherever 6.5 requires an lvalue not of array type to be converted to the value stored in the designated object, replace the lvalue expression e by the expression $e''.
+
+Well, [6.5.16 #2] says that ''in simple assignment (=), the value of the right operand is converted to the type of the assignment expression and replaces the value stored in the object designated by the left operand'', and [6.5.16 #3] says that ''An assignment expression has the value of the left operand after the assignment, but is not an lvalue''. OK. Now back to annex D.
+
+So, then it says [D.3.2 #3] that when ''x'' is an identifier, ''E(x)'' is ''L(x,n)'' where ''n'' is the size of ''x''. And then [D.3.2 #6] ''E(a=b)'' is made up of the following things: ''E(a)'' with each ''L'' replaced by a ''W'', ''E(b)'', and an ordering constraint ''E1 < E2'' whenever ''E1'' is in ''E(b)'' and ''E2'' is one of the ''W''s derived from ''E(a)''. Oh, and [D.3.2 #6] ''E($a)'' is obtained from ''E(a)'' by turning ''L''s into ''R''s.
+
+Now, ''a=b=c'' parses as ''a=(b=c)'', of course. This contains exactly one "lvalue not of array type to be converted to the value stored in the designated object", namely ''c'', so the transformation step turns the expression into ''a=(b=$c)''. So, pretending for convenience that ''sizeof(int)==1'', we get the following, in order. ''E(c)'' = {''L(c)''}. ''E($c)'' = {''R(c)''}. ''E(b)'' = {''L(b)''}. ''E(b=$c)'' = {''W(b)'', ''R(c)'', ''R(c)<W(b)''}. ''E(a)'' = {''L(a)''}. ''E(a=(b=$c))'' = {''W(a)'', ''W(b)'', ''R(c)'', ''R(c)<W(b)'', ''W(b)<W(a)'', ''R(c)<W(a)''}.
+
+OK, so we have the events ''R(c)'', ''W(b)'', ''W(a)'', in that order. Now, [D.3.3 #4] says ''If an R(a) event applies to a volatile object, this is an access to the object.''
+
+There is no ''R(b)'' anywhere in there, so the model of annex D doesn't prescribe any accesses to ''b''. Hence, by [D.1 #2], an implementation should ensure that exactly 0 accesses to ''b'' happen if ''b'' is volatile.
+
+Now, of course, [6.7.3 #6] ''what constitutes an access to an object that has volatile-qualified type is implementation-defined'', so I suppose an implementation can say that reading its value doesn't count as accessing it; but if your implementation doesn't say that explicitly [3.11] then you can probably assume that reading ''b'' counts as accessing it.
+
+Yow! -- GarethMcCaughan
+
+----
+
+I prompted this entire discussion when I wrote something equivalent to the following:
+  a = b = constant;
+
+What was in my head was:
+  a = constant;
+  b = constant;
+and I was just saving on typing.
+
+I was surprised by the behaviour of the compiler, and wondered what ANSI had to say on the matter.
+As observed below, saving on typing was the wrong thing to do. But for non-volatiles,
+  a = b = constant;
+is safe and (I would claim) the RightThing to do because the constant occurs OnceAndOnlyOnce.
+
+-- NeilWalker
+
+These statements are not equivalent. Consider this program:
+
+ #include <stdio.h>
+ int main(void) {
+     double d;
+     int i;
+
+     d = i = 3.14159;
+     (void) printf("d = %f\n", d);
+     (void) printf("i = %d\n", i);
+     return 0;
+ }
+
+The output is
+
+ d = 3.000000
+ i = 3
+
+-- RolandIllig
+
+''They are equivalent when the variables are of the same type, yes?''
+
+With your particular compiler, on your particular system, the output is as you demonstrated. However, according to Gareth's comments at the top of the page, with a standards compliant compiler d could end up as 3.14159. So this is another case where saving on typing would be the wrong thing to do.
+------
+
+If you have a choice and time, I would suggest simplifying such expressions to make the behavior more clear to the reader so that they don't have to be a LanguageLawyer. Personally, I don't like "leaky assignment" operators.
+
+''Indeed, you should be careful. When the language designers set down the lvalue of an assignment operation, they did it with the intent to avoid having to wastefully reload the rvalue, or else there wouldn't be much point in chaining assignments. However, that doesn't mean that compiler writers haven't cheated by hacking in volatile behaviour by forcing a new sequence point to be created whenever a volatile is encountered. Volatiles are problematic because they are 100% side effect, so don't expect their behaviour to be simple or correctly implemented. -- SunirShah''
+
+This was my point all along. If the compiler is going to do some weirdness with your variable space or stack then you need to slap it around a little to make it behave. Gone are the daze when I used to compile my C stuff through the Tektronix 80186 compiler into assembly and then hand massage the assembly code to get what I wanted. Nowadays I may be a little more verbose, but the code comes out all right because I have clarified everything I'm worried about the compiler misunderstanding. If you take no shortcuts you catch no brambles.
+
+----
+
+When 'dest' is *not* volatile, gcc (and egcs) for m68k targets (and probably for others too) generates this code:
+
+    ;    char * dest;
+    ;    char * source;
+    ...
+    ;    // copy string
+    ;    while( *dest++ = *source++ );
+  loop:
+    move.b (a0)+,(a1) // a0 is the source, a1 is the dest
+    tst.b  (a1)+      // Does 'dest' contain zero ?
+    bne loop
+
+That is fine.
+
+When 'dest' is a volatile char *, egcs generates exactly the same code. I believe that this ... is wrong.
+
+( -- copied from http://gcc.gnu.org/ml/gcc/1999-10n/msg00201.html )
+
+To comply with the standard, the compiler should generate code more like this:
+    ;    char * source;
+    ;    volatile char * dest
+    ;    ...
+    ;    // copy string
+    ;    while( *dest++ = *source++ );
+  loop:
+    move.b (a0),(a1)+ // a0 is the source, (volatile)a1 is the dest
+    tst.b  (a0)+      // read from the non-volatile source *again*.
+    bne loop
+
+If both the source and the dest are volatile, the compiler should generate code more like this:
+    ;    volatile char * dest;
+    ;    volatile char * source;
+    ;    ...
+    ;    // copy string
+    ;    while( *dest++ = *source++ );
+  loop:
+    move.b (a0)+,d0
+    move.b d0,(a1)+
+    tst.b  d0        // avoid touching volatiles again
+    bne loop
+
+(PreferredOrderOfSrcDstArguments)
+
+----
+
+''Originally this page said:''
+
+C LanguageLawyer needed to answer the following question:
+
+	* int a,b,c;a=b=c;
+		* Does ''b'' get read?
+	* int a,c; volatile int b; a=b=c;
+		* Now does ''b'' get read?
+
+''There's 2 different things going on here:''
+
+	* what happens when we read from a variable that hasn't been properly initialized with any particular value yet.
+
+There is an important gotcha. The value placed in ''c'' - which is unspecified, of course - might be what the standard calls a "trap representation", which would cause undefined behaviour as soon as that value is accessed. See section 6.2.6.1 #4. It is explicitly permitted for integral types to possess trap representations; see section 6.2.6.2 #1 and footnote 37 thereto. So, strictly, the behaviour of both examples above is undefined, and there is no guarantee that ''b'' is read or even written; indeed, I think a conforming implementation is permitted to refuse to compile a program containing that code.
+
+-- GarethMcCaughan
+
+see http://www.eskimo.com/~scs/C-faq/q1.30.html for more details.
+
+	* the "volatile" thing (which I think is what Wright really wants to know about)
+
+''I find this is more interesting; I modified the above discussion to focus on that.''
+
+-- DavidCary
+
+----
+
+''When 'dest' is a volatile char *, egcs generates exactly the same code. I believe that this ... is wrong.''
+It seems to me that if i have a string pointer that can be modified by something outside my program (i.e. a volatile char *), and such a modification occurs when I am in the middle of copying the currently-pointed-at data somewhere else, that in virtually every case I would much rather be allowed to finish what I was doing first before acknowledging the change, rather than changing proverbial horses in midstream. Therefore I would support the egcs behaviour. -- KarlKnechtel
+
+''I don't understand. In the above code, it's the data in the string itself that is being modified. One might hope that''
+ while( *dest++ = *source++ );
+''would eventually null-terminate the destination string and exit the loop; but the above (egcs-compiled) assembly code can in some cases exit without ever null-terminating the destination string -- to me, that seems more like switching horses in midstream than the standards-compliant behavior. If the pointer itself can be modified by something outside the program (i.e.,''
+  char * volatile pci_card_name;
+'') then I would agree that copying the entire string before acknowledging that the pointer has been changed would be less confusing than the alternative. Could you give an example where changing egcs to be standards-compliant would be a bad thing?''
+-- DavidCary
+
+http://rdrop.com/~cary/html/c_programming.html#volatile

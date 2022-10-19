@@ -1,0 +1,842 @@
+Here's the refactored code, tests first. A step-by-step walkthrough of how I refactored it is below. I feel that, with the tests, this code is better documented that the CommentingChallenge version with comments.
+
+-- JimLittle
+
+''Comments in italics were added by me (RobertWatkins) to make it a bit clearer what refactorings were being done. This is in response to GlenStampoultzis saying that there was one single big refactoring, not a series of little ones.''
+
+----
+
+  import java.util.*;
+  import java.io.*;
+  import junit.framework.*;
+  import junit.ui.*;
+  
+  public class _TestQueryStringParser extends T''''''estCase {
+  
+    private Dictionary _expected = new Hashtable();
+  
+    public _TestQueryStringParser(String name) {
+      super(name);
+    }
+  
+    private Dictionary doTest(String testString) throws IOException {
+      I''''''nputStream testStream = new B''''''yteArrayInputStream(testString.getBytes());
+      Q''''''ueryStringParser parser = new Q''''''ueryStringParser(testStream);
+      return parser.parseArgs();
+    }
+  
+    public void testOneNameValuePair() throws IOException {
+      _expected.put("name", "value");
+      assertEquals(_expected, doTest("name=value"));
+    }
+  
+    public void testMultipleNameValuePairs() throws IOException {
+      _expected.put("name1", "value1");
+      _expected.put("name2", "value2");
+      _expected.put("name3", "value3");
+      assertEquals(_expected, doTest("name1=value1&name2=value2&name3=value3"));
+    }
+  
+    public void testNoPairs() throws IOException {
+      assertEquals(_expected, doTest(""));
+    }
+  
+    public void testDuplicateName() throws IOException {
+      _expected.put("name1", "value1b");
+      assertEquals(_expected, doTest("name1=value1a&name1=value1b"));
+    }
+  
+    public void testSpaceInName() throws IOException {
+      _expected.put("name 1", "value1");
+      assertEquals(_expected, doTest("name+1=value1"));
+    }
+  
+    public void testSpaceInValue() throws IOException {
+      _expected.put("name1", "value 1");
+      assertEquals(_expected, doTest("name1=value+1"));
+    }
+  
+    public void testSpaceInNameAndValue() throws IOException {
+      _expected.put("name 1", "value 1");
+      assertEquals(_expected, doTest("name+1=value+1"));
+    }
+  
+    public void testMultipleSpacesInARow() throws IOException {
+      _expected.put("name", "value   1");
+      assertEquals(_expected, doTest("name=value+++1"));
+    }
+  
+    public void testSpaceAtEndOfStream() throws IOException {
+      _expected.put("name", "value ");
+      assertEquals(_expected, doTest("name=value+"));
+    }
+  
+    public void testRealSpace() throws IOException {
+      _expected.put("name 1", "value 1");
+      assertEquals(_expected, doTest("name 1=value 1"));
+    }
+  
+    public void testSpecialCharacter() throws IOException {
+      _expected.put("name=1", "value=1");
+      assertEquals(_expected, doTest("name%3D1=value%3d1"));
+    }
+  
+    public void testDegenerate_NoValue() throws IOException {
+      _expected.put("name", "");
+      assertEquals(_expected, doTest("name"));
+    }
+  
+    public void testDegenerate_NoName() throws IOException {
+      _expected.put("", "value");
+      assertEquals(_expected, doTest("=value"));
+    }
+  
+    public void testDegenerate_NoName_OnePair() throws IOException {
+      _expected.put("", "value1");
+      _expected.put("name2", "value2");
+      assertEquals(_expected, doTest("=value1&name2=value2"));
+    }
+  
+    public void testDegenerate_OnePair_NoName() throws IOException {
+      _expected.put("name1", "value1");
+      _expected.put("", "value2");
+      assertEquals(_expected, doTest("name1=value1&=value2"));
+    }
+  
+    public void testDegenerate_TwoNoNamePairs() throws IOException {
+      _expected.put("", "value1b");
+      assertEquals(_expected, doTest("=value1a&=value1b"));
+    }
+  
+    public void testDegenerate_OneNameMultipleValues() throws IOException {
+      _expected.put("name", "value1a=value1b");
+      assertEquals(_expected, doTest("name=value1a=value1b"));
+    }
+  
+    public void testDegenerate_OneNameMultipleEqualSigns() throws IOException {
+      _expected.put("name", "=value");
+      assertEquals(_expected, doTest("name==value"));
+    }
+  
+    public void testDegenerate_OneNameEqualSignAtEnd() throws IOException {
+      _expected.put("name", "value=");
+      assertEquals(_expected, doTest("name=value="));
+    }
+  
+    public void testDegenerate_TwoNamesMultipleValuesEach() throws IOException {
+      _expected.put("name1", "value1a=value1b");
+      _expected.put("name2", "value2a=value2b");
+      assertEquals(_expected, doTest("name1=value1a=value1b&name2=value2a=value2b"));
+    }
+  
+    public void testDegenerate_SecondEqualSignImmediatelyBeforeSecondName() throws IOException {
+      _expected.put("name1", "value1=");
+      _expected.put("name2", "value2");
+      assertEquals(_expected, doTest("name1=value1=&name2=value2"));
+    }
+  
+    public void testDegenerate_MissingHexDigits() throws IOException {
+      _expected.put("name", "value");
+      assertEquals(_expected, doTest("name=value%"));
+    }
+  
+    public void testDegenerate_MissingHexDigitsBeforeSecondName() throws IOException {
+      _expected.put("name1", "value1ame2=value2");
+      assertEquals(_expected, doTest("name1=value1%&name2=value2"));
+    }
+  
+    public void testDegenerate_MissingHexDigitsBeforeValue() throws IOException {
+      _expected.put("namevalue", "");
+      assertEquals(_expected, doTest("name%=value"));
+    }
+  
+    public void testDegenerate_BadHexDigits() throws IOException {
+      _expected.put("name", "value");
+      assertEquals(_expected, doTest("name=va%ZZlue"));
+    }
+  
+    public static T''''''estSuite suite() {
+      return new T''''''estSuite(_TestQueryStringParser.class);
+    }
+  
+    public static void main(String[] ignoredArgs) {
+      T''''''estRunner.main(new String[] {"_TestQueryStringParser"} );
+    }
+  
+  }
+
+----
+
+  import java.io.*;
+  import java.util.*;
+  
+  /**
+   * Like H''''''ttpUtils.parseQueryString, except that it never throws parse
+   * exceptions.
+   */
+   public class Q''''''ueryStringParser {
+  
+    private Dictionary _result = new Hashtable();
+    private I''''''nputStream _stream;
+    private int _nextCharacter;
+  
+    public Q''''''ueryStringParser(I''''''nputStream stream) throws IOException {
+      _stream = stream;
+      _nextCharacter = stream.read();
+    }
+  
+    public Dictionary parseArgs() throws IOException {
+      while (hasAnotherCharacter()) {
+        parseNameValuePair();
+      }
+      return _result;
+    }
+  
+    private void parseNameValuePair() throws IOException {
+      String name = readUpTo('=');
+      String value = readUpTo('&');
+      _result.put(name, value);
+    }
+  
+    private String readUpTo(char boundaryCharacter) throws IOException {
+      String word = "";
+  
+      while(hasAnotherCharacter()) {
+        char character = readCharacter();
+  
+        if (character == boundaryCharacter) return word;
+        else if (character == '%') word += readHexEncodedCharacter();
+        else if (character == '+') word += " ";
+        else word += character;
+      }
+      return word;
+    }
+  
+    private String readHexEncodedCharacter() throws IOException {
+      int sixteens = readHexDigit();
+      int ones = readHexDigit();
+      if ((sixteens < 0) || (ones < 0)) return "";
+  
+      char character = (char)((16 * sixteens) + ones);
+      return "" + character;
+    }
+  
+    private int readHexDigit() throws IOException {
+      if (!hasAnotherCharacter()) return -1;
+  
+      return Character.digit(readCharacter(), 16);
+    }
+  
+    private boolean hasAnotherCharacter() {
+      return (_nextCharacter >= 0);
+    }
+  
+    private char readCharacter() throws IOException {
+      if (!hasAnotherCharacter()) throw new I''''''llegalStateException("assertion failed");
+  
+      char result = (char)_nextCharacter;
+      _nextCharacter = _stream.read();
+      return result;
+    }
+  
+  }
+
+----
+
+Step-by-step walkthrough of the code:
+
+First, I needed to reformat the code. I didn't set out to do that, but it wouldn't compile at first and I couldn't figure out why. The problem was due to a brace, I was certain, but the formatting (probably destroyed by Wiki) made it hard to see where the problem was.
+
+After fixing the problem, I still couldn't get the code to compile. I was missing the 'getHexDigit' method. I stubbed that in and wrote my first test. Note that I've identified some additional tests for later.
+
+----
+
+  import java.util.*;
+  import java.io.*;
+  import junit.framework.*;
+  import junit.ui.*;
+
+  public class _TestUtil extends T''''''estCase {
+
+    public _TestUtil(String name) {
+      super(name);
+    } 
+
+    public void testOneNameValuePair() throws IOException {
+      Dictionary expected = new Hashtable();
+      expected.put("name", "value");
+  
+      Dictionary actual = new Hashtable();
+      I''''''nputStream testStream = new B''''''yteArrayInputStream("name=value".getBytes());
+      Util.parseArgs(actual, testStream);
+
+      assertEquals(expected, actual);
+    } 
+
+  /*/
+    public void testDegenerate_NoSpecialCharacter() {
+    }
+ 
+    public void testDegenerate_NoValue() {
+    }
+  /*/
+
+    public static T''''''estSuite suite() {
+      return new T''''''estSuite(_TestUtil.class);
+    }
+
+    public static void main(String[] ignoredArgs) {
+      T''''''estRunner.main(new String[] {"_TestUtil"} );
+    }
+
+  }
+
+----
+
+  import java.io.*;
+  import java.util.*;
+  
+  public class Util {
+  
+    /**
+     * Turn a stream of "name=value&" pairs into a Dictionary. (The version
+     * in javax.servlet.http.U''''''ttpUtils? throws exceptions if it sees "name"
+     * rather than "name=".
+     */
+    public static void parseArgs( Dictionary args, I''''''nputStream in ) throws IOException {
+      S''''''tringBuffer key = new S''''''tringBuffer( 50 );
+      S''''''tringBuffer value = new S''''''tringBuffer( 50 );
+      S''''''tringBuffer curBuf = key;
+  
+      while (true) {
+        int b = in.read();
+        switch (b) {
+          case '=':   // Second half of name=value pair.
+            curBuf = value;
+            curBuf.setLength( 0 );
+            break;
+          case '&':  // End of name=value pair.
+            args.put( key.toString(), value.toString() );
+            curBuf = key;
+            key.setLength(0);
+            value.setLength(0);
+            break;
+          case '%':  // Encoded special character.
+            int num = getHexDigit( in.read() );
+            num = num * 16 + getHexDigit( in.read() );
+            curBuf.append( (char) num );
+            break;
+          case '+':  // Encoded space.
+            curBuf.append( ' ' );
+            break;
+          default:
+            if (b < 0) {
+              if (key.length() > 0)
+                args.put( key.toString(), value.toString() );
+              return;
+            }
+            curBuf.append( (char) b );
+            break;
+        }
+      }
+    }
+  
+    private static int getHexDigit(int character) {
+      return 0;
+    }
+  
+  }
+
+----
+
+The next step was to round out my test suite with everything I could think of. I didn't do anything with the special character yet because that method was stubbed. In writing these tests, I also found my first bug. The behavior of the program isn't consistent when the 'name' piece of the name/value pair is missing. See testDegenerate_NoName, testDegenerate_NoName_OnePair, and testDegenerate_OnePair_NoName. Similarly, the behavior defined by testDuplicateName and testDegenerate_TwoNoNamePairs isn't consistent.
+
+----
+
+  import java.util.*;
+  import java.io.*;
+  import junit.framework.*;
+  import junit.ui.*;
+  
+  public class _TestUtil extends T''''''estCase {
+  
+    private Dictionary _expected = new Hashtable();
+  
+    public _TestUtil(String name) {
+      super(name);
+    }
+  
+    private Dictionary doTest(String testString) throws IOException {
+      Dictionary dictionary = new Hashtable();
+      I''''''nputStream testStream = new B''''''yteArrayInputStream(testString.getBytes());
+      Util.parseArgs(dictionary, testStream);
+      return dictionary;
+    }
+  
+    public void testOneNameValuePair() throws IOException {
+      _expected.put("name", "value");
+      assertEquals(_expected, doTest("name=value"));
+    }
+  
+    public void testMultipleNameValuePairs() throws IOException {
+      _expected.put("name1", "value1");
+      _expected.put("name2", "value2");
+      _expected.put("name3", "value3");
+      assertEquals(_expected, doTest("name1=value1&name2=value2&name3=value3"));
+    }
+  
+    public void testNoPairs() throws IOException {
+      assertEquals(_expected, doTest(""));
+    }
+  
+    public void testDuplicateName() throws IOException {
+      _expected.put("name1", "value1b");
+      assertEquals(_expected, doTest("name1=value1a&name1=value1b"));
+    }
+  
+    public void testSpaceInName() throws IOException {
+      _expected.put("name 1", "value1");
+      assertEquals(_expected, doTest("name+1=value1"));
+    }
+  
+    public void testSpaceInValue() throws IOException {
+      _expected.put("name1", "value 1");
+      assertEquals(_expected, doTest("name1=value+1"));
+    }
+  
+    public void testSpaceInNameAndValue() throws IOException {
+      _expected.put("name 1", "value 1");
+      assertEquals(_expected, doTest("name+1=value+1"));
+    }
+  
+    public void testMultipleSpacesInARow() throws IOException {
+      _expected.put("name", "value   1");
+      assertEquals(_expected, doTest("name=value+++1"));
+    }
+  
+    public void testSpaceAtEndOfStream() throws IOException {
+      _expected.put("name", "value ");
+      assertEquals(_expected, doTest("name=value+"));
+    }
+  
+    public void testRealSpace() throws IOException {
+      _expected.put("name 1", "value 1");
+      assertEquals(_expected, doTest("name 1=value 1"));
+    }
+  
+    public void testDegenerate_NoValue() throws IOException {
+      _expected.put("name", "");
+      assertEquals(_expected, doTest("name"));
+    }
+  
+    public void testDegenerate_NoName() throws IOException {
+  //BUG    _expected.put("", "value1");
+      assertEquals(_expected, doTest("=value"));
+    }
+  
+    public void testDegenerate_NoName_OnePair() throws IOException {
+      _expected.put("", "value1");
+      _expected.put("name2", "value2");
+      assertEquals(_expected, doTest("=value1&name2=value2"));
+    }
+  
+    public void testDegenerate_OnePair_NoName() throws IOException {
+      _expected.put("name1", "value1");
+  //BUG    _expected.put("", "value2");
+      assertEquals(_expected, doTest("name1=value1&=value2"));
+    }
+  
+    public void testDegenerate_TwoNoNamePairs() throws IOException {
+  //BUG    _expected.put("", "value1b");
+      _expected.put("", "value1a");
+      assertEquals(_expected, doTest("=value1a&=value1b"));
+    }
+  
+    public void testDegenerate_OneNameMultipleValues() throws IOException {
+      _expected.put("name", "value1b");
+      assertEquals(_expected, doTest("name=value1a=value1b"));
+    }
+  
+    public void testDegenerate_OneNameMultipleEqualSigns() throws IOException {
+      _expected.put("name", "value");
+      assertEquals(_expected, doTest("name==value"));
+    }
+  
+    public void testDegenerate_OneNameEqualSignAtEnd() throws IOException {
+      _expected.put("name", "");
+      assertEquals(_expected, doTest("name=value="));
+    }
+  
+    public void testDegenerate_TwoNamesMultipleValuesEach() throws IOException {
+      _expected.put("name1", "value1b");
+      _expected.put("name2", "value2b");
+      assertEquals(_expected, doTest("name1=value1a=value1b&name2=value2a=value2b"));
+    }
+  
+    public void testDegenerate_SecondEqualSignImmediatelyBeforeSecondName() throws IOException {
+      _expected.put("name1", "");
+      _expected.put("name2", "value2");
+      assertEquals(_expected, doTest("name1=value1=&name2=value2"));
+    }
+  
+  /*/
+    public void testDegenerate_NoSpecialCharacter() {
+    }
+  /*/
+  
+    public static T''''''estSuite suite() {
+      return new T''''''estSuite(_TestUtil.class);
+    }
+  
+    public static void main(String[] ignoredArgs) {
+      T''''''estRunner.main(new String[] {"_TestUtil"} );
+    }
+  
+  }
+
+----
+
+Now that I had the basics taken care of, I could work on that missing getHexDigit method.  Naturally, I started out by writing a test first. It turned out that the basic case was easy, as there was already a method to convert a hex digit to an integer. The degenerate cases were more difficult, though. The code as currently written can't handle those cases without throwing an exception. Since the intent of this code was apparently to handle input without throwing exceptions (see the comment on the original code), I defined some tests that followed that approach, but commented them out for now.
+
+Here are the test cases I added:
+
+----
+
+    public void testSpecialCharacter() throws IOException {
+      _expected.put("name=1", "value=1");
+      assertEquals(_expected, doTest("name%3D1=value%3d1"));
+    }
+  
+    public void testDegenerate_MissingHexDigits() throws IOException {
+      _expected.put("name", "value");
+      assertEquals(_expected, doTest("name=value%"));
+    }
+  
+    public void testDegenerate_MissingHexDigitsBeforeSecondName() throws IOException {
+      _expected.put("name1", "value1");
+      _expected.put("name2", "value2");
+      assertEquals(_expected, doTest("name1=value1%&name2=value2"));
+    }
+  
+    public void testDegenerate_MissingHexDigitsBeforeValue() throws IOException {
+      _expected.put("name", "value");
+      assertEquals(_expected, doTest("name%=value"));
+    }
+  
+    public void testDegenerate_BadHexDigits() throws IOException {
+      _expected.put("name", "value");
+      assertEquals(_expected, doTest("name=va%lue"));
+    }
+
+----
+
+Now that I'd defined all the test cases I could think of, it was time to start refactoring. The first thing I thought of when I saw this class was that the cases should each have their own method. But they all rely on local variables, so this called for the Command pattern. The first step was to convert the static method into an instance method in its own class. Then I moved the local variables to instance variables and added a constructor.
+
+While I was at it, I moved the method comment to the class's level. I would have deleted it entirely if it didn't have the editorial about exceptions.
+
+''It appears that what Jim is trying to do is '''ConvertProceduralDesignToObjects'''. His first step, as he said, is a variant on '''ReplaceMethodWithMethodObject''', which I'll tenatively dub '''ReplaceStaticMethodWithMethodObject''' [if anyone has a better or existing pattern name, please put it in!].''
+
+----
+  
+  import java.io.*;
+  import java.util.*;
+  
+  /**
+   * Like H''''''ttpUtils.parseQueryString, except that it never throws parse
+   * exceptions.
+   */
+   public class Q''''''ueryStringParser {
+  
+    private S''''''tringBuffer _key = new S''''''tringBuffer( 50 );
+    private S''''''tringBuffer _value = new S''''''tringBuffer( 50 );
+    private S''''''tringBuffer _curBuf = _key;
+    private Dictionary _args;
+    private I''''''nputStream _in;    
+  
+    public Q''''''ueryStringParser(Dictionary args, I''''''nputStream in) {
+      _args = args;
+      _in = in;
+    } 
+  
+    public Dictionary parseArgs() throws IOException { 
+      while (true) {
+        int b = _in.read();
+        switch (b) {
+          case '=':   // Second half of name=_value pair.
+            _curBuf = _value;
+            _curBuf.setLength( 0 );
+            break;
+          case '&':  // End of name=_value pair.
+            _args.put( _key.toString(), _value.toString() );
+            _curBuf = _key;
+            _key.setLength(0);
+            _value.setLength(0);
+            break;
+          case '%':  // Encoded special character.
+            int num = getHexDigit( _in.read() );
+            num = num * 16 + getHexDigit( _in.read() );
+            _curBuf.append( (char) num );
+            break;
+          case '+':  // Encoded space.
+            _curBuf.append( ' ' );
+            break;
+          default:
+            if (b < 0) {
+              if (_key.length() > 0)
+                _args.put( _key.toString(), _value.toString() );
+              return _args;
+            }
+            _curBuf.append( (char) b );
+            break;
+        }
+      }
+    }  
+  
+    private static int getHexDigit(int character) {
+      return Character.digit((char)character, 16);
+    }
+  
+  }
+
+----
+
+The next step was to move the various cases into their own methods. I also modified the loop to make the default case more clear.
+
+These refactorings taught me a lot about how the code worked. In particular, it uses a StringBuffer reference as if it were a pointer. This reference is used to squirt the parsing results into the appropriate name or value bucket. It's a clever approach, but a confusing one.
+
+''Jim's cheating a bit here. He would have started with four separate refactorings: each of them being '''ExtractMethod'''. He also '''ReplacedEndlessLoopWithClearEndCondition''' [again, another name of my own] to make it clearer how the loop terminates. This caused him to move some of the default processing code out of the loop. By showing the result, rather than the intermediate step, he makes it look like he bit off more than he really did.''
+
+----
+
+  import java.io.*;
+  import java.util.*;
+  
+  /**
+   * Like H''''''ttpUtils.parseQueryString, except that it never throws parse
+   * exceptions.
+   */
+   public class Q''''''ueryStringParser {
+  
+    private S''''''tringBuffer _key = new S''''''tringBuffer( 50 );
+    private S''''''tringBuffer _value = new S''''''tringBuffer( 50 );
+    private S''''''tringBuffer _curBuf = _key;
+    private Dictionary _args;
+    private I''''''nputStream _in;
+  
+    public Q''''''ueryStringParser(Dictionary args, I''''''nputStream in) {
+      _args = args;
+      _in = in;
+    }
+  
+    public Dictionary parseArgs() throws IOException {
+  
+      int b = _in.read();
+      while(b >= 0) {
+        switch (b) {
+          case '=':
+            startParsingValue();
+            break;
+          case '&':
+            startParsingNewNameValuePair();
+            break;
+          case '%':
+            parseHexEncodedCharacter();
+            break;
+          case '+':
+            parseEncodedSpace();
+            break;
+          default:
+            _curBuf.append((char)b);
+            break;
+        }
+        b = _in.read();
+      }
+      if (_key.length() > 0) {
+        _args.put(_key.toString(), _value.toString());
+      }
+      return _args;
+    }
+  
+    private void startParsingValue() {
+      _curBuf = _value;
+      _curBuf.setLength(0);
+    }
+  
+    private void startParsingNewNameValuePair() {
+      _args.put( _key.toString(), _value.toString());
+      _curBuf = _key;
+      _key.setLength(0);
+      _value.setLength(0);
+    }
+  
+    private void parseHexEncodedCharacter() throws IOException {
+      int num = getHexDigit(_in.read());
+      num = num * 16 + getHexDigit(_in.read());
+      _curBuf.append((char)num);
+    }
+  
+    private void parseEncodedSpace() throws IOException {
+      _curBuf.append(' ');
+    }
+  
+    private static int getHexDigit(int character) {
+      return Character.digit((char)character, 16);
+    }
+  
+  }
+
+----
+
+At this point, I was technically done. The code communicated everything it had before, but without comments. But I wasn't happy. The code still wasn't that readable - it had that huge while loop - and it employed a confusing trick that made the purpose of some methods unclear. Plus, there were bugs in it that I wanted to fix. It was time for a new approach. I turned the whole thing inside out.  
+
+This refactoring changed the behavior of a number of degenerate cases, but since they were degenerate cases, I didn't worry about it. It also fixed a number of bugs. The tests were very valuable on this refactoring, since it was fairly extreme.
+
+''Again, I'll try to guess Jim's process. First he would have used '''IntroduceExplainingVariable''' (_moreCharsInStream). He would then probably have used '''ExtractMethod''' to move the body of the while loop out to parseNameValuePair. The post-processing of the loop was a cause of duplicated code, so he tidied it up so that it could go into parseNameValuePair as well, which meant that parseNewNameValuePair could go. At some point, he would have seen that instead of reading in character-by-character, if he was in a name or a value, he could just read up to the next control token. This is the '''SubstituteAlgorithm''' refactoring, and yes, it's a biggie, but the tests cover him. And that's it.''
+----
+  
+  import java.io.*;
+  import java.util.*;
+  
+  /**
+   * Like H''''''ttpUtils.parseQueryString, except that it never throws parse
+   * exceptions.
+   */
+   public class Q''''''ueryStringParser {
+  
+    private S''''''tringBuffer _key = new S''''''tringBuffer( 50 );
+    private S''''''tringBuffer _value = new S''''''tringBuffer( 50 );
+    private S''''''tringBuffer _curBuf = _key;
+    private Dictionary _args;
+    private I''''''nputStream _in;
+    private boolean _moreCharsInStream = true;
+  
+    public Q''''''ueryStringParser(Dictionary args, I''''''nputStream in) {
+      _args = args;
+      _in = in;
+    }
+  
+    public Dictionary parseArgs() throws IOException {
+      while (_moreCharsInStream) {
+        parseNameValuePair();
+      }
+      return _args;
+    }
+  
+    private void parseNameValuePair() throws IOException {
+      String name = getCharsUpTo('=');
+      String value = getCharsUpTo('&');
+      if (!name.equals("") || !value.equals("")) _args.put(name, value);
+    }
+  
+    private String getCharsUpTo(char lastCharacter) throws IOException {
+      String chars = "";
+  
+      int b = _in.read();
+      while(b >= 0) {
+        if (b == lastCharacter) return chars;
+        else if (b == '%') chars += getHexEncodedCharacter();
+        else if (b == '+') chars += " ";
+        else chars += (char)b;
+        b = _in.read();
+      }
+      _moreCharsInStream = false;
+      return chars;
+    }
+  
+    private char getHexEncodedCharacter() throws IOException {
+      int num = getHexDigit(_in.read());
+      num = num * 16 + getHexDigit(_in.read());
+      return (char)num;
+    }
+  
+    private static int getHexDigit(int character) {
+      return Character.digit((char)character, 16);
+    }
+  
+  }
+
+----
+
+At this point, I still wasn't quite done. getHexEncodedCharacter() didn't handle improperly encoded values. I fixed it so that it worked, but not exactly as the tests specified. But since those were degenerate cases and I was getting tired, I changed the tests. :) My personal preference would have been to throw ParseExceptions, but that wasn't the original intent of the code.
+
+''The first change here is around getCharsUpTo(). First, he's done a '''RenameMethod''' to readUpTo, along with '''RenameParameter''' and '''RenameLocalVariable''' to make the intent a bit clearer. He's done '''ExtractMethod''' again, to encapsulate the reading of characters from the stream (and the handling of the end-condition). In readHexEncodedCharacter(), he's used '''IntroduceGuardCondition''' to prevent bad data going through. He's also moved the responsibility of obtaining the character to be converted to a hex digit to getHexDigit (quickly using '''RenameMethod''' to readHexDigit), which of course reuses the readCharacter method extracted earlier (correcting a possible bug that Jim didn't mention).''
+----
+  
+  import java.io.*;
+  import java.util.*;
+  
+  /**
+   * Like H''''''ttpUtils.parseQueryString, except that it never throws parse
+   * exceptions.
+   */
+   public class Q''''''ueryStringParser {
+  
+    private S''''''tringBuffer _key = new S''''''tringBuffer( 50 );
+    private S''''''tringBuffer _value = new S''''''tringBuffer( 50 );
+    private S''''''tringBuffer _curBuf = _key;
+    private Dictionary _args;
+    private I''''''nputStream _in;
+    private boolean _moreCharsInStream = true;
+  
+    public Q''''''ueryStringParser(Dictionary args, I''''''nputStream in) {
+      _args = args;
+      _in = in;
+    }
+  
+    public Dictionary parseArgs() throws IOException {
+      while (_moreCharsInStream) {
+        parseNameValuePair();
+      }
+      return _args;
+    }
+  
+    private void parseNameValuePair() throws IOException {
+      String name = readUpTo('=');
+      String value = readUpTo('&');
+      if (!name.equals("") || !value.equals("")) _args.put(name, value);
+    }
+  
+    private String readUpTo(char boundaryCharacter) throws IOException {
+      String word = "";
+  
+      char b = readCharacter();
+      while(_moreCharsInStream) {
+        if (b == boundaryCharacter) return word;
+        else if (b == '%') word += readHexEncodedCharacter();
+        else if (b == '+') word += " ";
+        else word += b;
+        b = readCharacter();
+      }
+      return word;
+    }
+  
+    private char readCharacter() throws IOException {
+      int character = _in.read();
+      if (character < 0) {
+        _moreCharsInStream = false;
+        return '\0';
+      }
+      else {
+        return (char)character;
+      }
+    }
+  
+    private String readHexEncodedCharacter() throws IOException {
+      int sixteens = readHexDigit();
+      int ones = readHexDigit();
+      if ((sixteens < 0) || (ones < 0)) return "";
+  
+      char character = (char)((16 * sixteens) + ones);
+      return "" + character;
+    }
+  
+    private int readHexDigit() throws IOException {
+      return Character.digit(readCharacter(), 16);
+    }
+  
+  }
+
+----
+
+Continued in CommentingChallengeResponsePartTwo.
+

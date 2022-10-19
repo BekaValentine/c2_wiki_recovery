@@ -1,0 +1,216 @@
+Experiences with UnitTest''''''s in a C++ environment - getting down to some of the nitty gritty.
+
+After 2 years working with Unit Tests, testing collections of classes rather than single classes, we have developed in C++ a fairly complex test harness which I would like to share and review. 
+
+Let me introduce this work by showing you some example code. The application we're looking at here is an intelligent transaction router. Servers notify the router of the services that they provide, when a router receives a request from a client it then sends relevant requests to those servers.
+
+The key code in the setUp call is the first line which sets up a global factory class (gFa) to provide what one might call Mock Objects (thoughthese objects are set up not so much to provide simulated behaviour but to catch calls to their methods - more on that later). gFaT is a pointer to the sub-class and is used within the test code only, whereas gFa is a pointer to the super class and is used throughout the code being tested (gfa is of class PSGlobalFact which is a super class of PSGlobalFactTest).
+
+ void TC_DDR_Notifications::setUp()
+ {
+  gFa = gFaT = new PSGlobalFactTest(TRUE); // use new test classes
+ ...
+
+The test itself is split up into 5 sections. The first group of lines sends
+in the Server notifications, at each point checking that this does not cause
+the code to generate any requests. Then the factory is instructed to create
+a 'real' version of a class rather than a Test (or Mock) version. Then a
+client requests is sent in. Then a check is made to see if the two expected
+requests to servers were generated. And finally code is cleared up and a
+check is made to see that no further extraneous requests were generated.
+
+ // -----------------------------------------------------------------------------
+ // 3. Test_IfIndex_Notifs_Then_Request
+ //
+ // Test: Notifs for Throughput. Notifs for IfTranslation. Send a request for Delivery.
+ // Expect: 2 Requests sent out for IfIndex
+ // -----------------------------------------------------------------------------
+
+ void TC_DDR_Notifications::Test_IfIndex_Notifs_Then_Request()
+ {
+   SendNotification ( NPIPC_Notification::CN_Discovered, sNearPENodeName, NPIPC_Characteristic_Set::CC__Throughput );
+
+   CheckNoMoreEvents ( "Throughput notification (harry) causes nothing more to happen" );
+
+   SendNotification ( NPIPC_Notification::CN_Discovered, sFarPENodeName, NPIPC_Characteristic_Set::CC__Throughput );
+
+   CheckNoMoreEvents ( "Throughput notification (ron) causes nothing more to happen" );
+
+   SendNotification ( NPIPC_Notification::CN_Discovered, sNearPENodeName, NPIPC_Characteristic_Set::CC__IfTranslation );
+
+   CheckNoMoreEvents ( "IfIndex notification (harry) causes nothing more to happen" );
+
+   SendNotification ( NPIPC_Notification::CN_Discovered, sFarPENodeName, NPIPC_Characteristic_Set::CC__IfTranslation );
+
+   CheckNoMoreEvents ( "IfIndex notification (ron) causes nothing more to happen" );
+
+   gFaT->CreateNonTestPSSubCharacteristic();
+
+   SendSiteToSiteRequest ( sNearPENodeName, 0, sFarPENodeName, 0, NPIPC_Characteristic_Set::CC_Delivery, 1, "ddr request" );
+
+   CheckRequestSentNextTo ( C_From, sNearPENodeName, NPIPC_Characteristic_Set::CC__IfTranslation, 1, "check on ifindex request for harry" );
+
+   CheckRequestSentNextTo ( C_To, sFarPENodeName, NPIPC_Characteristic_Set::CC__IfTranslation, 1, "check on ifindex request for ron" );
+
+   DESTROY_IF_PRESENT ( sTestSiteToSiteMeasList[1] );
+   CheckNoMoreEvents ( "nothing else" );
+ }
+
+This all looks very nice (IMO, anyway :-) ) but it has taken quite a lot of
+effort to get to this stage.
+
+All code being tested uses global factories rather than 'newing' their own
+objects (this I think is fairly standard practice). When running unit tests,
+the Test global factory can generate (under control - see above) Test_XXXX
+classes for every XXXX class we have defined. These Test_XXXX classes are
+automatically generated from the XXXX by scripts we have written. Here's an
+example:
+
+ In X.hh
+ --------
+
+ class AutoTest_PSClient : public PSClient
+ {
+ public :
+ ...
+  void MySend( NPIPC_Root_Obj* o_obj ) ; // business method
+
+  static MaBool sPassSend;
+  static void Pass_Send() { sPassSend = TRUE; }
+  static void Dont_Pass_Send() { sPassSend = FALSE; }
+ }
+
+ In X.cc
+ --------
+
+ MaBool AutoTest_PSClient::sPassSend = TRUE;
+
+ void AutoTest_PSClient::MySend( NPIPC_Root_Obj* o_obj )
+ {
+  if ( sPassSend )
+    PSClient::MySend( o_obj );
+  else
+    TestEvent::ST_GenerateEvent( * new EV_PSClient_MySend(  this, o_obj ) );
+ }
+
+As you see every method can either work in the normal non-test fashion or it
+can generate an event which is then the basis of the test harness calls such
+as CheckRequestSentNextTo.
+
+And here's the event class (also auto-generated) which, as you will also see,
+allows me to check whether Send was called with *any* o_obj or with a
+specific o_obj.
+
+(In order to check whether an event has happened, an equivalent event is created and used as a key for the search. The difference between CheckNextIs and O_CheckNextIs is that, after asserting that the event is present, the former destroys the generated event (as well as the key) whereas the latter passes it back to the caller):
+
+ in AppTestEvents.hh
+ ------------------------
+
+ class EV_PSClient_MySend : public AppTestEvent
+ {
+ public :
+  //  Check methods
+
+  static void CheckNextIs( void* mGenerator, NPIPC_Root_Obj& o_obj );
+
+  static EV_PSClient_MySend* O_CheckNextIs( void* mGenerator, NPIPC_Root_Obj& o_obj, MaBool wild_o_obj = FALSE );
+
+  static void CheckHappened( void* mGenerator, NPIPC_Root_Obj& o_obj );
+
+  static EV_PSClient_MySend* O_CheckHappened( void* mGenerator, NPIPC_Root_Obj& o_obj, MaBool wild_o_obj = FALSE );
+
+  virtual const EV_PSClient_MySend* CastToEV_PSClient_MySend() const
+  {
+   return this;
+  }
+ ...
+  NPIPC_Root_Obj* so_obj;
+  MaBool wild_so_obj;
+
+ private :
+ ...
+  bool IsEquivalent( const AppTestEvent& rhs ) const;
+ };
+
+ in AppTestEvents.cc
+ ------------------------
+
+ void EV_PSClient_MySend::CheckNextIs( void* mGenerator, NPIPC_Root_Obj &o_obj )
+ {
+   TestEvent* expectedEvent = new EV_PSClient_MySend( mGenerator, o_obj );
+   _DESTROY( OST_CheckNextEventIs( *expectedEvent ) );
+   DESTROY( expectedEvent );
+ }
+
+ EV_PSClient_MySend* EV_PSClient_MySend::O_CheckNextIs( void* mGenerator, NPIPC_Root_Obj& o_obj, MaBool wild_o_obj )
+ {
+  TestEvent* expectedEvent = new EV_PSClient_MySend( mGenerator, o_obj );
+  const_cast< EV_PSClient_MySend* >
+ ( expectedEvent->CastToAppTestEvent()->CastToEV_PSClient_MySend() )->wild_so_obj )
+    = wild_o_obj;
+  AppTestEvent* t_ptr = OST_CheckNextEventIs( *expectedEvent );
+  DESTROY( expectedEvent );
+  return ( EV_PSClient_MySend* ) t_ptr->CastToEV_PSClient_MySend();
+ }
+
+ void EV_PSClient_MySend::CheckHappened( void* mGenerator, NPIPC_Root_Obj &o_obj )
+ {
+  TestEvent* expectedEvent = new EV_PSClient_MySend( mGenerator, o_obj );
+  _DESTROY( OST_CheckEventHappened( *expectedEvent ) );
+  DESTROY( expectedEvent );
+ }
+
+ EV_PSClient_MySend* EV_PSClient_MySend::O_CheckHappened( void* mGenerator, NPIPC_Root_Obj& o_obj, MaBool wild_o_obj )
+ {
+  TestEvent* expectedEvent = new EV_PSClient_MySend( mGenerator, o_obj );
+  const_cast< EV_PSClient_MySend*>
+  ( expectedEvent->CastToAppTestEvent()->CastToEV_PSClient_MySend() )->wild_so_obj )
+    = wild_o_obj;
+  AppTestEvent* t_ptr = OST_CheckEventHappened( *expectedEvent );
+  DESTROY( expectedEvent );
+  return ( EV_PSClient_MySend* ) t_ptr->CastToEV_PSClient_MySend();
+ }
+
+ bool EV_PSClient_MySend::IsEquivalent( const AppTestEvent &right) const
+ {
+  const EV_PSClient_MySend* rightRight = right.CastToEV_PSClient_MySend();
+
+  return ( rightRight != 0 ) &&
+       ( wild_so_obj || rightRight->wild_so_obj || IS_EQUIVALENT( *so_obj, *rightRight->so_obj ) );
+ }
+
+The OST_CheckEventHappened calls use assertions which are then translated
+into exceptions and caught by our C++ version of JUnit (a port I did a
+couple of years ago). We have also created a trace system such that:
+
+ { trace << "fna test" << endmsg; assert( fna_test() ); }
+ { trace << "fnb test" << endmsg; assert( fnb_test() ); }
+
+- works in such a way that the trace message only appears if the
+corresponding test fails.
+
+So there you go - that's how we've done it. In retrospect, having a separate
+class for each event, where there is an event defined for not all but many
+methods of every class, seems excessive, though it has allowed as to
+partially specify an event as for when, for example, we know a method will
+be called but we cannot predict the value of every parameter (like a pointer
+or the value of system time or possibly some internal variable we have no
+access to or we don't really care about). I think if I was to do this again
+I might settle for just having a string representation of the method call - possibly :-)
+
+Our underlying Event System allows you to check whether events (i.e. method calls) happened in a particular order or not. Since we're in the C++ world and we like to make sure there are no memory leaks we have also had to take considerable care about object ownership (the o_ in the o_obj parameter indicates that ownership is passed into the MySend method, so it then gets passed into the MySend event object; should it not have been so, then a clone of the object would have had to go into the event object - again, all this is spotted by our code generation scripts).
+
+It's been a lot of work, and I do wonder how other people have dealt with
+these problems (also in the Java world).
+
+-- RichardDevelyn
+
+----
+
+Have you tried CppUnit? I haven't myself, but it might help simplify things.
+
+----
+
+Consider using the Boost test libraries from http://www.boost.org/libs/test/doc/index.htm I notice that you're using some naked pointers, which I tend to avoid. I prefer to use a smart pointer which will deal with the ownership issues, or at least make explicit. e.g. by using std::auto_ptr<> when passing a pointer into a function you are explicitly passing ownership of the object to the function. Exception safety is generally improved with smart pointers, which is one of the main reasons for using auto_ptr<>. The Boost project also has some interesting smart pointer classes for concepts such as sharing ownership (shared_ptr<>) and preventing ownership from being transferred out of a given scope (scoped_ptr<>). Do you really need to use void* as a parameter? -- TerryEbdon 
+----
+CategoryTesting

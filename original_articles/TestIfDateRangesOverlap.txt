@@ -1,0 +1,226 @@
+A commonly-used idiom for determining if one range of dates overlaps with another range of dates
+
+'''Problem:'''
+Given two date ranges, each with start and end dates (and possibly times), how do you determine if the ranges overlap?
+
+'''Solution:'''
+
+Testing the range "start1 to end1" against the range "start2 to end2" is done by testing if...
+	'''( start1 <= end2 and start2 <= end1 )'''
+If TRUE, then the ranges overlap.
+
+If the ranges do not include the "end" value itself, then use "<" instead of "<=" in the comparisons.
+
+'''Important Assumption:'''
+
+This assumes that start date <= end date in each range. This can also be stated as...
+	'''( start1 <= end1 and start2 <= end2 )'''
+For discussion of what to do if this is not true, see below.
+
+'''Applicability:'''
+Is not limited to date/time comparisons; can also be used for ranges of numbers, names, and any other data type where ranges are meaningful.
+
+'''Alternate Expression:'''
+	'''not (end1 < start2 or end2 < start1)'''
+	 :	The expression in brackets is true when one range is entirely to the left or right of the other. This condition is pretty easy to visualize. The ranges overlap if and only if it is false.
+
+'''Implementation:'''
+''See MartinFowler's RangePattern for implementation details.'' http://www.martinfowler.com/ap2/range.html
+
+[CategoryPattern]
+
+----
+----
+
+Q: Why document such a simple and obvious pattern/idiom?
+
+A: It's not as obvious as you may think.
+----
+Actually, it is obvious, if you use the alternate expression given above. Consider:
+
+	1 The date ranges do not overlap if '''end_1<start_2'''
+	1 The date ranges do not overlap if '''end_2<start_1'''
+	1 Therefore the date ranges do not overlap if '''end_1<start_2''' OR '''end_2<start_1'''
+	1 Therefore the date ranges do overlap if NOT('''end_1<start_2''' OR '''end_2<start_1''')
+	1 Therefore the date ranges do overlap if '''end_1>=start_2''' AND '''end_2>=start_1'''
+
+Now include or exclude endpoints as you wish. Given this analysis the alternate version is clearly right, and the code might be better in that form.
+
+If it's possible that you have '''not(start<end)''' then you should "wash" the date ranges first as a separate process, rather than conflating the two issues.
+
+The apparent difficulty goes away when you think about the right thing - a little analysis goes a long way.
+
+-----
+-----
+
+RE: ''"It's not as obvious as you may think."'' note above...
+
+I have to "scratch my head" to find the solution every time I run into this problem,
+and over the years I've fixed a number of misguided attempts by other programmers to accomplish the same thing.
+''(...and they often use excessively complex expressions)''
+-- JeffGrigg
+
+-----
+
+Example: We had a consultant here about a year ago who did some work
+in code with a lot of date plumbing. His work was generally good, but he systematically changed every instance of
+	'''( start1 < end2 and start2 < end1 )'''
+to
+	'''( ( start1 >= start2 and start1 <= end2 ) or '''
+	'''  ( end1 >= start2 and end1 <= end2 ) or '''
+	'''  ( start1 <= start2 and end1 >= end2 ) )'''
+which is almost the same if you assume that the startX <= endX. It is ''not'' the same on the edge boundaries, which is how we noticed the change.
+
+-- EricBennett
+
+I would guess that his change was to attempt to make the code maintainable by an inexperienced programmer. It makes the goal of the test a '''lot''' more obvious. As a consultant, who presumably wouldn't be around very long, he should not have altered working code (I guess this should go under EthicsOfConsulting) without a very good reason and permission. Breaking the boundary conditions was a result of this hubris. -- DSS
+
+But if the intention was merely to make the goal more obvious, why not just do this?:
+	'''( start1 < end2 and start2 < end1 ) /* i.e. ranges overlap */'''
+-- TonyAndrews
+----
+
+Excellent question Eric!
+''I just '''assumed''' that startX <= endX.''
+
+So maybe we should use this expression:
+	'''( start1 <= end2 and start2 <= end1 and start1 <= end1 and start2 <= end2 )'''
+or, in your case...
+	'''( start1 < end2 and start2 < end1 and start1 < end1 and start2 < end2 )'''
+The first assumes that the range [startX to endX] '''includes''' both end points.
+Example: "Nov 1 to Nov 7" is a 7-day range that includes both Monday (the 1st) and Sunday (the 7th).
+''(Yes, some systems really do it this way. ;-)''
+
+The second assumes that the range [startX to endX) excludes one end point.
+Making "startX = endX" an empty range; covering no time at all -- not even one second.
+This is a common implementation approach that helps avoid hard-coding internal implementation details:
+"This month" is "1999-Nov-1 at midnight" to ''(but not including)'' "1999-Dec-1 at midnight".
+Otherwise, the end date would have to be "1999-Nov-30 23:59", or is it "... 23:59:59", or maybe "23:59:59.999", or something else that will have to be changed if our date range's internal precision is changed.
+''(It's also easier to compute the 1st day of the next month than the last possible moment of this month. ;-)''
+
+''...and, anyway, Eric's consultant's refactoring not only changes boundary condition results, it does not address the "startX > endX" issue.''
+-- JeffGrigg
+
+----
+
+To really fix it, how about
+	'''( min(start1,end1) < max(start2,end2) and min(start2,end2) < max(start1,end1) )'''
+? -- DSS
+
+Why not throw an exception on an attempt to create a D''''''ateRange with ''start'' after ''end''? Unfortunately, since (in java) ''Date''s are mutable, it's possible to modify ''start'' or ''end'' in place; the invariant that ''start'' does not come after ''end'' will be hard to enforce. -- EricJablow
+
+''The "min/max" fix assumes that when they say "From January 24th, 2001 through January 5th, 2001" (negative time travel), that they really meant to say "January 5th through 24th." As for me, I'd rather consider negative date ranges an error -- throw an exception or otherwise refuse to accept the data. -- JeffGrigg''
+
+I will then nominate NoConstObjects as one of the JavaDesignFlaws. It's nearly impossible to define a class representing an interval [''start, end''] of ''Date''s (or any Comparable mutable class) with a ''start <= end'' invariant. Unless you make the accessors return ''clones'', any client of the class can modify the interval. Furthermore, you cannot write a generic Interval class because you cannot specify that an argument to a method be both Comparable and Cloneable. And, if you make the accessors return clones, you slow down your program. Am I asking for too much? -- EricJablow
+
+''How much work is it to write an immutable version? It would be nice if the standard utility classes came in immutable versions, but it's hardly a killer.''
+
+It's easy enough to insulate the Date''''''Range class from changes to the Dates.
+
+ public Date''''''Range(Date fromDate, Date toDate) {		
+	if (fromDate.after(toDate))
+	throw new IllegalArgumentException("fromDate cannot be after toDate");
+
+	// don't alias the params!
+	start = new Date(fromDate.getTime());
+	end = new Date(toDate.getTime());
+ }
+
+ public Date getStartDate() {
+	return new Date(start.getTime());
+ }
+It's not necessary to store the start and end as Date objects, either. Store the result of getTime() and use that for comparisons, and only construct a Date when required. 
+
+----
+
+Well, startX <= endX ''was'' the case for us. I brought it up because
+you need to assume it to (nearly) deduce the one form from the other.
+
+[start..end] is most convenient when the ''time unit'' is numbered, so end identifies the last unit. The [start..end) form is good when the ''divisions'' ''between units'' are numbered. Then end - start will give you the duration.
+
+I suspect that how people use times depends on which way they think
+about time. To me, time is a continuum, so I operate on infinitesimal
+moments. I think many others view days, minutes, seconds, etc as units
+to be identified, so they code accordingly. That may be part of why this keeps coming up.
+
+-- EricBennett
+
+A month often ''is'' a unit to be identified. There are many applications where you need to do something on the last day of the month - adding 86400*31 seconds just won't cut it. Ditto annual events, which must cope with leap years. -- DanBarlow
+
+----
+I think the original definition of the right way to do it is wrong. I think it assumes the number 1 interval is before the number 2 interval.
+
+There are 3 distinct cases, the ranges are disjoint, the ranges overlap, or one range is a subset of the other (which I will include in the overlap case). The range numbers 1 and 2 are arbitrary. I will cover all cases by switching 1 and 2, making 6 cases.
+
+''you missed all the cases involving open-ended ranges.''
+
+I am ignoring edge cases.
+
+1.a. S1_____E1	S2_____E2	S1<E1<S2<E2
+
+1.b. S2_____E2	S1_____E1	S2<E2<S1<E1
+
+2.a. S1________E1		S1<S2<E1<E2
+	  S2_______E2
+
+2.b. S2________E2		S2<S1<E2<E1
+	  S1_______E1
+
+3.a. S1___________E1		S1<S2<E2<E1
+	S2____E2
+
+3.b. S2___________E2		S2<S1<E1<E2
+	S1____E1
+I think I caught all cases. With 4 points, fix one, and you have 3 degrees of freedom. Hmmm, this also presumes you know that S1<E1 and S2<E2. That should be checked somewhere.
+
+"Testing the range "start1 to end1" against the range "start2 to end2" is done by testing if...
+	'''( start1 <= end2 and start2 <= end1 )'''
+If TRUE, then the ranges overlap."
+
+By golly, it works! I must have messed up when I did it on my fingers.
+
+Ok, that's why this is a pattern. It's not obvious until you work it out for yourself. (At least to me.) -- BobFarrington
+
+----
+The intervals do not overlap if one ends before the other begins.
+Therefore they do overlap if both begin before either ends.
+(Phrased in terms of open intervals, and assuming start1<end1 and start2<end2.)
+----
+The proposed solution fails in a certain use case unless my Junit tests fail me. Consider a half-open range where a zero-length range is allowed.
+
+start1 = 100; end1 = 200; (length = 100)
+start2 = 100; end2 = 100; (length = 0)
+
+	'''( start1 < end2 and start2 < end1 )'''
+Given these values, the formula returns false, yet the empty range definitely [''subject to definition of "overlaps"''] overlaps the larger range.
+
+To solve this in Joda-Time we used:
+	return (start1 < end2 && start2 < end1) ||
+		(start1 == start2 && (start1 == end1 || start2 == end2));
+----
+May I suggest yet another obvious solution:
+
+	DEFINE BOOLEAN DateRange.overlapsWith(DateRange someOtherRange) AS
+	  RETURN this.includes(someOtherRange.start) OR someOtherRange.includes(this.start);
+
+I made this up on the spot, so please correct me if I'm wrong, but I think it works both if the end date is defined to be included in the range and also if it isn't, and it also handles the case of a zero length range correctly.
+
+Of course, you would also have:
+
+	DEFINE BOOLEAN DateRange.includes(Date d) AS
+	  RETURN this.start <= d AND this.end > d;
+
+Trivial and self-documenting, isn't it? And '''of course''' the DateRange objects make sure that start <= end, otherwise the variable names would simply be wrong.
+
+Note: Two identical ranges would not be considered to overlap if their length is zero, in the above example. It seems odd, but in the case of calendars it actually makes sense. It is a logical consequence of defining two ranges to not overlap if the end of the first equals the start of the second, which is the case for any two consecutive items in, say, the programme schedule of a single TV station. You wouldn't want those to show up as overlapping.
+----
+My solution is to explicitly distinguish between date ranges and timestamp ranges.
+
+Date ranges are inclusive of the end date, timestamp ranges are not. Genrally, date ranges correspond to entire calendar days - they are business, even legal entities and are time-zone agnostic (3rd of July, 2007 simply means that date in whatever the timezone might be). Note that date ranges cannot have a length of zero.
+
+Timestamps, by contrast, refer to instants of physical time. Timestamp ranges are all physical instants up to but not including the end of the range.
+
+Thus the semantics are different, and you use a different class for doing the comparisons. When converting between the two types, the relevant questions are: what's the time zone, and are we talking business hours (9-5) or the whole day as being a "day"?
+----
+See also: OrderingDateRanges
+CategoryExample

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Ternary Sql Alchemy
+      </h1>
+      <p>
+        This is a sort of response to <a href="EjbTernaryRelationshipExample.html">EjbTernaryRelationshipExample</a> and <a href="OrTernaryRelationshipExample.html">OrTernaryRelationshipExample</a>.
+      </p>
+      <code>
+        #!/usr/bin/env python2<br/>
+      </code>
+      <code>
+        import sqlalchemy as sa;<br/>
+      </code>
+      <code>
+        de = sa.create_engine("postgres:///3way")<br/>
+        md = sa.BoundMetaData(de)<br/>
+        #md.engine.echo = True<br/>
+      </code>
+      <code>
+        # inspect the table metadata<br/>
+        for t in ['suppliers', 'parts', 'projects',<br/>
+        'r_projectsparts', 'r_suppliersparts', 'r_supplierspartsprojects']:<br/>
+        globals()[t] = sa.Table(t, md, autoload=True)<br/>
+      </code>
+      <code>
+        # ORM session<br/>
+        sn = sa.create_session(bind_to=de)#, echo_uow=True)<br/>
+      </code>
+      <code>
+        # Full ORM, although it's not needed for this problem<br/>
+        class Supplier(object):<br/>
+        def __init__(self, sname):<br/>
+        self.supplier_name = sname # missing Ruby's Struct here<br/>
+        class Project(object):<br/>
+        def __init__(self, pname):<br/>
+        self.project_name = pname<br/>
+        class Part(object):<br/>
+        def __init__(self, pcode):<br/>
+        self.part_code = pcode<br/>
+        class SuppliedPart(object):<br/>
+        def __init__(self, supp, part):<br/>
+        self.part = part<br/>
+        self.supplier = supp<br/>
+        class RequiredPart(object):<br/>
+        def __init__(self, proj, part):<br/>
+        self.part = part<br/>
+        self.project = proj<br/>
+        class PotentialPart(object):<br/>
+        def __init__(self, reqp, supp):<br/>
+        # assuming you want this caught before the db sees it<br/>
+        if reqp.part != supp.part:<br/>
+        raise Exception("Parts mismatch")<br/>
+        self.reqp = reqp<br/>
+        self.supp = supp<br/>
+        class AcceptedPart(PotentialPart):<br/>
+        def __init__(self, reqp, supp):<br/>
+        PotentialPart.__init__(self, reqp, supp)<br/>
+      </code>
+      <code>
+        sa.mapper(Part, parts)<br/>
+        sa.mapper(Supplier, suppliers)<br/>
+        sa.mapper(Project, projects)<br/>
+        sa.mapper(SuppliedPart, r_suppliersparts, properties = {<br/>
+        'part': sa.relation(Part, backref='splist', lazy=False),<br/>
+        'supplier': sa.relation(Supplier, backref='splist', lazy=False)})<br/>
+        sa.mapper(RequiredPart, r_projectsparts, properties = {<br/>
+        'part': sa.relation(Part, backref='rplist', lazy=False),<br/>
+        'project': sa.relation(Project, backref='rplist', lazy=False)})<br/>
+        sa.mapper(AcceptedPart, r_supplierspartsprojects, properties = {<br/>
+        'reqp': sa.relation(RequiredPart, backref=sa.backref('ap', uselist=False),<br/>
+        lazy=False), # 1:1, but may be None<br/>
+        'supp': sa.relation(SuppliedPart, backref=sa.backref('ap', uselist=False),<br/>
+        lazy=False)})<br/>
+      </code>
+      <code>
+        # this is more or less a client-side view<br/>
+        big_join = sa.join(projects, r_projectsparts).join(parts).               join(r_suppliersparts).join(suppliers) # problem with col names<br/>
+        named_join = sa.select([projects.c.project_name, parts.c.part_code,<br/>
+        suppliers.c.supplier_name], from_obj=[big_join]).                            alias('potparts')<br/>
+        # the fields are only needed if you want traversals or insertions<br/>
+        sa.mapper(PotentialPart, named_join, properties = {<br/>
+        'reqp': sa.relation(RequiredPart, backref='pplist',<br/>
+        primaryjoin=sa.and_(named_join.c.part_code==<br/>
+        r_projectsparts.c.part_code,<br/>
+        named_join.c.project_name==<br/>
+        r_projectsparts.c.project_name),<br/>
+        lazy=False),<br/>
+        'supp': sa.relation(SuppliedPart, backref='pplist',<br/>
+        primaryjoin=sa.and_(named_join.c.part_code==<br/>
+        r_suppliersparts.c.part_code,<br/>
+        named_join.c.supplier_name==<br/>
+        r_suppliersparts.c.supplier_name),<br/>
+        lazy=False)})<br/>
+      </code>
+      <code>
+        # ORM ends here, insert some data now to show that it works as expected:<br/>
+        # all these assignments can be avoided with metaclasses, but KISS for now<br/>
+        # SA only checks shallow identity, so you'd need a weakref hash, yuck...<br/>
+        hammer			= Part('hammer')<br/>
+        nails	 		= Part('nails')<br/>
+        wood			= Part('wood')<br/>
+        game			= Part('game')<br/>
+        spice_rack 		= Project('spice rack')<br/>
+        nice_meal 		= Project('nice meal')<br/>
+        acme 			= Supplier('ACME')<br/>
+        forrest			= Supplier('Forrest')<br/>
+        acme_hammer 	= SuppliedPart(acme, hammer)<br/>
+        acme_nails 		= SuppliedPart(acme, nails)<br/>
+        forrest_wood 	= SuppliedPart(forrest, wood)<br/>
+        forrest_game	= SuppliedPart(forrest, game)<br/>
+        sr_hammer 		= RequiredPart(spice_rack, hammer)<br/>
+        sr_wood 		= RequiredPart(spice_rack, wood)<br/>
+        sr_nails 		= RequiredPart(spice_rack, nails)<br/>
+        nm_game			= RequiredPart(nice_meal, game)<br/>
+        sn.save(AcceptedPart(sr_hammer, acme_hammer))<br/>
+        # ACME nails are substandard, so they're not accepted<br/>
+        ## sn.save(AcceptedPart(sr_nails, acme_nails)) <br/>
+        sn.save(AcceptedPart(sr_wood, forrest_wood))<br/>
+        sn.save(AcceptedPart(nm_game, forrest_game))<br/>
+      </code>
+      <code>
+        sn.flush() # commit<br/>
+      </code>
+      <code>
+        def parts_that_cannot(pname):<br/>
+        """<br/>
+        List all parts that suppliers cannot provide for the project<br/>
+        and that the project actually requires, and only for those<br/>
+        providers that provide at least one part; also count how many<br/>
+        parts they *can* supply, and the total number of parts needed<br/>
+        for the project: (total, [(supplier, [count, missing]), ...])<br/>
+        """<br/>
+        proj = sn.query(Project).selectone_by(project_name=pname)<br/>
+        requires = frozenset((rp.part_code for rp in proj.rplist))<br/>
+        hres = {}<br/>
+        for part in sn.query(PotentialPart).select_by(project_name=pname):<br/>
+        he = hres.setdefault(part.supplier_name, [0, []])<br/>
+        he[0] = he[0] + 1<br/>
+        he[1].append(part.part_code)<br/>
+        hres[part.supplier_name] = he<br/>
+        # do the set complement w/o SQL, probably more efficient<br/>
+        # if most projects use only a small subset of the parts<br/>
+        for hk, hv in hres.iteritems():<br/>
+        hres[hk][1] = requires - frozenset(hv[1])<br/>
+        res = hres.items()<br/>
+        res.sort(key=lambda x: x[1][0], reverse=True)<br/>
+        return (len(requires), res)<br/>
+      </code>
+      <code>
+        def parts_that_cannot_meth(self):<br/>
+        return parts_that_cannot(self.project_name)<br/>
+      </code>
+      <code>
+        Project.suppliers_with_parts_they_cannot_provide = parts_that_cannot_meth<br/>
+      </code>
+      <code>
+        print "---spice rack---", parts_that_cannot('spice rack')<br/>
+        print "---nice meal---", nice_meal.suppliers_with_parts_they_cannot_provide() # OO way<br/>
+      </code>
+    </div>
+  </body>
+</html>

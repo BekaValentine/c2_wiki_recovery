@@ -1,0 +1,108 @@
+'''How can you protect internal collections when providing access to them?'''
+
+You need to provide access to a collection but you don't want clients unpredictably modifying your internal collection
+
+'''Therefore'''
+
+ReturnEnumerationsNotCollections or ReturnIteratorsNotCollections
+
+----
+In Java 2 it is better to ReturnUnmodifiableCollectionsNotCollections using Collections.unmodifiableXXX
+
+''Anything similar in other languages?''
+
+----
+Many times you have a class that contains a collection of other objects. For instance, let's consider a class Company that contains a collection of Employees.  Now, there are two common things that clients of Company will want to do with the list of Employees. They might want to add  or remove the list, or they may want to iterate over the list of employees and interrogate each of them.
+
+In Smalltalk, we would accomplish the second goal by returning the collection, and then letting the client iterate over the collection using Smalltalk's iterator messages. But this presents a problem.  Returning the collection allows clients to also directly ''modify'' the collection without the knowledge of the containing object. If Company wanted to be able to validate Employee instances as they were added, or notify dependents when they were removed, it would be out of luck if clients could simply obtain the collection.
+
+To get around this, I've seen the following idiom applied in a lot of Java code - both in the Sun classes and in other vendor classes. Instead of returning the collection, return an Enumeration over the collection as the PublicInterface.  This allows clients to iterate over the collection, but not modify it directly.  The following code illustrates what I mean
+
+ public Enumeration employees() {
+ return employees.elements();
+ }
+
+ public void addEmployee(Employee e) {
+ employees.addElement(e);
+  // do anything else necessary
+ }
+
+ public void removeEmployee(Employee e) {
+ // checks and other things
+ employees.removeElement(e);
+ }
+
+A second potential solution would have been to return a clone() of the original collection instead of an Enumeration. The drawbacks of this are that clients may be misled into thinking they *are* modifying the original collection, and that cloning a large collection can be an expensive operation. Returning an Enumeration instead makes the class author's intent more clear - clients may iterate, but not modify.
+
+One problem with this idiom that if you simply want the size of the collection, you can't obtain that from an Enumeration without enumerating over all of the elements and incrementing a counter. This is one of the shortfalls that is being fixed in the new collection classes that will be a part of the JDK 1.2.
+
+-- KyleBrown
+----
+
+Just to add another "Known use" to this idiom - In EnterpriseJavaBeans if you want to have a "finder" method for an Entity Home Interface return a collection of Entity EJB's, the only type that is allowable is an Enumeration.  I suspect this because you can build Enumerations that either get one object at a time across the network, or that do internal caching to reduce network overhead. -- KyleBrown
+
+----
+'''Why not return an Iterator?'''
+
+You can return an Iterator if your EJB Server supports Java 2 - after all, an Iterator is really the same as an Enumeration in this respect. However, the EJB Spec doesn't require Java 2 compliance, so an Enumeration is the best option for those servers that don't support it. -- KyleBrown
+
+''While you can, you shouldn't. I was rereading the spec the other day and noticed section 9.9.1 - "a finder method that returns a collection of objects must define the return type to be java.util.Enumeration."''
+
+----
+'''Consequences'''
+
+A disadvantage of having a method ReturnEnumerationsNotCollections is that client code can ''only'' enumerate over the values returned.  Client code might want to index values by some key or check that a value is in the set of objects returned.  In these cases, they would rather receive a Map or Set, so returning a collection is a better choice.  
+
+With the Java2 collections framework, you can stop client code modifying an object's collection by returning an wrapper around the mutable collection that makes it appear to be immutable. Alternatively, you can return an ImmutableCollection.
+
+-- NatPryce.
+
+----
+'''ReturnCollectionsNotIterators'''
+
+Another good reason to do this: Returning a collection often ties the clients to implementation details of your class. If you decide to use a different collection later, it can be hard to maintain the same client interface. -- JeffGrigg
+
+This is why we use interfaces. If you simply return the base collection-type interface (such as ''List''), you are not tied to any particular collection implementation. Generally, I think returning enumerators (or iterators) is a bad idea as it ties the system even more to external iteration. Actually, it ties the system even more to that specific implementation of collections. Furthermore, you have to consider ''why'' you want to return an enumerator in the first place. Is it because you want to access a collection of objects? If so, you should simply return a collection instead of trying fancy stuff. In other words, DoSimpleThings. If the client wants a collection, give them a collection, not an enumeration object. -- RobertDiFalco
+
+----
+The question is do you really ''know'' what the client wants?  What the client wants is "a bunch of things". ''Any'' decision as to how to interpret "bunch of things" is up to you. The decision to return a base collection-type interface applies ONLY in Java 2. The idiom was originally written back before Java 2, so that's why Enumeration chosen - because it was the ONLY interface that represented a "bunch of things" that you could return.
+
+''I dunno. Now I'm not sure I like either approach. Either would cause me to wonder why my class has a member that returns a bunch of disembodied elements - regardless of it being a collection or an Enumerator/Iterator interface. Usually, the collection is an underlying detail of some outer abstraction. I've only ever needed to expose the collection (or iterator to a collection) used by a class if I was being too lazy to decide what operations on the collection the outer class should expose. Instead, I simply return the collection or an iterator to it and let the client code do whatever it wants. If those operations aren't appropriate for the class currently containing the collection, it is often because there is an intermediary abstraction wanting to be born. I'm not sure, though. At least this is what my intuition says - returning an Enumerator '''or''' a Collection across class boundaries may be a flag for refactoring. -- RobertDiFalco''
+
+It might be a matter of what level of abstraction you are talking about. In general raw collections don't make good business objects but they are fine as components of business objects. Perhaps a good design for a class that contains a container would be to expose specialized InternalIterator''''''s that implement the policies of the class. The InternalIterator''''''s can be implemented most flexibly (though sadly not most efficiently) if the collection exposes ExternalIterator''''''s like Java Enumerations. If the policy of the containing class is at the same level of abstraction as a collection, however, it might be better to expose enumerations since it is generally inappropriate to constrain the choices of iteration strategies at that level. -- PhilGoodwin
+
+This is pretty much what I was thinking. Providing naked access to some collection within a class should be viewed the same as providing naked access to ''any'' field of the class - i.e. to be avoided. Therefore, it is better to add methods to the outer class that operate on (rather than expose) the embedded collection. Returning an Enumeration or Iterator object is little different than returning the collection itself. So the operations should take the form of functions that internally iterate over the collection - though probably ''not'' as generic as #select, #reject, #detect, #do, and so on. This not only protects the client from changes in the underlying implementation of the class but it also prevents the client from being able to do something to the data type that can compromise the state of the class using this data type. -- RobertDiFalco
+
+Absolutely, this comes under the general concept TellDontAsk. It also solves various problems like what to do about locking when you're being threaded. -- SteveFreeman
+
+If you use a DomainObjectList, then you will never grant any access to your private list. -- MikeRettig
+
+''There are times when you need to pass the contents of one collection to a different collection.  Often times, the simplest thing is to pass the collection itself.  For example, to populate a grid display with multiple rows of data, one needs to expose individual data elements within each row of the collection.  Another example is passing data between separate machines.  For performance reasons, it may be desirable to pass the data as one block in one call, rather than providing an interface that may need dozens or hundreds of calls (think XML, SQL, MQ series, pipes, and flat data files).  Collections are often a valuable tool, and it is best not to avoid them out of some "purist" leanings (I've been guilty of this myself).  -- WayneMack''
+
+----
+'''DisappointedWithJavaCollections'''
+
+The Java Collections Framework is really quite a disaster, because the designers arrogantly assumed that everyone would immediately convert their old code to use the new framework. Consequently they do not support creating a Collection ''(you mean Iterator?)'' from an Enumeration. Of the 5 most stupid design decisions I have ever heard, the Collections Framework team has made 3 of them, and this particular idea is right up there. I wonder if these glitches in the class libraries will ever be sorted out, or whether we'll have to wait till the successor to Java. -- JohnFarrell
+
+I was rather disappointed with the Collections Framework, too - and surprised! I took it for granted that Sun would be inundated with complaints about some aspects of it which struck me as obviously wrong. I now regret not adding my voice to whatever comments they did receive. (Or did they actually receive a lot of complaints which they ignored for the wrong reasons?)
+
+I am neither pro or con strong typing. But I definitely dislike the contradictory stand that Sun took with collections. They basically saddled programmers with the burden of strong typing, but threw away the benefit. A method which throws an exception indicating that the method should never be called against that particular object is a particularly strong CodeSmell''''''s. 
+
+BTW, I could speculate, but what is your list of 3? -- KielHodges
+
+	* ''Not supporting enumerations''
+	* ''Using List as a class name, although it already exists in the core packages''
+	* ''Not following Java Beans naming conventions''
+
+Java 1.5 fixes some of this
+	* Enumerators an Iterators implement "Iterable"
+	* Agreed. awt.List and util.List is a royal pain. Fortunately, if you mainly use swing you explicitly import the util version and forget about awt.List
+	* Bleh: who wants to have to call "getNextElement()" all the time? Having saif that, the new for-loop syntax makes this much of a muchness.
+
+And generics - I was skeptical until I started using them. An absolute godsend.
+--PaulMurray
+
+----
+Contrast with BlocksInJava and InternalIterator
+----
+CategoryJava CategoryCollections

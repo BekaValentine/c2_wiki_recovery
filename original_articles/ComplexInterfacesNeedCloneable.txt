@@ -1,0 +1,131 @@
+Category JavaIdioms
+
+----
+'''Observation:'''
+
+When working more excessively with Java "interface"s for getting a clear 
+separation between a type and its implementation, I found it usually
+unavoidable to provide a public clone() operation for such a type when
+this type is used as part of the state of an object.
+
+'''Forces/Facts:'''
+
+	1. Accessor methods in Java should return a copy of internal state variables instead of references to the internal variables - in order to maintain the object's integrity (ReturnImmutablesFromAccessorMethods, ReturnNewObjectsFromAccessorMethods).
+
+	1. Values given to constructors which are supposed to become part of the state of an Object should be copied instead of just referenced (again object integrity).
+
+	1. There are no constructors available in an interface declaration, so a "copy constructor" can not be declared. 
+
+	1. The visibility of clone() usually needs to be public to allow arbitrary client classes to clone the object (can someone provide me with an example why a clone() method shouldn't be public?).
+
+
+'''Example of Problem:'''
+
+    public interface State {
+        //
+        // some operations
+        //
+    }
+
+
+    public class C {
+        public C(State s) {
+            //
+            // risky assignment, but "state = new State(s);" not possible
+            //
+            state = s;
+        }
+
+        public State getState() {
+            //
+            // risky handout of reference to internal state
+            //
+            return state;
+        }
+
+        protected State state;
+    }
+
+
+'''Solution:'''
+
+    public interface State extends java.lang.Cloneable {
+        //
+        // some operations
+        //
+        public Object clone();
+    }
+
+    public class C {
+        public C(State s) {
+            state = (State)s.clone();
+        }
+
+        public State getState() {
+            return (State)state.clone();
+        }
+
+        protected State state;
+    }
+
+'''Alternative Solution:'''
+
+Usage of an abstract base class instead of interfaces. Problem here:
+Objects which need many types (interfaces) are impossible to formulate this way.
+
+-----
+
+I've generally decided to avoid overriding clone(), due to two things:
+
+(1) clone() is declared as protected in Object -- overriding it to be public can be confusing, and it can be difficult to work through the semantics of typing variables to the ''Cloneable'' interface.
+
+''(Could you clarify what you mean by "semantics of typing variables to the Cloneable interface"?)''
+
+(2) clone() is expected to be a shallow-copy, since this is the default implementation in Object.  Most of the time, I want a deep copy (to some level) of an object.  So what I do instead is:
+
+I Create a new interface called ''Copyable'', that declares one method as so:
+
+   public interface Copyable {
+     public Object copy();
+   }
+
+I then make all of the classes that I need copies of implement Copyable AND Cloneable.  My copy() method can either be at its absolute simplest:
+
+   public Object copy() {
+     return this.clone();
+   }
+
+or it can be more complex, as a deep-copy may need to be.  In any case, the point is that I define the semantics of copy().  In that way I'm not confusing people by having clone() do one thing in one class, and another thing somewhere else.
+
+KyleBrown
+
+'' I HaveThisPattern, except that I typically don't make it an interface, since Java doesn't include CovariantReturnTypes, and I hate casting. -- JeffBay''
+
+----
+I have a couple of thoughts about this.  The first is that I don't think that it is the complexity of the interface that is the motivator for the idiom.  Sometimes you want to be able to copy, and sometimes you don't.
+
+Secondarily, it looks kind of like an AbstractFactory but the intent is different.  -- MichaelFeathers
+----
+Regarding the complexity, I can't provide hard facts that this drives my desire
+to implement a clone() operation. It is only an impression. Maybe the odds are just rising that one needs a clone() operation if an interface gets larger (more complex).
+
+I don't agree with the comparison to the AbstractFactoryPattern. An AbstractFactory provides an interface for creating objects without specifiying their concrete classes (GOFBook). In the above idiom, however, the concrete class is (implicitely) specified - by calling clone() or copy() (or however you call the method) on exactly an instance of the class you want to get. In this sense, the idiom is IMHO more similar to the PrototypePattern.
+
+Regarding similarity of patterns in general, there is an nice but relatively unknown theory by WolfgangPree demonstrating that from a coding point of view most design patterns are only variants of a few basic structures:  ConstructionPrincipleForDesignPatterns
+
+-- ThomasWeidenfeller
+----
+Sorry about how abrupt I was there.  I do like the idiom.  I suspect that the decision about whether or not to clone would have to do with whether instances of the class which implements the interface would be a value or reference objects.
+
+Regarding AbstractFactory, I see your point and I was thinking about prototype also.  The idiom is also kind of like AbstractFactory in that in AF you have a concrete class also, but it is hidden from you in much the same way as here.  I'm just rambling..
+
+I'd love to hear about WolfgangPree's idea.  I've been thinking about the same type of thing, but I don't talk about it much because even though there may be higher abstractions, it seems that the real utility of the patterns that they can be contextualized.  As such, higher abstraction seems very academic.  On the other hand, I think that extracting the essence of the various GOF patterns may lead to more understanding of what AlistairCockburn is calling the ShieldPattern. -- MichaelFeathers
+
+-----
+I want to begin by defending the desire to override clone() when appropriate, and address Kyle's concerns.  The clone() operation is not expected to provide a shallow-copy.  It just happens that there is a default implementation which does that for you - to make it easier to do that part of the job.  And, as you note, it is protected.  The intent is that any class which wants to use it ''will'' override it. It might have been less confusing had they simply named it shallow_clone...  Also, I would note that clone() is defined in Object, so there is no need to cast to Cloneable.
+
+The clone() method should do exactly what is appropriate for the object.  In some cases that is a shallow copy, in others a deep copy.  More often, something in between is warranted.  In fact, we should probably be very careful over the general ShallowVsDeepCopy issue, since it is an over-simplification.
+
+That said, I agree with MichaelFeathers that not every "complex" interface necessarily requires clone().  I often include the method in those interfaces which do need it, but I have many that should never be cloned (it is not appropriate for every object).  Of course, if the object does need to be cloned (it is owned by a cloneable object) then it must define how that should happen.
+
+-- RussellGold

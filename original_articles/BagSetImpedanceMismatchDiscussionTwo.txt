@@ -1,0 +1,282 @@
+This is a continuation of BagSetImpedanceMismatchDiscussion, which is getting TooBigToEdit.
+--------
+'''Schema Martha7'''
+
+Below is a schema sample to use in query scenarios. 
+
+This is customer purchase information given to a marketing research agency. You are a database programmer in this agency and receive the following table periodically from an office furniture sales company who is contracting with your company to do marketing research. You prepare this table for your company's marketing research specialists to use for analysis using various statistical and custom tools. They can be considered "power users", some with SQL experience. 
+
+Sometimes updates are sent for the same given period (period_ID). However, periods are never mixed in a given set.
+
+ customer_info
+ --------  
+ period_ID   // code identifying purchase period (string)
+ latitude    // approximate customer latitude (exact obscured for privacy reasons)
+ longitude
+ zipcode
+ amt_spent  // total amount the customer spent (double)
+ chairs     // quantity of chairs purchased (integer)
+ desks_tables  // quantity of desks or tables purchased (integer)
+ other      // quantity of other items purchased
+
+--top
+--------
+'''Duplication Count'''
+
+Note that some have proposed "fixing" duplicate data by adding a "duplication count" if the domain/source won't give us a "real" key.
+  // generated ID approach:
+  firstName lastName generatedID
+    Elvis  Presley   1
+    Elvis  Presley   2
+    Elvis  Presley   3
+    Elvis  Presley   4
+    Fred   Jones     1
+    Fred   Jones     2
+	
+  // duplication-count approach:	
+  firstName lastName duplicCount
+    Elvis  Presley   4
+    Fred   Jones     2
+
+However, it's often difficult to work with data in such a format, especially when doing statistical summaries. One has to add a lot of multiplication to formulas and some statistical tools may not "understand" such a convention. If it was my choice, I'd probably ask the users if such is okay with them, but more than likely they'll turn it down after trying a few queries or tools. (The Elvis example comes from bottom half ofBagSetImpedanceMismatchDiscussion.)
+
+--top
+
+''Most statistical analysis tools, like SAS and SPSS, are designed to work with data that represents multiples via frequency counts.  Those that do not will happily perform aggregation on specified columns.  In other words, the following is legitimate input to SUMMARIZE...''
+  firstName lastName generatedID
+    Elvis  Presley   1
+    Elvis  Presley   2
+    Elvis  Presley   3
+    Elvis  Presley   4
+    Fred   Jones     5
+    Fred   Jones     6
+''...but aggregate calculations (e.g., FIRST, LAST, MAX, MIN etc.) can be obtained for attributes like firstName and lastName.''
+
+''For example, in Rel, the following...''
+  VAR r REAL RELATION {x INTEGER, y RATIONAL, id INTEGER} KEY {id};
+  r := RELATION {
+    TUPLE {x 1, y 2.3, id 1},
+    TUPLE {x 1, y 2.3, id 2},
+    TUPLE {x 1, y 2.3, id 3},
+    TUPLE {x 1, y 2.3, id 4},
+    TUPLE {x 1, y 2.3, id 5}
+  };
+''...used in the following expression...''
+ SUMMARIZE r ADD (COUNT() AS N, SUM(x) AS sumx, AVG(y) AS avgy, SUM(y) AS sumy)
+''...returns:''
+ RELATION {N INTEGER, sumx INTEGER, avgy RATIONAL, sumy RATIONAL} {
+	TUPLE {N 5, sumx 5, avgy 2.3, sumy 11.5}
+ }
+
+The Elvis examples as given are not sufficient to demonstrate the potential difficulties. I'll have to give a more thorough example.
+--------
+'''Localized Sequencing'''
+
+You know, this may be a satisfactory approach for many situations:
+
+   UserID   IP           occuranceSequence
+   Dave     192.168.2.1            1
+   Dave     192.168.2.1            2
+   Dave     192.168.2.1            3
+   Jo       192.168.2.44           1    // start over at "1"
+   Jo       192.168.2.44           2
+   
+Here, we are only sequencing relative to the duplicates, yet every row is unique. The unique "key" is the value of every column in a given row. Yet, the added sequence number is unlikely to be mistaken for a stable and general key because any query that assumed it was a general key would likely produce blatantly wrong results such that the problem would be caught early.
+
+However, it's not very friendly for JOIN writing, and could take a fair amount of up-front processing.
+
+--top
+
+''I must be missing something, because I don't see how this is an improvement over the GeneratedID as per the examples on BagSetImpedanceMismatch.  A GeneratedID is unlikely to be mistaken for a stable and general key because any query that assumed it was a stable and general key would produce blatantly wrong results.  In particular, a JOIN will never return any results, because the GeneratedID values are always unique in a given database.''
+
+[TopMind is thinking of the third tier consumers - not the person who generated the report, rather the person who is eyeing it. A unique value per row would offer an illusory impression of being a stable identifier. The scheme he offers above would leave less room for mistaken impressions, albeit with a much higher performance cost (no efficient way to compute occurrence sequence on a stream, for example). I would suggest the easy, efficient solution of naming the generated column `unstable_id` and eventually hiding it in the final report.]
+
+''Your suggestion is reasonable.  I could also make all "unstable_id" values the concatenation of the serial number and something derived from the serial number that's aesthetically ugly and long, like its SHA224 hash.''
+
+[You have typed values. You could probably just make it `unstable generated ID do not report or store this 1`, `unstable generated ID do not report or store this 2`, or similar, without loss in performance. It won't fit nicely in a report that way, and people would think twice about writing down IDs that have `unstable` in both the column name and values.]
+
+''I like it.''
+
+"unstable_ID" using the "original" sequencing plan (1 to listSize) is okay to me from a technical standpoint, but it does not instill confidence to those who don't know the sticky background of the project data. It's similar to the "political issues" brought up in the parent topic. It "looks" unprofessional.  I know it's kind of petty, but "image" matters in the biz world. Even if I opt personally to take the hit, that solution won't extrapolate to a "typical" data programmer.  "temp_load_sequence" may be an almost-acceptable compromise. But damn, why put it in if we don't need it! Nobody asked for it yet. Arrrrg.-t
+
+[Are you conflating tables with reports?]
+
+No. Leaving such an odd name in the table would have the stated problem. I've done things kind of like that in the past, and some PointyHairedBoss in or related to IT looks at it and says, "This is a disturbing name/title. Please find something more congenial". -t
+
+[What do you mean by `leaving the name in the table`? If you're talking about altering a table to add the column to persistent data, it would not be an unstable ID.]
+
+Perhaps we need to formalize what we call an "unstable key". I generally consider it "unstable" if due to an update or refresh (if such happened), the same given "domain object" may end up with a different number. The ID does not "'''follow the object around'''". Contrast this with an "auto-number" ID in what's sometimes called a "master table". An employee number is a common example. Employee numbers generally don't change. In our scenarios here we only have a copy, and don't know the master's ID numbers (or it doesn't have one, such as with a typical OS event log). If we asked for a new copy containing the same target period, there's no stated guarantee they'd come over in the same order or quantity, because there may be corrections or additions. Thus adding a sequential "row number" to our copy will not give us "domain-stable" keys. 
+
+Now if you can find a way guarantee the same domain object will always have the same key, then you could call it a "domain-stable key", or "'''domain-stable unique identifier'''" to be more exact. True, nothing is guaranteed in life, for servers crash, back-ups fail, etc. But it's more about our OperationalAssumption. Is it safe to ''assume'' we can re-identify domain objects properly? You should probably get it in writing from the data supplier if you are going make a stability assumption. 
+
+Say a disk crash destroys your January OS event log copy. Thus, you call the server administrator and ask him/her for another copy of January's log. Are you certain it will contain all the same events in a predictable order or state so that you can rely on your added-column generated sequential ID's? Suppose while viewing the log the administrator accidentally deleted one event between the time of your original January copy and the new January copy? A phone call interrupted him while viewing the log and he accidentally bumped the Delete key while fumbling to get the phone. Your sequences could easily be thrown off such that any of your existing tables referencing based on that ID would be nearly useless. You could build a guess-a-tron perhaps to try to put Humpty Dumpty back together, but it's still just guessing. If some process needed temporary ID's, it may be better to use the RDBMS built-in row numbers, or generate a temporary copy for that process and only that process and then delete that copy when the process is finished. Letting it sit around risks it being mistaken for something with a domain-stable unique identifier. (Or name it "temp_jf7s86r" and put it in the "temp" folder.) -t
+
+[I understand what an unstable key is, but I was assuming import on demand, not a permanent copy in the database that sits around for your pointy haired boss to peruse. Regarding your questions: there is no way to get domain-stable unique identifiers while working with duplicates.] 
+
+I'm not sure it matters. If two things are value-per-value identical, then mixing one up with the other won't change anything. However, if we later update one of the (former) duplicates, then it may matter. Although ItDepends. We couldn't re-join under the "duplication-count approach" shown above. Using compound keys based on a multitude of domain values (columns) has this kind of risk.
+
+''In Rel, at least, exposure of an unstable key may be trivially limited by making all unstable key types inherit from an UNSTABLE type.  Reporting and data export tools can be explicitly designed to disallow (or at least noisily warn about) attempts to report, export, or even preserve in a persistent RelVar, all attributes of UNSTABLE type.''
+
+There are some WikiZens who should have the "UNSTABLE" type tag ;-)
+
+I'm a bit skeptical because it's hard to know the future use of something. You can assume it will be used for a certain purpose, but if requirements change causing odd errors/warnings start popping up on screens or reports at 4:50pm on a Friday, it won't help sell your tools.
+
+How come you are open to "warning" here, but not in general? I've suggested warning over outright forbids regarding emitting bags. To me that's a '''very reasonable compromise''' between the casual way SQL does it and outright banning. For example, if a query emits bags, then one would get an error message such as:
+
+  ERROR BAG-OUTPUT-WITHOUT-ALLOW:
+  This statement emits a bag result set. Either adjust it
+  to emit a unique set, or use the ALLOW_BAG keyword.
+  for more on bags, go to www.bagsAreEvil.com 
+  or to www.bagsKillPuppiesAndAstronauts.com
+It's encouragement toward sets without the gun to head. It would make Rel more welcome in mixed RDBMS shops, and improves its changes against the great juggernaut SmeQl (hey, stop coughing over there!). -t
+
+[I wonder what you think the `compromise` is. After all, you've yet to demonstrate even one technical advantage of using bags. Even your BagNeedScenarios are just a bunch of poorly contrived circumstances in which we might need to import a bag into a relation, which has been addressed easily enough. That is, you have yet to demonstrate any reason we might ''want'' to have a bag if we were given a choice. Except, perhaps, that you insist on conflating relations with reports, building reports in the query language.]  
+
+Sigh. Not this again. Evidence hypocrisy. You haven't demonstrated "technical advantages" of forbidding bags. Nor have you diminished the risk of mistaking phoney keys for stable ones. You just pretend it's a non-risk because it conflicts with your preconceived notions hard-wired into your cold, dead rockbrain. What exactly do you mean by "contrived"? Your uncompromising paranoia from head visions of evil bags is contrived. Those scenarios I listed are based on real-world examples. Damned pedantic purity zealot; go iron your socks. Better yet, stick them.......You frustrating stubborn little.......aarrrrrg.
+
+http://upload.wikimedia.org/wikipedia/en/thumb/f/f4/The_Scream.jpg/220px-The_Scream.jpg
+
+It's a '''good compromise''' because it minimizes accidental and unintentional usage or generation of bags, yet still allows them if one feels it's the best course of action for a given situation. I'm confident a jury of IT peers would agree with the compromise if they looked at the evidence, especially in terms of working with existing systems and DB engines. -t
+
+''Some technical advantages of forbidding bags are:''
+* ''Access to improved optimisation strategies.''
+** I'm skeptical this will help much in cases where domain bags exist
+* ''No inadvertent duplication of data.''
+* ''No erroneous query results due to duplicates, as shown in BagSetImpedanceMismatchDiscussion.''
+* [Fewer abstractions to implement.]
+''The risk of mistaking "phoney" or unstable keys for stable ones has been virtually eliminated, as has been described above.''
+
+No it hasn't, because the "fixes" still create unstable keys. They create "technical" sets, but still leave domain bags. '''They mask a domain problem''', and that mask creates misuse risk. I'm choosing to leave the existence of a domain problem visible as a kind of self-evident form of documentation. It's a WYSIWYG warning.
+
+[It's a `problem` that wouldn't even exist if you were using relations in the first place.]
+
+If a meteor strikes Earth and we could start over from scratch, you may have a point. However, we'd be arguing with intelligent cockroaches instead of humans.
+
+[All your arguments amount to PathDependence - we need bags because someone chose bags in the past for reasons that were dubious and ill-considered even then. Sure, we've granted there's some PathDependence, and we address it well enough. Regarding that point, you've been reduced to stupidly and desperately quibbling scenarios where third-tier consumers might misunderstand a `phony key`, which shouldn't even be in the report, which was made obvious by choosing a not-so-congenial name (like `unstable_ID`), which got vetoed by your idiotic PointyHairedBoss. '''We don't have any answers for human stupidity.''' If we did, the first thing we'd do is cure yours. But all that is beside the point. I asked for ''technical advantages of bags'' - not reasons you think we're stuck with them, but reasons I'd choose bags if the decision was made again. Regarding THAT question, you've completely failed to deliver. You just DodgeTheIssue.] 
+
+* This is not clear. Use details to describe why it's "stupid". What name? 
+* [Your argument is a SlipperySlope that could be used against ANY technology (including bags, or lawnmowers) - i.e. you argue that one person after another makes mistakes and neglects them. Worse, even if we granted your point, '''it's negligible'''. Some people are stupid, and do stupid things like stick their fingers into a running lawnmower even with warnings, or confuse phony keys with stable ones even with warnings. Not a problem we care about. YOU are stupid because you either (a) are stupid enough to think we're stupid enough to fall for your argument, or (b) are stupid enough to fall for your own argument. Regarding the name - that regards your own complaint, that `unstable_ID` wasn't `congenial` enough for your PointyHairedBoss. You can't even place that in context? Yet one more more unit of objective evidence against you, I suppose.]
+* And why should we consider JUST technical advantages? We'd all be using just machine language because it's technically more efficient running on the "technical" machines. We are paid to align our goals with company owners, and '''their concern is primarily economical, not technical'''. The owners don't care much about making machines happy, or your math equations simpler: what they want primarily is to make cash registers happy. You just don't seem to get that.
+* [Sure, economics and such are worth considering, too. Sort of like, the interior and stereo system and paint job on a car are worth considering. But you keep dodging the question when it comes to technical advantages. It makes you seem untrustworthy, like a used car salesman who keeps dodging questions about the engine by pointing at the paint job. You seem to think we haven't noticed. THAT just makes you stupid.]
+* '''Economics is just window dressing???''' You are fucking clueless of the real world. Damn! You don't have AspergersSyndrome, rather AspergersSyndrome has you. You are [insult removed]. Jeeeez.
+* [Har har. Economics are quite important, of course, but you're on the wrong damn forum for me to care. On WikiWiki, yes, economics is just window dressing. But if I were to care, I'd point out that Rel has much greater economic value than the sum total of all your work you've advertised on WikiWiki.]
+* [bad word] Rel. Economics is the best model for tuning software tools for the work expected of them. Rel is designed to make zealots happy, not for doing real work in the nitty gritty messy world. You and Rel fans are MIT in WorseIsBetter.
+** ''People are using Rel to do real work in the messy world. Please don't use your anger at it not being ExBase, or that no one is implementing SmeQl, cloud your perception of it. Please try not to swear, too. It looks unprofessional.''
+** It's always possible to find a handful of like-minded zealots. I apologize for the swearing. I lost my temper.
+* [''"Economics is the best model for tuning software tools for the work expected of them.''" The best model, eh? Any evidence for your bold claim? And how does OpenSource fit?]
+* This discussion is mostly from the perspective of somebody hired for a company/org-specific task. If you want to make Rel or pink dragon games on your own time, knock yourself out. If people make something because they "feel like it", then there is little to measure resource allocation against. Economics gives us a numeric metric, money, by which to model and compare. No, it's not perfect, but a better metric/model has not been produced.
+* [No better metric has been produced? When you're done with ArgumentByRepeatedAssertion, perhaps you can provide some evidence for your claim.]
+* The person who pays you decides what your goal should be. If you wander off that goal, they fire you. QED.
+* [What has this to do with the metric? Do you measure your success by how quickly you are fired? I guess that explains LieOrStreet, and your complete lack of interest in integrity.]
+* You are growing rude. My working assumption here is that in general '''my employer sets my goals'''. Not myself. If my employer's goal is (legal) profitability, then set-only "integrity" is only important to them IF it increases profitability. Sure, if it prevents lots of problems in the future, it can increase profitability, but that must be weighed against the down-sides of having to jump through hoops (extra labor, deadlines missed) if we interface with or need to create bags (and possible extra processing time to maintain an extra index). Is this not a rational working assumption as far as goal management? -t
+
+Further, sometimes it's done for '''security/privacy reasons'''. You may want to supply a subset of employee info to an outside firm, but omit the employee number because it's not needed for the purpose of the request and a possible privacy violation. Newspapers are asking for such info of government agencies of late to see if gov't employees are over-paid because Rush Limbaugh etc. are making it a political issue. (Rush and the subject of "bags", how fitting.) A newspaper doesn't need to see the employee number.  The data supplier could generate a dummy key as it's being "saved", but it would be an unstable key and lead us to the same problem. The only full solution I see would be to make a surrogate key that "stays with" a given employee for the duration of the record in the employee master table. But that puts an extra burden on the data supplier. It's another key and index that has to be carried around. It's a lot of work just to satisfy the Set Gods. Further, the newspaper could use it to make inferences about promotion patterns because the key makes an entity instance track-able over time, which is not the stated goal of sharing the info. The gov't agency, employees, and unions will want to supply only the bare minimum info necessary to satisfy the request. A stable keys goes outside of that.  -t
+
+To be moved to UsingBagsForPrivacyPurposes...
+
+[So? Do bags offer some '''advantage''' for this purpose? Certainly not, if you want relationships with more than one table. And you're back to assuming stupidity in the newspaper employees and scientists who use this data - that they'd never realize they're dealing with a privacy-scrubbed database. Realistically, you'd be incredibly irresponsible to depend on `bags` for privacy. What you need is a security expert with a background in formal methods.]
+
+Please rephrase. I'm not understanding. We are giving them what they need and ONLY what they need. The end result is a bag, not the goal.
+
+[The end result isn't necessarily a bag. It isn't even ''usefully'' a bag - that was just you confusing your choices for good ones. Also, I think you know almost nothing about privacy (other than that it's difficult to achieve when you start sharing data) and should not touch the subject without a contract offering you indemnity against your inevitable mistakes.]
+
+Projection. An org is NOT going to give employee numbers to reporters just to satisfy your purity obsession.
+
+[I did not suggest an org would provide employee numbers.]
+
+An artificial temporary key? It's usually best not to supply "extra" info in such circumstances, as it may be interpreted as an attempt to influence or distract the reporters.
+
+[Do not conflate the problems of privacy and export. Privacy does not imply providing data in a particular format, nor to reporters. It could just as easily be a sanitized snapshot or view of the same database, provided to professionals or contractors. Even for reports, it is common to have a set of related tables rather than one enormous table. There is much use for a sanitized key. Your approach to using bags for privacy does not generalize.]
+
+I'm not sure what your point is. If they don't ask for an artificial generated key, I see no reason to give them one. They can make their own if they want one. You might event break their MS-Access import pre-processor built for use with multiple orgs who are doing the same activity, for example. They ask for columns A, B, C and you give them A, B, C, X instead. That's '''poor customer service''', and possibly a contract/agree violation. Don't give lawyers more reasons to sue you. -t
+
+[I see. You'd provide SSN,Name,Address if that was what people asked for and paid you to do. Your professional ethics are very mercenary. You also seem to think that your customers are in charge of detailed design, as opposed to being in charge of UserStories. But how does any of this support a claim that bags are useful for privacy?]
+
+No no no. The lawyers and/or owners agree to what to send. It's my job as a techie to supply what my employer asks to be supplied. I'm just explaining the domain issues behind it so that one understands why such may be requested.
+
+----------------------
+
+''Why emit an artificial temporary key?  There's nothing that requires it.  Remember: Bags are imported into relations by adding a generated key.  Relations can be exported to bags by removing a key.  Inside the DBMS, however, there are only relations.''
+
+There seems to be some confusion. Let's assume we are delivering the "list" using CSV files, since it's a common way to deliver data across organizations. No primary key is defined.
+
+{''Then export it to CSV the way you want to export it. CSV doesn't have to display the database as it is - you can export csv as you want to''}
+
+So bags are now "okay"?
+
+* ''If someone requests a bag, I can export it.  If someone provides a bag, I can import or link it into a relation.  There's never a reason to maintain or manipulate bags inside a relational system, however.  They simply aren't necessary.  Worse, as I've shown, maintaining bags inside a relational system can lead to subtle and difficult-to-find errors.''
+* You are oversimplifying the arguments. Sets aren't "necessary" either; so don't play the necessary game unless you play it on both sides. The pro's and con's must be weighed. I weigh, then decide. 
+* ''You are overcomplicating the simplicities.  Sets aren't "necessary", but then neither are high level languages.  Why don't we develop systems in machine code?''
+* At least you seem to agree that "necessary" is not applicable here. That's progress.
+* ''FacePalm''
+* Be my guest. Here, I'll help you increase the impact. Your original statement is useless as stated.
+
+{''The point the other ItalicsMan was making is that bags need not be stored in the database, you can export bags..  if you want.. what's wrong with being able to export CSV into different possibilities and keeping the database more sterile? The csv doesn't have to be as sterile as the database itself. But you'll start claiming nanny state when I use words like sterile.''}
+
+Why is that? Data is data. Why be more lax with transferred info than intra-DB info on that rule? Flexibility? Ahah!
+
+{''This is why I don't think you are a RelationalWeenie, you are a TableWeenie or a BagatationalWheenie because you don't want relational databases, you want bag databases.  The advantage of relational instead of bags is outlined in the third manifesto - I can't summarize it in one line here. Likely you fundamentally disagree with the third manifesto and therefore this conversation will never get any where. I disagree with some points in the third manifesto but I think SQL is flawed and creating another SQL that is just more terse, isn't really going to solve many of sql's problems. You seem to be advocating something like SQL, but with different syntax, whereas a truly relational database actually addresses the problems of the math problems in sql.''}
+
+Is it all about the name of the tool? I'm just trying to figure out why CSV gets a pass but DB-to-DB doesn't in your mind.
+
+{''Well csv doesn't always contain column names, so why should databases contain column names since they could do without column names? You could have a table without column names - but why? How is this an improvement? Why do you give some things a pass but not others - i.e. you seem to want a database with column names, but why even bother with column names if CSV doesn't always contain column names? True you can optionally have column names in csv at the top of the file, but some csv files don't contain column names, so for compatibility, why not just forget column names? See the logic here? It's almost insulting.''}
+
+You don't omit column names unless there is a good reason to. Without knowing the reason, I cannot comment. Some tools will supply dummy column names such as field01, field02, etc. if you load in a column-name-free CSV. '''This is handy''' when a deadline is approaching and there's no time to make a clean schema (clean it up later). Flexibility and LimpVersusDie is sometimes a good thing. -t
+----
+
+Why CSV gets a pass but DB-toDB doesn't, should, I think, frankly, be easy. If I may interject. If I have understood about Rel so far, it takes the view that SQL is not relational, but this is probably the biggest failure of SQL. And, how is SQL not relational? Sql is based on bags. So? This is bad because bags can have duplicate rows--I'll put 'rows' in scare quotes, here, in the hopes that we all understand each other. Results frequently contain duplicate rows. SQL does not require that a table have keys. I see the line above: 'a truly relational database actually addresses the problems of the math problems in sql'. I'll add a comment about that: bag math is much more complicated than set math. 
+
+Probably, it is not necessary, well, heck, the way this is going in circles, perhaps it's worth digressing into something of the nature of the relational model, the six basic operators, everything else is defined in terms of those operators. Two of them are set union and set difference. And, the relational model says that a query language should be based on relational algebra, and queries are done via some query language. 
+
+Now, it should be clear, why why CSV gets a pass but DB-to-DB doesn't. The idea is to follow the relational model in Rel. Only in Rel, is integrity provided. Integrity is provided, through constraints. I think there's a bit of breezy informality, here, in your understanding of the point, that the "relation" in relational comes from mathematics. Or, at least, I'll provide a reminder. We're talking about the relational model, based on math and logic, specifically set theory and predicate logic. There are rules for restricting data types, values, etc. - constraints. Integrity, is taken to be actually still a word that means anything. And, structure, structure is logical. How is the data organized. 
+
+General theory of representing and manipulating data, if we're talking about this meaning of 'data model', then your points about 'The owners don't care much about making machines happy, or your math equations simpler: what they want primarily is to make cash registers happy. You just don't seem to get that.' are perfectly irrelevant. Your cries of Asperger's syndrom, like that's a mental illness. 'And why should we consider JUST technical advantages?' I take that to mean, why should we consider technical advantages--have you considered them? Are you capable of considering them? 
+
+specifically, Rel is the outcome of considering why SQL is not relational. Note, that I'm not an expert on Rel, nor am I incapable of coming up w/my own criticisms of Rel--I'm not a trustworthy loyal shill for Rel. But I offer, that Rel is as I understand it the outcome of considering why SQL is not relational. And, there are probably half-a-dozen reasons why, and maybe Rel doesn't address them all, but one is, poor integrity support. Specifically, minimal constraint support. 
+
+I understand this much of Rel, that the idea here is, that a truly relational DBMS would be really cool.
+
+I take your position, alternatively, to be 'relational sucks'. Comments?
+
+--
+
+To go at this again, integrity is provided by constraints. and, to quote myself, 'Integrity, is taken to be actually still a word that means anything.' It doesn't work, to wave your hands at integrity. You're free not to hate SQL, or to hate it for your own reasons. But if you hate integrity, that's not very intimidating. You can't bluff the world off of its integrity requirements. so, how is integrity provided? Integrity is provided by constraints. And, keys are relation constraints. And, there are other relation constraints (relational has keys and other constraints). And, when it comes to keys, there are candidate & foreign. And, there are relation and database constraints. 
+
+Now, alternatively, if you're not trying to provide integrity, you're leaving that to the suffering victims of Asperger's syndrome, that's fine. You also seem sceptical of structure, and even data manipulation, so what if that falls apart, why make the machines happy?
+Even when you post to this wiki, if you post a reply, you receive a message: 'Your careful attention to detail is much appreciated.'
+
+''For one, I am for gently discouraging bags. I am not a "bag lover". I've offered what I feel is a reasonable compromise that reduces accidental baggification without outright forbidding them.''
+
+''As far as "integrity", like I said before I primarily use an economic model to calculate the "best" decision combos. If lack of "integrity" costs more than integrity from an economic viewpoint, I may agree with you. However, you focus on the "elegance of the model" first (ArgumentByElegance) and seem uninterested in the economic aspect. I cannot find a rational reason to put model elegance as the driving decision approach. Those who hire us to do tasks do so primarily for economic purposes. Their goal should be our goal. I see no significant reason to change their goal into a different one when I'm hired to assist them obtain it. True, they may not understand much of the minutia of databases, but they want us to follow their economic goal. We are just a subroutine to achieve their larger goal. We are not the main() program.''
+
+''If you want me to rank elegance over economic cost/benefits, you have to justify it. Maybe an economic model does favor bag banning; but you haven't explored that approach beyond perhaps "my experience says it does" (without the compromise in place, I might add). You need to better articulate this aspect. If our experience simply has a different model of how programmers act in the face of bags, that's fine; I can live with that as long as we respect each others' different experience and behavioral estimate without calling each names such as "stupid" or "bad student".''
+
+''I'm fine with working together to create a detailed economic model that explores each branch (bag-allow versus bag-ban) and adds up the cost of all the probability tree branches in terms of economic cost times probability. "Elegance is it's own reward" doesn't cut it with me. The "heavy typing" crowd has used similar reasoning to piss on scriptish and type-light languages. '''This issue is not just about bags'''; it's about ArgumentByElegance versus Argument-by-Economics. -t''
+------
+Just so we're clear, that I inserted myself into this debate, the meaning of 'if I may interject', above--I don't mean to suggest that as having been perfectly clear, just, I'm a different guy, never posted to this page before, to be clear. I'll get the hang of it, sorry, my fault. And, I've never called you any names such as 'stupid' or bad student'. My purpose with my posts, is to characterize Rel. Which, I may not be giving a characterization that will fly, with its designers, actually, but in that case, a hypothetical project, the outcome of, as I put it above, 'considering why SQL is not relational.' And, as I added, 'I understand this much of Rel, that the idea here is, that a truly relational DBMS would be really cool.' 
+
+I don't want you to rank elegance above economic cost/benefits. I don't think I'm very interested in a detailed economic model that explores anything. "Elegance is its own reward" is not my position, either. I suppose, that if it's about ArgumentByElegance versus Argument-by-Economics, I'd be fine sitting on the Argument-by-Economics side--shall I put it this way, I can be bought, in such a debate. I'm clear, however, that whether an economic model does favor bag banning, I have defined 'data model', above: 'General theory of representing and manipulating data', the subject is integrity, structure, query manipulation. As in, there are the goals. I'm open to feedback about how to approach these goals. I'm open to giving/discussing clarification about the nature of these goals. 
+
+I think a wiki such as this, I'm reiterating a point somebody made above, is not the place for ignoring these goals--ignoring the purpose of a data model. I've offered, that I can't be 'bluffed off'. This is a quote, I take this to be a similar point, from above: 'But you keep dodging the question when it comes to technical advantages..You seem to think we haven't noticed.' There are certainly non-technical subjects to discuss, but it's a big world, full of morons, who think they have opinions, they can discuss them among themselves. What is a data model, what are its goals, first of all, and how best to accomplish them, where would I find such a discussion, because that, I'd find interesting.
+
+''I don't see why technical advantages should be the overriding concern unless the differences between the two are large enough to impact overall economics. Besides, "technical advantage" is kind of vague with lots of subplots.  -t''
+------
+
+well, in the spirit of being open to giving/discussing clarification about the nature of these goals, I've said that one of them is query manipulation. I'm not thrilled with having used this term--I guess, what I mean is simply manipulation. I know something of how the concept of manipulation fits into the relational model. In relational theory, insert, update and delete can all be thought of as assignment. Every modification to the data in a relation variable changes the value of that variable. to sum up, what allows modification of data? In relational theory, it's operators that do this. 
+
+I've said above, I quote: 'I think there's a bit of breezy informality, here, in your understanding of the point, that the "relation" in relational comes from mathematics. Or, at least, I'll provide a reminder. We're talking about the relational model, based on math and logic, specifically set theory and predicate logic.'
+
+''One problem is Top believes in a subjective relational model - his own model - which is actually bags/tables, but he thinks it is relational since he doesn't much believe in an objective single definition.''
+
+so, then, how are queries done? That the relational model does not define a language, this is a point that I think I look at in a different light, than you do. Bags, are why Sql. Is not. Relational. I've offered that you do not have to consider this to be probably the biggest failure of SQL. However, nevertheless, Sql. Is not. Relatonal. There are other reasons, why Sql. Is not. Relational. I've also mentioned poor integrity support. Perhaps, I can be bluffed off of this requirement. It's still a reason why Sql. Is not. Relational. 
+
+We could indeed, if we're all on the same page about what we're doing, discuss what we see as the advantages in modeling data by use of mathematical relations compared to mathematical graphs of trees or networks. I'm fairly certain, that there are many viable models for data. However, the notion that Rel will make an abrupt cut away from the very innovative work, in the area of database theory, which it is intended to implement, that's just silly-a misunderstanding of its purpose, from what I have read, and from what I have read here. 
+The RM is a mathematical model. It is a model.  The mathematics of the relational model is sound.
+
+''What about the queries to get the data out of the database - is this math, or a language, or a new math notation, or a science (likely not a science since science studies the natural universe)? Is there an agreed upon set of language tools or listing of all the possible query abilities a relational database should provide? I.e. when you sort data with queries, or find data "near" other data, or use a regex in your query, this is borderline '''not relational'''. When you introduce regexes in the queries or things like "SELECT something LIKE this NEAR that", you are almost mixing relational with other things; regexes, LIKE, and NEAR are some other science or some other math and are not directly relational theory - so now your language is mixing paradigms or mixing theories!  Regex is a domain specific language of its own, so now we're sort of mixing relational theory with regex and other theories! If regex theory is not mathematically defined somewhere, isn't your relational tool now an impure tool, even though regexes have proven to be useful practically, but not in a pure academic sound sense? Queries have a lot of creativity that can't necessarily be agreed upon in one mathematical place. One relational language might implement better queries than another relational database. So is relational language pure math, math "mixed with other things too", or is it some kind of constructive math (math that can be extended or constructed further?).''
+
+The process of determining what this model should be used for, that's a different subject. If you are right, that life is too short for impedance, we would have to eliminate the RM from the solution. Which is fine, because it's not necessary. Which is even better, because it's not sufficient. Which, we all agree. Unless you're arguing that it's not even useful, there are pros and cons to employing it. 
+
+But, in order to be able to compare its usefulness to that of tools based on approaches other than the RM, we need to put it out there.
+
+MarchTwelve

@@ -1,0 +1,147 @@
+There are different possible semantics for a global environment in an interpreted programming language. ChristianQueinnec's book ''LispInSmallPieces'' describes several possibilities for the SchemeLanguage. The Scheme Standard, of course, prefers one of them. (Actually the R5RS, R4RS, ''and'' the IEEE standard prefer it. That's ''three'' standards.) However, I'm finding I prefer another possibility...
+
+In the Scheme standard environment, you can define functions in terms of variables that haven't been defined yet. Here's an example conversation with a Scheme interpreter which returns OK for the "unspecified" value:
+
+ >''(define scale (lambda (x) (* y x)))''
+ OK
+ >''(scale 40)''
+ ERROR: undefined variable 'y'
+ >''(define y 100)''
+ OK
+ >''(scale 40)''
+ 4000
+
+The environment I prefer, Christian Queinnec calls "Hyper-Static." It works like this:
+
+ >''(define scale (lambda (x) (* y x)))''
+ ERROR: undefined variable 'y'
+ >''(define y 1000)''
+ OK
+ >''(define scale (lambda (x) (* y x)))''
+ OK
+ >''(scale 3)''
+ 3000
+ >''(set! y 100)''
+ OK
+ >''(scale 3)''
+ 300
+ >''(define y 1000)''
+ OK
+ >''y''
+ 1000
+ >''(scale 3)''
+ 300
+
+The hyper-static environment does not allow a function definition to refer to variables that haven't been defined yet. Also, in the hyper-static environment, '''define''' always creates a new variable and is not the same as '''set!''', but functions continue to refer to the variable that existed when they were defined. Thus, if you accidentally re-'''define''' a variable, you will only affect your view of the environment, not the views of functions that have already been defined.
+
+There are a few reasons why I favor the hyper-static environment. First, it allows me to load a library, and have the library's functions behave the same as Scheme's built-in functions in the presence of '''define'''. I cannot alter my library's functionality by '''define'''ing anything (although I can alter its functionality if I use '''set!''', which does not allocate a new variable. But I wouldn't use '''set!''' unless I knew there was a variable to set, and in such a case, making an alteration was probably my intention.) Second, the hyper-static environment allows the representation of code in memory to not contain symbols. In standard Scheme, the representation of a function has to refer to global variables ''symbolically'', because they might not have been defined yet when the function was created, and when they are defined, the symbol is the easiest way to find it. In hyper-static Scheme, a function can capture the variable's binding.
+
+Third, hyper-static Scheme makes more sense in the presence of compilation and serialization. Serialization (saving objects to disk in binary form) is not part of Standard Scheme, but the environment in Scheme has effects on how serialization will work. If you serialize a procedure created in standard Scheme, and then de-serialize it later, the de-serialized procedure may find that some of its variables are undefined. If you serialize a procedure created in hyper-static Scheme, it can go ahead and serialize all the "boxes" to which it refers. When you load it back, those variables may be invisible, but they will exist and contain their former contents, so the function will behave as it did when it was serialized! If you serialize and de-serialize a continuation in standard Scheme, I expect it would come back pointing to the ReadEvalPrintLoop; there is only one REPL. In hyper-static Scheme, if you serialize a continuation, you will capture the interpreter, its environment, everything. You can load it back into another interpreter and switch back and forth between the two interpreters as if they were co-routines...
+
+But, hyper-static Scheme is not standard Scheme. So, if I were implementing Scheme, what should I do? Go with the Standard or go with what I think is cool? If I go with the Standard, I have the opportunity to run other people's code and let them run mine. If I go with what I think is cool, it will be cool.
+
+-- EdwardKiser [Sun Apr 8 2001, 8:30 AM UTC]
+
+----
+
+Are you aware, that this strategy makes the programs meaning dependent on the order of linking?
+How do you resolve that? -- GunnarZarncke
+
+Not necessarily, it depends on details. Kiser alludes to the term "hyperstatic" from LispInSmallPieces, but he isn't following what is said there strictly (see e.g. pg 200), since he says below that he wants mutual recursion without special notation. Exactly what Kiser wants is therefore somewhat vague.
+
+Linking is an issue here only if there can be multiple instances of a global symbol, which probably is a bad idea; LispInSmallPieces discusses it briefly both ways.
+
+Earlier they also tersely allude to the Pascal approach of a compiler directive '''forward''' that flags that a symbol definition is yet to come, allowing reference to it before actual definition.
+
+One obvious approach is to allow only one instance of a global variable (avoiding link order dependency), handle mutual recursion and other forward references transparently by making two compiler passes, the first of which collects  all symbols, the second pass resolving all symbols.
+
+...hours later, it occurs to me that, while I was assuming "linking" in the modern sense of linking machine code object files and libraries together into a final executable, you might conceivably have meant something like "dependent on order in which Lisp loads are done". I believe that, too, is resolved by the two pass scheme.
+
+----
+
+The world doesn't need another Scheme implementation, it needs better implementations of the ones it already has.  That said, you highlight one of the few inconsistencies in Scheme - the top level is different to every other scope in the language.  DrScheme is addressing the same problem by not providing a top level environment.  Everything is in a module, modules define a new lexical scope, and module imports are immutable.  I'm fairly sure a top level environment is faked for those who want to use it (not sure how; v200 is still in development).  --NoelWelsh
+
+"The world doesn't need another Scheme implementation" -- unless the new one is substantially better than the ones that are already out there, right? -- EdwardKiser [Mon Apr 9 2001, 12:50 PM UTC]
+
+Sorry for the rant on my part.  Scheme implementations are easy and fun to make, but Scheme the language would benefit more from work enhancing existing implementations than creating new implementations.  I want to use Scheme for my day to day hacking, but there is currently no system that comes close to covering all my needs.  DrScheme is IMO the best for general programming/scripting tasks, but I'd love to have the speed of Stalin or the power of the Scheme Shell available as well.  The number of people who will hack Scheme is finite, and every new implementation reduces the number who will hack code that I can use.  On the other hand, if people were to focus on improving the existing implementations, I'd reach my goal sooner and the whole community would benefit when Scheme reaches the critical mass necessary to take off (in a manner similar to Perl, Python etc.)  -- NoelWelsh
+
+----
+
+Edward, you might want to look at the ForthLanguage (perhaps you already have).
+It works as you described. ObjectiveCaml too, by the way. The problem, in both
+languages, is that it becomes more difficult to define mutually recursive functions. In both Forth and OCaml, there is special syntax for this. You will
+need to invent some syntax for this in your hyper-static Scheme dialect, too.
+
+A point in favour of your proposal is that macro definitions already work
+in a hyper-static way. This is clearly an inconsistency in the language, which
+your proposal would eliminate.
+
+-- StephanHouben
+
+Ah, mutually recursive functions. In hyper-static Scheme, I don't think any special syntax would be necessary, because variables are permanently associated to ''locations'', not values. So you can write
+
+ > ''(define even? #f)''
+ OK
+ > ''(define odd? (lambda (x) (if (= x 0) #f (even? (- x 1)))))''
+ OK
+ > ''(odd? 5)''
+ ERROR: #f is not a function
+ > ''(set! even? (lambda (x) (if (= x 0) #t (odd? (- x 1)))))''
+ OK
+ > ''(odd? 5)''
+ #t
+
+The definition of '''even?''' to '''#f''' creates the variable, so it can then be referenced. The interpreter does not care what ''value'' is in the variable until '''odd?''' is actually executed.
+
+-- EdwardKiser [Mon Apr 9 2001, 12:45 PM UTC]
+
+(As usual, I screwed up the definitions of '''even?''' and '''odd?''', now they should be correct. -- EdwardKiser [Tue, Apr 10, 2001, 11:03 AM UTC])
+
+In DrScheme I'd do something like
+
+  (define-values (odd? even?)
+    (letrec ((even?
+              (lambda (n)
+                (if (zero? n)
+                    #t
+                    (odd? (- n 1)))))
+             (odd?
+              (lambda (n)
+                (if (zero? n)
+                    #f
+                    (even? (- n 1))))))
+     (values odd? even?))
+
+-- NoelWelsh
+
+Of course you could define it this way, but the local environment you create (by letrec) won`t behave the same as global environment: you can`t extend a local environment in runtime.
+BTW, the HyperStatic global env. looks like a local environment in another aspect: the hash which maps the "current view" of the global environment into slots is very much like the "compile-time environment"
+for local environments, except that the environment construction is performed at run-time.
+
+''One way to think of the HyperStaticGlobalEnvironment is that, it's as if every define looks like a big '''''let*''''' which is never closed, like this:'' '''(define variable 'value)''' ''becomes the same as'' '''(let* ((variable 'value)) ...''' ''and the parenthesis never closes!''
+
+This can be made more formal by introducing the special form 
+call-with-lexical-continuation, which is the compile-time analogue
+of call-with-current-continuation. So we can define the hyper-static
+define as
+
+  (define-syntax define (syntax-rules () 
+    ((_ var value)
+     (call-with-lexical-continuation cont
+        (let ((var value)) (cont (void))))))
+
+''Actually I would have preferred a '''repl-here''' function. Then you would define the macro to carry out the following transformation:''
+
+  (define <var> <expr>) => (let ((<var> <expr>)) (repl-here))
+
+''The function '''repl-here''' would start a ReadEvalPrintLoop in the current lexical environment. It would never return. Since it never returns, it discards its continuation, which then becomes inaccessible.''
+
+''However, I find it necessary to require that '''repl-here''' can only occur in certain special macros, which can only be defined and used at the interpreter, at the top level. The reason why is compilation: if you could call '''repl-here''' at runtime, from anywhere, then the virtual machine would have to keep track of all the names of all the variables, so that it could construct a REPL that knew those names.''
+----
+
+I'll bite. How do you do co-recursion in HyperStaticGlobalEnvironment. For those who don't know, co-recursion is a pair of functions that call each other.
+
+''The entire above section was dedicated to '''mutual recursion''', which is what I suspect you mean. An example is the 'even?' and 'odd?' function pair, above. "corecursion" has another meaning in ComputerScience, relating to generators and infinite (often lazy) data structures. That can also be done in a HyperStaticGlobalEnvironment, provided the language has a mechanism to handle it at all.''
+
+----
+CategoryScheme

@@ -1,0 +1,219 @@
+This is about the "No pointers" hype phrase used to market programming languages, or more generally, whether "unsafe" pointers are much worse than "safe" references.
+
+Much discussion about indirection in general has been moved to WhyAreReferencesHard. ''(And some has been deleted altogether, especially when it arose from misunderstandings since cleared up. I think it would be good if people would delete as much from this page as they can bear. -- DaveHarris)''
+
+The essential difference between "pointers" and "references" is that pointers can be invalid in a way which leads to undefined behaviour. References either point to a valid object or to NULL, and either way dereferencing them is well-defined (although in the NULL case it yields a NullPointerException).
+
+* I'm not sure I agree with that terminology. C++ references can certainly point to an invalid object - try returning a reference to a local variable, for instance. Java's lack of (unconstrained) PointerArithmetic is a necessary but insufficient condition for guaranteeing pointer/reference validity; other requirements are:
+** GarbageCollection; to prevent pointers from being invalidated by pointing to objects which have been deleted.
+** Guaranteed initialization -- so that they cannot contain an invalid address
+** No pointing to TheStack -- Java accomplishes this by allocating all objects from TheHeap. (More generally, ensuring that pointed-to objects ''never'' go out of scope before the pointer does; by putting all objects on the heap, Java gives them indefinite scope, thereby solving this issue).
+** Writes to pointers are atomic (mainly an issue with multithreaded programs on certain CPUs, most or all of which are archaic)
+** Certain compiler optimizations (such as stuffing a pointer into a register before constructing the object to which it points) are disallowed.
+
+It's instructive to compare the semantics of C/C++ pointers, C++ references, and Java references:
+
+* Pointer arithmetic, assignment of arbitrary address.
+ C++ pointers: '''Yes'''.  C++ references: '''No'''.   Java references: '''No'''
+* Can be rebound (note that const/final can disable rebinding in both yes cases) 
+ C++ pointers: '''Yes'''.  C++ references: '''No'''.   Java references: '''Yes'''
+* Initialization required/provided.
+ C++ pointers: '''No'''.   C++ references: '''Yes'''.  Java references: '''Yes'''
+* Can be NULL (C++ references can be null if you dereference a null pointer; i.e., the following - this is UndefinedBehavior)
+
+ Foo &badref = *((Foo *)NULL);
+
+ C++ pointers: '''Yes'''.  C++ references: '''No'''.   Java references: '''Yes'''
+* Explicit dereference semantics (operator * or similar)
+ C++ pointers: '''Yes'''.  C++ references: '''No'''.   Java references: '''No'''
+* Can be grouped in arrays
+ C++ pointers: '''Yes'''.  C++ references: '''No'''.   Java references: '''Yes'''
+
+Interestingly enough, on all of the above the C++ pointer answer is ''opposite'' to the C++ reference answer. Java references provide semantics "in between", sometimes acting like C++ pointers, sometimes acting like C++ references.
+
+----
+The main ways to get undefined behaviour from pointers are pointer arithmetic, casts, explicit memory deallocation, and failing to initialize. Actually, C++ has two kinds of invalid pointer: the first does not allow dereferencing and the second doesn't allow the pointer itself to be read. Some examples:
+
+'''Pointer arithmetic'''
+
+    int a = 1;
+    int *pa = &a;
+    ++pa;  // OK
+    *pa; // Undefined behaviour of the first kind.
+    pa = &a;
+    ++pa; // OK
+    ++pa; // Undefined behaviour of the second kind.
+
+The last increment is undefined behaviour because some machines have special registers for storing pointers, and verify that values refer to legitimate owned memory when the register is ''loaded'' rather than when it is indirected through. This leads to different efficiency trade-offs. It means that merely forming an invalid address may cause a crash. In C++ you are allowed to point to "one past the end" of an object or array, but no further.
+
+'''Casts'''
+    int *pa = reinterpret_cast<int *>( 1 ); // Undefined.
+    long la = reinterpret_cast<long>( &a );
+    pa = reinterpret_cast<int *>( la );
+    *pa; // Undefined behaviour.
+
+Almost everything to do with reinterpret_cast<> is strictly undefined. The second example is safe provided long is large enough, but that is not guaranteed.
+
+'''Explicit memory deallocation'''
+    int *pa = new int(1);
+    delete pa;
+    int *p = pa; // Undefined.
+
+The last line is undefined in the second way. The delete operation may have returned the memory to the operating system, which could mark it as no longer owned by the caller.
+
+'''Failing to initialize'''
+    int *pa;
+    *pa;  // Undefined.
+    int *pb = pa; // Undefined.
+
+There's not much you can legally do with an uninitialized variable of any primitive type in C++. 
+
+'''What does it mean?'''
+
+Undefined behaviour makes it impossible to reason about the program. It could do anything. It may crash, with or without a diagnostic, immediately. It may yield some random but harmless value and continue running happily. It may yield a value which causes problems down the line. The optimizer is allowed to assume undefined behaviour won't happen, and can produce very strange effects if it's present. These things will vary from compiler to compiler and from run to run.
+
+It is impossible to produce real security in a system that allows undefined behaviour. For example, code like:
+    MyClass *pMyClass = new MyClass;
+    MyClass *pMyCopy = pMyClass;
+    delete pMyCopy;
+    while (true) {
+        Your''''''Class *pYourClass = new Your''''''Class;
+        if (pYourClass == pMyClass)
+            // Hack!
+    }
+
+may eventually allow access to an instance of Your''''''Class through a MyClass alias, thus defeating the type system and anything which depends upon it. Thus references require automated garbage collection.
+----
+
+Java has "NoPointers," except that it does - it has a lot of them. Except they are rechristened "references". There are even three different classes of pointers in Java: normal, weak and shadow. Same with Smalltalk, so no hiding there. And we had a whole ruckus earlier on JavaDoesntPassByValue where misunderstandings over what a Java reference was caused great confusion.
+
+'''Q:''' So, what makes pointers so difficult for people? -- SunirShah, DevilsAdvocate
+
+'''A:''' One frustration with pointers is they can force you into a linear mode of thinking. Some programmers want to manage linear memory directly. Others prefer to exclusively manipulate an abstraction layer of objects. The preference for which approach to use is often a PerformanceVsMaintainability issue. -- MichaelLeach
+
+As for pointer arithmetic, I find most pointer problems come from people who like to spread the complexity out throughout the application instead of pushing tricky bits into well-contained functions and modules. Methods and classes in object-oriented languages.
+
+'''A:''' Because there are so many times that the obvious / easy way to use pointers is subtly wrong, but will work ''most'' of the time.  This leads to a false confidence in the incorrect idiom that then gets spread all over the code, and will eventually fail "randomly".
+
+----
+''So, pointerless languages are to help the self-taught people? Do well-trained people fear pointers as well?''
+
+I believe most well-trained people respect the difficulties with pointers. When used to access dynamically allocated memory, there are problems due to: uninitialized pointers, accessing a pointer to deallocated memory, and not deallocating memory. When used to access arrays, there are problems with overrunning the bounds of the array and with negative indices. Pointer problems are especially nasty because the consequences of a bad pointer are usually far removed from its cause. Tracking down misbehaving pointers is one of the most difficult debugging tasks I have ever faced. -- WayneMack
+
+'''Q:''' Is this true in modern contexts where crossing an array boundary or accessing a dead pointer immediately results in an access violation exception? And if you're going to use C++, it's trivial to use ResourceWrapper''''s for ResourceAcquisitionIsInitialization so you never have to worry about uninitialized ''anything'' or accessing dead pointers. In pointerless languages, you have the same problem with pointers' kissing cousins like operating system resources (e.g. file handles, fonts), database transactions, etc. so there is no win. Indeed, I think the C++ idiom above is a far simpler resource management system than garbage collected languages as these (generally) don't use scopes to define object lifetimes. -- SunirShah
+
+----
+Pointers ''are'' only in the C/C++ and assembly world views.
+
+	 :	'''False!''' Both empirically (see the ModulaThree comment below) and theoretically. Consider array indices. All TuringComplete languages can (and often do) have pointers. Moreover, any language that can talk to the operating system directly has pointers in some way, e.g. handles. Or file offsets. Or a thousand other ways.
+
+One important use of pointers not listed above is when the persistence or lifetime of an object is longer than a method call but less than the lifetime of the program. The problem is that the pointer itself persists for the life of the program while the object or data it points to does not. The object or data contained in a reference has a lifetime equal to the that of the calling program, except for the case where programmers recast a pointer to a reference. 
+
+Distributed objects have the additional problem of no necessary relationship between the lifetime of the constructing program and the object itself. There is even uncertainty in determining whether one or the other is still alive.
+
+Managing lifetime issues is a difficult task. There is no easy way of determining the validity of the memory space pointed to by a pointer. -- WayneMack
+
+Having dead pointers is a ''bug''. The converse with references - trying to release an object, but leaving stray references around keeping the object alive - is also a ''bug''. Since both are equally bad systemic failures, neither references nor pointers gain the upper hand. And if you think that crashing is worse than memory leaks, I will refer you to SoftwareIsReallyPointless; 128MB of RAM for a text editor is ridiculous. At least with crashes it's easy to discover that a bug even exists. Reference leaks are much harder to detect. -- SunirShah
+
+----
+''"References aren't pointers. With a reference, you don't know where in memory your object is stored."''
+
+I think you are confusing the two separate concepts of "pointer" and "address".  
+A pointer is a ''language-level'' abstract type that indirectly refers to another typed value.
+An address is a ''machine-level'' reference to a location in the memory space of a process.
+
+Thus a Java object-reference is a pointer, not an address. However, in C a pointer can be coerced into an address. The problem with C is that this coercion is very easy to do, can be done implicitly, it's very easy to coerce an address back into a pointer of a different type, pointers are used explicitly to implement pass-by-reference and arrays are silently coerced into pointers to their first element.  
+
+Pointer-to-address coercion is necessary for systems programming, and C is not the only language to allow it. However, coercions in C are so easy to perform that even experienced programmers can make silly errors that take time to track down. Other languages, such as those in the Modula family, make address-pointer coercions much more explicit. ModulaThree only allows address-pointer coercions in modules that are explicitly marked as "unsafe".
+
+----
+
+'''Q:''' Can someone explain the difference between pointers and references?  For example, in PythonLanguage list "objects" are pointers to the actual data structure. Since the list data-structure is mutable, this can lead to complexities such as:
+
+  a = [1,2,3,4]
+  b = a
+  a += [5,6]
+  print b
+  ''[1,2,3,4,5,6]''
+
+Are 'a' and 'b' pointers to the same data structure, or references, or does it matter?  I thought I had this figured out until the references angle showed up. :/ -- AndyPierce
+
+'''A:''' Pointers are a kind of reference. The only difference is that with pointers, you can perform arithmetic on the pointers themselves. In C, which has pointers:
+
+  char a[] = "xyz";
+  a += 2;
+  putchar(*a);
+prints a "z", since that's what a points to. Pointers are memory addresses, in other words. "Reference" is a more abstract concept, meaning "a thing on which I can perform these operations: bind to another thing, access the bound thing, unbind from anything." With pointers, you can do a lot more, like corrupt random memory locations with the subtlest typo.
+* Oops?  The type of '''a''' is ''array of char'' not ''pointer to char''.  Compilers of my experience will choke when you try '''a++''' or '''a += 2''' since you can't "increment" an array.  You ''can'' say '''putchar(*(a+2));''' (which yields 'z').  Now ''this'':
+  char *a = "xyz";
+  a += 2;
+  putchar(*a);
+will compile and behave as advertised.  It highlights another aspect of pointers:  it's possible to "lose" a string constant ("xyz") if it's not named ('''char a[]''' gives it a name, '''char *a''' does not).  
+
+----
+
+'''More complicated explanation'''
+
+A pointer is an index into the special array known as ''memory''. It's the same as any other array index, except when it isn't (as memory on modern machines isn't a normal array; the addresses are more like hashes than offsets). But you can look at a pointer as something that holds an ''address''. A reference is a pointer, except you can't modify the address. In many languages, you can't even retrieve the address (except when you can), but that isn't a necessary condition. The most important distinction is that a reference is guaranteed to refer to a valid datum (except when it isn't), whereas a pointer can hold ''any'' address.
+
+The exceptions exist because often references are too restrictive to do some useful work, so hacks have been made. Look up shadow and weak references in Java, or ephemerons in some Smalltalk implementations. In C++, the exceptions exist because C++ is non-anal by design - the compiler is your friend, not your enemy, so you can defeat the type system if you have to.
+
+The reason why references were invented in the first place was to do memory management, typically via a GarbageCollector. However, GarbageCollector''''''s are a bit of a hack too, because they only manage memory and not other transactional resources, like files (you have to allocate ''and'' deallocate memory; open ''and'' close files). Moreover, they don't even manage memory transactionally, which can be very bad.
+
+This isn't true in C++, which uses references as syntactic sugar for constant pointers. Instead, in C++, one uses SmartPointer''''''s, which ''are'' references but not built into the language directly; thus, you can avoid many of the stupid problems you get with garbage collected references by doing it right. On the other hand, writing a resource management system is not fun.
+
+On the other hand, you need references to get garbage collection to get things like closures and bad exception handling. Good exception handling uses a unified transactional approach, which modern garbage collectors don't use. Hence the "I can't believe it's not error chaining - oh wait, it is, but worse!" exception system in Java and Smalltalk.
+
+By the way, it is possible to write a transactional resource management system that handles circular structures (a better garbage collection, in other words). The implementation is trivial. The cost is in (a lot of) storage and (but not really) time. So, let's not forget that tracking references and garbage collectors are a hack. -- SunirShah
+
+That's a rather bitter analysis. I preferred the earlier definition: references are pointers without pointer arithmetic, casts or other ways of forging them, so that only references to valid objects, or NULL, are possible.
+
+I am not sure why you think weak pointers are exceptions. Or why you think references are required by garbage collection. For example, there are conservative collectors which allow for pointer arithmetic. If anything, references require garbage collection because an explicit "free" would otherwise be a way to make a reference invalid. (Thus Java's security model absolutely requires GC.) -- DaveHarris
+
+Bitter? This whole page is in reaction to zealous hype. The purpose is to show that ditching pointers for references is just trading problems. Most people seem to think that references are somehow magically good, but they aren't. 
+
+I don't think weak references are required by garbage collection. ''[I didn't mean to imply that. I've rephrased the original. -- dh]'' I think they are needed for certain solutions. They are most definitely an exception because they defeat the garbage collection system (and in fact, complicate the object model implementation). [...] Note that references are used for two mostly disjoint things: avoiding pointer errors and freestore management. -- SunirShah
+
+Weak references are tricky to implement, but they are not an exception to the rule that all references refer to valid objects or NULL. That is the crucial property which distinguishes references from pointers, and the reason we have to give up unchecked pointer arithmetic, casts etc. Obviously giving that stuff is a price; I certainly don't think references are a free lunch.
+
+I'll say it again: references aren't needed for free-store management. You can use pointers for that. There are garbage collectors for C++. -- DaveHarris
+
+The collectors (I've seen) for C++ aren't guaranteed to work, though. They make a best guess, and often leak for fear of freeing active data. They aren't appropriate for a long-term, heavily used applications, like a dynamic web server. C++ isn't designed to be collected at a level lower than the language; indeed, there isn't much below the level of the language, which is its particular strength. I think the question really comes down to, "Are garbage collectors worth it?" I say they ''can be'' but often aren't good enough because they aren't transactional, and they only collect a limited set of resources. I was thinking of a better collector last night; I think the limiting factor is bloat. Maybe we just need a totally different solution to the problem of memory management (maybe even ditching the VonNeumannArchitecture). But that I don't know. -- SunirShah
+
+----
+'''It's a Life Time Problem not a Memory Problem'''
+
+The problem with pointers is in managing an object that has a life time less than that of the program. References that are opened and closed or initialized and uninitialized are just as problematic. Using a closed reference, file handle, or whatever may not cause a crash, but it will cause incorrect operation. The program will still be buggy to the user. Eliminating pointers will not resolve the underlying problem. Programming needs a consistent way to handle state and life time issues. -- WayneMack
+
+Most programs are event based, now, with each response being a transaction. Non-transactional resource management systems aren't appropriate. Garbage collectors are '''bad'''. The C++ idiom of ResourceWrapper''''''s is better. However, SmartPointer''''''s fail due to cyclical structures. Indeed, it were these very same cyclical structures that caused the creation of garbage collectors (otherwise, reference counting would be sufficient). However, with an interpreted language - especially one like Smalltalk where ''everything'' is a reference - the cost to do proper scope-bounded resource maintenance without a special collector thread is O(r) where r is the number of references to a given object. This is considered '''expensive'''. I don't really see why; if you're willing to leak 60MB of RAM because you are using a scavenging collector that can never complete, this is cheaper. Really, it means that each reference instead of being four bytes, costs eight. And since you can get rid of typed references (e.g. weak vs. strong), you lose those bits too. Each object instance would also have to grow by one address length too. -- SunirShah
+
+Sunir, I would like to point out that not only are garbage collection techniques
+able to collect cyclic garbage, they are also much more efficient than
+refcounting. Indeed, a state-of-the-art GC will outperform any form of
+manual garbage collection. The rest of your argument about Smalltalk I don't
+fully understand, but there is actually a web server in SqueakSmalltalk and I 
+understand that it doesn't "leak", and it certainly doesn't leak 60 MB. 
+
+See also http://www.xanalys.com/software_tools/mm/faq.html
+
+-- StephanHouben
+
+Thanks. That was pretty informative. As for the 60MB leak, that's because the VMs I was using were using bad collectors (generational, I think). If there are better collectors, cool. Now if someone could implement them, that would be nice. Does anyone have a map of Java VMs -> garbage collector algorithms. Re: Commanche, I don't think that's used in quite the scale I'm talking about. And it's not a truism for ''all'' web servers, that's for sure. -- SunirShah
+
+''I think that the Sun VM has options for various garbage collection algorithms hidden deep in the system classes somewhere.  Sorry that I can't say for sure.  And ObjectiveCaml has a garbage collector that's pretty fast and good... or at least, I've never had a problem with it.''
+----
+'''Q:''' ''Is this true in modern contexts where crossing an array boundary or accessing a dead pointer immediately results in an access violation exception?''
+
+'''A:''' That isn't true. It leads to undefined behaviour. See the long section I added at the start.
+
+I am an experienced C++ programmer and pride myself on rarely having pointer errors. I had exactly 1 in the last 12 months. As a result of this error, the program worked correctly 100% of the time in DEBUG mode, 99% of the time in RELEASE mode, and the 1% of failures were not reproducible. This was in 2000.
+
+The problem was due to eagerly reading a one-past-the-end value - "eagerly" because the result wasn't used and hence didn't affect subsequent calculations. It was unobvious because the pointer was formed in one place and then passed around for a while before being used. The failures happened when that array happened to be located right at the end of a hardware data segment. In RELEASE mode this depended on timing issues randomized by threads, UI etc. In DEBUG mode it never happened because the compiler adds "sentinel" values to the ends of dynamically allocated arrays, ironically to make detecting this kind of bug easier.
+
+I've probably overlaboured this undefined behaviour issue, but it's crucial to understanding why pointers are problematic. -- DaveHarris
+
+It can get worse than this, too. In even more modern contexts, like the PervasiveComputing contexts, there is no memory protection. So, no, it's not true. -- SunirShah
+-----
+See also: ElectricFence
+----
+CategoryQuestionsAnswers CategoryPointer

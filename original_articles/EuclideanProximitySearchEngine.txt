@@ -1,0 +1,190 @@
+Related to AI "self learning" or "auto classification" engines.
+
+Suppose we have a data-set of factors where the values are normalized between 0.0 and 1.0. For illustration, we'll assume it has factors A thru Z. A print-out may resemble:
+
+ ID..A.....B.....C....Etc....Z
+ 1 0.500 0.998 0.003
+ 2 0.734 0.034 0.973
+ 3 0.646 0.218 0.824
+ Etc...
+(For the first pass, let's assume there is no Null)
+
+Now suppose we wanted to do QueryByExample-like queries on it to find closest matches. An example query may resemble:
+
+ D=0.762, G=0.008, Y=1.000
+What we want to do is find the closest N euclidean-distance "matches" in the database for this query. Factors not given in the query are not included. (This example query has 3 factors, but it may be one or 26.)
+
+How could this be implemented such that an entire '''sequential search is not necessary'''? I don't have a clue to how to index such. Any ideas? Such a tool may be useful for AI.
+
+For version 2.0, we want weighting factors on each query factor. Thus, the above query reworked may resemble:
+
+ factor value weight
+ -------------------
+ D      0.762  0.500
+ G      0.008  0.850
+ Y      1.000  0.245
+
+The weights are also normalized to the range 0.0 to 1.0.
+
+----------------------
+
+Well, my first approach would be BinarySpacePartitioning (BSP). To be clear, BSP can be performed on a space with any number of dimensions - 2D, 3D, 4D, or even 26D as you suggest. The 'binary' in 'binary space partitioning' refers to breaking the space in two on a dimension with each partition. I am ill-equipped to explain BSP on WikiWiki (pictures help), so I'll point you to an external resource: http://en.wikipedia.org/wiki/Binary_space_partitioning, http://en.wikipedia.org/wiki/Kd-tree.
+
+A query for "nearest" points to another given point or projection (line, region) will require a narrowing of partitions to search that might contain the desired target, then brute forcing the 'closest' from among the points in the selected partition. Partitions 'nearby' another partition may also be searched, i.e. if the point searched is near the edge of the partition. This narrowing is fairly simple in nature: i.e. if a search splits G<0.5 from the rest, you obviously need to search the 'G<0.5' partition (G query was 0.008, which is <0.5), but you also know that the minimum weighted vector to any point in the other partition is 0.357 (= |(0.08-0.50)|*0.850 ) in the G direction. Thus, when searching for the K nearest points, you can avoid backtrack search into the G>=0.5 partition unless you can't find K points closer than 0.357 in the G<0.5 partition.
+
+Weighted-distance searches are easy. A bit more complex is searching on complex lines (diagonals, curves) and other shapes (spheres, for example). It's all doable, though. BSP is one of the more flexible indexing techniques. And if you can produce a total-order function on a space ('<'), or have other ways of breaking spaces up in arbitrary and automated manners (necessary, for example, for spheres and toroids - there is no total-order in the dimensions measured in radians or degrees), BSP will work just fine. (OTOH, more complex partitioning functions also means more complex region-intersect tests and such, so stick with simple functions wherever feasible!)
+
+BSP supports "persistent" data-structures (by which I mean CopyOnWrite with logarithmic time and space complexity), and high-performance region processing (i.e. grab all points that match certain criterion, or replace all points in a given region with another set). I'm very much of the opinion that programming languages that deal with large amounts of data ought to provide intrinsic support for BSP ''instead of'' simple maps, arrays, and hashes! BSP is very suitable for scene-graphs, collision detection, and so on.
+
+Unless there is a reason to do otherwise, each partitioning of the multi-dimensional space simply rotates through the dimensions, so at 3 search-steps down from the root of the BSP tree you'll generally able to narrow distances on three different dimensions. Whether those are the ideal dimensions for your query would depend on many factors, of course, but overall this results in a logarithmic time search (for a sufficiently large number of points).
+
+It is worth mentioning, however, that it takes a veritable ''ton'' of data to take advantage of BSP in 26 dimensions. If you wish to break the search space on any given dimension into eighths or sixteenths, the number of datapoints required is on the order of at least 8^D or 16^D. For D=26, that is 10^23 or 10^31 points respectively. And that's not even including ID as a dimension. Suffice to say, BSP by itself doesn't scale to large numbers of dimensions.
+
+Alternative:
+
+Given the large number of dimensions and a relatively small number of points ('relatively small' being less than, say, 16^D) you might wish to instead keep many indexes. The primitive form, in this case, would be one index per dimension on the same data. So I'll consider that first.
+
+The region-selection search technique using one index per dimension:
+* For each constrained dimension, select all appropriate points. 
+* Intersect these sets (from smallest to largest).
+
+And the weighted K nearest points using one index per dimension:
+* Select the K nearest points in each dimension with a non-zero weight. Might select more than K items of some points are equidistant in a given dimension.
+* Find the weighted distance (measured using ''all'' dimensions in the search) to all points found.
+* Keep the K smallest. (Can easily be done inline, i.e. using a weighted heap or priority queue, to avoid ever keeping more than K points.)
+
+The cost of this multi-index approach is the maintenance and searching of many indices. Overall, this costs more than BSP - both for time and space - by a factor of the number of dimensions. It can still be performed persistently, but costs on the order of O(D*log(N)) for each insert, removal. The K closest would, as an educated guess, cost O(log(N)*K*Qd) for Qd = #dimensions involved in query. This should be sufficient performance.
+
+You can trade off a bit between the designs using, say, four or five dimensions per index (i.e. first index is A..E, second index is on F..J, third index is on K..O, etc.) and doing BSP on each set of five dimensions. This hybrid approach could offer the necessary flexibility for smaller numbers of points in combination with greater narrowing of broadly multi-dimensional searches (i.e. when the dimensions queried share the same index). The cost is of the performance, however, is complexity - greater difficulty to develop query optimizers and such. 
+
+I suspect this latter multi-index design may be more suitable for you, since it allows you to easily scale up the number of dimensions without also needing to exponentially scale up the number of datapoints. I seriously doubt you have anywhere near 16^D datapoints! I suggest avoiding the hybrid approach until you've tried both plain-old index-per-dimension and plain-old BSP and have benchmark numbers for both. Keep it simple until the complexity can be justified.
+
+----
+
+'''Speeding Sequential Search'''
+
+Rather than avoid sequential search, perhaps speed it up instead. This may give us something that has a high power-to-complexity ratio, which is always fun to explore. At least they are easier to test drive than the complicated ones. 
+
+One possible way to simplify sequential search would be a "compressed index" (CI). This approach assumes that new variables don't come along very often. (If they do, then perhaps slots can be reserved in chunks of say 5 or 10. See below for periodic cleaning process.)
+
+Once you get an approximate list of best candidates from the compressed index, you then sift the actual values of the match candidates to refine the results further. Note that the existence of a compressed index doesn't preclude the existence of a full index(s).
+
+As an example, use 2 binary digits to represent four states (using normalized ranges): 
+
+  00 - 0% to 24% (rounded)
+  01 - 25% to 49%
+  10 - 50% to 74%
+  11 - 75% to 100%
+Using this search template:
+
+  Var A = 35%
+  Var B = 4%
+  Var C = 82%
+we'd get the binary "string": 010011 (A=01, B=00, C=11)
+
+We'd then calculate the total difference between the search template and values in the compressed index by scanning and subtracting each pair. Rather than store each match score, perhaps a threshold can be set via manual configuration or by using a random sample first to estimate the distribution. (It may even be theoretically possible to guarantee we catch all possible matches past a certain threshold. I haven't done the math.) Perhaps a relatively small threshold could be initially used, but then a larger one if the first pass returns an insufficient quantity of candidates.
+
+Four variables would fit per byte, although there's the overhead of a record key. However, splitting the bytes may be the bottleneck here, not the size of the compressed index. Thus, perhaps just use a letter for each variable, giving us 26 value steps instead of 4 (and 128 if we want to use the entire Ascii range). If we have 40 variables, then each value in the compressed index is 40 bytes (assuming ASCII characters), plus the record identifier/key.
+
+If we write the CI scanner in C instead of using a database to gain speed, keeping the index updated may involve a periodic cleaning process. If a record is changed on the master database, then a new record value is appended to the CI and the old one left in place until the next cleaning period (re-indexing). The extra outdated CI record would just be ignored when the fine-tune pass through the actual data is done if it shows up in the candidate list. This is because the final score depends on the actual values, not the CI scan. Leaving the old nodes in only results in false positives in the candidate list, never true negatives because the real node is also scanned.
+
+I'm sure I'm not the first to propose this kind of thing. 
+
+Or just parallelize the sequential search by hashing the nodes/records out to multiple CPU's or machines.
+
+- t
+
+What you describe is actually a crude manual version of BinarySpacePartitioning. The binary in BSP exactly means to use one bit of the data at a time. The leading bit of all dimensions first, then the next and so on...
+
+''Wrong, for three reasons:'' 
+* First, BSP does not mean ''"use one bit of data at a time"'' - it means, simply put, bisecting space with each subsequent division... and, while rotating through dimensions is a common strategy, it isn't actually required by BSP. (It is part of the definition for KD-tree, though.) Further, unless the points were uniformly distributed, '''most''' BSP strategies would '''not''' split one 'bit' at a time. Further still, 'one bit at a time' is poorly defined on open spaces... it applies only to closed spaces.
+* Second, TopMind simply isn't using ''"one bit of data at a time"''. The above '010011' comes from (A=01,B=00,C=11) concatenated directly. To use one bit at a time would result in the string '001101' (topmost ABC bits = 001, lower ABC bits = 101, concatenated). 
+* Third, TopMind isn't doing "partitioning" of any sort. He is classifying points into some broad classes (i.e. there are 10 types of people in the world: those who know binary, and those who don't), but he's just marking which group rather than partitioning by it. His approach presumably would result in constant-speedups for the initial search. Unless some other form of indexing is used (which top does mention as a possibility), all points are still searched.
+
+Yes, of course you are right. In general, BSP means much more than 'one bit at a time'. But I'm sure Top is smart enough to discover this earlier or later and correct his solution accordingly. That is not the problem with Top's approach. The problem is that he reinvents the wheel because he doesn't quite have the academic background you have. But see http://xkcd.org/664/.
+
+''TopMind's approach does have a killer flaw. He didn't look very hard at his assumptions when he said: ''"then calculate the total difference between the search template and values in the compressed index by scanning and subtracting each pair"''. This is not nearly as trivial as TopMind suggests. I.e. consider that:''
+ A = 26% | A = 24%
+ B = 51% | B = 49%
+ C = 73% | C = 76%
+ 011010  | 000111 (TopMind's string), subtracted: 010011 (or 010111 w/o carry across dimensions)
+ 011100  | 001011 (bit-at-a-time), subtracted: 010001.
+ Cartesian distance (root of summed squared differences): 4.12%
+''These points are very close together, but nothing about the subtracted strings suggest they should even be in the candidate sets! Not even rearranging the strings bit-at-a-time helps, nor does subtracting on a per-dimension basis. While speeding up a sequential search can be useful, the only true thing TopMind said about his particular proposal is: ''"I haven't done the math."''
+
+By "pairs" I meant a "horizontal" group of 2 binary digits, not both strings being subtracted from each other. I apologize for not making that clear. Also note that we can in theory choose any number of bits to represent our compressed values. I just chose 2 and later 7 (Ascii) for my example. - top
+
+ 00 = 0
+ 01 = 1
+ 10 = 2
+ 11 = 3
+
+ 011010 -> 01,10,10 -> 1,2,2
+ 000111 -> 00,01,11 -> 0,1,3
+
+ 1, 2, 2
+ 0, 1, 3
+ -------
+ 1, 1,-1  (diff of each "group")
+But, I see your point that a worse-case coincidental set could score relatively low. Obviously, more precision may help, along with a wider "near" return set, but one has to be careful if it's an app where occasional coincidental "misses" are detrimental. I'll leave it as a reader exercise to find the minimum precision and/or minimum "near" threshold to guarantee we don't miss one. - t
+
+''I had covered both interpretations, actually. The "w/o carry across dimensions" was the pairwise approach as you describe it here, albeit with overflow. And, yes, more precision will help (if you get enough precision, you'll be representing A, B, C directly!). But recognizing this ''"wide 'near' return set"'' is non-trivial. When is one list of numbers 'near' another list? Of course, you could find a sum-of-squares... that would work, but the savings may turn out to be quite marginal.''
+
+That depends on what algorithm it's being compared to and how much accuracy is needed, which of course depends on the nature of the problem (the domain). Note that sum of absolute value of differences is also a calculation option. I'll agree that this algorithm makes it complicated to know how often we are getting the very best match. But competitors, such as neural nets, also have similar limitations. Also, an API user has the option of scanning the actual data if thoroughness is required. There are at least parameters/options to choose from, including initial match threshold. Internally, it could look something like:
+
+  matches = scan(threshold=small)
+  if insufficient matches and not timeLimitReached {
+  ...matches = scan(threshold=big)
+  ...if insufficient matches and not timeLimitReached {
+  ...... matches = directScan(timeLimit)
+  ...}
+  }
+
+(Details not shown: We'd probably want to keep the early matches in case we find nothing during the deeper search and need to present what we have found so far if the total time-limit is reached.)
+
+Things to consider include but are not limited to:
+
+* Simplicity of the model
+* Tweakability of the model
+* X-ray-ability of the model (see what's going on inside)
+* Accuracy of the model
+** Average imperfection rate
+** Worse-case imperfection rate
+* Speed and/or space efficiency
+* Ability to adjust between these trade-offs as needed.
+** Run-time adjustments
+** Configure-stage adjustments
+* True Euclidean versus sum-of-differences or other approximations. (Not all domains may need "true E".)
+* Expense (such as off-the-shelf tools versus commercial)
+------------
+I've been kicking around the idea of using something like this to match similar images, such as all photos taken at approximately the same time and place on a vacation. Possible factors to use:
+* Ratio - Flat=0.0, square=0.5, tall=1.0
+* Average color level - 3 factors: red, green, blue
+* Average brightness when split into 4 quadrants (upper left, upper right, lower left, lower right), giving 4 factors.
+** Alternative: Replace above two with average level for each color per quadrant, giving 12 factors (4 quadrants x 3 colors).
+* Horizontal frequencies split into 3 levels: low, medium, and high, per Fourier Transform (gives 3 factors)
+* Vertical frequencies split into 3 levels: low, medium, and high, per Fourier Transform (gives 3 factors)
+* "Ellipse-ness" - A metric that measures the quantity and degree of circular or ovoid curves. That is, "rounded curves" [1]. (No porn jokes, please.)
+* "Rectangleness" - A metric that measures the quantity and degree of right-angles. Buildings would typically rate high, for example. (We'll include "rotated" right-angles, such as a rectangle taken at a 45-degree angle.) 
+** We could alternatively do the above 4 for each quadrant. 
+
+Notes:
+
+* Weights should be possible on each of these factors. 
+
+* We could add a larger sectioning than quadrants, such as a 3x3 grid, but then matching becomes more sensitive to specific position.
+
+* In case the image is reversed or taken from another angle, it should perhaps be compared with a mirror image of each candidate. However, the mirror image should perhaps be given less weight. Otherwise, we might as well use only top and bottom splitting instead of quadrants. Upside down is also a possibility to consider, but I'm not sure that happens often enough to justify the extra false matches such may create. 
+
+* [1] Edge isolation via delta filters which are then applied to "curve" template filters is one possible way to implement this, but there may be more elegant approaches.
+
+--top
+
+The problem of clustering similar images is very well studied. Compared to state of the art approaches, any original approach you hack together is likely to be fragile and inefficient. Go learn how other people solve the problem. Example: http://homepage.tudelft.nl/19j49/t-SNE.html --AnonymousDonor
+
+I'm not saying it's the only or best technique for image matching/clustering. My example is more a lab toy or a quicky example of how one may apply a EuclideanProximitySearchEngine rather than anything meant for production. My apologies for not making that clear up front like I should have.
+
+----
+See Also: FuzzyPredicate
+-------
+CategoryArtificialIntelligence

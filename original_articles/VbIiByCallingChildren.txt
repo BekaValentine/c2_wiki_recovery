@@ -1,0 +1,60 @@
+How to implement VbClassicImplementationInheritance by having the parent class speculatively call methods on the child class, and fill in behavior for methods not implemented (overriden) on the child classes.
+
+-----
+
+Drawbacks:
+	* Performance:  Relies on Late Binding (call by name through Object/IDispatch interface).
+	* Can't call base class methods if you have a reference to the child class type.
+	* Child class methods can't call (overridable) base class methods unless you separate the "call from the outside" interface code from the "internal working logic" code in the base class.
+	* All base class methods must have forwarding code to enable derived class overrides.  (This implies that you can't "derive from" a class unless all its methods are designed as "base class methods.")
+
+-----
+
+''[MacReiter says...]''
+
+I developed a system in VB called DataPipes.  Data comes in, gets massaged, maybe added to, then goes back out.  DataPipes plug into each other and include code (easter egg?) to display the flow of data through the pipes.  In C++/Java/SmallTalk, DataPipe would be a base class that you could then inherit from to make, for example, the AveragingPipe.  But I couldn't (this was in VB4, no less, so I couldn't even do interface inheritance).  What I ended up with was the DataPipe class, which contained a Handler reference (type: Object) which lets you stick any object in it.  Take the derived classes and attach them to the Handler reference.  Gets some base functionality working in simple systems.
+
+For bigger stuff, like mapping methods/properties from the base class into the inherited classes, try the following: (pardon my capitalization, VB lets me be
+sloppy and cleans up -- this editor doesn't)
+
+ Public Function BaseMethod(X As Integer) As Integer
+     On Error Resume Next
+     Err.Number = 0
+     BaseMethod = Handler.BaseMethod(X)
+     If Err.Number <> 0 Then
+         On Error Goto 0 'Turns off error handling, or you could turn on
+                         'other more useful error handling
+         'Implement Base class functionality here.
+         BaseMethod = X*X 'For lack of a better example...
+     End If
+ End Function
+
+How does implementation inheritance work?  If the derived method exists, it overrides the base method.  Otherwise you use the base method.  The code above does this by attempting to call the derived object's method, and if that fails it does its own work.  The code above can chain as well, since the object attached to Handler may have similar code for its BaseMethod (bad name, sorry).  Also, unlike other pseudo-inheritance approaches I've seen for VB, the addition of a new method/property to a base class automatically propagates to all derived classes.  Removal of a method/property requires removing the base implementation, but not the function itself, since derived classes will never get notified if the base function is removed.
+
+The biggest problem I can see in this approach is that the derived classes CANNOT just add methods/properties that can be seen through the base class interface.  But then, you can't do that in C++ or Java either, which makes sense -- people manipulating a generic Animal object can't call Bark(), but people who know they have a Dog object can...  Oh well, guess it isn't a problem, after all. (forgive me, I'm fleshing this approach out as I am typing it in...  You're getting to see me think out loud)
+
+OK, another problem.  In C++, if Dog derived from Animal, you would generally run around with a Dog pointer doing Dog things with it, and all of the Animal things would still work.  In this method, to get Animal things to work, you MUST be running around with an Animal object that has Derived set to (an instance of) Dog.  This is irritating, because you can't get to Dog-specific methods, like Bark, because Animal doesn't know about them and can't pass them through.  Partial solution, though slightly nasty, is to simply call Animal.Derived.Dog.Bark (Since you know that that is what it is...)  This falls apart, unfortunately, if you are working with Collie, since you don't know if you need (pardon me, I'm going to use D for Derived to save space...)  Animal.D.Dog.D.Collie or Animal.D.Dog.D.Utility.D.Collie (had to stretch a bit, but assume your hierarchy includes Utility Dogs, Recreational Dogs, Decorative Dogs, etc.).  Maybe the hierarchy changed after you wrote your code, and now it is broken because it doesn't match the hierarchy (hierarchy probably WILL change, as part of refactoring...)  Hmmm.  If you only needed access to the FINAL derivation in the chain, you could make a MostSpecific property that kept chaining down Derived until "Derived Is Nothing", then return Me.  But that involves special code in every class in the chain (so refactor it!  How?  Put it in the base class!  D'oh!).  Alternatively, each stage could also maintain a pointer to its parent.  When Derived is set, set your parent's MostSpecific to the new Derived.  That can be made to chain up, but still requires special code everywhere (though it is more runtime efficient than chaining on every call)  OK, so you still can't get inheritance.  But you might be able to get enough inheritance to get you through.
+
+I'm sure there is some other cleaning up to do, like checking the Err.Number more carefully for Error number 438 (Object does not support this property or method), but this is a starting place.  Checking the Err.Number directly helps avoid the problem that if Derived.BaseMethod exists, but ends up causing an untrapped error, the base class will assume that Derived.BaseMethod does not exist and do the Base implementation.  Decide for yourselves if that is good or bad...  In that it covers errors that should be trapped in Derived but weren't, I tend to think it is bad.  However, you could make a top level class, ErrorHandler, and pseudo-derive all other classes from it.  That way any unhandled exceptions pop up the pseudo-inheritance chain and finally hit ErrorHandler, which can do some kind of global error response.  Unfortunately that means you always work with ErrorHandler objects, late binding, and horrible performance.  Oh well, I just suggest the tools, and leave it up to others how many they'd like to drop on their feet... --MacReiter
+
+-----
+
+Separate possibility - CallByName.  Under the hood, this is how LateBinding in Visual Basic works, anyway.  The function name string is used in a call to the class to see if the string appears, and returns a function entry point if it does.  This would allow you to hand the function name to Dog, and if Dog did not know what to do with it, it could hand the string up to its parent for processing.  The biggest problem I see with this (oddly enough, it isn't string handling performance -- ANY method of faking inheritance in VB is gonna introduce some nasty performance hits) is marshalling of arguments and parsing them back out.  The BEST solution I can see at present is to make a class or global subroutine that can take a string and returns one string (the Function Name) and an array of Variants.  The array contains the arguments.  This is OK for ByVal, but I'm not sure how to do ByRef arguments with it.  How do you pass a reference through a string?  The parser object can recognize some symbol or keyword that says to make a reference, but how can it turn the string name of the object into a reference to the object.  It MIGHT be possible to reach under VB and ping the VB runtime DLL directly to get this information.  It would be ugly, but would only exist in the global marshaller object...  Pinging the runtime DLL is used in other hardcore VB code.  VarPtr() is one of the functions you can get this way.  Plus, if someone, anywhere, made this thing, they could sell it (or, if they're nicer, give it away) to everybody else who needs this capability.  And many VB programmers need Inheritance... --MacReiter
+
+-----
+
+(Geez, I'm developing RSI just from this addition.  Hope it's being useful and stimulating)  Earlier I mentioned something (MostSpecific property) that had to be added to all classes, which suggested refactoring, which suggested base classes, which we don't really have, etc.  Forgot that VB can also run in non-OOPS paradigms.  MostSpecific could exist in a module (.BAS) somewhere, and be defined as:
+
+ Public Function MostSpecific(StartObject As Object) As Object
+     Dim TrackObject As Object
+     Set TrackObject = StartObject
+     Do While Not (TrackObject.Derived Is Nothing)
+         Set TrackObject = TrackObject.Derived
+     Loop
+     Set MostSpecific = TrackObject
+ End Function
+
+It may be possible to make other Inheritance-simulating tools in global functions like these.  This is ONLY fitting for tools that do inheritance in the general case, not anything specific about the inheritance of Animals, Dogs, and Collies. --MacReiter
+
+----
+CategoryVbClassic

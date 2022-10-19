@@ -1,0 +1,175 @@
+One CeePlusPlus optimization that might save both time and code space is to check for types and cast instead of using polymorphism. For instance, 
+
+ struct B''''''aseClass
+ {
+	enum TYPE {
+	  SubclassA,
+	  SubclassB,
+	};
+	unsigned char type;
+	...
+ };
+
+ struct SubclassA : public B''''''aseClass
+ {
+	int width;
+	...
+ };
+
+ struct SubclassB : public B''''''aseClass
+ {
+	int stride;
+	...
+ };
+
+ B''''''aseClass *pInstance;
+ ...
+ int bufferWidth;
+ if( B''''''aseClass::SubclassA == pInstance->type )
+ {
+	bufferWidth = ((SubclassA*)pInstance)->width;
+ }
+ else if( B''''''aseClass::SubclassB == pInstance->type )
+ {
+	bufferWidth = ((SubclassB*)pInstance)->stride;
+ }
+
+If we were coding a pure object-oriented design, this would surely be a CodeSmell. Actually, in this trivial example, it is a CodeSmell. But there exist real cases where it's smaller and faster to check for type information than to use polymorphic dispatch. Note also that the type information is available through a member variable. Alternatively, one could write:
+
+ struct B''''''aseClass
+ {
+	enum TYPE {
+	  SubclassA,
+	  SubclassB,
+	};
+	virtual B''''''aseClass::TYPE getType() const = 0; 
+ };
+
+and then return the type through a polymorphic call. However, to create the polymorphic function, this may require upwards around 100 bytes a class, at a cost of 1 byte (or at most 1 alignment) an instance. This trade-off can be significant in memory-constrained environments like embedded devices. Moreover, the polymorphic dispatch can take many times as many bytes as a simple member access.
+
+''Besides which, if you're going to introduce a polymorphic get''''''Type(), why not just introduce a polymorphic get''''''Buffer''''''Width() through which each subclass can use whatever subclass-specific member variables it needs to use?'' -- MikeSmith
+
+This is one of those fine trade-off cases. There are many reasons not to do this. For one, it's a ridiculous optimization, and we all OptimizeLater anyway. But in general, this really only works well if:
+
+	* '''You really, really, really need code space efficiency!'''
+	* You are only really cheating for get methods.
+	* There are very few (say, one or two) subclasses who have a member that you want to retrieve, but most (say > 10) don't.
+	* You don't want to get the member variable dynamically very often.
+	* You spend the five minutes to compile both models to see which is better.
+
+Note that if you have to check a lot of types, it's more expensive to do the lookup than it is just to call the method. This is because you need an if-else cascade or a switch statement, which means a lot of compares and jumps. After a certain point, using the dispatch table is much more efficient because it uses the principle, "The instance knows about itself." -- SunirShah
+
+----
+
+By the way, this is a reasonable thing to do on a desktop for highly constrained domains like widget toolkits. Widgets should be thin and light or else you will eat memory badly and be very slow. Consider a poor widget toolkit like java.swt or javax.swing. Of course, both of those are quite bloated anyway, so there's no real point in trying. -- SunirShah
+
+''A useful GUI toolkit has so many necessary features - internationalization, configuration, resource management etc. - that I fail to see how avoiding good OO design to save a few bytes will gain you anything. You will probably lose any advantage you gain in the base classes with extra special-case logic in derived classes to work round these hacks. I've certainly found such logic necessary when working with AWT Component and Container base classes.''
+
+I don't mean to be excessively rude, but your half-assed guessing is totally bogus. ;) This is what others and I do ''in practice'' and it works very well. The "scary" concepts of internationalization, configuration, resource management have very little impact on the simplest thing that could possibly work. Often, it's simpler to not implement them because no one cares. Perhaps you're doing too much BigDesignUpFront in your head. -- SunirShah
+
+What kind of wins could be expected for a typical application using this technique? A hundred bytes per class and a few bytes per object doesn't sound like the end of the world, but I don't know much about GUI frameworks. -- AndersBengtsson
+
+Well, ~100 bytes per class * 21 classes ~= 2kb, which is currently 10% of the library I'm working on. Most classes are currently 550 bytes. When I first noticed this and the annoying automagically-inlined constructor/destructors, I cut the library size in half. As I was told once, "Code like Fortran!" I haven't written the widget library yet, but I expect it to be similar, albeit not as dramatic as the paint methods will be larger and I have tweaked my Perl script to generate even more efficient code (in C++) since then. Bear in mind that I work on small devices, not desktops, as I point out above. Crossing 32kb is bad, 64kb very bad. -- SunirShah
+
+Part of the problem sounds like the language implementation. C++ is not very intelligent about implementing polymorphism and its linking model reduces the compiler's ability to aggressively optimize polymorphic dispatch.
+
+''So what? We still have to use C++.''
+
+I'm just emphasizing that this is a C++-specific idiom, rather than a generally useful pattern. Although there is a link to this page from CodeSmellsIllustratedWithJavaAwt, the context of the pattern does not readily apply to Java and the AWT.
+
+	 :	This is Wiki. Referring pages aren't necessarily important, nor should you really depend on them because they may be edited to remove the link. Each page should stand on its own. -- ss
+
+Purely as a matter of interest, why do you have to use C++? With those tight memory requirements I'd prefer to use C because it gives one much better control over what the compiler generates (what you see is pretty much what you get) and you can implement polymorphism just as easily if you are not using vtables. Additionally, if you want vtables, you can implement vtables and inheritance by hand and tune the implementation wrt speed or space.
+
+	 :	Actually, C++ gives you better control over what the compiler generates because most compilers now use the C++ code generator for even C. Using object-based systems vs. object-oriented systems vs. simple aggregate types is another argument. But, of course, using C++ for polymorphism is usually more efficient (and more maintainable--I still CodeForTheMaintainer) than using polymorphism in C because the compiler has a better chance and better algorithms to do the static analysis. We actually use both C and C++ and C-like C++ and assembler and a Perl script that compiles an higher-level file to C++ and a bunch of other things. -- ss
+
+''Given the lack of virtual functions and dynamic_cast<>, I see the sample code at the top as largely a "C" subset of C++ - with class based syntactic conveniences. I recommend keeping C++ because the limited language features he chooses to use do help with maintenance.''
+
+''A trivial note: Instead of "(SubclassA*)" - C syntax to cast a pointer, I would use "reinterpret_cast<SubclassA*>". (Books will tell you to use "dynamic_cast<>", which is "right," but you're trying to avoid the cost of the dynamic dispatch.) -- JeffGrigg''
+
+No, use a static_cast<> if you have RunTimeTypeInformation turned on, dynamic_cast<> if you don't (no penalty--it degrades to static_cast<>). reinterpret_cast<> is used when you are completely changing the meaning of things, like unsigned char *videoMemory = reinterpret_cast<unsigned char *>(0xA0000000L); A static_cast<> is generally equivalent to a C-style cast. The gain of using static_cast<> over a C-style cast is that the static_cast is more readable. The disadvantage is that GCC doesn't really do the new style casts correctly (at least const_cast<>), so I gave up on them completely. C++ is fun because when you have to work with many different compilers, your end up having to use some lowest common denominator (for some definition that you believe will limit the portability problems). For instance, recently we had problems compiling for the Agenda because the GnuCpp they use (~2.9.0) didn't do namespaces. Fortunately, GCC is Light, so I begged and pleaded very nicely with the developer to build the latest GCC. She agreed and I didn't have to manually name mangle all my code. -- SunirShah
+
+''And you're both wrong. Use a static_cast for the above code, whether or not you turn off standard features like RunTimeTypeInformation. CstyleCasts are evil in C++. Avoid at all costs. Also, try to avoid reinterpret_cast where possible, but prefer it over C-style casts, and prefer static_cast or dynamic_cast more. reinterpret_cast has surprisingly little defined behavior, much less so than most people believe, and it generally hides errors whereas static_cast would fail to compile showing the error. Also, in today's age gcc 3.4.3 is considered old, and it supports the C++ casts correctly, so use them as intended.''
+----
+
+Funny, what think ye of the results of TestTypesInsteadOfDispatchProfileCode's?:
+
+On this machine (WinME, CygWin's GnuCpp), I got results consistently like this:
+
+ ./plain
+ Normal: 220
+ Manual: 279
+
+ ./optimized
+ Normal: 65
+ Manual: 220
+
+(Key: "Normal" uses standard polymorphism, and "Manual" is the way described on this page).
+
+Maybe I messed something up in the code to make it an unfair test. I didn't test the space consumption, though I can't really see where space would be lost or saved.
+
+Help! Is this the same thing that happened in CatchDontCheck/CatchDontCheckRefuted where someone posts some ugly code in the name of optimization that ends up not even being as optimal as the legible version?
+
+''Inlining is evil. Remove the inlining. You also eat it on the inlined constructors and destructors. By the way, I'm not making this up based on suppositions about the compiler. I spend a lot of time trying different constructs out under the environment I work in and then I choose the best one empirically. I often make assumptions that aren't true, which is why I test everything out.''
+
+I think that "Inlining is evil" is much too strong a statement. On many platforms, calling a function has some non-trivial cost (in both code size and execution time). An OO system favors short methods; in a lot of cases, inlining the shortest methods actually reduces code size because the method is shorter than the code required to call it. The purpose of inlining is '''to expose the inlined code to compiler optimization in the context of its caller'''. Properly refactored small methods may still contain redundancies which most compilers can only exploit when they are inlined into some larger context. Note that "clean" C++ code practically depends on compiler inlining to achieve the same performance as C. Unless you are using C++ as a bigger-better-c, judicious use of inlining is a good thing, not a bad thing.
+
+I think what you're really railing against is not inlining in itself, but the ''implementation'' of inlining in various compilers. In particular, the language/compiler should probably give the programmer more control over inlining than it usually does, since the compiler is sometimes not smart enough to control inlining itself. -- WylieGarvin
+----
+
+Seems to me that this technique, as written up, is ''very'' questionable, perhaps even mostly harmful. First of all, it doesn't even work in all languages. Second, it reduces the code's flexibility and communication. Third, the page gives little or no guidance on when, '''and when not''' to use the technique. Perhaps it should be rewritten as a pattern, with due attention to forces and related patterns. -- RonJeffries
+
+''You'd want to use it when performance is far more important to you than any other factors, like maintainability. And you'd have to prove with metrics that this is really needed. <I've never seen a need for this level of optimization, but then I don't do EmbeddedSystem''''''s work. -- JeffGrigg>''
+
+Yes, stuff like that is the answer. The exposition should bring such things out, in my opinion. -- RonJeffries
+
+Yeah, I see that it wasn't clear that this was a very limited hack. And it so is very much a hack. I've amended it a bit more. -- ss
+
+But note that this might be related to a more general principle; something like (ReduceCompilerBloat). In particular, the size of deliverables produced by various C/C++ compilers can often be reduced by 50% or more with an hour or two of fiddling with compiler switches. If curtailing some inlining gives you a 50% reduction in code size with little performance impact, isn't that a good thing? (e.g. the Intel C/C++ compiler produces slightly faster code than MSVC++ but it also tends to be like 10+% larger in code size). Reducing ''unnecessary'' compiler bloat is a good thing, and may even make your program run faster (less code == perhaps better use of I-cache). I read some papers on code compression once where they found interesting results like, compressing an entire large commercial application such as Microsoft Word did not really make it slower--in some cases it made it faster! Why? The I/O cost of demand-loading and paging code turned out to be a significant cost. The reduction of this cost completely offset the extra time spent decompressing code on demand. (Sorry for the off-topic rant..) -- WylieGarvin
+----
+
+Interesting. I just finished a project to write an interpreter for a SCHEME like language for school. Now the deadline pressure has gone away, I'm reviewing some of the decisions I have made, and maybe change / rewrite from scratch some things.
+
+I created a base class S''''''chemeObject and sub classes S''''''chemeString, S''''''chemePair, SchemeNIL etc. S''''''chemeObjects are passed around a lot. Only at some places it matters what type it is. For example an arithmetic function: it should only accept SchemeNumbers, every other type should throw an error.
+
+Therefore I decided to do put type checking and explicit casting into the base class in this fashion:
+
+ class S''''''chemeObject {
+ 	...
+ 	public S''''''chemeString asString() {
+ 		if (this instanceof S''''''chemeString) return (S''''''chemeString)this;
+ 		throw new W''''''rongTypeError(this, "string"); // found, expected
+ 	}
+ 	...
+ }
+
+This is done for every subtype. For example, when I need a list where the first element is a string, I can do:
+
+ public void doSomething(S''''''chemeObject argument) {
+ 	S''''''chemeString s = argument.asPair().getCar().asString();
+ 	...
+ }
+
+This statement will throw a W''''''rongTypeError when either the argument isn't a list, or the first element isn't a string. This is a very common form of casting/type checking/error throwing in my appication. So this solution is very convenient. Only when I need to do something else than throwing an error, which is pretty rare, I use the instanceof operator.
+
+I understand that this looks bad in many ways, but in every way I think about it, it's really the best solution. The number of "things that are done" with S''''''chemeObjects (more specifically: implementations of built-in Scheme functions) is huge, and in a lot of cases work only on one type and throw a W''''''rongTypeError on every other type. Note that a W''''''rongTypeError is converted into a Scheme error, and does not necessarily have to be considered to be a Java error.
+
+Polymorphism wouldn't help me. String concatenation is only applicable to strings, so a concat(..) function does not belong in S''''''chemeObject. The same goes for arithmetic functions: add, subst.... don't belong in S''''''chemeObject because they are not applicable to strings, pairs etc. etc.
+
+Only the evaluation function could be implemented trough polymorphism, but since eval is a Scheme function too, and I already had a Scheme "procedure" abstract class, I implemented eval in the same way as every other procedure, separately. Only equals() and toString() are implemented polymorphically.
+
+In this case, every S''''''chemeObject is a Scheme data type, but that's really the only similarity. A S''''''chemeString and a S''''''chemeNumber share nothing but being Scheme data types. I think that there are other cases in which TestTypesInsteadOfDispatch can be useful: When a certain collection of classes is similar in one way but polymorphous in another way, when (most) actions are naturally implemented separately, because these actions are entities of themselves, not bound to classes, TestTypesInsteadOfDispatch will be necessary.
+
+----
+
+This strikes me as an optimization which is ''only'' appropriate for very small or performance-critical systems (or for places where you wish to avoid the default language mechanism for dynamic dispatch).  It certainly isn't the simplest thing which could possibly work (just using virtual functions is), it's error-prone, and it smacks of PointerCastPolymorphism (which is, after all, a similar technique formalized with preprocessor macros).
+
+The gains it buys you:
+* Avoidance of generating vtables.
+* Avoid the additional overhead involved in C++ dynamic dispatch, used to implement MultipleInheritance.
+* Avoiding an extra indirection in a different area of memory, possibly resulting in a cache miss.  (Assuming, of course, that a cache is used--if you have 64k of total memory available, caching is probably not an issue).
+
+If profiling tells you you need to do this, go ahead.  OTOH, if you're writing PC software.... this sounds rather questionable to me.
+
+----
+CategoryOptimization, CategoryLanguageTyping, CategoryConditionalsAndDispatching, CategoryCpp

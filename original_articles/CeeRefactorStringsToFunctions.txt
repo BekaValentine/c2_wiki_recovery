@@ -1,0 +1,257 @@
+Here's a C/C++ specific refactoring.
+
+I was just editing a large C program (CVS actually).
+
+It containing many instances of C strings - "C strings". Fortunately, at least it used #define as a level of indirection:
+
+  #define CVSADM "CVS"
+
+I wanted to allow this string (and its relatives) to be changed by the user. Accomplished by refactoring the string to a function:
+
+  #define CVSADM get_CVSADM()
+  extern char* get_CVSADM();
+  ...
+  char* get_CVSADM() { return "CVS"; }
+
+''Pardon my ignorant nature, but what was wrong with the original define? And if you *must* change it, why not make it a static const char[]?''
+
+This *almost* worked. It failed where the original code contained
+ 
+  sizeof CVSADM
+
+Unfortunately, it compiled, but failed to execute correctly. Fortunately, CVS had tests - not unit tests, but tests nevertheless.
+
+Globally changing all of these sizeofs to
+
+  sizeof_CVSADM
+
+with
+
+  #define sizeof_CVSADM  (strlen(get_CVSADM()+1)
+
+completes the refactoring. (At least, all of the tests pass.)
+
+----
+
+Moral: sizeof impedes syntactically transparent refactorings.
+
+----
+
+Careful:
+While this works, it's very close to a very common error.
+See number 10 of
+
+The Top 10 Ways to get screwed by the "C" programming language by Dave Dyer
+http://www.andromeda.com/people/ddyer/topten.html
+
+----
+
+Another related gotcha, refactoring C static strings to dynamic strings returned
+by a function or method: *static* *string* *concatenation*.
+
+The ANSI C standard requires two adjacent string literals to be combined:
+	"string1" "string2"
+becomes
+	"string1string2"
+
+When the static string literal is replaced by a function, this breaks. It must be replaced by something that can concatenate dynamic strings. Unfortunately, in ordinary C, there is no standard such function, because of memory management issues. In C++, one can refactor to
+
+	string(get_string1())+"string2"
+
+i.e. using C++ strings rather than C "srings" (char*). (Converting back to C strings by adding .c_str() to the above works in some circumstances.)
+
+Many folks have added kluge-like support for this sort of thing to C, e.g. 
+	char* thisstrcat(char* s1, char* s2) {
+	static buf[1024];
+	strcpy(buf,s1);
+	strcat(buf,s2);
+	return buf;
+	}
+but such kluges do not work in all circumstances - e.g. you cannot call the version of thisstrcat above twice in an expression.
+
+----
+
+Problems with the above code snippet:
+
+1. It may introduce a buffer overflow, because buf is fixed-size but
+the size of the concatenation of s1 and s2 is not checked to be less
+than or equal to the size of buf.
+
+2. It violates the ZeroOneInfinity rule by using a fixed-size buffer,
+which means strings of arbitrary size cannot be concatenated.  A
+general-purpose concatenation function should allow for arbitrary size
+by dynamically allocating the right amout of memory using malloc.
+
+3. Mixing strcpy and strcat in repetitive statements may lead to bugs
+if the order of the statements is changed but you forget to change the
+strcpy and strcat parts.  Eg, before:
+
+	char buf[100];
+	strlcpy(buf, "my program - ", sizeof(buf));
+	strlcat(buf, filename, sizeof(buf));
+
+after:
+
+	char buf[100];
+	strlcat(buf, filename, sizeof(buf));  /* WRONG! */
+	strlcpy(buf, "- my program", sizeof(buf));  /* also wrong */
+
+a better way to say the same thing, avoiding the problem:
+
+	char buf[100];
+	strlcpy(buf, "", sizeof(buf));
+	strlcat(buf, "my program - ", sizeof(buf));
+	strlcat(buf, filename, sizeof(buf));
+
+Note how in the last example the strlcat() statements are trivially
+interchangeable.  There is a general pattern here: first the resource
+is initialized (strlcpy the empty string into the buffer), then it is
+modified (strlcat arbitrary strings into the buffer).  Combined
+initialize-and-modify functions (strlcpy an arbitrary string into a
+buffer) are harmful, as they waste mental effort and may lead to bugs
+when changing the order of the modification statements.
+
+4. The function returns a pointer to a statically allocated buffer
+that will be overwritten by subsequent calls, which (a) is not
+thread-safe, and (b) messes up statements such as
+
+	printf("%s %s", thisstrcat("foo", "bar"), thisstrcat("baz", "qux"));
+
+strlcpy and strlcat are from the OpenBSD C library, but can be
+implemented in portable C.  Note that the standard C strncpy and
+strncat functions are very easy to get wrong, because they are not
+guaranteed to null-terminate a non-zero-length buffer.  This is almost
+certainly a design mistake.  Never use strcpy, strcat, strncpy, or
+strncat.  Always use strlcpy and strlcat instead.
+
+A better routine, doing the same thing as thisstrcat above, follows.
+
+Noteworthy properties of the code below.
+
+1. Define an stdarg function handling an arbitrary number of args, but
+export wrappers specifying a fixed number of args as the public
+interface.  Reaps the benefits of stdarg flexibility and fixed arg
+safety (unlike with stdarg, the compiler can verify the arg count and
+arg types in calls to the function).
+
+2. Use the preprocessor to redefine the names of bug-prone functions
+into do_not_use to make sure we don't accidentally call them out of
+habit later in code where they are no longer needed.
+
+3. Use of the unsigned size_t type to store counts and sizes.
+
+4. Test for integer overflow when adding together buffer sizes.
+
+5. We waste a little memory and CPU time by counting the null
+terminator of each individual string into bufsize, and by using things
+like strlcpy(buf, "", bufsize);.  I aim at ease of auditing and
+monotonicity (use only one idiom for one action, such as strlcpy to
+initialize a string buffer, even if it's not the fastest one in a
+particular case).  I sacrifice (negligible) machine resources to
+attain these goals.
+
+6. In main(), I assume that printf() handles null args gracefully by
+printing "(null)".  I don't know whether this is portable.  main()
+leaks memory by not freeing the dynamically allocated strings.  In a
+long-running program you'd probably want to free() the strings, but
+contrary to popular insistence it is pointless to free every resource
+when the resources reclaimed by freeing them cannot be put into new
+uses.  For example, in a short-running program the memory from free()
+will probably not be given back to the operating system by the malloc
+implementation, and the operating system will reclaim the memory soon
+anyway when the program dies.
+
+	#include <limits.h>
+	#include <stdarg.h>
+	#include <stdlib.h>
+	#include <string.h>
+
+	#define strcpy do_not_use
+	#define strcat do_not_use
+	#define strncpy do_not_use
+	#define strncat do_not_use
+
+	static char *strdupv(size_t count, ...)
+	{
+	char *buf;
+	const char *str;
+	size_t bufsize;
+	size_t strsize;
+	size_t i;
+	va_list ap;
+
+	bufsize = 0;
+	va_start(ap, count);
+	for(i = 0; i < count; ++i) {
+		str = va_arg(ap, const char *);
+		strsize = strlen(str) + 1;
+		if(strsize > (SIZE_MAX - bufsize)) return(0);
+		bufsize += strsize;
+	}
+	va_end(ap);
+	buf = malloc(bufsize);
+	if(!buf) return(0);
+	strlcpy(buf, "", bufsize);
+	va_start(ap, count);
+	for(i = 0; i < count; ++i) {
+		str = va_arg(ap, const char *);
+		strlcat(buf, str, bufsize);
+	}
+	va_end(ap);
+	return(buf);
+	}
+
+	char *strdup2(const char *s1, const char *s0)
+	{
+	return(strdupv(2, s1, s0));
+	}
+
+	char *strdup3(const char *s2, const char *s1, const char *s0)
+	{
+	return(strdupv(3, s2, s1, s0));
+	}
+
+	// and so on
+
+	#define strdupv do_not_use
+
+	// library code ends, user code goes below this point
+
+	#include <stdio.h>
+
+	int main()
+	{
+	printf("%s\n", strdup2("", ""));
+	printf("%s\n", strdup2("abc", ""));
+	printf("%s\n", strdup2("", "def"));
+	printf("%s\n", strdup3("hello", " ", "world"));
+	printf("%s %s\n", strdup2("foo", "bar"), strdup2("baz", "qux"));
+	return(0);
+	}
+
+	// $ gcc -std=c99 -pedantic -Wall -g -o strdupv strdupv.c
+	// $ ./strdupv
+	//
+	// abc
+	// def
+	// hello world
+	// foobar bazqux
+	// $
+
+----
+
+Moral: C++ strings are easier to refactor than C strings.
+
+Moral: the distinction between compile time and run time operations interferes with refactorings that convert between static and dynamic values.
+
+Moral: If you change the meaning of a #define, you must inspect ''every'' use of that #define before checking in. Which is why #define's are kind of smelly, right there. --MichaelGates
+
+Sizeof and adjacent string concatenation are compile time operators. Strlen and strcat (with memory allocation) are run time operators that almost, but not exactly, correspond.
+
+Refactoring is easier if (a) compile time and run time use the same language, operators, etc. Or, at least (b) if they have equivalent operators.
+
+----
+See RefactoringBetweenCompileTimeAndRunTimeOperations,
+SyntacticallyTransparentRefactorings,
+CeePreprocessorStatements
+

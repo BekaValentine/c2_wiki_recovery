@@ -1,0 +1,168 @@
+'''Intent:'''
+
+Rewrite a recursive program/algorithm/function into an iterative one which uses an external stack.
+
+'''The Problem:'''
+
+All computer scientists are familiar with recursion; many consider it a more "natural" way than iteration to describe algorithms which must repeat some computation. However, recursive algorithms, when naïvely written, can chew up a valuable resource - TheStack - in languages which use stacks to maintain activation records (this includes CeeLanguage, CeePlusPlus, and JavaLanguage; it excludes SmalltalkLanguage). Some recursive algorithms exhibit TailRecursion and can be rewritten in an iterative way that uses bounded space (and some compilers, especially of functional languages, will perform this transformation as an optimization - see TailCallOptimization). However, many recursive algorithms are ''not'' tail-recursive.
+
+The most natural way to express recursive algorithms is with recursive function calls; each instance of the function gets its own activation record to maintain its particular state, while TheStack holds the complete set.
+
+The problems with TheStack in many languages (or the stacks, in multithreaded programs) are as follows:
+
+* In addition to holding the state which must be kept recursively, all other state (local variables) as well as bookkeeping information for repeated function calls is held on the stack. Wastes memory. Wouldn't be too much of a problem, except for...
+
+* Program stacks often must occupy contiguous address space. The contiguous AddressSpace remaining "above" the top of the stack is far less than the the total remaining system memory (physical and virtual). ''On many systems, TheStack grows downward from the top of your address space. Thus, TheStack and TheHeap have exactly the same remaining memory available.''
+
+This causes many recursive functions, naïvely implemented, to fail on large datasets. In some languages, you get a StackOverflowException or some other controlled error. In others, the stack overflow causes something else important to be overwritten, resulting in death, destruction, and UndefinedBehavior. For a well-known example, see JavaSerializationAndTheStack.
+
+'''The solution:''' 
+
+ExternalizeTheStack.
+
+Figure out what state ''must'' be maintained between successive invocations of the function. Define a structure to hold that (and only that) state. Declare a stack (or a linked list, or whatever you have available) ''(a linked list is one possible implementation of the AbstractDataType stack, not something to be seen as an alternative to a stack)'' of that structure. Use it to hold the stacked copies of the recursive state. Then rewrite the remainder of the function to be iterative. (In the case of Java serialization, and many other graph/tree traversal algorithms, the only thing that needs to be maintained in recursive fashion is a BackPointer).
+
+'''Advantages:'''
+
+* You will use much less memory, as only the recursive subset of your function's state is duplicated.
+	
+* No longer subject to the contiguous address space limitation; the depth of the recursion is now limited only by total memory resources (assuming that intelligent data structures are chosen. A LinkedList is a fine way to go).
+
+* Much better cache behavior, as the program stack can likely be kept in cache the whole time.
+
+* On systems which don't offer adequate protection against StackOverflow, improves ability to detect failures - increasing reliability.
+
+'''Disadvantages:'''
+
+* Obscures the algorithm a bit.
+
+* Requires the creation of an ad-hoc data structure, which might be annoying in some languages.
+
+'''Examples:'''
+
+* Many GarbageCollection algorithms do this. GarbageCollection is a graph-traversal algorithm, and thus not TailRecursive. Memory-efficient implementations of GarbageCollection are very important,as the GarbageCollector often runs when the system is low on memory. Having a GarbageCollector fail due to an out-of-memory condition (or worse, a StackOverflow) is not a good thing.
+
+* Many parts of the BoostLibraries (for example, the regex lib) can be configured to externalize the stack. (This is the default on Unix implementations, as Unix apps cannot tell a SIGSEGV resulting from a stack overflow apart from, say, a WildPointer. On Windows platforms, the stack is internalized by default).
+
+* StacklessPython. Essentially, the old Python VM (which used recursion; we're not talking about ParrotCode here) was subjected to ExternalizeTheStack. Now it runs in a loop with an external data structure, allowing PythonLanguage to run in environments with very limited stack space. (It also allows extended Python versions to use non-stack-like data structures for ActivationRecord''''''s.)
+
+'''A Compromise:'''
+
+Partly externalize the stack, by reallocating as many of the local variables as possible to global memory (off the stack). If the value of a variable must be preserved during a recursive call, then the variable must be local; but if this never happens, it is safe to make the variable global. However, some languages (e.g., Pascal) do not allow a looping index variable to be global. Sometimes, this can partly solve the stack problem while preserving the readability of the code.
+
+----
+
+'''Example'''
+
+This is contrived, since the iterative version does not actually require an array. This whole page is somewhat contrived, since there's no mention of the fact that ExternalizeTheStack is '''usually''' a premature optimization, although there's no question but that it is sometimes essential. Also some of the supposed benefits listed above are platform specific, not universals.
+
+  // recursive
+  factorial(int n) {
+	if (n <= 2) return n;  // Originally "if (n <= 1) return 1;"
+                               // I find it amusing that someone applied this
+                               // dead-accurate yet PrematureOptimization, here.
+                               // Yes, it optimizes. But does it clarify or obfuscate?
+                               // And if one quantifies the optimization: clearly premature.
+                               // Whoever did that needs to reconsider their habitual
+                               // tradeoffs. This was an inappropriate optimization.
+                               // See RulesOfOptimization
+	return n * factorial(n-1);
+  }
+
+  // iterative
+  factorial(int n) {
+	int  i, array[100]; // integer overflow will happen well before we reach factorial(100)
+	int  result;
+	for (i=1; i<=n; i++)
+	array[i] = i;
+	result = 1;
+	for (i=1; i<=n; i++)
+	result *= array[i];
+	return result;
+  }
+
+''I understand both the recursive and iterative approaches to computing the factorial. This example seems to demonstrate eliminating recursion altogether. I was hoping to see an example of "an iterative [function] which uses an external stack" -- I don't see an external stack in above example. Not to pick on the example too much, but many compilers will preallocate "array" with room for 100 ints -- assuring that the iterative example consumes MORE stack space than the factorial for typical values of n. How does the iterative approach optimize anything (even if prematurely)?''
+* I '''said''' it was a contrived example. But it most certainly does use an external stack. The iterative version's array holds values that are held on the stack in the recursive version. The fact that the array can be further optimized into oblivion is a side issue. Also, yes, the iterative version definitely optimizes; function calls are relatively expensive and relatively large -- stack frames hold more information (return address, frame pointer, temporary register values) than does the iterative version's array.
+* Incidentally: typically, no, compilers will not preallocate "array", exactly, since basically there's nothing beyond "array" on the stack; it's not at all like allocating "array" as global data/BSS. That's a bit of a nitpick, however despite claims at top of page, ExternalizeTheStack can in fact often require more space than the original stack-based solution. The original claims need some heavy qualification.
+* So the above contrived example absolutely should not be dismissed out of hand; it does indeed illustrate the key points, and it is very small and simple. The more complex example below is of course nice because it is not contrived, but it is significantly more complex, too.
+
+The example isn't a great choice, because computing factorial is TailRecursive and thus it doesn't need ExternalizeTheStack.
+* Which has been said redundantly more than once, twice even; did I mention it had been said before, more than once? Twice, in fact. But thanks for the non-contrived example.
+An example of an algorithm which ISN'T tail recursive - depth-first traversal of a tree - is given below. First, our definition of a tree (the trees in this example may have zero, one, or two children - no balancing is assumed - and both leaf and non-leaf nodes have data). This is written in Java/C++-esque pseudocode; with many issues, such as proper encapsulation, elided.
+
+First, the common preliminaries
+
+ class TreeNode {
+	Object data;  // our data
+	TreeNode left, right;  // children
+ };
+
+ class TreeNodeVisitor {
+	abstract void visit (TreeNode); // do something interesting on a tree node
+ };
+
+Second, a depth-first traversal using recursion. Nice and easy.
+
+ void recursiveDepthFirstTraversal (TreeNode root, TreeNodeVisitor visitor)
+ {
+	// do the left branch
+	if (root.left) recursiveDepthFirstTraversal (root.left, visitor);
+	
+	// visit this node
+	visitor.visit (root);
+
+	// do the right branch
+	if (root.right) recursiveDepthFirstTraversal (root.right, visitor);
+ }
+And third, a version using ExternalizeTheStack. Note that we need to define an auxillary class, TraversalState, which essentially captures the continuation that would otherwise be saved on the stack. Lots of possible error conditions go unhandled.
+
+ class TraversalState {
+	TreeNode node;  // node being visited
+	bool left_visited; // true if we've already visited the left node
+	TraversalState (TreeNode n) {
+	  node = n; left_visited = false;
+	}
+ };
+	
+ void iterativeDepthFirstTraversal (TreeNode root, TreeNodeVisitor visitor)
+ {
+	Cons <TraversalState> stack = 
+	 new Cons<TraversalState> (new TraversalState (root), null);  
+		// our external stack, implemented using conses
+
+	while (stack != null)
+	{
+	 if (!stack.car.left_visited)
+	 {
+		stack.car.left_visited = true;
+		if (stack.car.node.left)
+		{
+		 stack = new Cons<TraversalState> 
+			(new TraversalState (stack.car.node.left), stack);
+		}
+	 } else {
+		visitor.visit (stack.car.node);
+		if (stack.car.node.right) {
+		  stack = new Cons<TravseralState>
+			(new TraveralState (stack.car.node.right), stack);
+		}
+		stack = stack.cdr;  // done with branch; pop up to parent
+	}
+	}
+ }		  
+As you can see, the externalized and iterative version is considerably more complicated than the recursive version. And since it was typed in by hand (no attempt to run it), I'm not even sure it works. ExternalizeTheStack is definitely one of those things you should only do when you ''have'' to - such as when you are short on memory (and need to minimize the size of the saved continuation) or are likely to run into a StackOverflow.
+
+----
+
+Do not ExternalizeTheStack in languages, that have continuations (see CategoryContinuation), or rather where control flow is realized with continuations like in SML/NJ. In these cases there is no problem with TheStack, because there is only the TheHeap anyway.
+* Not necessarily. It may be the case that continuations are not optimized out of existence by the implementation, in which case ExternalizeTheStack might still be faster and/or smaller. It depends. There are certain to be examples of both kinds of situations in any language with continuations.
+
+----
+
+Another alternative, if you know that there is a bound on the recursion but the default stack size is not sufficient, is to allocate enough stack space for the calculation in the first case. Often setting the stack size as a compiler option/OS option/interpreter option is the simplest fix on machines with 32 bit or greater virtual memory spaces. -- PeteKirkham
+
+----
+See DesignPatterns
+See also http://wiki.cs.uiuc.edu/PatternStories/DesignPatterns
+
+CategoryStructuralPatterns 

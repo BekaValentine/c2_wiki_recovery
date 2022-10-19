@@ -1,0 +1,84 @@
+There need to be some guidelines for developing safe robust application-level protocols. Client-Server is a small chunk of a pattern. Sometimes you just have to do stuff so a world filled with gets won't work.
+
+Some application protocol problems:
+	* Replies timeout. This means your operation may have been implemented, you just don't know it. If your retry and the operation isn't idempotent you are screwed. Distributed transactions is a lot to ask for between arbitrary 	applications.
+
+	* Order problems. It's possible for an application to get your request and trigger a whole series of behaviours before you get the reply.
+
+	* Timeouts are impossible to set by applications. System load and network conditions make avoiding timeouts desirable.
+
+	* Using blocking calls in a threaded environment adds a lot of complexity. Yet developers prefer blocking calls. Yet developers bitch when they can't respond to other requests while blocked. Yet developers bitch when adding threads makes code more complicated.
+ 
+	* Some replies are large, like files or result sets. 
+
+	* Applications like messages to have a guaranteed order. This requires application level acks. It's not enough to ack when a request has been sent 
+
+	* Unbounded producers fill up queues. A client making many requests because replies are timing out causes a lot of load in the system.
+
+Some solutions:
+	* Clients should use a state machine so asynchronous logic can be easily used. Do not rely on an implied state machine implemented with synchronous calls.
+	* Do not rely on replies. Instead send requests as the reply.
+	* Requests should have a serial number so duplicate requests can be filtered out.
+	* Requests should be retried in a timer until the the reply (disguised as a request) moves the client's state machine to the next state.
+	* The server shouldn't care if it's reply gets to the client. It is up to the client to retry.
+	* The client should wait for a reply matching its latest serial number. All others should be dropped.
+	* Do the work necessary to handle the reply before the reply is received. Often data triggered by a request can arrive at the client before the client has actually seen the reply that triggered the data.
+
+----
+
+Those seem like useful ideas, but I don't understand them all. 
+
+Requests for clarification:
+
+"Do not rely on replies. Instead send requests as the reply."
+Please explain? Does that mean requests from server to client?
+
+"Do the work necessary to handle the reply before the reply is received."
+Please explain? Does that mean to make forward progress based on optimism? Or to do any setup required to handle whatever the currently-unknown reply may be? What if the reply is a boolean? Do you mean to assume True?  (Of course not, that's just a logic probe.)
+
+----
+Those seem like useful ideas, but I don't understand them all.
+
+Sorry, I just needed to get something down. I feel there is a lot more to talk about here, but it has not solidified in my mind. It's an area people don't talk about much, but I see application protocols in a distributed environment as a major source of bugs. Often these bugs are very subtle. The subtlety is often situational. Load conditions. Hardware issues. More messages arriving than expected. Messages arriving in unexpected states. Drops. Larger data sets than expected. Failures at unexpected times. People just doing dumb things. 
+
+The goal is to come up with a robust approach that isn't simplified beyond
+usefulness. We make systems to do things. Much of a system can not be stateless.
+The webpage model is not a sufficient application model.
+
+''For a contrary opinion, see http://www.prescod.net/rest/state_transition.html.''
+
+----
+"Do not rely on replies. Instead send requests as the reply."
+Please explain? Does that mean requests from server to client?
+
+I've noticed that we spend a lot of time worrying about requests in applications. But we usually just fire off a reply and then don't worry about. These replies are often dropped. The are often delayed because of CPU starvation, drops in the stack, network collisions, buffer space issues on the sender and receiver, etc. We can then get into a retry loop where a request can be implemented more than once and queues can get overloaded, etc.
+
+So, I've been reworking my systems to send a request without expecting a reply. I don't block or have any context id to asynchronously match a reply to a handling context. In the request, I add a sequence number and replyto address. In my case the replyto is a namespace.
+
+The server will not reply. Instead it will make a request to client based on the clients request. The server will not retry the request because it too does not expect a reply. It doesn't care.
+
+The client uses the request to move its state machine to the next part of the process. If the client did not get a request from the server it would retry its request. Of course, this is a retry loop, but i don't think you can avoid that. The sequence number allows the client to validate requests from the server so work does not get done more than once. Queues could even filtered against the sequence number so we can drop a request immediately instead of letting it be consumed and validated at the application level.
+
+Behaviour is being driven purely by requests. If we assume the client has a state machine, this is a clean approach from an application perspective. We are not embedding an implied state machine in the stack of a method. At a small scale, we almost always embed a state machine, but usually even the larger scale state machine is just implied in the code. If something happens that the client must respond to, it is not blocked waiting on a reply. No other threads/contexts are necessary to handle simultaneous work. For example, if a service in secondary/hot-standby state must transition to primary service because of a failure, this is very difficult to do when blocking calls are used. It is also difficult to test because it can be a very small window.
+
+For example, a primary and secondary database needs to synchronize after the secondary machine comes up. The secondary has a database id and database sequence number the primary can use to know if the secondary needs to completely resync from disk or whether it can resync from a log. The secondary tells the primary its information in a hello request. It waits in a state with a retry timer. The hello request is retried until the secondary is transitioned to another state. The transaction happens because the primary will request the secondary to do either a total resync or a log-based resync. The request from the primary is the secondary's "reply." The secondary doesn't move until the primary makes the request (or the primary dies or something else). 
+
+This seems like a lot for a simple scenario, but in practice even this simple scenario has a lot of complicated failure cases that must be addressed robustly at the application layer.
+
+There's a simplicity here because the applications are more decoupled. Synchronous messaging is a very strong form of coupling. Asynchronous messaging is still a strong form of coupling because you are still tied to the reply and maintain a handling context. Obviously, this is all not exactly true because at some level, everything is the same as everything else (messages, function calls, rpc). But the point here is to simplify and robustify applications. Removing
+reply state handling is simpler.
+
+----
+"Do the work necessary to handle the reply before the reply is received."
+
+The idea is to put yourself in a state such that a request can be handled without first checking if work from a previous state needs to be completed. This creates dependencies between states. In the database example, the secondary database should be put in a position where it can be synchronized before it is told to synchronize. The error condition here is if the primary dies and the secondary reboots the secondary will come up not knowing it may have an old database. The early prepwork makes this discoverable on a reboot.
+
+----
+On second thought, use of sequence numbers to tie the requests together is too much of a binding. Better to use the state machine to know if the request can be handled in the current state. Or perhaps a request can be interrupted by another more updated request if only one of such a request can be outstanding. Or if a request can have multiple instances just let them go through. However, this could have bad consequences, say if the request was to download a movie and there was no state to say this person had already bought the movie.
+
+----
+http://www.prescod.net/rest/state_transition.html
+
+What happens if the server creates a URI and the reply is lost?
+What happens if the server itself needs to remember states to know what to do
+if something happens? It's not just about the client.

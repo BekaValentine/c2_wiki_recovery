@@ -1,0 +1,142 @@
+This is somewhere between an idiom and a "best practice". I've encountered it now three times, so it implies that it is a pattern :) This also potentially belongs in ComponentDesignPatterns, but it's pretty specific to EJBs.
+
+One of the notions that EnterpriseJavaBeans bring with them is that every EJB has a Home interface that defines how the generated EJB "Factory" will work. One of the types of methods that a Home can implement is called a "Create" method, and is basically a FactoryMethod (although the implementation is way wackier). Create methods have a pseudo-bnf like the following:
+
+ argument = <type> varName
+ createMethod = create([argument]*)
+(e.g., there are 0 or more arguments, each of which is a variable declaration consisting of a type name and a variable name. And the answer is yes, I know I'm leaving out the comma between arguments.).
+
+Now, the problem that has been posed to me is ''what'' types should a create method take as its arguments? This is related to some architectural considerations about how to best use EJBs like FacadesAsDistributedComponents and UseDataTransferObjects. In short, the problem is that you can either have any arbitrary object be passed in to your create method, or you can limit it to some subset of objects. The syntax allows either one -- you need to decide which one is 'better'.
+
+If you allow arbitrary objects to be passed in to your EJBs, you are creating dependencies between the EJB object and the object that is passed in. If you consider where EJBs fit in a FourLayerArchitecture, you are probably creating a dependency between an object that belongs in the lower two layers (the EJB) and an object that belongs in the upper two layer (a DataTransferObject). So, I've declared the following convention:
+
+''EJB create() methods can only take as arguments either a subset (up to and including the full set) of the types of fields that the EJB actually contains, or a single, primitive representation (like an XML string) from which the EJB can be created.''
+
+In other words, if you have an Entity Bean called EmployeeBean that has three fields, EmployeeKey empKey, String name and Date hireDate, the following create() methods are allowable:
+
+ create(EmployeeKey empKey);
+ create(EmployeeKey empKey, String name);
+ create(EmployeeKey empKey, String name, Date hireDate);
+
+ create(EmployeeKey empKey, XMLString stringToParse);
+(XMLString is a made-up class, but it gets the point across. The idea is that it's a standard, well-known representation).
+
+On the other hand, the following method is not allowed:
+
+ create(EmployeeKey empKey, EmployeeDataHolder data);
+Because it creates an improper dependency between the Employee EJB and the EmployeeDataHolder class.
+
+Thoughts?
+
+-- KyleBrown
+----
+
+It would bother me if EmployeeDataHolder had behavior. Past that, I don't really see the boundary line between "well understood representation" and "application specific ValueObject" all that clearly.
+
+This also seems (obliquely) related to the discussion in LimitConstructorArguments. I gather you're against the notion of using ArgumentObjects?
+
+-- WilliamGrosso
+----
+
+I would see the EmployeeDataHolder behavior being limited to "Syntactic" checking of parameters (is a value really in the form of an SSN or a telephone #, for instance).
+
+By "Well known representation" when discussing the constructors I explicitly mean something that's ''not'' application-specific. In this light an ArgumentObject would be application specific. The idea is that you want to separate the specific from the general, with the assumption that the EJBs are general.
+
+-- KyleBrown
+----
+
+I certainly hope that I am misreading the above, because it doesn't make all that much sense to me. Suppose I have an EJB that actually ''does'' depend on another EJB, with that reference being unchangeable. Would you really want to forbid passing the independent object to the dependent object's create method?
+
+And what makes the create method special so that it needs restrictions beyond those applied to the EJB interface methods? Aren't the same dependencies going to be introduced there? Or are you arguing that EJBs should not reference each other?
+
+-- RussellGold
+----
+
+While the EJB 1.1 spec does allow EJBs to directly reference each other, I'm still not convinced that it's a ''good'' idea. However, that wasn't the point of this idiom. This idiom was to enforce layering -- to make the EJB homes independent of any other object -- what I'm arguing is that EJB homes should be more general than any other application-specific class. They are a top potential point for reuse to occur, and we want to limit dependencies there.
+
+-- KyleBrown
+
+''Interesting. Why would you think that EJBs would not reference one another, just like any other distributed object? And why would you expect an EJB home to be a better unit for reuse than the home combined with the EJB? I would imagine them to be inextricably coupled, so the dependencies of either affects the dependencies of the unit. My suspicion is that reuse will be by components, which may include multiple interdependent EJBs (and their homes). -- RussellGold''
+
+Russ, I still don't think you're getting the point of this idiom. My preferences about EJBs holding on to other EJBs aside, the point of this idiom is to keep your EJBs independent from other application classes that are ''not'' EJBs. Let me tell you how this came about -- in the cases where I encountered this, we were using EntityBeansAsDataGateways and found out that the people writing the JavaBeans that we transferred across the network kept wanting to build create() methods that used their JavaBeans. However, we found that that too closely tied the EJB homes to the JavaBean classes -- which should have resided at a higher layer. The home interface would "explode" as everyone wanted to add their special "create" methods to the interface. -- KyleBrown
+----
+
+Maybe this doesn't have that much to do with you idiom, but it relates.
+
+Wouldn't you have to in the first place have as many arguments in the create as the underlying(!) database dictates you through its mandatory fields. I don't like this at all, but it seems the only workable way. The actual insert is performed when create is invoked on the home interface. This also means that validating any data becomes the responsibility of the ejbCreate method (or calling the appropriate methods). What's your view on these issues?
+
+-- RaphaelParree
+----
+
+You're right, it doesn't have much to do with the idiom. :)
+
+Yes, you must have at minimum the number of required fields in the underlying database in your create methods. However, I disagree that validating the data should reside in the EJB create() method. That means you're thinking of EntityBeansAsDomainObjects, which I don't think is the right approach. Instead think of EntityBeansAsDataGateways.
+
+-- KyleBrown
+----
+
+To begin with, I think
+
+ create(String id, String XMLString stringToParse) 
+is an AntiPattern. What happens that everybody is going crazy for XML these days? Even admitting that you receive the XML from an external source, you will have to have an adapter at the system boundary, that will do the XML parsing, will validate it according to the contract you have with that particular system, and adapt it to your own system, and only that thing will later call the xxxHome.create(data).
+
+Then, when you say that:
+ 
+ create(EmployeeKey empKey, EmployeeDataHolder data);	// creates dependencies while
+ create( ... huge list of parameters ... );		// is not right
+maybe you will want to think what exactly is the justification from having a EmployeeEntityEJB in the first place. It goes against the relational theory, against OO theories as far as I can tell (breaks SeparationOfConcerns), it's just no justification for having an EntityBean if you're in doubt of such basic issues as ejbCreate(...).
+
+-- CostinCozianu
+----
+
+''I'm sorry but I can't understand your reasoning here. Why does the second comparison "go against relational theory" and why does it "break SeparationOfConcerns"? Can you provide some more justification for those statements? -- KyleBrown''
+
+First of all, am I to understand that you have no arguments against dropping the XML based constructor?
+
+	* Operating on EntityBean''''''s with the plethora of ejbFindXXX() ejbLoad() ejbStore(), generates a very strange subset of data access operations against a relational database. This has a particularly nice effect of triggering deadlocks very easily, being very inefficient, and so on, so forth. It's like I'd give you a C compiler and require you to have only one function (main) and use only gotos or if I'm generous allow you to have structured blocks and loops and conditionals. Much the same, the programmers that have a relational database in the background and are forced to use the EntityBean concept are doomed. If you have further objections to this argument I propose that we can create another page from it.
+	* OO and SeparationOfConcerns. Well, let's see, for me it is enough to see that you have an EmployeeEntityBean and an EmployeeDataHolder, that is two objects for roughly the same concept (with the only difference that the EntityBean can be 'managed' and can be used as a distribution unit in a potentially distributed system), and already the whole design smells a little bit. Why don't you have only stateless session beans as points where you have your management (distribution, persistence etc) and where you can provide distributed services to the system's clients, and replace this dead concept of EntityBean with normal every-day business objects. And you won't have any of this troublesome dilemmas about such a basic thing as creating an object, whether or not it should be a domain object and so forth.
+----
+
+The goal of encouraging cohesion within a class and limiting its coupling to objects outside its package (and through implication, its layer) is a fundamental precept of solid OO design.
+
+'''Therefore,'''
+
+The declaration:
+
+''EJB create() methods can only take as arguments either a subset (up to and including the full set) of the types of fields that the EJB actually contains, or a single, primitive representation (like an XML string) from which the EJB can be created.''
+
+does not appear to support this goal. The idea of directly coupling internal object state to external interface is not sound OO design. If this approach is to be taken, eliminate the EntityBean and substitute DataAccessObject''''''s that encapsulate JDBC code to be called from SessionBeansAsFacades.
+
+A simple declaration of syntactical rules will be unable to address the deeper semantic issues present here.
+
+Specifically, the isolation of architectural tiers through the transformation of domain views encapsulated in interface parameter objects must consider context, i.e. how are the objects to be used. See the LawOfDemeter for a solid discussion of the unwanted effects that emerge when one attempts to summarize a set of context-dependent recommendations (the DemeterProject) into OneSizeFitsAll declarations.
+
+'''But,'''
+
+In defense of the declaration, the JavaPetStoreDemo uses Model objects in a manner similar to that proposed above for XML String objects. The domain is small and simplistic, so the ValueObject transformations needed are minimal between each tier's domain view.
+
+''JavaPetStoreDemo cannot be invoked in defense of anything. Has anybody actually seen the code in there ? What a lame argument.''
+
+My point exactly.
+
+-- KentDorsey
+----
+
+Kent, I think that your problems with this may stem from the fact that Entity Bean design is NOT equal to Object Design. EntityBeansAreNotDomainObjects Entity Beans are only a vaguely OO "wrapping" on what is (in effect) a database table.
+
+''Point taken, in the case where they are not domain objects. An elaboration of your opinions as to why they are unable to represent OO business entity objects that encapsulate the chasm-crossing to a database would be most helpful in furthering the discussion.''
+
+As to why you would want to use them rather than a DataAccessObject wrapping JDBC Code -- well,
+
+(1) CMPs can be created automatically by lots of tools,
+
+(2) The instance caching mechanism gives some performance benefits over raw JDBC unless you're willing to do some fairly sophisticated Object Factories that reuse DataAccessObjects, and
+
+(3) I can directly assign security on my Entity beans at the data level, rather than having to do it at the Session bean (function) level -- which I probably want to do anyway, but it's nice to have both options... -- KyleBrown
+----
+
+I think it's a nice idiom Kyle is suggesting to prevent dependencies between layers. As far as I can see though, there is still the problem with dependencies regarding the return values. Let me explain.
+My Entity EJB, Person contains the normal attributes for a person, so I create my create method only containing the attributes specified in my Entity EJB. (I like that rule) However, since I don't want the client to this EJB call each and everyone of the accessor methods to avoid lots of remote calls. To minimize the number of remote calls, I use the pattern to return a ValueObject. But..., then I have a dependency between the layers again. If I modify what's in my value object, the caller needs to update his local copy of the class!
+----
+
+CategoryEjb

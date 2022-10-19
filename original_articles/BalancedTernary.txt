@@ -1,0 +1,92 @@
+BalancedTernary is a representation for numbers that has some very useful properties and would make a reasonable replacement for binary in hardware implementations (switching to three-state logic with high, low, neutral per transistor). BalancedTernary allows one to represent signed numbers without use of a sign, and has much simpler multiplication rules than binary or decimal.
+
+In BalancedTernary, the 'digits' are 1, 0, and -1. I represent these as u, o, and n respectively:
+ u =  1
+ o =  0
+ n = -1
+
+These representations are easy to recognize when drawn on a board, and have neat little mneumonics. I tend to think of them as as '''u'''p, dow'''n''', and zer'''o''', but also the physical characteristics help distinguish them ('u' is open at the top, or like arms reaching towards the sky. 'o' is closed. 'n' is open at the bottom, or like legs pointing towards the ground). 
+
+The multiplication table for BalancedTernary has no carries, and the addition table has two carries:
+ *| u  o  n    +| u  o  n
+ ----------    ----------
+ u| u  o  n    u|un  u  o
+ o| o  o  o    o| u  o  n
+ n| n  o  u    n| o  n nu
+
+
+Representing a few numbers:
+ . . 6 = . .uno (9 -3 0)
+ . . 7 = . .unu (9 -3 +1)
+ . . 8 = . .uon (9 0 -1)
+ .  42 = .unnno (81 -27 -9 -3 0)
+ . -42 = .nuuuo (-81 27 9 3 0)
+ .-237 = noouno (-243 9 -3)
+
+The fact that the multiplication table has no carries is useful. You can negate a number (multiply by -1) by negating the digits. Representing -42 * -237 below, using a reverse-ordered representation (which is considerably more convenient on this forum):
+ onuoon (-237 in little-endian)
+ ouuun  (-42 in little-endian)
+ ---------------------
+ '''oooooo'''
+ o'''onuoon''' 
+ oo'''onuoon''' 
+ ooo'''onuoon''' 
+ oooo'''ounoou''' 
+ -----------------
+ oonoonnnnu = (0 0 -3^2 0 0 -3^5 -3^6 -3^7 -3^8 +3^9 = 9954)
+
+This leads to a relatively simple hardware implementation for multiply as a shift-adder, or at least I'd imagine it would. I'm not a hardware guy.
+ 
+Rounding in BalancedTernary is the same as truncation, which greatly simplifies working with inexact real numbers.
+
+-----------------------
+
+'''Efficient encodings:'''
+
+Obviously 'uon' isn't very compact compared to decimal. One could, of course, encode numbers in decimal when representing them to humans, but humans can't read or understand large numbers anyway, and this would result in inefficiencies
+
+One of the best choices is a simple binary-encoded-ternary at the octet basis. For storage and serialization, balanced ternary (or ternary in general) can be coded into octets using 5 trits (243 states) per 8 bits (256 states) with a spatial encoding loss of 5.08%. This loss can be leveraged; those remaining 13 states can be used as terminals or separators. If encoded in actual ternary, of course, one would need to use some other mechanism to escape characters. I suspect one could implement hardware designed for adding and multiplying fixed-width numbers encoded in binary-encoded balanced ternary without too much difficulty.
+
+For representation in an ASCII or UTF-8 stream, simply using base32 with binary-encoded-ternary is about 4% more compact than using a base27 representation. Attempting to represent a base81 in ASCII/UTF-8 will run one out of printable characters that are important for separators. 
+
+--------------------
+
+Integers get represented as a list (arbitrary length) of trits (type u|o|n), with the normal form requiring that the list end in the a trit not equal to 'o'. The first item in the list would be in the 1s place, so the list is in little-tritian. Real numbers are represented using a ''stream'' of trits (always infinite length) along with an integral exponent, with the normal form requiring that the stream ''start'' with a trit not equal to 'o' except in the special case of the zero valued real number. Inexact reals add to that a finite precision - a natural number of significant trits. 
+
+----
+
+Sure BalancedTernary has some nice features - from a mathematical point of view. But I fear if you base your computational core on it you will build yourself a hole and never get out.
+
+One thing is the social aspect: Even if BalancedTernary were the more intuitive and easier representation (which I'm not really convinced of) and even if your computational core would become simpler - for you. Even then most people would disagree and you'd get much much less support in your endeavor. And you need it.
+
+But even the hardware aspect is not as cheap as 5%. I'm not exactly a HardwareGuy but I have programmed FPGAs and know about gate delays and transistors. 
+Your tristate transistor is not as simple as you think. Instead of 3 layers (NPN) you'd at least need 5 (NPNPN). And 5*5>8*3 so it doesn't stay at 5% space loss.
+The sign which troubles you so much is only a few gates compared to the majority of gates needed in the multiplication logic. Binary multiplication is very well understood and there are very effcient structures (structurally, gate wise and geometrically) and chip manufacturer depend on these. Also FPGAs provide specialized multipliers and FPGA compiler generate efficient multiplication code. Lots of research has gone into this. 
+
+-- GunnarZarncke
+
+The social aspect is a risk, I agree. That's part of why I put it up here, to gauge reactions. Thanks for offering yours. I'm still a good bit away from implementation, so there is plenty of time for my mind to change.
+
+Users just performing math ops, from the math lib, wouldn't, I suspect, generally care how it's done under the hood so long as the performance is good. 
+''I agree.''
+
+I'll be using bignums, and I'll be writing an optimizer for them either way. From that aspect, it doesn't matter whether I choose binary, decimal, balanced ternary, base 7, etc. The ability to avoid twiddling/checking an extra sign bit, and the ability to avoid having two representations for zero (+0, -0) is pretty darn convenient. Two's complement is NOT an option for bignums, since that would require infinite-width representation. Under the hood, ultimately, the optimizer would be translating the whole program to use whatever is optimal for the hardware in any case. Actually, it makes a good proof-of-concept for the optimizer.
+
+''BalancedTernary is neither a good choice for BigNums with a base prime to 3 for the same reason. But the usual way to implement BigNums with 'decimal' places is to scale to the least digit anyway and with that way you can - with some generalization - work with 'decimal' places in all bases. So binary - even 2s complement is quite a good choice. Maybe you should have a look at some math library. (e.g. http://www.krugle.org/kse/entcodespaces/A213GO ).''
+
+''When you have an optimizer which translates PeanoNotation, BalancedTernary or your ordinary numerals into bignums (or whatever) then this choice indeed becomes of lesser importance.''
+
+For the hardware, is it not the case that 5*5 is talking about 5 3-state transistors, whereas 8*3 is talking about 8 2-state transistors? Well, that would bring us to a 9% space loss. But, and I can't remember where I read about it, I believe I read about some natural three-state materials with different resistive states that would make 3-state transistors pretty cheap. I also understand Intel is working on three-gate transistors for non-planar designs. Well, whatever, the hardware aspect isn't what interests me in the subject.
+
+''I assumed that to realize a 3-state transistor you'd need one more NP layer but I could be wrong. Anyway your simple that 3 states take 3 units of space is probably as appropriate. Other materials are out of our horizon anyway. And yes this is probably not relevant for the BalancedTernary choice.''
+
+I was using your numbers: ((3^5)/(5*5)) for the 3-state transistor vs. ((2^8)/(8*3)) for the 2-state transistors for total (States/Space). Switching to '3 states take 3 units of space and 2 states take 2 units of space' would give me ((3^5)/(3*5)) vs. ((2^8)/(2*8)), which would give a 1.25% states/space advantage to ternary. I don't know which is more realistic given materials available. As said, this isn't too relevant to the decision, but just wanted to clarify.
+
+----
+
+See: http://en.wikipedia.org/wiki/Balanced_ternary
+
+(Also Generalized Balanced Ternaries, Reed-Muller ''or'' Zhegalkin Polynomials, and Permutahedra)
+
+----
+AprilZeroNine

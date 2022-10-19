@@ -1,0 +1,170 @@
+From the XpMailingList:
+
+Could those of you who have followed the ExtremeProgramming approach to optimization (i.e., ignore optimization until there's a proven need or LazyOptimization) please post descriptions of your experiences? I'll collect them and put them on a Wiki page. "Non-"experiences ("we were sure we needed to optimize but then it turned out we didn't need to") are just as interesting, so please post them as well. I'm also very interested in bad experiences where the XP approach failed.
+
+----
+'''Profiling, refactoring lead to connection pool optimization'''
+
+The project I'm currently working on is very database-intensive. When we first started it, about eight months ago, we created a new connection to the database for each transaction that needed to modify the database. At the time, we thought that this would be a problem, as creating a connection to the database takes about three seconds. The typical solution is to use a connection pool, but we didn't do that because there was no proven need. We did maintain a single shared connection for database queries because that's how the code had evolved. (We had a Database object which maintained the shared query connection and Transaction objects that obtained a new connection for writing.)
+
+Surprisingly, this assumed performance bottleneck wasn't a problem. We had no user or customer complaints. I later realized that this was because the existing programs, which we were replacing, were actually '''slower''' than ours, because they didn't have the code reuse ours did. Every page (the system's Web-based) had used a new connection. Most of our pages didn't do database updates, only queries, so didn't actually create a connection. The ones that did were at the end of our applications where the users were presumably used to seeing a brief pause.
+
+After working within this framework for about six months, we made a change that caused every page to write to the database before being displayed. This slowed our application down immensely. Our functional tests started taking ten times as long to complete. In retrospect, the problem was obvious: we were creating lots more connections than before and the three-second hit was killing us. At the time, though, we had just implemented a difficult serialize-to-database algorithm, and thought the problem was due to a misunderstanding of the database API or poorly-optimized SQL.
+
+If we had just dived in and fixed what we "knew" was broken, we could have spun our wheels for days without any success. Instead, we profiled the code and discovered the real culprit.
+
+To solve the problem, we added a connection pool. Because our code was well-factored, the change took only a few hours and affected only one class. For us, the XP approach worked great.
+
+-- JimLittle
+
+----
+'''Deciding not to use a queue'''
+
+Here's one; a little trivial, but illustrative. 
+
+I just finished a module to sit on our server and translate incoming messages (over TCP) from one format to another before sending it back out.
+
+The initial design that we came up with involved a moderately simple threaded design; there would be a reader thread that would listen to messages and place them in a threaded queue for translation and transmission. The idea behind this was that translation or re-transmission could be time-consuming, and we didn't want the reader to block.
+
+In the initial version I did, I ignored the threaded aspect of the queue... invoking queueMessage() processed it straight away. The idea was that we'd profile it to see how fast it was over the typical situation, then go back and put the queue in properly if it was needed.
+
+Message traffic analysis showed that, at most, they'd need message transaction rates of about 5 messages/second at most. The simple prototype I did handled several hundred a second. Product management decided not to bother with the queue as it wasn't needed. Although this sort of queue is fairly simple as a threaded app goes, it's complex enough that we didn't want to do it unless we had to.
+
+The simplification knocked back a three-man-week task down to just over 1, including acceptance testing by the customer. If we ever need to go back and make it threaded (for example, we decide we want a store/forward capability), the design has a clear point of flexibility.
+
+(In fact, we already had a threaded design, as the pipe was two-way; this meant we had two readers, etc. However, the threads didn't interact, so it was not a complication.)
+
+-- RobertWatkins
+
+----
+'''Floating-point inefficiency or slow date class?'''
+
+I was involved in a project to build a financial toolkit in Java (interest rate derivatives, since you asked...) to replace an older system and we attempted full-bore XP. As we put together enough code to work with, we found it was very much slower than the old version so we were a bit nervous as to whether we would be able to make it. We cracked open a copy of JProbe. 
+
+We had assumed that, when the time came to optimize, the problem would be in the floating-point arithmetic. In fact, by far the biggest bottleneck was Java's date library (interest rate calculations involve lots of dates). Eventually, we ended up implementing an integer Fast''''''Date. With that and a little bit of cacheing we got it up to the same speed as our old C++ implementation. Total cost about a couple of pair weeks (we kept developing while this was going on), but the principal benefit was that we didn't spend ages optimizing things that didn't matter. We also found that our new implementations were considerablely shorter than the originals which had acquired a lot of crud over the years.
+
+Issues:
+
+* Had this issue arisen with the old code? We knew it had a similar date scheme, but we didn't realise it made such a big difference. Where could this be captured? Should we have called the new type "YourCodeWillGrindToAHaltWithoutThisDate"?
+
+* Our code wasn't well enough refactored. This was still early days, so people weren't used to it. When making the change, we could really have done with some of the refactoring support added in later versions of VisualAge.
+
+-- SteveFreeman
+
+----
+'''Porsche-in-the-parking-lot'''
+
+Sorry I can't think of a good first-hand story right now. However, I'll share a terribly mangled  version of my all-time favorite optimization story. This is from memory, so my apologies to  the author. I sure wish I could remember which  book it's in! If you recognize it, please let me  know.
+
+This program was "too slow". The team may have spent some time optimizing before profiling, but perhaps not. Either way, the heart of the story comes after they did some serious profiling. They found a single routine that was using a HUGE amount of CPU time. I forget the percentage, but let's say it was 35% of the process time. Wow.
+
+They dug in to the assembly code, and found it was not particularly efficient. They tweaked. They unfolded. They optimized the holy heck out of it, knowing that every bit of speed they could wring out of this one routine would pay off handsomely. 
+
+When they had taken it as far as they could, they stepped back. But wait. The system did not seem to run any faster. Finally someone realized that this routine they were optimizing was....the idle loop. 
+
+Doh!
+
+-- KevinSmith
+
+But when they were done, they had a ''really tight'' idle loop! -- CowboyCoding Advocater
+
+''This is such a silly story, does anybody really believe it?''
+
+It's only silly if you understand "idle loop" to mean something like the idle process of an OS, i.e., something that really does nothing at all. However, the idle loop of an application can do a couple of things that need to be done once in a while when the application isn't too busy, like check the keyboard for new input, release system resources that became unneeded, etc. In that case, you have a loop where you can in fact do meaningful optimizations, which will get you real speed improvements and still do nothing to improve perceived performance. -- NeKs
+
+BrianKernighan and RobPike tell (see Chapter 7, "Performance", starting on page 177 in the first printing at least) a similar story - albeit prefaced with "The following story might be apocryphal . . ." - in ThePracticeOfProgramming. ProgrammingUrbanLegend? -- GregBacon
+
+'''Successful Optimization of an Idle Loop'''
+
+A few months ago, I changed how our application processed events, and performance ground to a halt. Profiling revealed the culprit: The GarbageCollector was running almost constantly. I spent several hours digging around in the GC before I realized the true problem: My idle loop was allocating memory! I re-wrote the idle loop carefully to stop it from allocating memory, and the system sped up considerably. -- anonymous
+
+The video game ''WarioWare: Mega Microgame$'' for GameBoyAdvance has a habit of BusyWaiting for the next frame to begin. Some hobbyist posted a patch for this game that replaces this with a low-power sleep mode, causing the game to run longer on one pair of AA batteries. So even if an idle loop can't be optimized for speed, it can be optimized for power consumption. -- DamianYerrick
+
+----
+'''Perl rewrite'''
+
+The project I'm currently working on is a big-ass Java program with two tiers and a lot of complicated object and thread pools. It's highly asynchronous! We've been working on it for months and months, and it's too slow. After a couple months of puzzling over performance, I went home and wrote the whole system in Perl over four days. It's 1000 lines of Perl code, and it entirely lacks object pools, and it's about six times faster than the Java version. -- JustaProgrammer
+
+''Which raises the question: does the performance improvement come from the lack of object pools, or from being written in Perl? Rewrite the Perl solution in Java, and see...''
+
+''Indeed. I'll get back to you on that.'' -- JustaProgrammer
+
+Perl is blindingly fast. For all serverside ''whatever'', the correct answer is to use Perl not Java. Perl is more portable, more powerful, more maintainable, and more open. Once again, the question arises, IsThereSomethingJavaShouldDo? -- SunirShah
+
+''But in this situation... we don't know for sure''
+
+----
+'''HandHeld optimization'''
+
+Our company displays complicated images on HandHeld''''''s. We try to keep our implementation small and fast. Nonetheless, we still have to do color transformations on the client for certain input files. The last time I had to implement the color transformation, I used a really cheap N cubed Euclidean distance algorithm to convert from RGB to paletted systems. It accounted for 21% of the load & display time (including loading the file over the network). Consequently, when we decided to rewrite the entire system from scratch to make it smaller, faster, and generally more elegant, I rewrote the color mapping algorithm - worse, now the input file could be described in ''any'' color system, and the client device could be in ''any'' color system - one UnitTest, one if statement at a time. The code is hairy, but nearly optimal.
+
+When profiling the new system, we noticed that while the new color transformation was now negligible (nice!), we were still spending 15% of load & display time pushing the palette onto one particular device. Sure enough, the platform did some Euclidean distance junk of its own deep inside the system code.
+
+Four hands, four eyes, two brains, and a couple hours later, we did a little magic dance to cleave through the system like CookDing. The 15% speed hit went away, and with it a second off the load & display time. -- SunirShah
+
+----
+'''Excel subtotal macros'''
+
+I had the misfortune of being drafted to assist in writing a distributed database system in a major telco cable roll-out. Sounds ok so far, except "distributed" in this case means "a big bunch of MS Excel spreadsheets". 
+
+One task I had to write up was a macro that would grab the list of spreadsheets in a given directory, and for each of those go through and extract out some subtotals, writing each one into a new spreadsheet. Each directory held spreadsheets for all the regions in that state, or zones in that region, or districts in that zone, or streets in that district... a hierarchical structure.
+
+I decided to DoTheSimplestThingThatCouldPossiblyWork, which was to work on one child spread sheet at a time: get the list, and for each file open it, extract the rows, close it, proceed to the next file.
+
+The code worked on the small test files. I decided to test it against a full sized directory... when the sysadmins came running out from the server room wanting to know who was thrashing the disks so much the servers were just about walking across the floor, it was then I figured it was time to consider optimization. Really, they came running out!
+
+Turns out MS Excel spreadsheets are written to disk in a column then row order (or was it the other way about - doesn't matter for this story), and thus the algorithm I had written was causing Excel to grab a few bytes from one disk block, then want to grab a few bytes from the next disk block, and so on to the end of the file, and then repeat again with a small offset.
+
+I rewrote the macro to open all the files at once, and then process them column by column instead of row by row. Icky.
+
+They really did come running out. 
+
+----
+'''Optimization under pressure'''
+
+An interesting story about "real-time" optimization of Slashdot on the day of the Sept 11, 2001 World Trade Center bombing can be found at http://slashdot.org/article.pl?sid=01/09/13/154222&mode=nocomment.
+
+----
+'''Algorithms versus tuning'''
+
+Had a nightly process that took two hours to run and was very well behaved relative to other nightly processes.
+But for some reason, top management insisted that it had to be optimized.
+So they assigned some 3rd person (not the person who wrote it) to the task, and guided by profiling tools, he spent a significant amount of time hand-optimizing the most performance-critical loop - with only moderate success.
+
+"Well," I said, "I think it would really be a better idea to look up part numbers using a hash table instead of doing a linear search for each one." This done, the program ran several times faster.
+
+Lesson learned: algorithm is many times more important than tricks; write maintainable code.
+
+Also: To go faster, you have to slow down and... '''>>> THINK!!! <<<'''
+
+-- JeffGrigg
+
+This observation alone:  
+* To go faster, you have to slow down and... '''>>> THINK!!! <<<'''
+
+Gains most of the speed optimizations I have ever achieved.
+
+Some people feel proud that they waited until it ground to a halt before optimizing. Some felt satisfied because the new system went faster than the old one so the users didn't know the 3 second wait was now optional. I think these people failed to pay attention to the unwritten/assumed UserStory, ''I want it to behave smoothly and cleanly but don't apply gold plate to get that without asking''. Thus C++ developers should have access to a hash table and use it wherever appropriate. This is not premature/late optimization, it is ordinary code reuse/ vs / laziness.
+
+It is only after applying this rule at least 3 times that one should optimize actual code.
+
+For this particular case, if N is large, a hash table for equality matches are just soooooo much faster than linear or even log(n) searches as to be ludicrous.
+
+In fact one might go so far as to suggest:
+* To write code faster, you have to slow down and... '''>>> THINK!!! <<<'''
+Remember, most of the cost is in the maintenance and not in the original construction. YAGNI, OnceAndOnlyOnce, DoTheSimplestThingThatCouldPossiblyWork are not valid excuses to DoTheFirstDumbThingYouThinkOfThatMightJustWork
+
+-- AlanChristiansen
+
+----
+I was working on updating a Bugzilla database with a little Ruby script yesterday. The first time I wrote it, I put the "mysql -u foo --password="bar" foo -e 'update #{rec} where foo = #{bar}" inside a loop. It took 2 minutes, 47 seconds to run all the updates. Then I changed the script to write all the updates to a file and then run them as a big batch. Now it takes a little over 2 seconds to run the script. Of course, if it had only taken 5 seconds to run it the first way, that would have been fine. I guess the moral of the story is "out of process calls can be expensive". Hardly original, but quite true in this case. -- TomCopeland
+
+----
+The first time I used a profiler on a C program, I discovered that about 50% of the time was spent in TWO instructions, namely the casting of two variables from float to int. Using round() instead made it run considerably faster. For Pentium family optimization, this is a very nice guide: http://www.cs.nmsu.edu/~pfeiffer/classes/473/notes/pentopt.htm.
+
+Then there's size optimization, which is even less politically correct, but this one hack I can justify. A guy had an old laptop with no working floppy disk and an (almost) erased HD with only command.com and the MS-DOS kernel on it. So, I wrote a small ASCII program to transfer data via the serial port (I did not know that/if the DOS kernel+shell could do that), and let him type it it with COPY CON, which allowed him to install a complete system.
+
+-- RobertOestling
+
+----
+CategoryStory CategoryOptimization

@@ -1,0 +1,67 @@
+(Part of PortableSql)
+
+When you insert a new row into a table, you need to generate a unique PrimaryKey for it.  Some ways to do this include:
+
+'''Auto-increment columns'''
+
+	* Supported by: Access, MySQL, MS SQL Server, PostgreSQL.
+	* not supported by: Oracle (can emulate with a sequence and trigger)
+	* partial support: Sybase (unintuitive implementation)
+	* cannot emulate with Solid
+
+Issues to check:
+
+After an insert, how do you fetch the primary key that was generated?
+
+If the last row is deleted and a new row inserted, is the value reused?  (True in MySQL 3.22, fixed in 3.23)
+
+How far does the autoincrement column jump ahead after a crash and recovery?  
+(Sybase's behavior is particularly unfortunate - under the default settings, it can jump ahead by more than the range of a 32-bit integer!)
+
+'''Sequences'''
+	* Supported by: Oracle, Solid, PostgreSQL
+
+'''Emulate it'''
+
+If a database supports neither autoincrement nor sequences, you can implement the key generation yourself using a counter in the database.  However it can be tricky to avoid locking issues and will be slower.
+
+''Since no method is supported everywhere, a question to consider is: emulate sequences with autoincrement, or emulate autoincrement with sequences?''
+
+	* ''Sequences are more versatile, aren't they? You can use a sequence for one or many tables, you can use it for other purposes than as primary keys, you can set the pk right there in the insert statement or you can first fetch a new number from the sequence and then use that as the pk, thus making sure your application has knowledge of the pk. So, I personally prefer to use sequences, and would emulate sequences with autoincrement, rather than the other way round. YMMV, of course.''
+
+'''Use a key from outside the database'''
+
+The above methods create artificial values for primary keys, but the data being entered may already have a primary key that you can use.  (Social security number.) However, you have to be very cautious because the real world tends to be messy and will generate exceptions that break your database.  (People outside the US probably don't have a social security number.) ''(OT: So in your eyes the vast majority of humanity are a messy exception to the norm of being an US citizen? Gee, thanks ever so much. Talk about twisted perception...)'' ''(PH: There's also the problem that the US *recycle* social security numbers, so you can't really use it as a PK anyway as it's not time-inviolate''
+
+'''Generate UUIDs'''
+
+Simple and portable, with none of the problems described above. One downside is that you can't generate UUIDs "by hand", e.g. when manually inserting an data set for testing or BootStrap purposes.
+
+----
+
+PostgreSQL 7.0 (http://www.postgresql.org/) supports automatically incrementing columns by declaring them "SERIAL".  At least in 6.5, this was actually just shorthand for creating a sequence and attaching a trigger to the column in question (which the database would do for you; you could even see it happen if you watched the SQL monitor.)
+
+-----
+
+Should you generate keys yourself, from your own "next sequence number" table, here are some suggestions:
+	* Do UPDATE (adding 1) before SELECT of new value.  Doing SELECT first will generally not lock the row for the duration of the transaction unless you do SELECT ... FOR UPDATE, and thus may cause a RaceCondition which allows other users to read the same value before the UPDATE executes.  Additionally SELECT first may give "wrong" value (Oracle) or make deadlocks dramatically more likely (all other databases) -- because doing SELECT then UPDATE "escalates the lock."
+	* When the database locks pages instead of records (Sybase, Access, early SQL Server, etc.), pad records in the "next value" table so that each record is on a separate page.
+	* Consider allocating sequence numbers in large blocks (and doing a commit) -- when you know you'll need lots of numbers.
+
+Contributors:  JeffGrigg, JayWalters
+
+-------
+
+On way of solving PortablePrimaryKeyGeneration is to simply ignore the "portable" part. Write an implementation in your application for each DBMS you are using, taking advantage of the built-in id generation features almost all of them have. When refactored and neatly folded away behind an abstract factory, every implementation will actually be quite small and easy to implement.
+
+Unit testing can be a problem, since you can't have ten DBMSes hooked up to your unit test suite. This may or may not be worse than testing a truely portable solution.
+
+--AndersBengtsson
+
+----
+
+Any approach to primary key generation (portable or not) that requires communication with your database creates a potential bottleneck under heavy load.
+
+Consider designing a primary key generator that does NOT require access to your database (such as a random number of sufficient length). Design your database so that the occasional primary key conflict is handled by an exception.
+
+Now you can optimize the behavior of the total system based on a balance of load, overhead, space, and reliability.

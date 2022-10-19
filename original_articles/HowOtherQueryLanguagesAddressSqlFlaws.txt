@@ -1,0 +1,323 @@
+This is a comparison of how different query languages, proposed or actual, deal with various SqlFlaws and shortcomings. Motivated by a discussion of goals in SqlFlawsDiscussion. It can also be a discussion of different approaches to solving them, regardless of whether an existing language actually has such a feature. It's an exploration of techniques more so than specific languages. Fortunately, the field of SQL alternatives is still new, and thus this is a good time to hash out the options.
+
+The "problem" categories are listed below in no particular order other than creation date (nobody agrees on the importance ranking anyhow). Languages are listed in '''alphabetical order'''.
+----
+'''Non-Unique Results Sets'''
+
+* '''D4''': Considered a bad idea, it should be possible to do it with arrays, but I need to confirm it.
+
+* '''JPAQL''': Tables are seen like collections of objects, if a query returns duplicates the collection might contain more than one reference to an object (the object is not repeated, but the reference is). "DISTINCT" needs to be used to explicitly forbid duplicates when writing JPAQL queries.
+
+* '''SmeQl''': As currently defined, tables are bags rather than sets. Duplicate rows are allowed unless the Unique operation is used. But there is no known property that prevents a set-only version of it being created, or enforced by the underlying engine without a query language overhaul. SmeQl is intended to potentially be used with existing RDBMS engines, and supports "bags" for compatibility purposes. Thus, it considers uniqueness enforcement primarily an "engine" issue and not a query language issue. In other words, a '''policy configuration decision for the DBA''' and/or the organization management.
+** Con: In the RelationalModel, duplicate rows are meaningless, redundant, and can cause erroneous results if used as the basis for totals, counts, and other summaries or aggregate results. What purpose is a duplicate fact? See DatabaseIsRepresenterOfFacts.
+*** ''Sometimes we have to be "ugly" to match real-world ugliness. If the domain wants a bag, give it a bag. Another "purity" fight here? Sometimes the user simply doesn't want to see the damned key. Why are you forcing them to see it? If I ask the computer to not show the key, the thing better not show it or I'll go buy another that obeys me[5]. If it lectures me about purity, I'll smash its screen. Further, using bags as results may be more efficient in some cases.''
+*** Except for the last sentence, which is accurate but of negligible concern, that's a nice rant.
+*** (Rest of discussion moved to BagAtational.)
+
+* '''TutorialDee''': Considered a bad idea, but can be represented if necessary using a randomly-accessible, ordered container of tuples called an ARRAY.
+
+----
+'''A better Null or replacement to Null (NullVersusNone)'''
+
+* '''D4''': Allows the use null to represent unspecified values to allow for compatibility with the underlying SQL based databases used for storage.
+
+* '''JPAQL''': Translates SqlNull to JavaNull which leads to inconsistent behavior (null is treated as none when filtering a Java object collection in Java, and as unknown when getting results from the database.)
+
+* '''SmeQl''': Allows the use null to represent unspecified values, but otherwise doesn't define the "domain math"[1][2].
+
+* '''TutorialDee''': No nulls. DateAndDarwensTypeSystem diminishes the need for nulls in most cases; higher levels of normalisation take care of the rest.
+** Pro: Eliminates inconsistencies and complexities associated with ThreeValuedLogic in SqlLanguage.
+** ''Con: May make it difficult to work with existing RDBMS and schemas designed with the availability of null in mind. -- top''
+*** Mechanisms to map external SQL databases to RelVar''''''s, with NULL values mapped to appropriate user-defined type values, is WorkInProgress in the RelProject. 
+*** ''Being that SmeQl is also a work-in-progress, that's fair. But I'd like to see a rough scenario that illustrates how it might be done.''
+*** Without delving into syntax and details: Given an external SQL table represented as a RelVar, for each nullable column you must specify what value NULL will be converted to. That value, of course, must belong to the column's TutorialDee column type. The type system permits rich definitions; e.g., assuming a SQL column mapped to the following Date type, NULL may be mapped to M''''''issingDate (or whatever the developer specifies) in the Date type:
+                   TYPE Date UNION;
+                   TYPE V''''''alidDate IS {Date POSSREP {Year INTEGER, Month INTEGER, Day INTEGER}};
+                   TYPE M''''''issingDate IS {Date POSSREP {}};
+.
+*** Discussion on null alternatives moved to NullVersusNone.
+
+----
+'''Reference (named) sub-division of large query statements (including multiple references of a single given definition)'''
+
+* '''D4''': Can store intermediate steps in variables (but current implementation evaluates each step (variables do not work as named expressions), causing performance degradation issues.)
+
+* '''JPAQL''': No support, in this regard JPAQL is more limited than some SQL implementations (some SQL implementations support the WITH keyword to help with complex queries.)
+
+* '''SmeQl''': Can use named expressions, similar to functional programming.
+
+* '''TutorialDee''': WITH construct supports named subexpressions.
+
+----
+'''Flexibility of column selection'''
+
+* '''D4''': If columns are not specified explicitly, all columns are obtained by default; there is no '*' column specification. Support for OVER, RENAME and REMOVE (equivalent to TutorialDee ALL BUT) projection operators.
+
+* '''JPAQL''':If one wants all the columns in a query without joins, the select can be omitted the: "from Persons", if a join is required, the alias can be used when all columns are required: "select p,a from Person p,Address a where ..."
+
+* '''SmeQl''': Column selection can be based on a TqlColumnTable, a kind of meta DataDictionary, with additional columns or joins if desired, and thus relational expressions and operations can be used to select and alter target columns dynamically (during run-time). For example, one can change the case of selected column names, add a prefix or suffix to them, union two Column Tables to get a new one, etc. (An empty column list is similar to an asterisk in SQL, by the way.)
+** Pro: Columns can be dynamically determined, which has proven useful in features such as "cross-tab" operations. In cross-tab queries, you don't know the columns ahead of time (at compile time).
+** Con: Prevents compile-time type inference on ResultSet''''''s, useful for compile-time error-checking, because ResultSet columns are determined dynamically. (Thus is an expected trade-off of dynamism, by the way.)
+
+* '''TutorialDee''': If columns are not specified explicitly, all columns are obtained by default; there is no '*' column specification. An "ALL BUT" clause can be used to choose columns by exclusion rather than inclusion.
+** ''Is there a way to create '''user defined column selection operators''' ? (For example, a "T''''''oLower" that changes all the column names of a relvar to lowercase, of a "A''''''ddPrefix" that adds a particular prefix to all the column names... or a "T''''''oCamelCase" that changes all column names from "COLUMN_NAME" to "C''''''olumnName"? or any other operation that someone may want to implement?)''
+** At present, there are facilities in RENAME to specify a prefix or suffix on all columns, but RENAME is an on-the-fly relational operator. It does not modify any RelVar definitions. In the RelProject, a future release will support "live" updates of system catalog metadata, which will permit string operations (which may be user-defined) to be used in UPDATEs to the RelVar attribute names found in the catalog. This will permanently alter RelVar definitions.
+** ''Nice but... what about non-permanent, only for this query, for any relvar (even if it is a "view-equivalent" relvar) user defined column selection operators? (IMO one of the main principles of TTM is to "give all relvars the same rights, regardless of how they were born"... no?)''
+** In short, no. The purpose of RENAME is to facilitate or avoid JOINs, facilitate UNIONs, etc. There is no more reason to temporarily camel-case a set of attribute names within a relational expression in TutorialDee than there is to temporarily camel-case a set of class member names within a class method in Java.
+*** ''I am pretty sure that the TTM warns against thinking that rules that apply to classes apply to relvar definition (there is chapter only for that IIRC), so no use for member renaming in classes is not a good counter argument for not having UDCSOs in Rel. An operator like "ToCamelCase" could be used, for example, to facilitate joins between relvars in different databases that are using different NamingConventions.''
+*** My reference to class member names was an analogy, but it is an apt one.  In TutorialDee, at least, attributes are structural, just as class members in Java are structural.  Similar analogies apply to non-OO languages, e.g., variables or struct members in C.  Attributes are '''not''' dynamic.  Indeed, in implementation the RENAME operator is a purely compile-time mechanism.  However, I can appreciate that there may be value in a more powerful RENAME than that currently provided, and will consider mechanisms to generalise and/or customise the process of mapping existing names to new ones.
+** As for user-defined dynamic column selection operators, along the lines of what might be used to generate attribute_name_list_expr for PROJECT(non_scalar_expr, attribute_name_list_expr), that too is forbidden as it precludes static determination of the type of the result. 
+*** ''Are you sure there is no way? Maybe it is just that Date and Darwen have not invested time investigating this possibility... for example Haskell can do all sort of strong typing tricks... maybe some kind of "strongly typed list mini-language" could be used for this?''
+*** There is no way to determine the contents of a list that is generated at run-time at compile-time, by definition.  Hence, the heading of a relation generated by such a list can only be determined at run-time.
+** That said, ''Rel'' does provide a means for dynamically constructing projections, using mechanisms too humiliatingly crude and inelegant to share here. (I could tell you, but I'd have to kill you and commit hari kari.) It's intended to facilitate construction of administrative tools. I'll eventually provide a "proper" dynamic projection operator (like the PROJECT example shown above) but that will have to wait for official support for generic (i.e., heading unknown until run-time) relation and tuple types. Obviously, the declared type of a dynamic projection is either a RELATION or a TUPLE (depending on the generic type of non_scalar_expr), but its heading can't be known until run-time.
+*** ''I wonder if it is really impossiblo to design a language that allows creation of UDCSOs and at the same times permits to know the structure the resulting list at compile time... I only wish I know more about languages like Haskell...''
+*** There is no way to determine the contents of a list that is generated at run-time at compile-time, by definition.  Hence, the heading of a relation generated by such a list can only be determined at run-time.  Of course, this does not preclude alternative language designs that admit such dynamicity whilst being strongly-typed.  Many languages permit this.  TutorialDee is explicitly defined as a (mostly) statically-typed language, however, and so precludes this in its strongest form.  It does not preclude providing a dynamic projection operator that returns RELATION {*}.
+
+----
+'''Hierarchical Queries'''
+
+* '''D4''': The explode operator allows hierarchical queries to be expressed. Optional include specifications allow both the sequence within the hierarchy, and the level of the hierarchy to be included in the result set.
+
+* '''JPAQL''': No support (but a vendor may add non standard extensions to support them).
+
+* '''SmeQl''': Although tree-based queries are not currently defined in the base language, operations similar to the Traverse() operation described in RelationalAndTrees could be added to a library without the addition of new syntax. Its syntax style is intentionally designed to faciliate domain-specific additions. They are essentially library additions rather than language/syntax additions.
+
+* '''TutorialDee''': The TCLOSE operator implements transitive closure on relations of degree 2 where both attributes are the same type. Generalising this, applying it to creating hierarchical queries, or tailoring it to specific requirements, is left as an exercise for the developer.
+
+----
+'''Auto-Joins or a better NaturalJoin'''
+
+* '''JPAQL''': Foreign key constraints are represented as object references (Single object for ToOne multiplicity, object collection for ToMany multiplicity). It is possible to use "." then to simplify joins when traversing only ToOne relationships: "select p from Person p where p.address.street.city.state.country = 'France'" (assuming a ToOne relationship from "Person" to "Address" named "address", another from "Address" to "Street" (named "street") and so on. If a foreign key constraint involves a complex key (many table fields) that complexity is hidden behind the name of the relationships, which makes it easier to later change the complexity of the key (reduce or increase the number of fields) without having to rewrite the queries.
+
+* '''SmeQl''': Join-dictionary based. See TqlChainedJoin.
+** Pro: Doesn't depend on usage of column naming conventions. (I name foreign keys differently than primary keys. It helps readability in my opinion.)
+** Con: Join definitions become partitioned into distinct dictionary and syntax components.
+*** ''Why is this by itself a "Con"? It's a design decision that may indeed involve trade-offs, but a summary "con" doesn't address what the trade-offs are. It is my opinion that things best left to tables should be left to tables rather than invent custom or special language syntax or commands. More on this below in the discussion section under "Leverage Tables Instead of Compete with Them".
+
+* '''TutorialDee''': Uses NaturalJoin, plus a RENAME operator to prevent accidental joins.
+** Con: Requires managing column names to facilitate such joins.
+
+----
+'''User or DBA Extendability of Language'''
+
+* '''D4''': Proprietary support for user-defined operators (aka functions, aka stored procedures) and types (aka domains). 
+
+* '''JPAQL''': No standard cross-vendor way to extend JPAQL 
+
+* '''SmeQl''': User/DBA can create new table operations using the existing function-like syntax without the need to create explicit loops, IF blocks, or syntactical elements. (See "Defining Views" under TqlQueryOperators) Prefix syntax is generally more flexible for user/DBA extension than the infix used by some of SmeQl's competitors because it can have an arbitrary (user-selected) quantity of operands. One can also use a TqlColumnTable to pass associative-array-like parameters, which can also act like named parameters (KeywordParameterPassing) using the bracket "shortcut syntax".
+
+* '''TutorialDee''': Full support for user-defined operators (aka functions, aka stored procedures) and types (aka domains).
+** It's not clear how new operations or functionality is added. This includes not just scalar functions, but also operations that can accept tables.
+** ''User-defined operators can specify relation and tuple types as parameters and return types. The authors of TutorialDee have discussed possible mechanisms for specifying generic relations and tuples (RELATION {*} and TUPLE {*} are one suggestion) but these are not yet published. The RelProject provides facilities to extend ''Rel'' via native language extensions. These support generic relations and tuples. Examples of these are provided in the Scripts folder of a ''Rel'' distribution.''
+** It appears to rely heavily on "key words", similar to SQL. Does this create a distinction in style between "native" syntax and user-defined extensions? For example, if somebody wanted to write a custom operation that follows a similar pattern to an existing statement (kin to polymorphism), can they also use the key-word approach, or are they more constrained?
+** ''The native language extensions add new named operators and types.  Defining new keywords and syntax is not currently supported, but it's something I've been considering.'' 
+*** A language should strive to make additions/extensions be library additions, not syntax additions. TD's key-word-based approach makes this difficult, and is part of the problem with SQL. If you wish to debate this further, please do so under ExtendingKeywordLanguages (or similar). -t
+
+----
+'''Avoiding SQL's Complex Syntax'''
+
+* '''D4''': Exposes the RelationalAlgebra; queries are composed from a limited, well-defined set of conceptually simple operators.
+
+* '''JPAQL''': The syntax is heavily influenced by SQL but it also offers object oriented extensions on top of SQL (like the "." syntax for ToOne joins, use of relationship names instead of explicit field by field comparison in joins, use of "alias" instead of "alias.*" in select, queries that understand Java inheritance relationships, etc). This extensions do help to simplify the queries under some circumstances (but complicate them in others).
+
+* '''SmeQl''': 
+** Uses mostly a simple function-like syntax with fixed-position parameters of 3 basic "parameter types" (not to be confused with column types). These "functions" can be nested or referenced by "result name", both of which are semantically equivalent. (SmeQl currently doesn't define the "domain math" [2]) 
+** Tables instead of special-purpose syntax or commands are used for many operations, including DDL's. It's a form of "idiom reuse". See "Leverage Tables Instead of Compete with Them" below for examples.
+
+* '''TutorialDee''': Exposes the RelationalAlgebra; queries are composed from a limited, well-defined set of conceptually simple operators.
+** Con: TD relies too heavily on predetermined key-words, similar to SQL and COBOL. This unnecessarily complicates the syntax. (Further, it limits user/DBA-level "extensions" to the language since adding key-words is a non-trivial endeavor under most current technologies.) -t 
+
+----
+'''ImpedanceMismatch'''
+
+* '''D4''': D4 is intended to be an integrated application development language incorporating both database and general-purpose programming capabilities. Unlike SQL where tables have "special" semantics, the persistent, relation-valued variables (aka RelVar''''''s, aka tables) in D4 provide the same semantics as conventional imperative-language variables. This helps bridge the conceptual and technical gap between application programming and database development.
+** Con: Acquires the complexity and learning-curve of an application programming language and arguably is no longer just a "query language".
+** Pro: Acquires the power, flexibility, and integrated ease-of-use of an application programming language with full database capabilities, similar in concept to ExBase, etc. Developers need only learn one application development language, rather than having to learn a client-side application language, a server-side query language, and the technology needed to integrate the two such as ODBC/JDBC/OCI, etc.
+*** ''I'd compare its approach more to PL/SQL than to ExBase. - t''
+*** [Maybe... but I am curious, why do you think it is closer to PL/SQL?]
+*** ''Less "scripty", more type-centric and compiler-oriented.''
+*** There seems to be some confusion here. PL/SQL is the name given to Oracle's server-side extensions to SQL, mainly to support creating stored procedures. Whilst it may be used to ''support'' creating applications, a client-side programming language is required in order to create complete, user-friendly applications. Like ExBase and unlike PL/SQL, D4 and TutorialDee are intended to be general-purpose programming languages that require no sublanguages or client-side programming languages to create complete applications. By the way, I don't know what "less scripty", "type-centric", or "compiler-oriented" mean. I find none of these terms in the literature.
+*** ''If I am not mistaken, there is an "Oracle Lite" that can run on clients. It's kind of bulky if I remember correctly. And even if you do intend to create a GodLanguage, there is still value in defining a subset meant for querying and only querying.''
+*** By that argument, isn't ExBase a GodLanguage? There is nothing in Tutorial Dee that forces it to be the entire application development environment, though it can be. For example, the RelProject can either be run as a conventional multi-user DBMS receiving TutorialDee queries and returning ResultSet''''''s, or it can be used as a stand-alone language. I'm not sure what Oracle Lite has to do with this, as it's not an application development language. It's a version of Oracle Database intended for mobile deployment and synchronisation with server-based Oracle Database.
+*** ''PL/SQL along with other Oracle tools such as OracleForms are indeed used as app dev tools. Whether they "should" be is another matter. And I agree that ExBase has expanded beyond its database roots. However, tracing back through its history one can see it (or its predecessors) was originally primarily a database tool. This topic was primarily intended to explore the query side, namely SQL as a query language, and not proprietary imperative extensions. If we open the topic up to DB-influenced GodLanguage''''''s, then it changes and complicates the nature of comparison. It may indeed be a useful exercise, but this isn't the place for it.''
+*** The PL/SQL used for event handlers and the like in Oracle Forms is unique to it, and quite distinct from the server-side PL/SQL normally used to define StoredProcedures.
+*** ''I don't see why that is relevant here.''
+*** This threadlet started with your claim that you'd "compare [D4's] approach more to PL/SQL than to ExBase". I assume you meant Oracle Forms rather than PL/SQL, since PL/SQL is Oracle's name for any and all procedural SQL regardless of context. The purpose of this threadlet is to clarify what you meant by that claim.
+*** ''Let's just be careful about the scope of what's being compared. This topic is mostly about "query languages". An extended discussion about integrated tools probably belongs in its own topic.''
+
+* '''JPAQL''': It is the official query language for integration between SQL based databases and Java.
+
+* '''TutorialDee''': TutorialDee is intended to be an integrated application development language incorporating both database and general-purpose programming capabilities. Unlike SQL where tables have "special" semantics, the persistent, relation-valued variables (aka RelVar''''''s, aka tables) in TutorialDee provide the same semantics as conventional imperative-language variables. This helps bridge the conceptual and technical gap between application programming and database development.
+
+ImpedanceMismatch is a long and involved issue. Perhaps the "solution" should be broken up into multiple titles to avoid confusion.
+
+----
+'''Approach to Facilitating SeparationOfDatabaseAndDomainMath'''
+
+* '''SmeQl''': Generally supports SeparationOfDatabaseAndDomainMath by not defining scalar operations nor domain types.
+Notes: 
+
+* Assumes SeparationOfDatabaseAndDomainMath ("domain math"???) is a desirable or even attainable goal.
+
+* A related question is how does it facilitate '''usage with existing RDBMS''' engines. I'm tempted to make it a separate topic, but first will ponder consolidation with this one. I suspect TutorialDee will have difficulty here because of its strong "anti-bag" stance (see "Non-Unique Results Sets" above).
+
+* ''I presume by "anti-bag" you're referring to a fundamental axiom of the RelationalModel, that no relation can contain duplicate rows aka tuples.  As the developer of an implementation of TutorialDee (RelProject), I can state with some authority that enforcing adherence to the RelationalModel presents no difficulty, whilst giving all the benefits of strict adherence to the relational model.  At worst, some edge cases at the boundaries of the system require keywords to handle circumstances appropriately.  For example, you can explicitly identify what strategy to use to link to a SQL table that lacks a defined primary key.  See BagAtational and related discussions.''
+
+* Rest of discussion moved to NewQueryLanguagesOnExistingEngines.
+
+--------
+'''User-defined Database Objects'''
+
+* '''D4''': Since AlphoraDataphor is a VirtualDatabase, View, Tables, Constraints and Operators can be defined "Virtually" (inside the D4 Server) even if the DBA configured the target database (Oracle, MSSQL, PostgreSql, etc, etc) in a way that prevents the user from being able to create them.
+
+* '''JPAQL''': It is possible to define "N''''''amedQueries" (with an annotation in Java) that work like named expressions (can be seen like views). It also possible to map a class hierarchy to a single table (or map a table to many several classes). Support to define foreign key constraints that are not defined at the database level. No support for Tables or Operators
+
+* '''SmeQl''': Naturally creates "virtual tables" as part of its design which can be "saved" if desired. The prefix syntax is more powerful than the infix used by other query languages such as TutorialDee because more than two parameters are possible. Further, the "column table" feature can be used to provide optional named-parameter-like interfaces. However, it does not currently define an object security mechanism to delineate between "user", "DBA", "programmer", etc. If it had such, it would probably be configured by filling tables, such as AccessControlList-like technology rather than dedicated syntax, and thus is not really a "language" issue in SmeQl's philosophy of things. You lose meta-ability when you make it syntax. See "Leverage Tables Instead of Compete with Them" below.
+
+* '''TutorialDee''': Supports user-defined views, operators and user-defined types.
+
+Please define "database object". It's not clear how this section differs from "User or DBA Extendability of Language" (above). Different languages allocate what is handled by the base language versus handling features via "objects" and/or libraries differently.
+
+----
+'''Queries that are not affected by multiplicity changes (AccessPathIndependence)'''[3]
+
+* '''ConQuer''': A conceptual query language based on ObjectRoleModeling, enables users to pose complex queries in a readily understandable way, without needing to know how the information is stored in the underlying database (changes in multiplicity do not affect how queries are written). 
+
+* '''D4''': No advantage over SQL
+
+* '''JPAQL''': No advantage over SQL
+
+* '''SmeQl''': No advantage over SQL
+
+* '''TutorialDee''': No advantage over SQL
+
+* '''GeneXus''': It allows to define semi-independently the view required by each of the modules of the systems (with one model for each StakeHolder?), and leave the problem of creating an unified model to NormalizationBySynthesis. That way the queries for each one of the modules is independent from the requirements of the other modules, and we achieve LocalAccessPathIndependence (access path for a particular module only change if that module changes... is this a way to bring encapsulation into database design?)
+
+----
+'''Facilities in the language that make it easier to achieve high levels of normalization in an automated way (NormalizationBySynthesis)'''[4]
+
+* '''ConQuer''': See ObjectRoleModeling (apparently properly normalized model can be synthesized from an model based in ObjectRoleModeling notation using a NormalizationBySynthesis algorithm)
+
+* '''D4''': No advantage over SQL
+
+* '''GeneXus''': Full support for NormalizationBySynthesis
+
+* '''JPAQL''': No advantage over SQL (Although some ObjectWeenies believe that a high level of normalization can be achieved by making your database model closely follow your class model, this has not been demonstrated in an algorithmic/math proof way)
+
+* '''SmeQl''': No advantage over SQL. SmeQl's philosophy is that such functionality should be part of a dedicated tool with a GUI etc., not part of the query language base.
+
+* '''TutorialDee''': No advantage over SQL
+
+I don't believe such is the domain of a query language, but rather a design or refactoring tool of some sort. -- top
+
+''So... SmeQl is only a DataManipulationLanguage but not a DataDefinitionLanguage? (what about the DataDictionary that TqlChainedJoin may use... isn't that something that could also be considered out of the domain of a query language (and part of the domain of a design or refactoring tool of some sort)''
+
+* "CREATE TABLE X" is a much lower level than deciding which normalization level to use. You seem to want Adobe PhotoShop to tell you what color your prom dress should be. - t
+
+* ''Well, if I had to choose a prom dress, I would be nice if could buy a PhotoShop plugin that did what this software does: http://www.mvm.com/cs/ to help me. And if wanted to do so professionally I might want to buy something like SmithMicroPoser(http://en.wikipedia.org/wiki/Poser). And going back to normalization, it is a fact that GeneXus can do NormalizationBySynthesis, the questions is: Why nobody else does?''
+
+** [It's not that nobody else does it, as there are tools at a database IDE or design tool level, plus relatively obscure features like the "table analyzer" in MicrosoftAccess, that do it. However, most database modelling experts consider such things largely unecessary. Normalisation merely formalises an intuitive, largely obvious, and one-time process.]
+
+**''Did you even bother to read about how GeneXus or DeKlarit do NormalizationBySynthesis? I guess not, if you had, you wouldn't feel that MicrosoftAccess table analyzer is comparable to what GeneXus offers. I agree that Normalization formalizes an intuitive process, but it '''not''' largeley obvious or done only one time (specially if you want to avoid using nulls). Normalization is also a process that derives from InductiveReasoning, which means a single (or a small number of) new facts (BlackSwan) about the model may require you to completely reorganize your database model... and since in big systems every StakeHolder will only provide you with only a partial view of your model requirements, a tool like GeneXus that makes it possible to define a database by describing it from multiple perspectives (and leaving the generation of a single coherent model to the NormalizationBySynthesis engine) seems like a tool that would be very nice to have as part of any DataDefinitionLanguage. After seeing what GeneXus can do I believe we do not do Normalization in an evolving agile way because our DataDefinitionLanguages do not support NormalizationBySynthesis, and not because something on its nature makes in something that most be done in a single shot''
+
+** [I am very familiar with NormalizationBySynthesis. It no more belongs '''in''' a data definition sublanguage for a RelationalLanguage than UI "wizards" belong '''in''' an ObjectOriented programming language. Normalization is properly a process of organising data '''models''' as part of '''modelling''' an enterprise, not the process of developing individual solutions for the enterprise. Developing enterprise-wide data models is a process that ''should'' be independent of any database system or database, and that exists across database systems and databases, and that will long outlast individual applications or even individual databases. It is part of ''understanding'' an enterprise -- properly an element of ongoing business analysis and SystemsAnalysis -- that has nothing to do with the process of ApplicationDevelopment (which unquestionably benefits from agile methods). The notion of defining a data model in an "evolving agile way" or that a singular model can be accurately derived from "multiple perspectives" is an exceedingly naive and narrow view that deprecates database development to a level on par with application development. A sad notion, that. By the way, I mention the MicrosoftAccess table analyser not because it is on par with NormalizationBySynthesis (it isn't) but simply that it is yet another mechanism for automating normalisation.] 
+
+* If you really think that's the type of thing that should be shipped with PhotoShop, then I guess we just view tool partitioning in a very different way.
+
+[I'm not clear what point you're trying to make. Automated normalisation can certainly be the role of some external tool, ala Toad or some other database-oriented IDE.]
+
+----
+'''Availability of Implementation'''
+
+* '''ConQuer''': See ConceptualQueries
+
+* '''D4''': AlphoraDataphor
+
+* '''GeneXus''': GeneXus
+
+* '''JPAQL''': Part of JavaEnterpriseEdition/JavaPersistenceApi, Hibernate, EclipseLink
+
+* '''SmeQl''': Imaginary. Is nowt but a gleam in Top's eye.
+** Pro: Gives us time to fix any major flaws or shortcomings.
+** Con: Said time may be infinite.
+** ''Further discussion on lack of implementation moved to HowOtherQueryLanguagesAddressSqlFlawsDiscussion.'' 
+
+* '''TutorialDee''': RelProject
+
+* '''Duro''': DuroProject (http://sourceforge.net/projects/duro/)
+---------
+'''Leverage Tables Instead of Compete with Them'''
+
+It is my opinion that things best left to tables should be left to tables rather than invent custom or special language syntax or commands. It not only reduces the complexity of the syntax or language, but also increases meta-ability. It also gives one the option of using a TableBrowser to enter "configuration" info. 
+
+Note that this doesn't exclude the possibility of a command language performing operations that are built around tables if the command language can create tables (including virtual or temporary tables) and then "act" on them. For example, if there is no cross-table key reference dictionary as shown in TqlChainedJoin, then one can use existing SmeQl to create one for a given context or script. If you make it only do-able within a language, then you are stuck using that language instead of other database tools and languages.
+
+I always felt the CREATE TABLE command typicaly found in SQL-RDBMS suffered from this also. The schemas should be defined in tables, not command syntax. If one wants to create a table from a schema, they reference the dictionary table and/or or an existing table in the CREATE TABLE command(s) rather than describe the table using some goofy command syntax. Pseudo-code: "CREATE TABLE x USING SCHEMA TABLE y".
+
+If one needs to do it ''in'' the command language, then the language should provide a mechanism to describe a table (real or virtual), such as table "y" above, and then reference ''that'' table in the command. This reduces the number of command language idioms and commands because table definition only needs to be described once. (Another technique I learned from ExBase.) 
+
+A distinction should perhaps be made between using an existing table's structure as the schema reference and a DataDictionary. A CREATE TABLE command could perhaps use both techniques/sources, but if there is a "get schema" command that creates a DataDictionary from an existing table, then a dedicated command may not be necessary. Whether it's a convenient shortcut or not is another question.
+
+ // pseudocode for creating a table from existing schema
+ save schema from table A to table B   // B is a data-dictionary
+ create table C from schema table B
+
+ // potential shortcut pseudocode 
+ create table C from schema of table A
+
+However, for what I propose, you wouldn't have dedicated syntax for the above, because one changes (system) tables to add/change schemas, not use dedicated schema commands. If other processes need to know about the changes, then internal triggers can perhaps be used. In short, Data Definition Languages (DDL) are a violation of conceptual OnceAndOnlyOnce. Designers of existing languages didn't think "meta" enough about this and similar issues, and it's part of the reason for SQL's and similar language's syntactic and linguistic bloat. (Although, VendorLockIn may also have been a motivation. It's harder to clone complex languages.)
+
+--top
+
+''There are research DBMSs that do this.  In some, updates to the catalog via the DML are equivalent to the DDL and can be used as an alternative to it.  In others, there is no DDL; the only way to create new constructs is via insertions into the catalog.  The former is a handy facility; the latter is awkward.  For example, defining a table via CREATE TABLE syntax is simple and intuitive.  Defining a table via a series of inserts to the catalog's "Tables" table is not intuitive, and in most cases represents an unnecessary level of indirection.''
+
+If a TableBrowser is handy, I'd rather use it than CREATE TABLE-like syntax. It can even provide pull-down lists and/or type-ahead for things like type names. And what do you mean by "level of indirection"?
+
+''If a SyntaxAwareEditor is handy, it too can provide pull-down lists and/or type-ahead for things like type names.  VisualStudio and the EclipseIde do that now with various languages.''
+
+''By "level of indirection", I mean that a syntax that supports "CREATE TABLE" directly requires less indirection than a syntax that does not directly express "CREATE TABLE", but instead requires the user to translate his intent ("CREATE TABLE") into something that expresses it (a series of INSERT statements).''
+
+If a TableBrowser is a natural tool to a user/DBA, there is no "translation". Further, it is possible to simplify a "series of INSERT statements" to make similar tasks and related syntax more convenient. The advantage is that such shortcuts can be used on other tasks, not just scheme definitions. Inventing custom syntax for every specific DBA-like task is '''anti-parsimony'''. -t
+
+''Whether a TableBrowser is familiar or not, constructing a table by editing metadata requires a translation from the user's intent ("CREATE TABLE blah (x INTEGER);") to the user's action ("INSERT INTO sys.Tables VALUES ('blah'); INSERT INTO sys.Columns VALUES ('blah', 'x', 'INTEGER');").  Obviously, you can certainly simplify the series of INSERT statements to make similar tasks and related syntax more convenient.  The way SQL does that is to provide the CREATE TABLE command.  Inventing custom syntax for every specific DBA-like task is not just "anti-parsimony", it would be unreasonable.  However, providing custom syntax for commonly-used commands is convenient, helpful, and reasonable.'' 
+
+My "intent" does ''not'' look like Oracle or DB2 DDL SQL; I don't know where you are getting that intent thing. (If anything, my intent looks tabular; after all, I have a TOP mind.) As far as text-centric approaches, textually serializing and importing and exporting tabular data is one of those "commonly-used" features you talk about. It's not isolated to just table definitions. Perhaps we should focus on that as a '''general problem''' and then only abandon general solutions for use in table definitions IF we cannot get it to work well as a general technique. I am open to better ways to do such (CSV, XML, UniversalStatement, hybrids, etc.). If we can universalize it, then switching back and forth between textual and (generic) table-browsers could be made easier. But let's start another topic if we do; perhaps ImprovingTextualTabularDataFormats or something. I find it highly silly that RDBMS have invented huge entity/feature-specific syntax trees to handle what is (or could be) essentially data changes to schema tables. --TopMind
+
+''My SQL (which is standard, and not specific to Oracle or DB2) was merely intended to illustrate the intent of "create a table", using familiar terms.  How does "INSERT INTO sys.Tables VALUES ('blah'); INSERT INTO sys.Columns VALUES ('blah', 'x', 'INTEGER');" clearly demonstrate the intent to create a table?  Does it even create a table?''
+
+* Are you suggesting that hard-wiring in commands is the best way to provide self-documenting code? (Actually, "CREATE TABLE" often lies because it may replace an existing table. We need a generic verb for "INSERT IF NEW BUT REPLACE IF EXISTS".)
+
+* ''I'm not suggesting anything, but it seems fairly evident what the intent of "CREATE TABLE" was; not so much for the INSERT statements.  I don't think a generic verb is needed for "INSERT IF NEW BUT REPLACE IF EXISTS".  Just DROP the table before you create it.  (The choice between a "generic verb" and some set of constructs is, of course, a matter of that "balance" thing, mentioned below.)''
+
+* While I agree that better self-documentation may be a positive feature of hard-wired syntax, I do not believe that benefit alone is enough to choose hard-wiring over factoring, unless it's otherwise a close-call. A flip-side may be that once one learns the syntax for a specific case (table specifications), they can reuse that knowledge for other situations, such as other configuration updates. -t
+
+''However, I can appreciate your desire for elegant simplicity using a few elemental operators and mechanisms which can be composed in an infinite number of ways to define every possible operation.  That is the essence -- and some would say the beauty -- of languages like Lisp and Forth.  Every language strikes some balance between potentially obscure and laborious elemental simplicity vs overly-verbose pre-specified keywords and constructs.  The choice of balance point is at the discretion of the language designer.  Apparently, SQL didn't strike that balance where you would have liked.''
+
+As mentioned in MaspBrainstorming, Lisp perhaps has the right idea, but wrong base data structure. A map or perhaps "ordered map" would make a better base data structure.
+
+----------------
+The issue of the '''scope or role''' of the query language seems to be common question or issue. Different participants seem to have widely different views about this. Potential roles to consider include:
+
+* Find and extract data (little disagreement so far)
+* Alter and create table schemas
+* Procedural or extended programming for a more complete or thorough application language
+* Optimization and/or design analysis and recommendation tool or system
+--------
+'''Footnotes'''
+
+[1] My preference based on my experience is to either not have nulls for strings, or treat them the same as empty strings. -- top
+
+[2] See SeparationOfDatabaseAndDomainMath. For the purpose of illustration, SmeQl generally borrows from SQL's scalar operators.
+
+[3] This title appears to presume multiplicity changes are a problem. In a quarter century of developing business applications, I can count the number of times on one hand... However, there may well be domains where this is an issue.
+''See SurvivorBias''
+
+[4] Presuming, of course, that this is desirable, or that it should be part of the base "query language".
+
+[5] I am open to a "warning mechanism" that won't allow "bag" results without including a special keyword or "override" flag. I wish Cartesian joins in SQL had a similar protection in place. --top
+------
+See also: QueryLanguageComparison
+----
+CategoryQueryLanguage
+----
+AprilTen and again JanuaryTwelve

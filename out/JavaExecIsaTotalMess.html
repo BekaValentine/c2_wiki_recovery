@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Java Exec Isa Total Mess
+      </h1>
+      <p>
+        Runtime.getRuntime().exec( ... )
+      </p>
+      <p>
+        I can't say anything about it but it's close to a total mess.
+      </p>
+      <p>
+        It's badly designed to begin with. It makes you pay for what you are not using. JVM will typically create 4 threads per process to deal with the corresponding fork/exec on Unixes, and buffering of stdin, stdout, & stderr streams for the child process so that you can have them as nicely pampered Java streams. I have to admit, this comes in very handy for various purposes, but boy, is it expensive and unnecessary if you don't use it. Add to that your own threads, cause you're under firm contract with Sun specified in the <a href="JavaDoc.html">JavaDoc</a> to read those streams till the end. For Solaris with N processors it's not that important, but try that on an embedded Linux platform.
+      </p>
+      <p>
+        <em>If you know you don't want to read stdout or stderr from the process, redirect it to /dev/null. The Java code can then read the stdout immediately after exec()ing the process, which should (one hopes) immediately register the closed fd and get rid of the thread shepherding it. If you need to read it, but are willing to suffer the non-parallelism, you might write the output to a temporary file.</em>
+      </p>
+      <p>
+        In compensation, the API hides the PID of the child process from you. Now how can a platform like Java, considered mature and well tested, get away with such nonsense? No POSIX API mapping, no nothing. I believe the guys from Sun imagine people execute big JVM server processes and do everything in 100% pure Java. In real world you have to integrate all kinds of more or less safe little tools, supervise them, decide when they're blown away, when they're in limbo, when they're in an infinite loop or something, cleanup after them, etc. You just can't do that from Java. 
+      </p>
+      <p>
+        <em>Consider writing a shell script around the little tool that sets resource limits and monitor the time the program takes to run. Remember to redirect the wrapper's stdout and stderr!</em>
+      </p>
+      <p>
+        I've done that and then some, get the PID of the executed command, redirect the streams through  temporary pipes, renice, ulimit, etc. But the little shell has to be exec'ed :) And no matter that three streams circulate a grand total of 0 bytes, they're still a problem, they won't be closed until the shell script exits, and of course, the shell script cannot exit before the real spawned process, if I'm ever going to recover the exit status. Damn! Of course, I can go through JNI, and then face the same implementation problems that Sun engineers have faced, maybe on a smaller scale if I make the interface less general, but with nowhere near the same time at my disposal. Currently my best bet is that I'll implement a <a href="ObjectiveCaml.html">ObjectiveCaml</a> server that will spawn processes on behalf of the Java code, and Java will get results and stuff through TCP streams or temporary pipes. If anybody has some more insights into this extremely annoying thingie, I'd be grateful.
+      </p>
+      <hr/>
+      <p>
+        I wonder if your problem (and most others) has already been solved by the legions of open source programmers.  <a href="http://jakarta.apache.org/commons/daemon/">http://jakarta.apache.org/commons/daemon/</a>  Is this useful to you?  Me likey.
+      </p>
+      <p>
+        --<a href="DavidWoldrich.html">DavidWoldrich</a>
+      </p>
+      <hr/>
+      <p>
+        Related to the above design here comes the implementations. I was pretty confident with Java on Windows and on Solaris but I recently suffered it on Linux. I experienced the following happenings for which I was all but prepared: Runtime.getRuntime.exec() enters an infinite loop (it's featured in a bug parade but closed as NR, though). For me it happens time and again, but only under stress testing my system as a whole. Should I try to dedicate time to make it a reproducible test case? Not really. I would have a couple of years ago, but right now I have a certain bias against Java, and curse my not being able to see the true light in truly mature, stable, well designed platforms. Next one: a process killed externally doesn't get its exit status collected and the thread that called Process.waitFor() will be doomed to hang forever. Also happens very rarely but when it happens it really hurts.
+      </p>
+      <p>
+        I could of course try various workarounds. For example wrap Runtime.getRuntime.exec() in a TimedAction and if it doesn't perform in time, decide that it's in an infinite loop, and exit the VM. I have a bash script that restarts my process forever if it doesn't exit with 0. Of course, safety measures have to be taken so that I kill all the tree of children, grandchildren, and great-grandchildren. All the Java code that needed to execute a process would ship that action to a pool of dedicated "exec" servers (I had to do that anyways for other reasons).
+      </p>
+      <p>
+        In the end I decided to have a look at the source behind the curtains, and luckily Sun does offer me this privilege. Well, it turns out that it would take me forever to decide if that code is trustable, being heavily concurrent and extremely delicate. It looks like a prime candidate for <a href="ProofObligation.html">ProofObligation</a>, otherwise you just can't trust concurrent code like that.  Luckily, the whole thing can be bypassed if you're executing with green threads.
+      </p>
+      <p>
+        So if you use Runtime.getRuntime.exec() heavily under Linux, consider for your own safety to run Java -classic. Next time around, I'll personally try to convince my bosses that the sane way to do all these is <a href="ObjectiveCaml.html">ObjectiveCaml</a> and its powerful and elegant Unix module.
+      </p>
+      <p>
+        -- <a href="CostinCozianu.html">CostinCozianu</a>
+      </p>
+      <hr/>
+      <p>
+        Runtime.exec() is a hack. It's meant to be. If you need to break out of the VM to do something, you're meant to use JNI, and recognise that you're now dependant on the external environment such as the OS. Now stop bitching about it, and just be glad that they bothered to include it in the first place!
+      </p>
+      <p>
+        <em>Yes, of course it is meant to be a hack. So people get what they deserve when their reward for using  a rudimentary language instead of a decent high level language, with decent types, decent language constructs, decent POSIX bindings and easy to use foreign function interfaces, mature libraries and other basics. It is much more rewarding to debug the hacks in the core libraries of Java as opposed to just using Lisp, </em><a href="ObjectiveCaml.html">ObjectiveCaml</a>, Erlang, and other environments where things just work. <em></em>
+      </p>
+      <p>
+        Java is not an enterprise class programming system, and Sun seem determined to prevent it being one. They walk in BillG and IBM's footsteps. The fact they are doing these neanderthal things on UNIX is irritating, given UNIX was/is a response to monolithic stupidity. Such is life. --<a href="RichardHenderson.html">RichardHenderson</a>.
+      </p>
+      <hr/>
+      <p>
+        Runtime.exec() is a hack yes, but currently I'm glad it's available is it saves me a lot of trouble writing a complex test setup (I need more VM's etc. started from one unit test). Java is not an enterprise class programming system? Gee, where did I build all that large scale systems in? I must be an amateur.
+      </p>
+      <p>
+        -- Eelco
+      </p>
+      <hr/>
+      <p>
+        "...Now stop bitching about it, and just be glad that they bothered to include it in the first place!"
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd>"Yes, the food is inedible;  it's meant to be!  Now, stop whining about it and just be glad that they bothered to feed you in the first place."  </dd>
+      </dl>
+      <p>
+        --cwillu
+      </p>
+      <hr/>
+      <p>
+        Most Java APIs are well-designed and easy to use. The two main exceptions are Runtime.exec() and the I/O classes.
+        <em>And let's add the Date/Time API for completion's sake. At least the I/O classes were completely revamped. Runtime.exec() is still the same mess.</em>
+      </p>
+      <hr/>
+      <p>
+        See also <a href="JavaDesignFlaws.html">JavaDesignFlaws</a>
+      </p>
+      <p>
+        <a href="CategoryJava.html">CategoryJava</a>
+      </p>
+    </div>
+  </body>
+</html>

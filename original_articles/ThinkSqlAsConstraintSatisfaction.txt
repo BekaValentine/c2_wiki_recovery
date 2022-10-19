@@ -1,0 +1,93 @@
+This is an SqlPattern.
+
+----
+'''Context'''
+
+If you need to generate a complex report from relational data, you often don't know where to start. SQL seems inappropriate to generate what you need, and you are tempted to write iterative code to achieve it - SqlMyopia prevents you from seeing a solution. A method is needed to help.
+
+----
+'''Solution'''
+
+SQL is a declarative language that allows expressing relational computation and specifying constraints. ThinkSqlAsConstraintSatisfaction.
+
+	1 Write a query that will produce the rows you need in the result
+	1 Filter out what you don't need by specifying your constraints on the data.
+
+----
+'''Example'''
+
+A classic example is the way to implement the ''select top'' clause of Microsoft SQL Server (''select first'' with Informix, Oracle uses a special column named ''rownum'') in a database-independent way.
+
+You have the query:
+
+ select * from company order by earnings desc
+but are interesting in getting only the top 10. You can get it like this:
+
+ select * from company c1 order by earnings desc 
+ where 10 > (select count(*) from company c2 where c1.earnings>c2.earnings)
+The statement literally says "give me all companies, for which there are less than 10 with bigger earnings". A variant using SelfJoin instead of CorrelatedSubquery is something like:
+
+ select c1.* from company c1, company c2 order by c1.earnings desc 
+ where c1.earnings<c2.earnings
+ group by c1.*
+ having count(c2.*)<10
+-- NikolaToshev
+----
+
+The only problem with this approach is to make sure that you display the estimated execution plan, and extrapolate what would happen in a real life scenario with a non-trivial amount of rows. There's no way you are going to find a SQL optimizer smart enough to figure it out that you want to access the first N elements in a specific order, and do the right thing.
+
+In this case the pattern easily becomes an AntiPattern. On the other hand, the ''top N'' approach is becoming a standard and, if available, is highly recommended. If not available, even requesting a simple order by and closing the cursor after the first N rows, is going to be more efficient. If you don't have ''top N'' and you don't have a cursor (probably in Delphi, Excell, VisualBasic ), then you can try the things described above. Oracle rownum approach was something born dead, and still is brain dead. Oracle 9i supports ''top N'' syntax.
+
+Therefore please do use SELECT TOP [N] ...from ... where ... group by ... having ... ORDER BY ... Please note that TOP [N] will not work without an order by clause, and will retrieve the first N rows very efficiently.
+
+-- CostinCozianu
+
+''Costin: You write that Oracle supports "SELECT TOP n ...". Do you have a reference? - I don't see Oracle supporting the construct.'' -- TroelsArvin
+
+''Oracle 10g doesn't support it, don't know about 9i. The way to go seems to be to do a 'select-from-select', as in the following example. -- AalbertTorsius''
+  SELECT
+    foo,
+    bar
+  FROM
+    (
+      SELECT
+        foo,
+        bar,
+        rank() over(order by foo) as foo_rank
+      FROM
+        foo_table
+    )
+  WHERE
+    foo_rank <= 10
+  /
+[The Oracle DBAs I know use rownum, ie SELECT foo FROM bar WHERE rownum <= 10. rownum is an auto-magic field that's always in the result set, it's not a table level thing. This is the brain-dead thing Costin was talking about, and it is braindead, but it's better than nested selects. edit: On further checking, rownum doesn't respect order by and you have to use a nested select if you want the top N of an ordered set. Bleh. My previous experience was seeing it used with views which were pre-ordered. -- ChrisMellon]
+
+''Unfortunately (for your purposes), the rownum is assigned before the ORDER BY is executed, which means that you still need to do a 'select-from-select' if you want to use an ordering (Use the ORDER BY on the inner select, then when new rownums are assigned to the resultset returned by that select, 'WHERE ROWNUM <= 10' gives you the first 10, ordered as specifed. Rank() gives you more options, like partitioning, so you might as well use that one. -- ATS''
+----
+
+No doubt specialized syntax is more efficient - this is just an example of pattern application. I couldn't think about anything else simple enough, and it is still useful if you don't have ''top N'' syntax. Other examples, anyone? -- NikolaToshev
+
+''What about if you don't have a ''top N'', but you use a SELECT ... ORDER BY ..., open a cursor, return the first n rows and close the cursor? The problem with your approach is that depending on the size of the table, it might degenerate into a something very ugly. -- CostinCozianu''
+----
+
+I would love to think of SQL as constraint satisfaction. It works for SELECT, it kind of works for UPDATE and DELETE. It very much does ''not'' work for INSERT, CREATE TABLE, or ALTER TABLE.
+
+SQL (as I learned it, anyway) does not natively support such constraints as:
+
+	*"There is a record with a primary key of WardCunningham, and these are the values of its fields ..." (UPDATE if such a record exists, INSERT if it doesn't)
+
+** Note that there are some RDBMS that support a single statement that does this. MySql has a REPLACE command for it. However, I don't personally like its implementation.
+
+	*"There is a table named USERS, and these are the types of its fields ..." (INSERT TABLE if it doesn't exist, otherwise precise formulation of ALTER TABLE depending on what it looks currently)
+
+''Can these properly be considered constraints at all? I think the constraint idea is only meaningful for reading, not writing. -- MarnenLaibowKoser''
+
+Is it clear why such constraints would be useful? -- PaulChisholm
+
+----
+
+SQL is not a good language for expressing constraints. However, it is useful to remember that DatabaseIsRepresenterOfFacts, and when making a query to think in relational and constraint satisfaction domains instead of SQL domain itself. -- NikolaToshev
+----
+StructuredQueryLanguage, SqlFlaws
+
+CategorySqlProgramming

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Two Transaction Queuing
+      </h1>
+      <p>
+        This is an interesting little problem stemming from some of the transactional semantics we've seen in trying to design for EJB 2.0 MessageDrivenBeans (MDB's).  We're not saying this is a pattern yet -- we're open for other suggestions.
+      </p>
+      <p>
+        A Message Driven Bean has a single method (onMessage()) that takes as its argument a Message that is asynchronously received from a JMS queue or topic.  When the method is invoked, will usually start a transaction automatically (it's an EJB so you get declarative transactions, e.g. container managed transactions).  (Yes, I know that you can use bean-managed transactions -- but I'm concerned with container-managed transactions).
+      </p>
+      <p>
+        In the process of handling that message, often the information in the message will be interpreted and other actions will be taken -- usually invoking other EJB messages within the same transaction context to read and update a database.  
+      </p>
+      <p>
+        Since the message receipt and the database write are within the context of a single transaction, if the database write fails, then the entire transaction will roll back.  The net effect of this is to put the message back in the queue.  However, that may not be what you want.  Instead, you may want the message to be logged to a different queue (a "dead letter" or "error" queue). This is because if you fail once, you're quite likely to fail again -- however you MUST record the fact that it did not succeed. 
+      </p>
+      <p>
+        So a potential solution is to use two transaction contexts.  The outer transaction context is started when the bean receives the message.  This context is then suspended when a second EJB is invoked (creating a new, inner transaction context) which attempts to update the database.  The MDB is deployed using the REQUIRED transaction attribute.  The "writing" EJB is deployed using the REQUIRES_NEW transaction attribute to force it to create a new transaction context.
+      </p>
+      <p>
+        If the inner context completes successfully, then you're done.  If it fails, then write to the error queue.  If the write to the error queue fails, then really and truly put the original message back on the queue.
+      </p>
+      <p>
+        Comments?
+      </p>
+      <p>
+        <a href="KyleBrown.html">KyleBrown</a>
+      </p>
+      <hr/>
+      <p>
+        I have done this in the past, but before MDB's (WLS 4.5.1 EJB 1.0).  The mechanism I used was a pool of threads started in a <a href="WebLogic.html">WebLogic</a> startup class that waited on a JMS queue and passed the received message to a Stateless Session EJB.  Other than that part, the operation was almost identical.  It worked very well for the prototype (B2K) we were building.  Unfortunately, this technique never made it into a production application.
+      </p>
+      <p>
+        -- <a href="ChuckMcCorvey.html">ChuckMcCorvey</a>
+      </p>
+      <p>
+        I see one problem with the fact that if the system fails after the inner transaction is committed but before the outer transaction is, you will have done the inner work but the message is still put back in the queue (outer transaction times-out and is rolled back on recovery).  I guess you can put something in the inner transaction to protect against double message processing (assuming you can rely on a unique message identifier).
+        The scheme could be made to work as is if you had relative commit/rollback of inner transactions with respect to outer ones.  But the only transaction manager that I have ever seen implement this is Encina (circa 1992) and only a few custom-coded resource managers ever really implemented the required visibility and locking protocols.
+      </p>
+      <p>
+        -- MaxPGrasso
+      </p>
+      <p>
+        Yes, you're right. I think this is an <a href="AntiPattern.html">AntiPattern</a> since it is rather a hack that doesn't provide failsafe behavior the way messaging queues and databases are supposed to provide, it is purely and simply broken. Transactional mechanisms are designed so that the developer does not have to perform such ad-hoc measures.
+      </p>
+      <p>
+        Also the assumption that "if you fail once you're likely to fail again" is too strong and therefore not generally applicable, and should not be followed.  But then <a href="KyleBrown.html">KyleBrown</a> has not been active lately on wiki so that he can clarify what he wrote.
+      </p>
+      <p>
+        In any case the problem as presented has a very simple solution: transactional message queue systems have an automatic mechanism to place messages in dead letter queues, upon failure with certain conditions ( like after a threshold number of retries).  --<a href="CostinCozianu.html">CostinCozianu</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,66 @@
+[JeffGrigg mentioned having around a dozen MockObject''''s in a VbUnitThree test project on TipsOnUsingVbUnit.  Someone else asked for details...]
+
+See also VbMock for MockObject library for VbClassic.
+
+JeffGrigg says...
+I think it could be difficult to provide a single stub object to substitute for the database for the entire system under test, because so many different parts of the system do different things to the database.
+But each individual class should be doing only a few simple things to the database.
+
+So, given a single class that has several SQL statements in it, how can one effectively use the MockObject pattern when testing it?
+
+Answer:  ExtractMethod and ExtractClass the SQL statements to a dedicated "SQL" object for the object under test, then you can substitute a "mock" or "stub" object for the "SQL" object -- something designed to return controlled results for known queries.
+
+Example:
+I receive a catalog file with parts and prices.
+For each part, I "SELECT" to see if it's there and check the price.
+If the price is different, I "UPDATE" it.
+If the part isn't in the table, I "INSERT" it.
+
+First issue is to *NOT* mix application logic with SQL code.
+If the code that parses input lines and decides what to do is mixed with the SELECT, INSERT and UPDATE statements, do ExtractMethod to give you clean methods that do nothing but the SQL statement with minimal parameter manipulation necessary to overcome the ObjectRelationalImpedanceMismatch.
+So you could end up with...
+  Private Function SelectProductPrice(ByVal ProductID As String) As Currency
+  Private Sub UpdateProductPrice(ByVal ProductID As String, ByVal NewPrice As Currency)
+  Private Sub InsertProduct(ByVal ProductID As String, ByVal NewPrice As Currency)
+These methods are still mixed with business methods on the CParseProductFile class, so do ExtractClass to move these methods to a new CParseProductFileSql class.
+(And make them Public or Friend.)
+Give CParseProductFile a pointer to the new class:
+  Dim m_oSql  As New CParseProductFileSql
+In the test project, you'll need to create a MockObject to replace CParseProductFileSql while testing.
+Easy enough:
+  ' MockParseProductFileSql
+  Implements CParseProductFileSql   ' (Yes, use the application class as if it were an interface.)
+  Private Function CParseProductFileSql_SelectProductPrice(ByVal ProductID As String) As Currency
+  Private Sub CParseProductFileSql_UpdateProductPrice(ByVal ProductID As String, ByVal NewPrice As Currency)
+  Private Sub CParseProductFileSql_InsertProduct(ByVal ProductID As String, ByVal NewPrice As Currency)
+Now the test project needs some way to stick a 'MockParseProductFileSql' instance into CParseProductFile's 'm_oSql' variable, to replace the CParseProductFileSql instance.
+I put this in the CParseProductFile class:
+  #If DEBUG Then
+  Public Sub SetDebugSqlObject(ByVal oSql As New CParseProductFileSql)
+    Set m_oSql = oSql
+  End Sub
+  #End If
+(You can set 'DEBUG = -1' in the 2nd tab of the 'Project -> Properties' dialog box.)
+
+To implement the methods in MockParseProductFileSql, you can often do very simple things, such as having Public member variables in MockParseProductFileSql where you set the result to return for given functions.
+Or, a Public member variable may be a Collection of results to return, keyed by the input parameters.
+INSERT, UPDATE and DELETE calls can be tested by logging them to a Collection, and then verifying that the Collection contains the values you expect.
+Like this:
+  Public m_colInsertStatements  As New Collection
+  Private Sub CParseProductFileSql_InsertProduct(ByVal ProductID As String, ByVal NewPrice As Currency)
+    Call m_colInsertStatements.Add(Array(ProductID, NewPrice))
+  End Sub
+-- JeffGrigg
+
+----
+
+I HaveThisPattern in which I use persisted, discconnected ADO recordsets to mock a database for faster testing.
+
+When running in testing mode, have the procedure that generates a recordset make a hash of the logical query name and parameter values to use as a file name, then open a recordset from the file if it exists, otherwise open the recordset normally, disconnect it, and persist it to that file name.  The first time you run it in testing mode, all the queries run normally, but the results are persisted to files.  Next time, the recordsets are loaded directly from the files and open all but instantaneously.
+
+It turns out you can also adapt that pattern for a production run-time result cache.  Just use the hashed name as a collection key, and store the recordset streams in a collection.  For some reason, disconnected recordsets tend to close themselves when stored in a collection directly, so you still have to persist them into to stream objects.  I discovered this trick accidentally when I noticed a program ran faster in testing mode even on the first run because queries were being called multiple times with the same parameters.
+
+-- SteveJorgensen
+
+----
+[CategoryMockObjects][CategoryVisualBasic]

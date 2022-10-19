@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        How To Defer Schema Changes
+      </h1>
+      <p>
+        <em>This is one way to handle database schema changes if you're going to </em><a href="RefactorMercilessly.html">RefactorMercilessly</a>; see <a href="RefactoringWithRelationalDatabases.html">RefactoringWithRelationalDatabases</a> for more.<em></em>
+      </p>
+      <hr/>
+      <p>
+        <strong>Using Views:</strong>
+      </p>
+      <p>
+        Most relational databases let you define <strong>views</strong> -- virtual tables defined in terms of other tables: a subset of records, fields from more than one table, etc.  You pay a varying performance penalty, but (a) it can be quite small  and  (b) you'll only be using the view in the development environment anyway.
+      </p>
+      <p>
+        So to move a field, define a view A that's just table A minus field F.  At the same time, define a view B that's table B, plus a query for the corresponding value of field F from table A.  (If it's hard to write a query to get the right F for each row of table B, ask whether you're really putting F in the right table.)
+      </p>
+      <p>
+        Now the move-field refactoring is done.  Go ahead and <a href="UnitTest.html">UnitTest</a> for regressions.
+        See below for when to actually change the schema and move the data.
+      </p>
+      <p>
+        <strong>Doing It Without Views:</strong>
+      </p>
+      <p>
+        Even if your RDBMS doesn't support views, you presumably have code that reads instances of class A from table A, and instances of class B from table B.  If this code is in each class itself, move it to a delegate in order to make switching between schemas easier (and possible at runtime).  Parametrize the delegate to take table names.
+      </p>
+      <p>
+        In the class B database code, you're getting all the fields from table B -- but field F isn't there yet.  So you have to query table A to get the value for F.  (If there's no way to query a single value of F given all the other fields of B, this refactoring can't work anyway.)  <a href="UnitTest.html">UnitTest</a> the query delegate class.
+      </p>
+      <p>
+        In the class A database code, you're fetching field F, but you can't put it in class A, since you've moved it to class B, and it's not going to be in the final table A anyway.  So remove it from the query.  <a href="UnitTest.html">UnitTest</a> the query delegate class to catch dumb mistakes like removing a key field, or replacing * with an incomplete list of fields.
+      </p>
+      <p>
+        Now you've completed the move-field refactoring.  <a href="UnitTest.html">UnitTest</a> class A and class B.
+        See below for when to actually change the schema and move the data.
+      </p>
+      <p>
+        <strong>When to Actually Change the Schema and Move the Data:</strong>
+      </p>
+      <p>
+        When should you actually change the database schema and migrate the data?
+      </p>
+      <p>
+        The most XP answer would be Integration time (i.e. once or twice a day).  This is essentially <a href="ContinuousIntegration.html">ContinuousIntegration</a> of database schema updates, and removes the possibility for an <a href="IntegrationHell.html">IntegrationHell</a> in which two schema changes clash.  It's easier to find these clashes (they show up the first time you query a table for a field that's no longer there), but it can be tricky to merge them if you can't just apply them in sequence.
+      </p>
+      <p>
+        If this is expensive for some reason, you can defer it until <a href="SystemTest.html">SystemTest</a> time; at least the code side of your integration won't give you problems.  But I'm not wild about deferring anything until <a href="SystemTest.html">SystemTest</a>.  And if you defer it past that, you're not really testing the system.
+      </p>
+      <p>
+        <strong>How to Change the Schema and Migrate the Data:</strong>
+      </p>
+      <p>
+        <em>Use the View:</em>
+        If you used views, your task is straightforward:
+      </p>
+      <ul>
+        <li>
+           Dump view A into table NewA
+        </li>
+        <li>
+           Dump view B into table NewB
+        </li>
+        <li>
+           Skip to Finishing Up, below
+        </li>
+      </ul>
+      <p>
+        If you used the other method, you have a tougher row to hoe, but not by much.  There are two ways to migrate the data:
+      </p>
+      <p>
+        <em>Use the Database:</em>
+      </p>
+      <ul>
+        <li>
+           Take the query you wrote for class A and use it to create table NewA from table A
+        </li>
+        <li>
+           Do the same for NewB and B
+        </li>
+        <li>
+           Skip to Finishing Up, below.
+        </li>
+      </ul>
+      <p>
+        <em>Use the Code:</em>
+      </p>
+      <ul>
+        <li>
+           Create empty tables NewA and NewB with the appropriate structure
+        </li>
+        <li>
+           Create an instance of class A and configure it with the database delegate for the old schema
+        </li>
+        <li>
+           Read an instance of A
+        </li>
+        <li>
+           Now configure the class A instance with the database delegate for the new schema (parametrized to use table NewA)
+        </li>
+        <li>
+           Write the instance of A (to NewA)
+        </li>
+        <li>
+           Repeat for all instances of A
+        </li>
+        <li>
+           Do the same thing for B
+        </li>
+        <li>
+           Skip to Finishing Up, below
+        </li>
+      </ul>
+      <p>
+        <em>Finishing Up:</em>
+      </p>
+      <ul>
+        <li>
+           Test to make sure all the data is in NewA and NewB, and is consistent
+        </li>
+        <li>
+           Remove table A and table B
+        </li>
+        <li>
+           Rename NewA to A
+        </li>
+        <li>
+           Rename NewB to B
+        </li>
+        <li>
+           <a href="UnitTest.html">UnitTest</a> class A and class B
+        </li>
+      </ul>
+      <p>
+        <strong>Doing It for Real: Migrating the Production System</strong>
+      </p>
+      <p>
+        The above just changes the schema and migrates the data for the development database (or the test database, if you deferred migration until <a href="SystemTest.html">SystemTest</a> time).  How do you do the migration when you change the production system?
+      </p>
+      <p>
+        This is always a pain, but remember that doing things the <a href="ExtremeProgramming.html">ExtremeProgramming</a> way means you only feel this pain at installation time, rather than all through development.  So you're already ahead.
+      </p>
+      <p>
+        <em>Non-Live Transition:</em>
+      </p>
+      <p>
+        Assume you have time to do things right: either you can take the system offline on a Friday night; or you can get the new system running, quickly switch the web server's DNS entry over to the new system, and rely on logging during the transfer time to catch up the new system's data; or some miracle occurs.
+      </p>
+      <p>
+        You have a guaranteed-safe step-by-step path for migrating the data: do all the steps you did for each refactoring, in the order you did them.  This will put the production data in the same form as the <a href="SystemTest.html">SystemTest</a> data, so you can be confident everything will work.
+      </p>
+      <p>
+        The step-by-step approach could take too long if you made a lot of changes, though.  In that case, write queries that expresses the transformation in larger steps.  Remember, larger steps are quicker but riskier, whereas smaller steps are safer but slower.  No matter what your step size, you should test the migration process first as part of your <a href="SystemTest.html">SystemTest</a>.
+      </p>
+      <p>
+        One final approach is to maintain migration code all through development.  At all times, it should be able to take a database in the old format and migrate it to a database in the current format.  This is quicker than migrating all the development-environment data every time you integrate, since you can test the migration code against a smaller set of data designed to present challenges (can a data set be a test case?).  And it would certainly increase developer and customer confidence to know that the data could be safely migrated literally at any point in developing the iteration.
+      </p>
+      <p>
+        <em>Live Transition:</em>
+      </p>
+      <p>
+        How do you transition data in a live system?  That's not really in the scope of this page -- it's a problem no matter whether you refactor or not.  (Is that a shameless enough punt for you?)  But there are solutions: run tandem databases, convert data as it's used, etc.
+      </p>
+      <p>
+        One that might work (God willing and the creek don't rise) is to maintain separate databases, and database delegates for each class: one to deal with the old schema, one to deal with the new.  Any time the class can't find its data in the new schema, it looks for it in the old one; it writes it exclusively to the new schema, and (optionally) removes it from the old one.  In the background (whenever the system can take the load), go through the old instances and convert them by doing null operations on them.
+      </p>
+      <p>
+        If this is the route you take, then speeding up the database delegates could be important.  Here's a possible way: when A reads field F from the old schema, it could cache the value in itself for B to find, or cache it somewhere well-known so B can find it.  Then when B can't find itself in the new schema, it can either find the appropriate instance of A and ask for it, or check the well-known place (which could even be the new schema).  Like the other migration processes, you should test this as part of the <a href="SystemTest.html">SystemTest</a>.
+      </p>
+      <p>
+        -- <a href="GeorgePaci.html">GeorgePaci</a>
+      </p>
+      <hr/>
+      <p>
+        What happens here is that only a few mechanics of a particular schema transformation have been described. In reality what happens is that something as "simple" as "moving" one field from one table to another is more a matter of semantics. What was the field doing in the tableA anyway? 
+      </p>
+      <p>
+        Is it warranted in all cases that just by moving it to tableB we're going to solve whatever problem, especially when we might have already gathered some data in that collumn that may have a different meaning if moved to tableB ? Or if its normal place was in tableB from the beginning, the data gathered as part of tableA is not guaranteed to be consistent.
+        Then there's the nice assumption that tableA is accessed only from classA which is very simplistic (too good to be true, and likely to be false for non-trivial problems).
+      </p>
+      <p>
+        Well, in the process of figuring out all these things it is likely that you will be reinventing some square wheels about compatible schema transformations, that you should read from standard books on databases or from research papers. But I'm affraid that the whole theory on schema transformations was not constructed in order to support <a href="RefactorMercilessly.html">RefactorMercilessly</a>, but rather to help you do a proper database design. So <a href="DontRefactorDatabases.html">DontRefactorDatabases</a>.
+      </p>
+      <p>
+        And who's volunteering to properly analyze the implication of running "two databases in tandem"? A quick and dirty solution would be to perform <a href="UnitTest.html">UnitTest</a>s with databases in tandem, but what XP gurus conveniently forgot to mention is that there are situations in which <a href="UnitTest.html">UnitTest</a>s provide no confort whatsoever, transactional systems and concurrent programs being among those many little things. Well, ain't it nice to have a little <a href="BigDesignUpFront.html">BigDesignUpFront</a> party from time to time? -- " Anyone who tells you different is selling something. --<a href="KentBeck.html">KentBeck</a> "
+      </p>
+      <hr/>
+      <p>
+        We don't avoid transactions at all. In fact we make use of transactions to simplify unit tests...our cleanup method of database unit tests usually consists of one keyword: Rollback. 
+      </p>
+      <p>
+        I spoke with Terry Halpin today about schema migrations mentioned on this page. Paraphrasing his comments:
+      </p>
+      <p>
+        "There are two parts: semantic/conceptual transformation, and data migration. The schema migration in the table A/table B field moving example focuses too much at the logical/physical level. It is better handled at the conceptual/semantic level. There is a considerable body of research and work on data migration."
+      </p>
+      <p>
+        If you want to see a product that does semantic/conceptual transformation far better than anything out there, look at <a href="InfoModeler.html">InfoModeler</a> (AKA <a href="VisioModeler.html">VisioModeler</a>... with the best version of this tool being in Visual Studio.Net Enterprise Architect edition). For more on conceptual modeling, see <a href="http://ORM.Net.">http://ORM.Net.</a> I will work on getting references on the data migration research/tools. -- <a href="JeffWinchell.html">JeffWinchell</a>
+      </p>
+      <hr/>
+      <p>
+        <em>What happens if field F in A has foreign key relationships to tables C, D, and E?  What if there are indexes that include field F that are needed for acceptable performance? </em>
+      </p>
+      <p>
+        What happens? Goodbye joins.
+      </p>
+      <p>
+        Not that an O-R mapping layer cares.  If you can't find the object stored in this relation, look in this other one.
+      </p>
+      <p>
+        C.J. Date's <strong>An Introduction to Database Management Systems</strong> bemoans the lack of mathematical rigour in OO databases.  But sometimes I wonder.  In OO, the query you want to run is only a method call away, and it's already been parsed - and unit tested.
+      </p>
+      <p>
+        -- <a href="MattRickard.html">MattRickard</a>
+      </p>
+      <hr/>
+      <p>
+        Defering changes unfortunately changes the entire profile of the system. It will perform differently and have completely different characteristics from the non-deferred system which invalidates all your testing. -- <a href="AnonymousDonor.html">AnonymousDonor</a>
+      </p>
+    </div>
+  </body>
+</html>

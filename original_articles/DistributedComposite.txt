@@ -1,0 +1,293 @@
+'''Category:''' JavaSpaceIdioms
+
+'''Distributed Composite:'''
+
+I came up with this idiom when I was implementing logical grouping in a commercial software product that was using JavaSpaces at the time. The basic idea was to utilize the VisitorPattern and CompositePattern but to do it in a way that made sense for an AssociativeMemory base store like JavaSpace.
+
+'''Intent:'''
+
+I need to store large distributed composite structures in JavaSpaces without having to store the entire structure as a single JavaSpace entry. At the same time, we want the distributed composite structure to "act" like a regular old composite.
+
+'''Solution:'''
+
+To do this, we need to shift to modeling the Identities of entries as a composite and '''not''' the actual entries. The following implementations are skeletal; I'm not going to show all the implementation, just the important parts. 
+
+First, we need to create a genuinely unique identifier. We need this because the composite entries will need to be identified across machines. This is pretty easy to do by using a local-host hash code along with an RMI UID instance.
+
+ public class U''''''niqueIdentity
+ {
+    private int m_hid; // local-host hashCode
+    private java.rmi.server.UID m_uid; // the locally unique ID
+
+    public U''''''niqueIdentity()
+    {
+        try
+        {
+            m_hid = java.net.InetAddress.getLocalHost().hashCode();
+            m_uid = new java.rmi.server.UID();
+        }
+        catch ( java.net.UnknownHostException e )
+        {
+            throw new Error( e );
+        }
+    }
+
+    public int hashCode()
+    {
+        return m_uid.hashCode() ^ m_hid;
+    }
+
+    public boolean equals( Object that )
+    {
+        if ( this == that )
+        {
+            return true;
+        }
+        else if ( that == null || this.getClass() != that.getClass() )
+        {
+            return false;
+        }
+        else
+        {
+            U''''''niqueIdentity uuid = (U''''''niqueIdentity)that;
+            return uuid.m_uid == this.m_uid && uuid.m_hid == this.m_hid;
+        }
+    }
+ }
+
+Now we can layout the actual composite identity hierarchy like so:
+
+ /**
+  * Basic Identity protocol defines the accept method
+  */
+ public abstract class Identity implements Serializable
+ {
+    private U''''''niqueIdentity m_uid;
+
+    public abstract void accept( I''''''dentityVisitor v );
+
+    public boolean equals( Object that )
+    {
+       if ( this == that )
+       {
+          return true;
+       }
+       else if ( that == null || this.getClass() != that.getClass() )
+       {
+          return false;
+       }
+       else
+       {
+          return ((Identity)that).m_uuid.equals( this.m_uuid );
+       }
+    }
+ }
+
+ /**
+  * Defines a subclassable leaf (component) identity
+  */
+ public class L''''''eafIdentity extends Identity
+ {
+     public void accept( I''''''dentityVisitor v )
+     {
+         v.visit( this );
+     }
+ }
+
+ /**
+  * Defines a subclassable group (composite) identity
+  */
+ public class G''''''roupIdentity extends Identity
+ {
+     /**
+      * This method needs to read in group entries in order
+      * to get its children.
+      */
+     public void accept( I''''''dentityVisitor v )
+     {
+         // create a pattern to look for a group with this identity
+         G''''''roupEntry pattern = new G''''''roupEntry( this );
+
+         G''''''roupEntry aGroup = (G''''''roupEntry)
+             v.getJavaSpace().read( pattern, ... );
+
+         if ( aGroup == null )
+         {
+             throw
+                 new Error(
+                     new MissingException( "entry at: " + this ) )
+         }
+
+         aGroup.accept( v );  // node visits child identifiers
+     }
+ }
+
+Now we need to create the entry classes. Later, we'll come back to the visitor class. Note that the ''G''''''roupIdentity'' needs to collaborate with a ''G''''''roupEntry'' since it is the entry that actually contains the child identities (which may also be other group-idenitities). First we need to define a base entry-class for any kind of entry that needs identification. This should work just as well as a normal entry, as an item in a graph, or a member in any kind of distributed data-structured.
+
+ public class I''''''dentifiedEntry extends A''''''bstractEntry
+ {
+     public Identity identity; // Could be a Leaf or Group Identity
+ 
+     public I''''''dentifiedEntry()
+     {
+     }
+
+     public I''''''dentifiedEntry( Identity identity )
+     {
+         this.identity = identity;
+     }
+
+     [...]
+ }
+ 
+Now, we'll extend this to create the ''G''''''roupEntry'' class:
+
+ public class G''''''roupEntry extends I''''''dentifiedEntry
+ {
+     public A''''''rrayList children;
+
+     public G''''''roupEntry()
+     {
+     }
+
+     public G''''''roupEntry( G''''''roupIdentity identity )
+     {
+         super( identity );
+     }
+
+     /** Add a leaf or group as a child of this group */
+     public void add( Identity aChild )
+     {
+         if ( children == null )
+             children = new A''''''rrayList();
+
+         children.add( aChild );
+     }
+
+     <add all the other collection members, #count, #remove, etc>
+     
+     /** Implement the accept member called by G''''''roupIdentity */
+     public void accept( I''''''dentityVisitor v )
+     {
+         if ( children != null )
+         {
+             // Iterate over child identities
+             for ( final Iterator at = children.iterator(); at.hasNext(); )
+             {
+                 ((Identity)at.next()).accept( v );
+             }
+         }
+     }
+ }
+ 
+Note that we do not construct ''children'' in the constructor. This is because we may want to match ''null'' child arrays. This is pretty much everything save for the visitor class. The only twist in the visitor class is that it needs to have an accessor to get a JavaSpace reference. This reference is needed, at least, by the ''G''''''roupIdentity'' class. I use a wrapper for JavaSpace whose constructor takes a transaction object, but you can use anything you like. Here's the basic visitor interface and a null implementation:
+
+ public interface I''''''dentityVisitor
+ {
+     void visit( G''''''roupIdentity aGroupId );
+     void visit( L''''''eafIdentity aLeafId );
+
+     J''''''avaSpace getJavaSpace();
+
+     public static class Basic implements I''''''dentityVisitor
+     {
+        private J''''''avaSpace m_space;
+
+        public Basic( J''''''avaSpace space )
+        {
+            m_space = space;
+        }
+
+        public void visit( G''''''roupIdentity aGroupId )
+        {
+            // do nothing by default
+        }
+
+        public void visit( L''''''eafIdentity aLeafId )
+        {
+            // do nothing by default
+        }
+
+        public J''''''avaSpace getJavaSpace()
+        {
+            return m_space;
+        }
+     }
+ }
+}}}
+
+Pretty simple stuff. You can then create subclasses of the visitor to do any sort of composite visiting you want to. For example, the following class interacts with JavaSpace to visit only the leaf entries:
+
+ public class L''''''eafVisitor extends I''''''dentityVisitor.Basic
+ {
+     public L''''''eafVisitor( J''''''avaSpace aSpace )
+     {
+         super( aSpace );
+     }
+
+     public void visit( L''''''eafIdentity aLeafId )
+     {
+         I''''''dentifiedEntry anEntry = new I''''''dentifiedEntry( aLeafId );
+
+         visitEntry( (I''''''dentifiedEntry)getJavaSpace().read( anEntry, ... ) );
+     }
+
+     public void visitEntry( I''''''dentifiedEntry anEntry )
+     {
+         // use the leaf-entry
+     }
+ }
+ 
+You can easily create a Leaf ''modifying'' visitor like so:
+
+ public class L''''''eafModifyingVisitor extends I''''''dentityVisitor.Basic
+ {
+     public L''''''eafModifyingVisitor( J''''''avaSpace aSpace )
+     {
+         super( aSpace );
+     }
+
+     
+     public void visit( L''''''eafIdentity aLeafId )
+     {
+         I''''''dentifiedEntry anEntry = new I''''''dentifiedEntry( aLeafId );
+         anEntry = (I''''''dentifiedEntry)getJavaSpace().take( anEntry, ... );
+
+         modify( anEntry );
+         
+         getJavaSpace().write( anEntry, ... );
+     }
+
+     
+     public void modify( I''''''dentifiedEntry anEntry )
+     {
+         // change some fields
+     }
+ }
+ 
+I've left out error-handling and some other details, but I think you will find this sort of structure easy to use and that ''I''''''dentifiedEntry'' (as well as ''U''''''niqueIdentity'') can be reused in a variety of ways, including many different kinds of distributed data-structures. Also, by replacing JavaSpace with a class named TupleSpace, you can add member-data such as Trasaction or Lease values that can then be passed on to a wrapped JavaSpace object. This allows you to use the same transaction, for example, for the entire graph traversal. For example, this prints out all the leaf entries:
+
+ rootGroup_id.accept( 
+     new L''''''eafVisitor( new T''''''upleSpace( txn, lease_time ) )
+     {
+         public void visitEntry( I''''''dentifiedEntry anEntry )
+         {
+             System.out.println( "entry: " + anEntry );
+         }
+     } );
+
+If you need more control over traversal, you may want to check out HierarchicalVisitorPattern. This is easily adapted for use with a distributed composite and allows you to conditionally visit nodes and leaves.
+
+-- RobertDiFalco
+
+See: DistributedGraphDataStructure
+----
+JavaSpaceIdioms
+----
+'''Discussion:'''
+----
+What am I doing wrong? From looking at H''''''ierarchicalVisitor (which I intend to combine with DistributedComposite), I would have thought that accept(I''''''dentityVisitor) would return boolean. --TomStrickland
+
+True, the code above uses a simpler traditional visitor. If you want to use the H''''''ierarchicalVisitor pattern, you will need to modify the Identity#accept signature to return a boolean. -- RobertDiFalco
+----
+JavaSpaceIdioms

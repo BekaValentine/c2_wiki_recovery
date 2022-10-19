@@ -1,0 +1,51 @@
+A feature of transaction processing systems that enables databases or other transacted resources to be returned to the pre-transaction state if some error condition occurs.  Sometimes abbreviated 2PC.  Under 2PC, a single transaction can update many different databases or resources, and these resources may be distributed across networks, and have independent availability and failure modes. The two-phase commit strategy is designed to ensure that either all the resources are updated or none of them, so that the resources under transactional control remain synchronized. 
+
+Resources that participate in 2PC agree to be managed by a transaction manager.  
+
+In the X/Open model, there are 3 parties: the application, the resource manager (RM), and the transaction manager (TM).   An example of an RM might be a database (like Oracle, DB2, SQL Server) or a transactional message queue (like IBM MQSeries or Microsoft Message Queue).  An example of an App is, the code that denotes the transaction operation. The TM is often invisible to the app, but plays the role of director when multiple distributed RMs participate in a transaction.  
+
+The way it works:  
+*The app begins a transaction.  The TM opens and maintains a context on behalf of the app.  
+*The app then contacts an RM and reads or writes within the context of that transaction.  The app must communicate to the RM via a client library that is aware of the TM, and the RM itself must be aware of the TM context. 
+*The app can then contact other RMs similarly.  
+*When the app is finished, it can request a commit.  
+*The TM then contacts each RM that was involved in the transaction, and sends the "prepare" command.  Essentially the TM is asking the RM, "the changes performed at your resource, on behalf of this transaction - can you make them permanent?"  
+*Each RM then must respond "commit" or "abort" .  This is sometimes called the "vote".  If the RM votes to commit, it implicitly assures the TM that no changes will be lost, even in the face of failure (like power failure, or network failure).  This generally means the RM must store its changes to durable media, like a disk.  
+*If the TM gets a unanimous "commit" vote, then the TM sends "commit" messages to each RM.   If any RM votes to abort, then the TM Sends an abort message to each RM.  
+*Each RM receives the direction of the TM, and then either rolls forward or back, and releases locks held on behalf of the transaction.  If the network is interrupted and the RM never gets the message, the RM never resolves the transaction.  In this case administrator intervention may be required. 
+
+
+See also: 
+*http://webopedia.internet.com/TERM/t/two_phase_commit.html
+*http://en.wikipedia.org/wiki/Two-phase-commit_protocol
+----
+It has been my understanding that two-phase commit had largely been discredited, at least as a way of keeping databases synchronized, since if any of the several databases is down, none can continue. More recent replication strategies (while not as simple as the salesman might suggest) do a better job. Any input from real world users?
+
+	 :	''No, not discredited at all!  a better word is, 2PC is better understood.   For example: the use of distributed transactions implies synchronizing updates to multiple independent data stores, and therefore the reliability of the system as a whole is reduced.  Suppose the availability rate of a database is 99%, and the availability of a message queue is 99%.  A distributed transaction involving both of them would have an availability of 0.99*0.99 = ~98%.  If you add another resource, you would reduce the availability of the app further.  BUT,  in cases where synchronized updates are required, 2PC is quite useful.  It's a case of knowing when to use it.   -- DinoChiesa
+
+----
+It's also true that waiting for all databases to be updated is a bad strategy. Even if no database is down, you can be sure that one of them is the slowest, and if you wait for all databases to be updated before continuing, then you're running at the speed of the slowest one.
+
+However, there are cases where two-phase commit makes sense.  For example, suppose you have an application design that accepts incoming messages on a queue.  When a message arrives, the design calls for a row in a database to be updated or modified.  How does one coordinate the updates across these two independent stores?  A two-phased commit makes this sort of application possible.  
+
+----
+'''2PC != Transaction'''
+
+Transactions are sometimes confused with 2PC.  2PC is an example of a distributed transaction commit protocol.  While transactions can be used across distributed resources, the transaction concept is also often (most often?) used within a single resource manager, for example to to keep tables consistent within a single database.  
+
+Example: Let's say you want to transfer $20 from your checking account to your savings account. The bank's computer might do something like this:
+
+	1. BEGIN TRANSACTION
+	2. Debit checking account $20.
+	3. Credit savings account $20.
+	4. COMMIT TRANSACTION
+
+If the database crashes between step 2 and 3 without transaction control, you could end up with one account debited but the other one not being credited.  By wrapping the steps in a transaction, you are assured that either both steps will be completed or the whole transaction will be "rolled back", that is to say, the database will be in the state it was in before the transaction. In this case, that means that neither account will be changed. ''This is an example of a transaction that DOES NOT use 2PC.''
+
+As long as you're not running with distributed databases, "single phase" commit is what is used. All the necessary information for the transaction to be undone or completed are written to persistent storage (typically called a "transaction log") in an atomic step. The transaction is committed as soon as this information is permanently recorded.  This is not possible in a distributed system, as there's no guarantee that the commit record is written on all participating systems. With distributed databases, TwoPhaseCommit solves this problem.
+------
+
+TwoPhaseCommit assumes reliable communications and tends to utilize locking (between receipt of 'Prepare' and TM's final 'Commit').  If the communications are unreliable (especially if the TM can go down in the middle of a commit) or if blocking is undesirable, ThreePhaseCommit will be required.
+
+----
+In VersionControl(CVS), most developers do an update(checks for conflicts with repository), then a commit(write to repository). Most of the time it's a two step process, but sometimes it's of the form: update, if no conflicts, do a commit(as one automated step). It's a little different from SQL transactions, but the goal is always to handle conflicts.

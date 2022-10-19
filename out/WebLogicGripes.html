@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Web Logic Gripes
+      </h1>
+      <p>
+        I'm currently playing with <em>(um, that's developing a new cutting-edge system, boss!)</em> <a href="WebLogic.html">WebLogic</a> 6 at the moment. In the course of doing so, I've found some real nasty problems that have caused me serious delays, and I thought I'd choose this forum to vent in. 
+      </p>
+      <p>
+        First, there's a lot of improvement in <a href="WebLogic.html">WebLogic</a> 6 over 5.1. This isn't the page for them. There's a lot to be said for <a href="WebLogic.html">WebLogic</a> over other EJB servers. Again, this is not that page. This is the page for the problems and annoying features with <a href="WebLogic.html">WebLogic</a>.
+      </p>
+      <p>
+        -- <a href="RobertWatkins.html">RobertWatkins</a>
+      </p>
+      <hr/>
+      <p>
+        The Admin console has bugs. When I use trying to set up a JDBC connection pool, I would make my changes, restart the Server (yes, for most major changes you need to restart), and then try to connect the Admin console again. I would get a Malformed HTTP error message in the browser, and a message on the server console saying that the default context was null, indicating that it didn't deploy. It turned out that when the console saved out the new config.xml file, it would misspell (sometimes) attribute names and element tags, or leave the trailing > off. Furthermore, the server didn't report it as an error... it would just say that the default context was null. I ended up setting up my JDBC connections by editing the config.xml file by hand. (Service Pack 1 may have fixed this problem... the config file is in a different format, but I haven't tried to alter any settings through the Console under SP1 yet). <em>Nope, still happens under SP1.</em>
+      </p>
+      <p>
+        Under <a href="WebLogic.html">WebLogic</a> 5.1, you could hack the properties file to get the EJBs to use the reloading classloader to load common classes. This allowed you to develop, compile, redeploy the EJB, and test all without restarting the server (this wasn't recommended... you could just do it). Hah! No more, sayeth BEA. EJBs see the code in the EJB. WAR apps can see the EJB code if you package them both within an EAR file. You're meant to put any common code into the EJB jar file. If you want to share code between EJBs, you need to:
+      </p>
+      <ol>
+        <li>
+           put the EJBs into the same JAR file;
+        </li>
+        <li>
+           put the common classes into both EJB JARs; or
+        </li>
+        <li>
+           put the common classes onto the system classpath.
+        </li>
+      </ol>
+      <p>
+        If you pick the last option, <a href="WebLogic.html">WebLogic</a> won't notice the changes until you restart. Oh, and the files get locked so you can't recompile (or re-jar, if you're using a JAR file).
+      </p>
+      <p>
+        Now, Java has a good mechanism for this. You're meant to put common code into a utility jar (call it library.jar, for example) inside the EAR file. Then, in the manifest file for the EJB jars, you add a Class-Path: entry like this:
+      </p>
+      <code>
+        Class-Path: library.jar<br/>
+      </code>
+      <p>
+        This works fine under the J2EE SDK, for example. It's not officially part of the J2EE 1.2 spec (it's described as part of the Java Extension Mechanism), but the J2EE 1.3 spec makes it clear that was an oversight, and it's now explicitly there. In theory, then, I should be able to put my common code into an EAR file, then redeploy the EAR. <a href="WebLogic.html">WebLogic</a> allows me to redeploy the EAR fine, but the custom classloader they're using doesn't pay any attention to the manifest file.
+      </p>
+      <p>
+        <em>Status update: BEA have declared this a bug, and it should (maybe) be fixed in Service Pack 2</em>
+      </p>
+      <p>
+        I successfully deployed a large EAR using the manifest for library jars. Once this was done, hot deploy worked perfectly. Although with our massive app, it was actually faster to just restart the server. (It was still cool to see hot deploy work.) Hot deploy is a good test to see if you have packaged properly. Without a single change, I moved this same ear to JBoss and deployed it in minutes. 
+      </p>
+      <p>
+        -- <a href="MikeRettig.html">MikeRettig</a>
+      </p>
+      <p>
+        Okay, I'm rolling here. I started using the EJB 2.0 extensions today. I defined two CMP entity beans, and declared a one-to-many relationship between them. Because I had the two EJBs in separate JARs before (that's the way I like it... it's more flexible for deploying, and it suits the spirit of EAR files better, IMHO), and because the relationship was unidirectional, I thought I'd try a "remote relationship". Hmm, there's not much doco on this, however. But it's enough to get started. I define the relationship in the "many" ejb-jar.xml file without a hitch (well, a small one; <a href="WebLogic.html">WebLogic</a> is using the Public Draft 2 version of the EJB 2 spec, and the format changed slightly between then and the Proposed Final Draft version I was working out of). I define a corresponding DMBS implementation in the weblogic-cmp-rdbms.xml file, with a bit of difficulty... the doco listed some tags that I knew I needed (from looking at the examples), mentioned their parent tags, and didn't describe what the parent tags looked like. With a bit of perserverance, and a peek at the DTD file, I work out the right XML syntax for the CMP descriptor, package the jar, run through weblogic.ejbc finally, and then chuck it over to the server to be deployed.
+      </p>
+      <p>
+        The server complains that it can't deploy the EJB because there is no JNDI name specified in the relationship-descriptor element. Sure enough, there isn't, because there is no relationship-descriptor element. I've never seen any hint of such a beast. I do a complete search of the BEA site, and there's no mention of it. The AskBEA service they have just gives me a blank stare when I enter my question. Finally, I hunt through the various DTDs again, and find the entry (it belongs in the weblogic-ejb-jar.xml file, for the curious). They just hadn't put in any doco on this.
+      </p>
+      <p>
+        <em>Status Update: Well, BEA said that the EJB stuff is only beta, and you take what you get. Fair enough. They did take my comment on the doco to hand, though, and a request to get the doco updated was raised, and will be in the next EJB 2.0 release.</em>
+      </p>
+      <p>
+        That's all my gripes for now. But then, tomorrow is another day.
+      </p>
+      <p>
+        -- <a href="RobertWatkins.html">RobertWatkins</a>
+      </p>
+      <hr/>
+      <p>
+        More gripes. Request-time expansion of attributes is broken. For example:
+      </p>
+      <code>
+        <jsp:include page="nextpage.jsp" /><br/>
+      </code>
+      <p>
+        works. So does this:
+      </p>
+      <code>
+        <% String nextPage = "nextpage.jsp"; %><br/>
+        <jsp:include page="<%=nextPage%>" /><br/>
+      </code>
+      <p>
+        And so does this:
+      </p>
+      <code>
+        <% String nextPage = getNextPage() + ".jsp"; %><br/>
+        <jsp:include page="<%=nextPage%>" /><br/>
+      </code>
+      <p>
+        But <em>this</em> does not:
+      </p>
+      <code>
+        <jsp:include page="<%=getNextPage() + ".jsp"%>" /><br/>
+      </code>
+      <p>
+        The tag is unrecognized, and ends up being written out to the generated HTML. Work arounds are possible (the third example), but it's annoying.
+      </p>
+      <p>
+        <em>Status update - BEA have confirmed this as a bug, and raised a change request. Supposedly it will be in Service Pack 2.</em>
+      </p>
+      <hr/>
+      <p>
+        HTTP POST and SSL Bug in 6.0
+      </p>
+      <p>
+        There's a fun little bug in 6.0: if you use a POST style form submit to the SSL server, it hangs.
+      </p>
+      <p>
+        This appears to have been fixed in the service pack release (weblogic 6.0 sp1)
+      </p>
+      <p>
+        Other than that, my biggest frustration is that I haven't been able to find any document that explains weblogic from a task-oriented point of view; instead, I had to sift through the various admin docs and piece it together myself. There aren't any aftermarket books, either. I'd consider writing one, but then again if I were qualified to write one, I wouldn't be writing this rant :-).
+      </p>
+      <hr/>
+      <ol>
+        <li>
+          /Apr/2001 - Had a fun one today. I was building a JMS-driven Bean, and I had all sorts of fun getting it to deploy properly. A minor typo in a field in the descriptor caused complaints of "<a href="ClassCastException.html">ClassCastException</a>" to do with the CMP classes. I mean, okay, this is beta code (JMS Beans being part of EJB 2.0, and all), but this tool is just incredibly fragile.
+        </li>
+      </ol>
+      <hr/>
+      <ol>
+        <li>
+          /May/2001 - I'm getting more and more peeved off at this each day. I want to uninstall an autodeployed EAR file. I go to the console (very optimistically... see above). There's no delete icon for the EAR. '<a href="BuggerIt.html">BuggerIt</a>', sayeth I. I click the "deployed" box to deselect it and undeploy it. No problems. I shut down the server, delete the EAR file from the system, restart. It complains it can't find the EAR, but then moves on. I fire up the console again. The EAR is gone, but the EJBs and WARs that were in it are still there. And they still don't have a delete button. '<a href="BuggerIt.html">BuggerIt</a>', I say again. I shut down the server, open the config.xml file, and delete the offending lines. I restart the server. Now none of the applications, <strong>including the console</strong>, deploy. Re-inserting the lines removes the problem. So I'm forced to either re-install, or leave the application that I want to remove in the system. I can't find where it's caching the data, either... after deleting the temporary cache (which doesn't solve the problem), there's no files updated that shouldn't be. -- rw
+        </li>
+      </ol>
+      <ol>
+        <li>
+          /Jun/2001 - Well, that's enough of <a href="WebLogic.html">WebLogic</a> for me. I've just spent the last few days moving the application over to JBoss (while it's in development at least). The configuration problems with <a href="WebLogic.html">WebLogic</a> were just getting too much for me to handle, and I was only trying to keep two machines in synch! In a month's time, there's meant to be three more developers on this project. So I got out while the going was good. -- rw
+        </li>
+      </ol>
+      <hr/>
+      <p>
+        A. I can't understand paying US$18000/cpu for <a href="WebLogic.html">WebLogic</a> Server when JBoss or Enhydra will give you the basic EJB server for free. Unless you are interested in the higher-level <a href="WebLogic.html">WebLogic</a> goodies (Commerce, Collaborate etc), then why shell-out big $ for a basic EJB engine. 
+      </p>
+      <p>
+        <em>Speed, mostly. Our performace tests show that, for our application at least, </em><a href="WebLogic.html">WebLogic</a> is about three times faster than JBoss in our "default" configuration (that is, prior to special tuning). There's also the higher-end features of <a href="WebLogic.html">WebLogic</a> Server, particularly clustering, that make paying the money attractive. It really depends on what your market is, and what your application design is for. That said, we've moved off <a href="WebLogic.html">WebLogic</a> for now, as we focus on a server we can put on to developer's desktops. That's the nice thing about J2EE; you can shift your servers easily (moving to JBoss took just under a week, most of which was spent delving into an obscure JMS bug).<em></em>
+      </p>
+      <p>
+        B. Why is BEA still running WLS4.5.1 on their site? Or v5.1?  
+      </p>
+      <p>
+        <em>Dunno.</em>
+      </p>
+      <p>
+        C. [slightly <a href="OffTopic.html">OffTopic</a>] Is JBoss less fragile than WLS??
+      </p>
+      <p>
+        <em>Oh, hell yes. With </em>WebLogicSix, even fairly mild tweaking to the configuration file outside of the console could break it. I once managed to break it by reordering the XML elements, despite the fact that the order I changed it to was one the console had saved out earlier. Using the console wasn't viable, however, as it didn't always save the configuration file correctly. Furthermore, you could pick up a working configuration file and move it to another machine with an identical configuration and it wouldn't work. Obviously it was caching _something_ somewhere; deleting various temporary files usually fixed the problem, but not always. Under JBoss, the only major problem I encountered was the inconsistency of the documentation, and a bug to do with temporary JMS queues on the same JVM as their client (which I could fix as I had the source)<em></em>
+      </p>
+      <p>
+        Loaded questions, all.
+      </p>
+      <p>
+        -- <a href="DinoChiesa.html">DinoChiesa</a>
+      </p>
+      <hr/>
+      <p>
+        I spent several weeks migrating an EJB app with 700,000 lines of code from weblogic 5.1 to 6.1. The app had been developed xp style, so we had a full suite of functional and unit tests for the app, including scalability tests that hammered the app. Several bugs appeared in 6.1 that we had never seen in 5.1.
+      </p>
+      <ol>
+        <li>
+           Improper handling of manual rollbacks when using the "SessionSynchronization" interface on stateful beans.
+        </li>
+        <li>
+           With the (8.1.7) Oracle thin driver packaged with 6.1, there is a subtle bug with batch inserts and deletes. The new thin 9i driver fixes the problem but a BEA rep told me they "did not have the bandwidth to test it". Left without any options, I updated the driver myself and verified the fix. Also, I made sure the drivers didn't break any exising functionality - all within a day. Try to do that without a full suite of automated tests!
+        </li>
+        <li>
+           Stateful Exclusive Locking is just plain broken. Our scalability tests simulate users that concurrently hammer the server. Our automated tests kept blowing up because of a bean locking error. The error made it appear that multiple threads were somehow accessing the same bean at the same time. The problem arises when stateful beans of the same type are used at the same time. As far as I can tell, there is a very nasty synchronization bug buried in their locking scheme. I went back and forth with BEA over several weeks to demonstrate the problem. I sent them several unit tests that exposed the problem, but they could never "replicate" the problem. I went so far as to use DynamicProxies on all of our bean interfaces to guarantee that no threads hit the same bean interface at the same time. We developed workarounds and moved on, but as far as I know it has not been fixed.
+        </li>
+      </ol>
+      <p>
+        -- <a href="MikeRettig.html">MikeRettig</a>
+      </p>
+      <p>
+        Doubt:
+        There was a Deployment Tool in weblogic 5.1 that made deploying ejbs a breeze. i didn't find that in 6.1, and now there's an 8.1 in the market. been some time since i used weblogic. somebody fill me up with this change?
+      </p>
+      <p>
+        Vijay Kumar
+      </p>
+      <p>
+        <em>There are several deployment tools in 8.1. If your ejbs are already in a jar file then you can use the weblogic.Deploy tool, the ant task or the console. </em><a href="http://edocs.bea.com/wls/docs81/toolstable/ToolsTable.html#1009540">http://edocs.bea.com/wls/docs81/toolstable/ToolsTable.html#1009540</a> is the comprehensive list of deployment tools for WLS8.1 <em></em>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,66 @@
+I'm looking for guidance about unit testing '''Dynamic Behavior'''.
+
+For example:
+
+* Ensure that a call''''''back routine is invoked no more than X milliseconds after some event.
+* Test for the solution to a bug involving '''dynamic''' behavior, such as a race condition.
+* Demonstrate that a process lowers its priority after a fixed period of inactivity.
+* Demonstrate that a putative mutex implementation works correctly.
+
+How do the test-infected members of this community approach situations like these?
+
+-- TomStambaugh
+
+----
+
+These are all instances of integration testing (interaction between two or more routines).  Unit testing is intended for use on one routine at a time, and its techniques don't extend very well to testing real-time interactions.  
+
+You should consider some other form(s) of testing, e.g. acceptance tests involving a large number of test runs, or special testing hardware that can create and/or measure the precise timing you need.
+
+''The point of, for example, a Mutex or Semaphore class is it's dynamic behavior. That's hardly "integration testing. Similarly, AJAX is all about asynchronous behavior. The dynamics of a putative implementation of XmlHttpRequest are its very purpose. Similarly, methods like "fork" and "yield" on class "Process" are dynamic, rather than static, behaviors. It sounds like we need a new test strategy for this category of behavior. -- TomStambaugh''
+
+First Point.  Let's try to avoid the names for types of tests and look instead at the principle of testing as early as possible.  Forget "unit" and "integration" and look for the most effective means to test the capability.  If it involves multiple classes and functions, do it.
+''I use "unit test" to refer to various language bindings of J''''''Unit, P''''''Unit, and so on.''
+
+Second Point.  Diagnostic testing (to detect and isolate a problem) is different than validation testing (to verify a problem has been resolved).  I may have misinterpreted the statement, but the reference to a race condition sounded like it might be referring to what I call diagnostic testing.
+''Dynamic behavior is part of a specification. The purpose of unit testing (by any means) is to validate that a putative module fulfills its API "contract". Much more specifically, a key part of the ExtremeProgramming/AgileMethod/TestInfected approach to software development is to quite intentionally fold diagnostic testing into the test suite(s) for the failing unit(s). Since 100% coverage is impractical or impossible, '''any''' unit test suite is a gamble: the developer(s) bet on behaviors they think might fail. In a TestInfected shop, the unit passes all its tests before being released. Thus, a reported bug is, by construction, in example of a missing unit test. The first step in diagnosis, therefore, is to create a (failing) unit test that demonstrates the bug. The problem is then corrected, causing the test to subsequently pass. The integration of these "diagnostic" tests into the test suite assures "regression testing" -- changes to one problem do not create others.''  I think we may be in agreement here.  The idea I was trying to convey with the term "diagnostic testing" is all the steps taken leading up to writing the new unit test; print lines, debugger sessions, log file analysis, etc.  I could be convinced otherwise, but I currently feel you need to narrow the field before writing an x''''''Unit test.
+
+Third Point.  In hardware development there is a technique called "Design For Testability."  This involves adding hardware to insert signal and monitor signals at points of interest.  I believe the same concept applies to software.  To test some of the dynamic features, the software may have to be modified to allow it to be tested.  Long timeouts may need to be set as variables and tested in isolation (as timeouts are usually based on a hardware feature, I am not sure whether this is truly testing the software).  For race conditions, critical code sections can be isolated into small methods and launched from a test driver in sequences that cause the race condition to occur.  Alternately, one might need to conditionally compile some semaphores into the critical code sequence to force desired timings.  There are lots of other things that might be tried, but the overall principle is to think about how to test the code before or during the writing process.  Don't wait until the code is written before trying to figure out how it can be tested. -- WayneMack
+
+''I agree. This is really the discussion I'm hoping to provoke. I see very little reference to this in the literature, and I'd like to incorporate as much wisdom from this community as possible. In a prior life, I was a hardware designer. You're absolutely correct -- we constructed, for example, bench-test harnesses for a piece of hardware that allowed us to do "margin testing", where we varied critical voltages, currents, and delays in order to measure the margins of a particular device. I think we'd all benefit from similar harnesses specifically designed to address dynamic behavior. -- TomStambaugh''
+
+Actually, the point I was going for was more than a test harness; x''''''Unit and FIT seem to be covering this area.  In ASIC design, it was common to provide a standard test port taking up (I believe) 4 pins.  Internally to the ASIC, a small but significant percentage of gates were used to implement a test mode for the chip.  The analogies for software classes might be to provide a special test mode constructor and include some test only code in the production class.  
+
+The following is an off the top of my head example.  I have never tried this, but I think it might illustrate the principle.  The example is a simple up counter that might exhibit a race condition.  I am explicitly implementing the read, modify, and write steps assuming that the underlying processor does not lock the bus for this operation.  The race condition occurs when process A reads the value, then process B reads the value, then each process increments the value and writes back the result.  This will cause the value to be incremented by 1 rather than the desired increment by 2.
+
+The routine to be tested:
+
+Some''''''Class::Increment''''''Counter()
+{
+  int my''''''Counter = the''''''Counter;
+  if(I''''''Am''''''In''''''Test''''''Mode) Sleep(my''''''Testing''''''Delay);
+  ++my''''''Counter;
+  the''''''Counter = my''''''Counter;
+}
+
+The testing code:
+
+Test''''''Counter''''''Race''''''Condition()
+{
+ int my''''''Test''''''Counter = 0;
+ Some''''''Class Process''''''A(test''''''Mode);
+ Some''''''Class Process''''''B(); //B is not set to test mode.
+
+ //Launching threads omitted.
+ Process''''''A.Increment''''''Counter();
+ Process''''''B.Increment''''''Counter();
+ Assert''''''Equals(my''''''Test'''''Counter, 2);
+}
+
+Without having a declared critical region in the Increment''''''Counter() function, this test should fail, driving the need for the adding a critical region to the code.
+
+Caveat: intellectually I understand adding the if statement probably has negligible affect on the operation of the code.  Emotionally, however, I am uncomfortable with this and would probably try to use a conditional compile approach, even though that might add complexity to the test code and test set up.  Perhaps if I spent some time and did some actual measurements, though, I might convince myself to leave the inline test code.
+
+The intent of this example is to show that it might be necessary to add test only code to allow certain aspects of the software to be tested.  This is a little more invasive than create stubs and drivers as this may affect the delivered code.  In hardware development, however, this is seen as a viable trade-off.  Perhaps we should do the same for software development.
+
+''I ABSOLUTELY think we should do the same for software development. I think of this code as the software equivalent of testpoints, plugs, sockets, and buses. The hardware world has long employed such techniques to assure reliability. I also note that in the hardware world, a system comprised of several such boards connected to a backplane can often be re-engineered into a monolithic whole -- preserving some testpoints, eliminating others, improving performance, reducing power consumption. I think the software analog to this integration is an effective strategy for addressing situations where the various added costs of this test software impose enough overhead that they need to be optimised away. -- TomStambaugh''

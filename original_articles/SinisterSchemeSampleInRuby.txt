@@ -1,0 +1,241 @@
+This page is an attempt in Ruby to duplicate the snippet of Scheme code given in SinisterSchemeSamplePerplexesPythonPorter.  Check out that page for the original scheme code (which I don't repeat here).
+
+The first three functions are easy ...
+
+  def make_pointer(getter, setter)
+    [getter, setter]
+  end
+
+  def pointer_ref(ptr)
+    ptr[0].call
+  end
+
+  def pointer_set!(ptr, value)
+    ptr[1].call(value)
+  end
+
+We will skip the address function for now.  Scheme uses macros to implement address. We will come back to it in a moment.
+
+So, let's try it out our 3 basic functions ...
+
+  puts "Version 1"
+  x = 1
+  px = make_pointer(lambda { x }, lambda { |value| x = value })
+  puts pointer_ref(px)     # => 1   (good)
+  pointer_set!(px, 2)
+  puts pointer_ref(px)     # => 2   (good)
+  puts x                   # => 2   (good)
+
+So the basic approach works.  We use two lambdas (anonymous functions) to capture the getting and setting of the variable x, just as the scheme version did.  Note that each lambda function remembers the variable binding available at the point the lambda was created.
+
+Now let's see if we can duplicate the address function.  Our first attempt fails ...
+
+  def address(var)
+    make_pointer(lambda { var },
+		 lambda { |value| var = value })
+  end
+
+The reason it fails is that the lambda are created inside the scope of the address function.  "var" in the lambdas refers to the parameter of the address function, not to the original "x" variable bound in the main program.
+
+Somehow we need to create the lambdas in the enclosing scope.  One way to do it is to pass the outer bindings explicitly to the address function as a parameter, and then create the lambdas using eval.  (Note, the function "binding" returns a Binding object representing the current variable bindings that can be passed to eval)
+
+  def address(symbol, outer_scope)
+    make_pointer(eval("lambda { #{symbol.id2name} }", outer_scope),
+		 eval("lambda { |value| #{symbol.id2name} = value }", outer_scope))
+  end
+
+This version of address works fine ...
+
+  x = 1
+  px = address(:x, binding)
+  puts pointer_ref(px)       # => 1  (good)
+  pointer_set!(px, 2)
+  puts pointer_ref(px)       # => 2  (good)
+  puts x                     # => 2  (good)
+
+Although workable, it is a bit ungainly.  Here's a variation.  Instead of passing the value of the binding method, we could pass a proc instead.  Eval can use the bindings remembered in a proc as well.  What's more, we can have the proc do double duty by returning the symbol to be returned.  This makes the usage of address ''slightly'' more palatable.  Here's the new version of address and how it is used...
+
+  def address(&block)
+    make_pointer(eval("lambda { #{yield.id2name} }", block),
+		 eval("lambda { |value| #{yield.id2name} = value }", block))
+  end
+
+  px = address {:x}
+
+	 :	'''Ruby Note:'''  Ruby uses the keyword "proc" or "lambda" to introduce an anonymous function.  I used "lambda" in the above example to emphasize the parallel to the Scheme code.  When a code block (ie. lambda/proc object) is passed implicitly as the last parameter to a function, the lambda/proc keyword can be omitted.  This is the approach used with the address function.
+
+And that completes the functionality provided by the Scheme program.  We will do one more transform however.  Rubyists would rarely write the above code, instead they would encapsulate the solution in a class.  Here a the final class definition of Pointer using everything we learned up to this point.
+
+  class Pointer
+    def initialize(&block)
+      @getter = eval("lambda { #{yield.id2name} }", block)
+      @setter = eval("lambda { |value| #{yield.id2name} = value }", block)
+    end
+    def value
+      @getter.call
+    end
+    def value=(new_value)
+      @setter.call(new_value)
+    end
+  end
+
+  x = 1
+  px = Pointer.new {:x}
+  puts px.value            # => 1  (good)
+  px.value = 2
+  puts px.value            # => 2  (good)
+  puts x                   # => 2  (good)
+
+-- JimWeirich
+
+-----
+
+'''Extra Credit'''
+
+The version of Pointer given above works great.  However, if I had not seen the scheme version first, I probably would have written it slightly differently.  Compare the following Broken''''''Pointer class to the working version.  Why is Broken''''''Pointer inferior to the Scheme inspired version?  (hint: think about non-integer values)
+
+  class Broken''''''Pointer
+    def initialize(&block)
+      @block = block
+      @name = yield.id2name
+    end
+    def value
+      eval "#{@name}", @block
+    end
+    def value=(new_value)
+      eval "#{@name} = #{new_value}", @block
+    end
+  end
+
+----
+Ok, wise guy. What's the difference? The fact that you could possibly eval "x = the quick brown fox"?
+
+----
+
+Here is another one. It works with any lvalue, not just variables.
+
+  class Pointer
+    attr_reader :lvalue
+    attr_reader :binding
+    attr_reader :getter
+    attr_reader :setter
+    def initialize( &block ) ref( &block) end
+    def ref( &block )
+      @block = block || proc {:@value}
+      @binding = @block.binding() 
+      @lvalue  = @block.call()
+      @getter  = eval( "proc { #{@lvalue} }",         @block)
+      @setter  = eval( "proc { |v| #{@lvalue} = v }", @block)
+    end
+    def []() @getter.call() end
+    def []=( new_value ) @setter.call( new_value); end
+    def to_s() self[].to_s() end
+    def inspect() "<Pointer #{lvalue()}>#{self[].inspect()}" end
+  end
+  a = [1,2,3]
+  ptr = Pointer.new{ "a[2]"}
+  ptr[] = 4
+  p a # => [1,2,4]
+
+
+-- JeanHuguesRobert
+
+----
+
+This is the original Ruby version modified so that one doesn't need to pass a block to Pointer.new.
+
+  # Begin of inlined binding_of_caller.rb
+
+  begin
+    require 'simplecc'
+  rescue LoadError
+    def Continuation.create(*args, &block)
+      cc = nil; result = callcc {|c| cc = c; block.call(cc) if block and args.empty?}
+      result ||= args
+      return *[cc, *result]
+    end
+  end
+
+  # This method returns the binding of the method that called your
+  # method. Don't use it when you're not inside a method.
+  #
+  # It's used like this:
+  #   def inc_counter
+  #     Binding.of_caller do |binding|
+  #       eval("counter += 1", binding)
+  #     end
+  #   end
+  #   counter = 0
+  #   2.times { inc_counter }
+  #   counter # => 2
+  #
+  # You will have to put the whole rest of your method into the
+  # block that you pass into this method. If you don't do this
+  # an Exception will be raised. Because of the way that this is
+  # implemented it has to be done this way.
+  def Binding.of_caller(&block)
+    old_critical = Thread.critical
+    Thread.critical = true
+    count = 0
+    cc, result, error = Continuation.create(nil, nil)
+    error.call if error
+
+    tracer = lambda do |*args|
+      type, context = args[0], args[4]
+      if type == "return"
+        count += 1
+        # First this method and then calling one will return --
+        # the trace event of the second event gets the context
+        # of the method which called the method that called this
+        # method.
+        if count == 2
+          # It would be nice if we could restore the trace_func
+          # that was set before we swapped in our own one, but
+          # this is impossible without overloading set_trace_func
+          # in current Ruby.
+          set_trace_func(nil)
+          cc.call(eval("binding", context), nil)
+        end
+      elsif type != "line"
+        set_trace_func(nil)
+        error_msg = "Binding.of_caller used in non-method context or " +
+          "trailing statements of method using it aren't in the block."
+        cc.call(nil, lambda { raise(ArgumentError, error_msg ) })
+      end
+    end
+
+    unless result
+      set_trace_func(tracer)
+      return nil
+    else
+      Thread.critical = old_critical
+      yield result
+    end
+  end
+
+  # End of inlined binding_of_caller.rb
+
+  class Pointer
+    def initialize(target)
+      Binding.of_caller do |context|
+        @getter = eval("lambda { #{target} }", context)
+        @setter = eval("lambda { |value| #{target} = value }", context)
+      end
+    end
+    def value
+      @getter.call
+    end
+    def value=(new_value)
+      @setter.call(new_value)
+    end
+  end
+
+  x = 1
+  px = Pointer.new :x
+  puts px.value            # => 1  (good)
+  px.value = 2
+  puts px.value            # => 2  (good)
+  puts x                   # => 2  (good)
+
+----
+CategoryRuby

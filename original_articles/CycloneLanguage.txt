@@ -1,0 +1,183 @@
+Home page: http://www.eecs.harvard.edu/~greg/cyclone/
+
+Also see http://www.research.att.com/projects/cyclone/online-manual/main-screen001.html
+
+Cyclone extends C with a raft of features, including type safety enforcements, array bound checks, exceptions, parametric types, and pattern matching.  It compiles to C, and can make use of existing C code and libraries.
+
+----
+Terse New Scientist 11/2001 story: http://www.newscientist.com/news/news.jsp?id=ns99991578
+
+Slashdot discussion (poor signal to noise ratio): http://slashdot.org/developers/01/11/16/1757251.shtml
+
+----
+'''Pointers'''
+
+To improve safety of pointers, Cyclone introduces new kinds of pointers, via attributes for pointers, some with compile-time restrictions, others with run-time checks.
+
+'''Pointer attributes:'''
+* Nullable pointers: declaration and indirection syntax as with C pointers, but:
+** cannot cast from integer; 
+** no pointer arithmetic;
+** can point to NULL;
+** run-time NULL check on indirection.
+* Non-NULL pointers: similar to Nullable, but checks against NULL on initialization or cast;
+** FILE *@notnull f = xyz();
+** @ abbreviates *@notnull; "FILE @f = xyz();"
+** cannot cast from integer;
+** no pointer arithmetic;
+** currently cannot be used with @fat qualifier
+** run-time NULL check on initialization (unless compiler analysis proves a NULL check was previously done)
+* Thin pointers, @thin
+** default for all pointers unless overridden with @fat qualifier
+** requires 1 word of storage
+** disallows pointer arithmetic except with @zeroterm qualifier
+* Fat pointers: contain bounds info to allow pointer arithmetic (e.g. increment);
+** "char *@fat s;", "char *@fat *@fat argv;"
+** run-time bounds check and NULL check
+** casts can fail at run-time, e.g. fat pointer with zero length cast to char * fails
+** ? abbreviates *@fat, e.g. "char ?s;", "char ??argv;"
+** currently cannot be used with the @notnull or @numelts 
+* NUL/zero-terminated pointers: similar to Fat pointers, but same width as C pointers (1 word) because they are guaranteed to point to NUL-terminated data, such as C strings, and hence need no bounds info. The data itself cannot contain NUL.
+** char *@zeroterm = "hello world";
+** Allows pointer arithmetic, e.g. (p + i)
+*** Runtime check: make sure '''i''' is nonnegative
+*** Runtime check: make sure that the NUL comes '''after''' p[i-1] (so that p1 = p + i; is guaranteed to be NUL-terminated).
+*** Runtime check: NUL termination may not be overwritten with non-NUL
+*** Checks can be expensive, O(N) may become O(N^2); cast to Fat pointer
+** can be used with @fat, @notnull
+*** Is in fact the default with C strings: char *, char *@notnull, and char *@fat
+*** Override with @nozeroterm, char *@nozeroterm
+*** Other pointers default to @nozeroterm
+* Number of elements attribute, *@numelts(e)
+** void foo(int *@numelts(4) arr); -- parameter arr has 4 elements
+** can be applied to nullable and non-nullable pointers
+** cannot be used with @fat
+** when missing, defaults to element count of 1
+** abbreviated with curly braces, e.g. int *{42}
+* Region pointers; specifies region of memory pointer within which pointer may point
+** @region(`r)
+** abbreviated with backtick, e.g. int *@notnull @region`r'' ==> int @`r
+
+'''Pointer subtyping''' (subtypes may be substituted for types, e.g. in parameters)
+* TYPE *@notnull is a subtype of TYPE *@nullable 
+* TYPE *@numelts(M) is a subtype of TYPE *@numelts(N) when M > N, because it provides at least as many elements as are expected
+* TYPE *@region(`r) is a subtype of TYPE *@region(`s) when region `r outlives region `s
+** The heap region `h outlives all other regions, so heap regions are subtypes of other regions in regard to this rule, all else being equal
+** Outer blocks and outer regions outlive inner blocks and inner regions
+** Passed parameter regions are assumed to outlive regions local to the called function, by default
+** Relative lifetimes may be specified via {`r1,...,`rn} > `r
+*** e.g. void bar(int *@region(`r) x, int *@region(`s) y : {`s} > `r);
+** If T is a subtype of S, then T* is a subtype of const S*.
+*** necessary rule to avoid segfaults, see Cyclone documentation
+
+'''Pointer coercion'''
+
+----
+'''Regions'''
+----
+'''Other Features'''
+Cyclone supports
+* parametric polymorphism
+* structural subtyping
+* some unification-based, local-type inference
+* @tagged union 
+* tuples
+* subtyping
+* LET declarations (type is inferred from initializer)
+
+----
+''In someone's opinion:'' Experimental language, not ready for prime time.
+
+* I cited two URLs that quote different people saying it has problems, and "not ready for prime time" is itself a quote, not my own wording. Feel free to point me to something that shows that I've misunderstood the situation.
+** ''One of those pages was written by someone who didn't seem to have tried to use the language at all; just jumped to conclusions based on an off-hand comment at a presentation. The "not ready for prime time" quote is from an article written in 2001. If I understand correctly, the "semi-automatic" C->Cyclone porting mode of the compiler was not available then.''
+** OK, that's a reasonable response, and so is your other comment below, so that casts doubt on my critique. The next question is, to what extent is this language being tested in real world applications? Despite other comments I've made, to some extent it is encouraging to see successes.
+
+For instance, "Cyclone's straightforward memory leak detection algorithm doesn't lead to a small, well-defined interface. Case in point: in order to implement a garbage collector they had to extend the runtime. It was a small function (only 5 lines of code) but nevertheless it was not possible at the user level. In effect, they had to introduce a new proof rule into the type system. That's disturbing to me -- it means the type system is incomplete. And these are smart people, so if it wasn't complete to start with, that probably means it'll never be complete."
+
+"What's even more disturbing is that at the end of the talk, NormanRamsey asked how they would implement a generational garbage collector. And the answer was 'We haven't figured out how to do that yet... it may require dependent types'"
+
+"Just imagine trying to explain to a systems programmer that the reason they can't implement a "simple" generational GC scheme is because that would require that the type checker be extended to support dependent types. They'll look at you like you have three heads, and then they'll toss you and your silly little language into /dev/null."
+http://www.kimbly.com/blog/000325.html
+* That blog is commenting on a talk by the Cyclone developers about the paper: Safe and Flexible Memory Management in Cyclone, Mike Hicks, Greg Morrisett, Dan Grossman, and Trevor Jim.  University of Maryland Technical Report CS-TR-4514, July 2003. "This paper describes how we have integrated unique pointers, reference counted objects, and dynamic regions into the language." http://www.cs.umd.edu/Library/TRs/CS-TR-4514/CS-TR-4514.pdf
+
+
+''Why would you need to '''implement''' a generational garbage collector in Cyclone? Cyclone has garbage collection as part of the language (not generational in the current implementation, but it could be). Note that you can't implement a garbage collector for C objects entirely in C, either: it requires some assembler/MachineCode (because it is necessary to obtain the values of processor registers, at least). Technically you can poke code into an unsigned char[] and jump to it, but I would not consider that to be a program written entirely in C.''
+
+''If you were implementing an interpreter in Cyclone, OTOH, it would be possible to write a GC for objects in the interpreted language entirely in Cyclone, and that wouldn't require dependent types.''
+* Hmm! Perhaps you should read the provided link to find out!
+** ''That link says that the amount of a particular garbage collector that couldn't be written in Cyclone was 5 lines. How many lines of the Boehm-Weiser collector are written in assembler rather than C? Between 40 and 120 lines per platform (source available from http://www.hpl.hp.com/personal/Hans_Boehm/gc/). I detect a double standard being applied.''
+** ''You're reading a great deal into an off-the-cuff remark at a presentation saying that something ''may'' require dependent types. I doubt that it would require dependent types, but I'd have to write it to be certain.''
+** It's not the number of lines of code, nor whether it definitely needs dependent types or not, it is (in part) that the type system is incomplete and needs to be extended when new things come up -- and note that that is not my opinion nor that of the quoted audience member, that's what the Cyclone team member said, '''and''' that's what their paper says -- which I read before making any comments. Go ahead and read it, maybe I overlooked something important in it.
+*** ''The paper is primarily a paper about type system design. The writers are using Cyclone as a vehicle for testing type system extensions, because they control its specification and implementation. In order to do that they need to specifically look for things that are difficult to make completely typesafe in ''any'' current type system. You also have to take into account that any academic paper has to motivate the usefulness of whatever mechanism it is presenting by criticizing what was there before -- even if what was there before is still better than other languages by many criteria. It's perfectly feasible to write the vast majority of programs just using the part of Cyclone's type system that has been stable for several years, without any of the extensions; it is already significantly more expressive than C's type system. OTOH, the extensions are fascinating, and the fact that there is active research on improving the language makes it more attractive to me, not less.''
+
+Review: http://www.securityfocus.com/guest/9094
+
+But still interesting, and potentially useful as an alternative to C for certain projects.
+
+----
+'''Limitations'''
+
+The biggest one I see is that it currently does not support threads.
+
+''However see <http://www.cs.washington.edu/homes/djg/papers/cycthreads-abstract.html>.''
+
+Some people have gotten used to threaded programming, plus on Windows systems, there's just no other way.
+
+''Not just Windows. For many application areas, threads are essential regardless of OS -- Unix, Mac, embedded systems...I don't think I've ever worked on a really huge system that was not multithreaded, although smaller ones don't always need it.''
+
+Yes. I meant that you can still use fork in Unix for many application areas. But in windows you just can't (well, Cygwin emulates it by doing some horrible things, and slow things http://www.redhat.com/support/wpapers/cygnus/cygnus_cygwin/architecture.html).
+ 
+----
+So I keep hearing about these languages with stronger type systems (and I'm a static typing fan, I should say), and there's always one question I want to ask... and since Cyclone is C based, it's particularly apropos. There's a standard idiom for StateMachinesInCee that's has a concept like the following:
+
+    typedef state (*state)();
+
+That is, a state is a pointer to a function that, when executed, returns a the next state.
+
+Then, states can be used by
+
+    state current = initial;
+    while((current = current()));
+
+with extra code added as needed. Of course, the above isn't valid C... there's no way to do a recursive typedef. 
+
+Fortunately, C has WeakTyping, so this can be worked around:
+
+    typedef void* (*state)();
+    state current = initial;
+    while((current = (state) current()));
+
+Now, as far as I can tell (having just read the manual for a bit), there's no way to do recursive typedefs in Cyclone. Fine, I can accept that...
+
+But how do you do the above idiom with strong typing? How do you do it in Cyclone at all?
+
+-- AdamBerger
+
+''In either Cyclone or C,''
+
+    struct state_t;
+    struct state_t {
+        struct state_t *(*next)();
+    };
+    typedef struct state_t *state;
+
+    state current = initial;
+    while (current = current->next());
+
+''Actually, in Cyclone you'd probably use the closures in the standard library instead.''
+
+Hm... now I'm wondering why I never did it that way in C. Good answer! (Although I'm not convinced proliferating structs is a good thing... it's an interesting point that the type systems do allow structs to perform that type of self reference. Of course I've used it a million times in lists and trees and graphs, but never thought about having it there. Thanks -- AdamBerger
+
+The aspect of this that interested you was the use of the function pointer, to allow polymorphism?
+
+''The interesting aspect is how it solves either referring a to a typedef in itself (verboten) or the use of a void* (unsafe). By not seeing the struct solution myself, I constructed a false dichotomy by assuming referring to a type in itself was forbidden in general in C, where of course it's only forbidden in typedefs. So the answer reads as 'you're making a mistake about how powerful c's type system is to begin with; you don't need to solve it with a void* in c to begin with, so you certainly don't need to adopt any particular tricks in Cyclone.''
+
+That part of it is pretty much identical (I think) to the now-deleted original straight C solution I had posted below, before he offered the function pointer variation, so I still feel a little puzzled -- but since it seems to involve a mental block, I won't worry about it.
+
+----
+
+Cyclone is mentioned quite a bit in AdvancedTopicsInTypesAndProgrammingLanguages
+
+
+----
+CategoryProgrammingLanguage

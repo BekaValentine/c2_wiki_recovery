@@ -1,0 +1,230 @@
+This is not an attack on reflection. Reflection is a very powerful and necessary tool. However, it is often misused.
+
+It should not be used to handle complex operations that need to scale. For simple operations, reflection is often the easiest and cleanest solution. However, these solution do not scale well.
+
+''Could you give an example, please? The examples below are mostly counterexamples.''
+
+Limitations to Reflection Scalability
+	* Slow
+	* Complex
+	* Errors at Runtime, rather than compilation.
+		* ''"Unit tests lie, but the compiler doesn't."''
+	* Refactoring is harder when reflection is used
+
+Alternatives
+	* CodeGeneration - You can achieve the same results using reflection during the build process rather than runtime without all the limitations.
+	* Code it by hand - This may require writing more lines of code, but this may be easier to code and maintain.
+
+----
+
+These are possible abuses, and are not absolute laws.
+ 
+Possible Abuses:
+	* Using reflection to automatically generate sql to read and write to a database.
+		*Can be slow, complex and cumbersome. Consider CodeGeneration instead.
+	* Mashalling/Unmarshalling data using Reflection
+		*Can be slow, complex and cumbersome. Consider CodeGeneration instead.
+
+-- MikeRettig
+
+----
+
+I don't get it. WhyIsReflectionComplex?
+
+----
+
+Runtime Reflection may be TooDeepIntoTheBagOfTricks - and will earn you a PropellerBeanie.
+
+Same goes for CodeGeneration.
+
+''But these comments only apply if you're violating DoTheSimplestThingThatCouldPossiblyWork. If RuntimeReflection or CodeGeneration is the SimplestThingThatCouldPossiblyWork, then you're doing the right thing; you shouldn't be subjected to the PropellerBeanie.''
+
+----
+
+I find the unit tests lie comment interesting; the compiler may not lie, but it does not help guarantee ''correct'' code. Perhaps we should code generate unit tests too. :)
+
+Also, it seems to me that CodeGeneration may well be in the same ballpark as RuntimeReflection when it comes to bags of tricks. (The above comment about PropellerBeanie''''''s is not mine!) I have not found the API complex, it is certainly no more complex than JDBC. However, the next time I find a nail, I'll certainly be considering using the CodeGeneration tool to see how it fits for me.
+
+-- ShaunSmith
+
+
+See CategoryReflection for a definition.
+
+----
+
+Perhaps we should be careful about saying "Don't use Runtime Reflection 'cause it's too slow." Yeah, it's slow, but isn't worrying about that PrematureOptimization?
+
+''Also, I believe that it's the discovery of fields and methods that is relatively expensive, opposed to actual sets and invocations.''
+
+At any rate, I think it might be also useful to explicitly state situations under which using RuntimeReflection is possibly the best option. I found myself using it (and writing a bunch of utility-wrapper methods to make the java.lang.reflect.* stuff easier to use) when I really wanted runtime static method invocation. As in:
+
+ public void loadObjects(Class objectType) {
+     S''''''qlQuery query = objectType.getQuery();
+     R''''''esultSet rs = connection.getResultSet(query);
+     while (rs.next()) {
+          DBObject obj = objectType.getObject(rs);
+          cache(obj);
+     }
+ }
+... but Java won't let you do this, since it binds static methods at compile-time. So you need reflection there.
+
+   I use DotNet in a big project. With the size of our code, reflection takes 1 second to create any object. PrematureOptimization, eh? I have been executing ReplaceReflectionWithCodeGeneration with considerable success.
+-----
+I think RubyLanguage is really changing my view of RuntimeReflection from dubious, to extremely useful. Last night I was coding a report object where each row contains a user, a billing address (attached to the user), and a shipping address. Each address has fields like address1, address2, city, state, zip, etc. The row object - call it R''''''eportRow - needed these fields for both addresses: .shipAddress1, .billAddress1, .shipAddress2, .billAddress2 ...
+
+I could've written twenty one-line wrapper functions, but that would've been aggravatingly dull. Instead, I used RubyLanguage'''''''s Object.method_missing function:
+
+ def method_missing (methodSymbol)
+   methodName = methodSymbol.to_s
+   if methodName =~ /bill(.*)/
+     if @user.billingAddress
+       @user.billingAddress.send (StrUtil.decapitalize $1)
+     else
+       ''
+     end
+   elsif methodName =~ /ship(.*)/
+     @shipAddress.send (StrUtil.decapitalize $1)
+   else
+     @user.send methodName
+   end
+ end
+... which basically says:
+
+ if you get a method call that begins with "bill"
+   return @user.billingAddress.<whatever>
+ else if you get a method call that begins with "ship"
+   return @shipAddress.<whatever>
+ else
+   return @user.<whatever>
+ end
+Is this excessively clever? It made my code much, much cleaner, and it doesn't seem ''that'' arcane.
+
+As a side note, this is the kind of problem that CodeGeneration is supposed to solve, right? Perhaps RuntimeReflection is actually an antidote to CodeGeneration. -- francis
+
+Well... you are relying on a naming convention that isn't enforced automatically. -- DougMerritt
+
+Yes, and this is probably more of a problem for some programming styles than others. Since I'm in the "UnitTest + DynamicTyping" camp, I don't really mind the lack of interpreter-level enforcement. -- francis
+
+As a quick check, then: does your UnitTest currently (right this second) check all names to make sure they comply with the expected pattern? -- DougMerritt
+
+It does to my satisfaction, though of course you can always UnitTest more. In this case the path of testing is less explicit than some may like. There is no test method that tests these accessor methods directly, but there are tested methods that rely heavily on those accessor methods. And knowledge about what accessors exist are actually stored in two separate class-level constant collection of names (there are two since the report can be sorted on some fields but not on others). So changing the list of valid methods only involves making a change in one place. -- francis
+
+I think there's a hole in your scheme. If some later maintainer of the code finds that a new field needs to be added to support special shipping to Antartica or something, and doesn't follow your naming convention, and may even add a UnitTest, but does so in some lame way, so then nothing will catch that, and your scheme begins to unravel.
+
+The thing to avoid at all costs is bugs that only show up when a customer complains. And you should never, of course, have the mindset that you, the original author, will always be the one maintaining the code. That's a well known AntiPattern. (Although I'm not sure if it's been named and had a page created for it, still, it's been infamous for decades.)
+
+I really don't see any safe way to go but to enforce your naming scheme explicitly and directly in the UnitTest, in a way that enforces future names, not just current names. If for some reason you don't want to do that, then I would critique your entire approach of using reflection this way. Cleverness should include maintainability. Bulletproofing code is a worthy ideal. -- DougMerritt
+
+...And it occurs to me that I came to the page a fan of reflection, and surprised by the topic, yet (no offense intended) you've provided an interesting example of a potential RuntimeReflectionIsaDesignSmell (even if it turns out I've misunderstood some way that you're avoiding the problem I pointed out). -- DougMerritt
+
+''Doug, can you think of a specific way this might play out? I'm interesting in hearing about in what way this code could be vulnerable to a future bug.''
+
+Sure. You're looking for method names that begin with "ship" and with "bill". This is prone to false positives and false negatives, in the absence of automatic enforcement of the convention.
+
+For instance, the CEO (of the new company that has acquired all rights to your software) happens to have the name "billingsley" and requires extra business logic to handle his name differently than everyone else in the world, because he's a PointyHairedBoss, and doesn't see any downside to adding a small requirement (and he's largely right, there shouldn't be a downside).
+
+So some maintenance programmer who is new to the code but eager to please management (let's say he has some kind of hangup where he doesn't want to lose his job) adds a new method named "billingsley_special_check". This has nothing to do with billing address, but it will of course match your pattern "methodName =~ /bill(.*)/".
+
+So you get a false positive that adds this inappropriately to billing address, quite possibly screwing it up beyond repair because it uses up all the space on the mailing label or something. It's unexpected, after all.
+
+The software, let's say, treats the billing address *as* the shipping address in this case (pretty common), so the CEO doesn't get his product and the hapless maintainer is fired.
+
+You can say, "well, he deserves it for not knowing the code better and not following the right naming pattern". Or you could more proactively make such things impossible.
+
+False negatives could similarly come up if the maintenance programmer adds a special method "Antarctica_CreditDebit_address_is_really_Argentina". That doesn't start with "bill", so it doesn't get picked up by your reflective pattern match when it should.
+
+Like I said, I can't see any way around this except to have a UnitTest that looks at the format of every method name and makes sure that it fits the right pattern - and even then, this wouldn't help with the "billingsley_special_check" example. It's not clear to me exactly what the UnitTest could do to ensure that all future method names follow the right patterns.
+
+I really like that you're making the code simpler this way rather than brute-forcing it, that's pretty cool. But automating things needs to be bullet-proofed, and that's not happening here.
+
+You may think my examples are fanciful, but in their broad outlines, they are not. Weird things happen in the real world, and that's part of why software is so expensive and error prone. -- DougMerritt
+
+''In RubyLanguage, method_missing is only called if the attempt to find an explicitly defined method fails. So in the case of a later programmer adding a method named "billingsley_special_check", it would work correctly. method_missing would only be invoked if the method name wasn't explicitly defined, but in this case it has been.''
+
+''I'm not certain what could happen in the case of adding a method that '''doesn't''' match the naming convention, such as "Antarctica_CreditDebit_address_is_really_Argentina". Why should this be picked up by the reflective pattern? It sounds more complex than that, so probably the programmer that adds this should go ahead and write that four-line method.''
+
+''One of the issues that surfaces in this discussion, I think, is how clever you think your code can be before it gets unnecessarily difficult for a future programmer to maintain. I don't actually think this code is that clever: Keep in mind that all it does is create a bunch of accessor methods for report records, and that the report itself has a pretty narrow external interface. For more discussion, I elaborate on a less trivial use of reflection below. -- fh''
+
+I'm beginning to think that I was looking at your example all wrong from the start. The entire point is just to sort of automagically create accessors? 
+
+Well, go ahead and just access the fields directly, then! From within a new method of the class, of course, not from outside the class. Then you won't have to type in a bunch of accessors, nor have to use a MessageNotUnderstood proxy via reflection. It's not bad practice to avoid getters in the implementation of class methods themselves; it depends on the situation. -- DougMerritt
+
+-----
+''Isn't this just sloppy coding? I don't see this as particularly unique to either unit testing or reflection. The problem is a terribly sloppy test on "bill" - the test would fail whether the offending strings came from runtime reflection or from a source code repository. I think the premise - RuntimeReflectionIsaDesignSmell - is simply incorrect.''
+
+Well, no. Francis offered an example of using reflection. We discussed it at some length, and for the moment it appears that '''that particular use''' of reflection is flawed in a possibly unfixable way. It is not true that this can be fixed with a better test on "bill" nor by an improved unit test; go ahead and offer an improved solution if you believe otherwise.
+
+Does this constitute an argument against reflection as a whole? Of course not; we were only discussing a single example. -- DougMerritt
+
+''My point, and my objection, is that this example has nothing to do with reflection. The fact that the result doesn't work merely says that the string "bill" does not reliably imply a desire to invoke a billing method. It does NOT demonstrate that reflection is a design smell.''
+
+I'm not following you. His example uses reflection in one particular way, and you say it has nothing to do with reflection? In discussions, examples are often invoked to support or argue against something. Here we have an example of reflection that appears to be flawed, yet at first it seemed pretty cool. While it appeared cool, it was a small point of support for reflection. Finding it flawed eliminates it as a point of support for reflection. And this whole discussion is about whether it is a "smell", which was defined to be something like "suspicious", not "inherently bad", anyway.
+
+You're acting like I concluded that there was an inherent problem with reflection, but I don't think I said that, and this discussion doesn't demonstrate any such thing - but it '''could''' be taken as a point of evidence that using reflection is suspicious until proven valid. Maybe, maybe not, depending on one's tastes. Having concluded very little, it seems to me there's little to argue with. If you're a fan of reflection (and I still am, myself), go ahead and make some points in its favor. -- DougMerritt
+
+''I'm a fan of reflection (runtime or otherwise). Suppose I have a drawing program where the user is allowed to attempt to "plug in", at runtime, a variety of tools. The key here is that the drawing program, by construction, does not know at compile time (or even at launch time) what tool the user might attempt to plug in. The user might, for example, be able to construct the tool just before use. What the program '''does''' know is that if the tool has a "draw(start, finish)" method, where "start" and "finish" are points, then the program can invoke it. You can well imagine your own elaborations of the theme: the drawing program queries the tool to determine what methods it supports, constructs a palette to offer those methods to the user, then invokes those methods in response to user gestures. Runtime reflection is the easiest, most robust, most flexible way to accomplish this. Also, by the way, the rumored performance penalty doesn't matter, since adding, removing, or invoking a palette item already takes so long (because of the user) that the system overhead won't be noticed.''
+
+''I suggest that an appropriate "example" exemplifies the topic under consideration, not something different. Suppose I said "Automobile use is a design smell", and then proceeded to describe the terrible crash that took place after a drunk tried to drive home. Surely my example demonstrates the dangers of drunk driving, rather than the hazards of the automobile.'' [Bad counter-example. Many people do consider auto use to be bad. See CarFree.]
+
+You keep talking around the issue. Try tackling it head-on, e.g. "that example sucks, because obviously using string pattern matching like that with reflection is a terrible way to go, and could cause troubles even if used non-reflectively. Whereas a '''good''' reflective way to solve that problem would be...[fill in the blank here]" -- DougMerritt
+
+''That example sucks, because obviously using string pattern matching like that with reflection is a terrible way to go, and could cause troubles even if used non-reflectively. Whereas a '''good''' reflective way to solve that problem would be to provide a method called "billingMethods()" which, when called, answers a possibly empty list of methods that invoke billing. Provide a parallel method called "shippingMethods()" which, when called, answers a possibly empty list of methods that invoke shipping. The caller will invoke the methods from each list in order until one succeeds, and will complain if none succeed.''
+
+Heh. :-) Sounds great to me! Francis, does that approach suit your needs? -- DougMerritt
+
+''It would, but in this case it would be a small case of GoldPlating, I think. This modest report does not use RuntimeReflection so I can do interface discovery at runtime. It uses RuntimeReflection so I could save myself some keystrokes. I typed 10 lines of code instead of 100 lines of code. Anything more full-featured might not be worth the trouble. -- fh''
+-----
+For more discussion, I offer up a less trivial use of RuntimeReflection. I programmed the LafcadioFramework, an ObjectRelationalMapping tool for RubyLanguage and MySql. (Current plans are to extend this to cover other RDBMSs as well.) You define domain classes as children of D''''''omainObject, and D''''''omainObject gives you use of accessors to set attributes:
+
+ user.fname = 'John'
+ user.lname = 'Doe'
+ user.email = "john.doe@email.com"
+
+To use methods like "fname" and "fname=" (this is how Ruby internally describes the getter and setter) you don't have to explicitly define these methods, since they're covered in D''''''omainObject.method_missing. The pseudocode looks a bit like this:
+
+ def D''''''omainObject.method_missing (methodSymbol)
+   do a string match and figure out if it's a setter or getter
+   if it's a setter, chop off the trailing "=" to get the field name
+   find the field object that corresponds to the field name
+   if there's a match
+     either set the value or return it
+     otherwise pass the method up to the superclass (which will probably raise
+                                                     an exception)
+ end
+ 
+Now, again, there're just sloppy string matches here. But I've used this framework now on a number of projects and this isn't causing me any problems. What do you guys think? Does this sound like an example of GoodRuntimeReflection, or RuntimeReflectionGoneTerriblyWrong? -- fh
+----
+"Runtime Reflection", as provided by Java, is a pig and probably *should* be avoided when possible. On the other hand, there are tasks that are often greatly simplified when it is present. I don't see the dichotomy between "code generation" and "runtime reflection" -- in my view, they are both part of the same idea. I use reflection to see what's there, I use generation to react. Let me offer an example.
+
+Suppose I want to ensure, for some broadly used class of mutators, that every mutator includes a call to do something (perhaps validation) prior to the change, then the change, then a call to something (perhaps change notification) after the call. For an accessor like #foobar, I want something like this:
+
+ public void foobar(Mumble aFoobarValue) {
+   foobarPreStore(aFoobarValue);
+   foobarStore(aFoobarValue);
+   foobarPostStore(aFoobarValue);
+ }
+
+I've left off the housekeeping details for simplicity.
+
+Thus, I want to make sure that I wrap a "preStore" method and a "postStore" method around every mutator call.
+
+I suggest that I use a code generator to emit this, where I supply the template and determine the name of the mutator at the time the generator is invoked.
+
+*Where do I get the name of the mutator?
+*How do I handle mutators defined in classes I am extending?
+
+I find that reflection (runtime or not) is often the best answer, and I argue that this is '''not''' a "design smell".
+
+''I think that AspectOrientedProgramming solves these problems quite elegantly. And if you're not willing to take the aspect route, then you can make an action out of all the store-operations and decorate them with preStore/postStore functionality. Of course, depending on your program, this might be OverEngineering.''
+
+I agree that AOJ is an elegant solution, or will be when it's ready for prime time. I don't know what you mean by "make an action ...". In particular, I want to denote the desired structure (for all mutators) and property/member name OnceAndOnlyOnce. For example, if I change the name of a mutator from "foobar" to "coolFoobar", I want to make the change in precisely ONE place. AspectOrientedProgramming surely attempts to do the right thing - I'm not sure about the others. In the meantime, today I use a combination of reflection and generation to do this when I have to use Java. I would add that this kind of code is ''much'' cleaner in Smalltalk (because of the cleaner metastructure).
+
+I love that phrase "ready for prime time". How long does that take anyhow?
+----
+I have always considered runtime reflection too deep in the bag of tricks to use on a serious project. I keep being tempted, and then find a simpler, more limited way that doesn't need reflection. However, I finally ran into a problem where I was convinced I needed reflection. I programmed it in Ruby, and now I find that when I get an error, it can be a programming error or a data entry error, and it all looks the same in terms of how the error manifests. I can't see how to get rid of the reflection this time, but I sure wouldn't mind it; in other words, I do think that generally speaking RuntimeReflectionIsaDesignSmell, and this use of it is convincing me more of it.
+
+The particular problem is this: I have in mind to use a set of tables to build my web site, one table per file. I have in mind two sorts of files. One sort describes a 'kind of' thing that I own, and is a catalog of those; the other sort describes a single web page, and references things from either sort (catalog items or pages). The reflection is needed because there is no predefined set of 'things' I could have catalogs of. I currently envisage catalogs of articles and books, but also recently have found that cartoons, mp3 files, talks on ppt, talks on video, work samples, could all be good things to have catalogs of. I'd like the set of catalogs to be open-ended. E.g., a self-describing catalog file might have an entry saying "name=Book", and so the program creates a class called Book. The column names in the catalog are instance variable names (author, year, ISBN, etc), and will be different across the catalogs.
+
+The problem is that a typo in the column name wreaks havoc, and is generally indistinguishable from a program error. This means that when I update the tables, any typo in the data entry can cause very different looking error behavior in the program (which, rather by definition, can't tell what is inconsistency from what is deliberately different). -- AlistairCockburn
+
+''This is why your class shape should define the tables for you, automatically. This is one reason I don't like RubyOnRails, which attempts to be DRY but fails. They take the non-OO route of making you define your relational schema first and then have a framework to make objects reflect on that structure when it should be the other way around. Just a thought. -- JeffPanici''

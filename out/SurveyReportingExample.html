@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Survey Reporting Example
+      </h1>
+      <p>
+        This example is taken from work that I did for a web portal company. At first people tried to do this all in SQL but when I got there I found it really gnarly and impossible to maintain so then I ended up doing it in Java with object-relational mapping. If there were methods I could've used to make this work manageable in SQL I'd be interested in hearing about it.
+      </p>
+      <p>
+        This site was partnering with consumer products companies to funnel their users towards surveys and then reporting the results to the companies. My job was to query an Oracle database and generate these reports.
+      </p>
+      <p>
+        First, the schema looked something like this:
+      </p>
+      <code>
+        CLIENTS<br/>
+        |<br/>
+        |<br/>
+        PRODUCTS<br/>
+        |<br/>
+        |<br/>
+        SURVEYS -------- USER_SURVEYS ------- USERS -------- AGE<br/>
+        |                                    | |<br/>
+        |                                    | |<br/>
+        QUESTIONS                               | +--------- OCCUPATION<br/>
+        |                                    |<br/>
+        |                                    |<br/>
+        ANSWERS -------- USER_ANSWERS ----------+<br/>
+      </code>
+      <p>
+        Clients (like L'Oreal) could have multiple products (L'Oreal Hair Coloring Treatment) and each product had one or more survey. Each survey had multiple questions, and each question had multiple answers.
+      </p>
+      <p>
+        USER_SURVEYS and USER_ANSWERS are mapping tables to figure out which users filled out which surveys, and when they did fill out a survey, which answers they chose. The tables like AGE and OCCUPATION were small tables that just had a key and a string value: 1: 16-21, 2: 22-25, etc.
+      </p>
+      <p>
+        The clients were very interested in getting survey responses keyed up to demographic information. So you'd get user stories that went something like: For each one of a client's products, generate individual pages for each survey response, with answers keyed up to demo information. Pages might look like:
+      </p>
+      <code>
+        Q1. How many times in the last year have you colored your hair?<br/>
+      </code>
+      <code>
+        AGE                                       OCCUPATION<br/>
+        ANSWER            16-21  22-25  26-35  36-55  56 or older   Student  ...<br/>
+        Never             1  1%  0  0%  1  1%  4  4%  3  3%<br/>
+      </code>
+      <ol>
+        <li>
+           time            4  4%  3  3%  2  2%  6  5%  1  1%
+        </li>
+        <li>
+           - 4 times       7  6%  9  8%  2  2%  1  1%  7  6%
+        </li>
+        <li>
+           - 8 times       5  5%  4  4%  8  7%  5  5%  3  3%
+        </li>
+        <li>
+           or more times  1  1%  3  3%  2  2%  3  3%  2  2%
+        </li>
+      </ol>
+      <code>
+        No answer         0  0%  0  0%  2  2%  1  1%  0  0%<br/>
+      </code>
+      <code>
+        Total      90                             Total      ...<br/>
+        Mean       3.6                            Mean       ...<br/>
+        Std. dev.  2.4                            Std. dev.  ...<br/>
+      </code>
+      <p>
+        Note the individual percentages are compared to the entire number of responses (90), not the number of responses for all respondents in that demographic category or the number of responses for all respondents who chose that answer. Also note that "No answer" isn't an answer in the ANSWERS table; it's represented by the fact that the user completed the survey (they have a record in the USER_SURVEYS table) but they have no USER_ANSWERS record for any answer related to this question.
+      </p>
+      <p>
+        Like I said, I moved the code from being one SQL statement to being lots of OO code. How would a database-centric person do it? -- francis
+      </p>
+      <hr/>
+      <p>
+        First, let me make sure we have a decent schema to work with:
+      </p>
+      <code>
+        table: surveys<br/>
+        ----------------<br/>
+        surveyID<br/>
+        surveyTitle<br/>
+        productRef<br/>
+      </code>
+      <code>
+        table: questions<br/>
+        ----------------<br/>
+        questionID<br/>
+        surveyRef   (foreign key to survey table)<br/>
+        questionText<br/>
+      </code>
+      <code>
+        table: answers<br/>
+        --------------<br/>
+        ansID<br/>
+        questionRef   <br/>
+        ansText<br/>
+        centralValue   (used to represent mean if range given)<br/>
+      </code>
+      <code>
+        table: responses<br/>
+        ----------------<br/>
+        responseID<br/>
+        userRef<br/>
+        questionRef   (this is perhaps redundant)<br/>
+        ansRef<br/>
+      </code>
+      <code>
+        tables: users<br/>
+        -------------<br/>
+        userID<br/>
+        userAge<br/>
+        userOccupation<br/>
+      </code>
+      <p>
+        I am still working on a relational solution because I just got a new machine and have not moved all my software over yet, but I would note that you can get the answer by having multi-nested procedural loops with one loop per entity. You may need to make 2 passes for one of the inner loops to collect the summary statistics to use in the second pass. Thus, if SQL got too messy or two confusing, then why not procedural loops instead? You make it sound like that OO is the only alternative to relational.
+      </p>
+      <p>
+        <em>Personally, I'd be more interested in a DB-centric solution than a procedural-centric solution, simply because I know enough about procedural programming to be fairly certain that I almost always prefer OO. That is, if you try to sell me procedural over OO you've got a pretty tough sell. I'm not too hot on a DB-centric solution but I can imagine that perhaps there are some advanced DB features that I'm not familiar with that might change my mind on the subject. But that's just me; perhaps if you post a solution that's a blend of SQL & procedural then others will find it instructive. -- francis</em>
+      </p>
+      <p>
+        But I am curious right now as to why you think an OO solution would be better than a mostly procedural loop based solution. For the parts of projects that I cannot find a decent relational solution for, I then turn to procedural (I am not saying this is such a case yet). First I want to understand your output requirements. Here is the reporting nesting as I understand it:
+      </p>
+      <code>
+        for each product<br/>
+        for each question<br/>
+        for each occupation (including all, and summary at)<br/>
+        for each age-group<br/>
+      </code>
+      <p>
+        Note that I generally avoid making the internal data structures "shaped" like the output in any way because output requirements often expand and change in these situations. Some say this is anti-<a href="YagNi.html">YagNi</a>, but I don't always agree with pure <a href="YagNi.html">YagNi</a>. I would probably have a routine/module with a name like ReportX which would contain all this looping (if procedural route used). I suspect an OO solution would "delegate" various parts of this reporting process to each of the entities involved. I see no net benefits in such.
+      </p>
+      <p>
+        <em>The resulting files should be output as a tab-delimited text file so the customer can import them into Excel. </em>
+      </p>
+      <p>
+        But it is not a perfect "grid" shape. It has the count and percentage under the same age group, for example.
+      </p>
+      <p>
+        <em>Are you talking about the Total, Mean, and Std. Dev. cells at the bottom? </em>
+      </p>
+      <p>
+        No. In the example above, the "36-55" group takes up two cells because below it are the quantity and percentage.
+      </p>
+      <p>
+        <em>"36-55" should have two tabs after it to signify that it takes up two cells. The marketing intern will do a Merge-And-Center in </em><a href="MicrosoftExcel.html">MicrosoftExcel</a> by hand. (Not a good job, that marketing internship.)<em></em>
+      </p>
+      <p>
+        <em>The idea was that there would be some marketing intern who would spend a few minutes importing each file into Excel and then doing a little futzing -- merging cells, changing fonts, etc. -- to make it look presentable for the client. The code simply needs to insert the right number of tabs.</em>
+      </p>
+      <p>
+        <em>Also, it looks from your pseudo-code above that I might not have been clear enough on my requirements: Occupation and Age group shouldn't be nested inside of one another. They're largely independent on this report, but the customer wants them in the same file.</em>
+      </p>
+      <p>
+        I think I need to see a bit more of the output to get a feel for this.
+      </p>
+      <p>
+        <em>I mean that you have the Age breakdown section, which will include the answers and ages of all 90 people who responded to the question. Then you'll have the Occupation breakdown which will include the answers and occupations of all 90 people who responded to the question. The two are side-by-side on the same file, but their data isn't dependent on one another. The customer doesn't care, for example, about finding homemakers from the ages of 22-25.</em>
+      </p>
+      <p>
+        So every question will have an "age grid" and an "occupation grid" for each product? Is there any relationship between "product" and "survey"?
+      </p>
+      <p>
+        <em>Yes, there's an age grid and an occupation for each product. And, yes, there's a relationship between product and survey: Each survey is aimed at finding information pertinent to one product. They're product-specific surveys, as opposed to a more generalized lifestyle poll.</em>
+      </p>
+      <p>
+        How about you show 3 example output sections or enough to show the pattern. They don't have to be pretty. The saying that a picture is worth a thousand words is generally true.
+      </p>
+      <hr/>
+      <p>
+        I have found that if the output "shape" does not match the table shape in the database, than an intermediate structure, preferrably a "work table", can be used to provide the indirection needed for output formatting. This intermediate table would look something like this:
+      </p>
+      <code>
+        table: tempData<br/>
+        ---------------<br/>
+        factorA<br/>
+        factorB<br/>
+        factorC<br/>
+        ....<br/>
+        theValue<br/>
+      </code>
+      <p>
+        The secret is one value per row. In this case, the factors would be things like questionID, personID, productID, etc. Then have loops such as:
+      </p>
+      <code>
+        for each a in factorA_list<br/>
+        print("<tr>")<br/>
+        for each b in factorB_list<br/>
+        sql = stringValues("select theValue from tempdata <br/>
+        where factorA = %1 and factorB = %2", a, b)<br/>
+        useValue = queryForValue(sql)  // get only first result cell<br/>
+        print(stringValues("<td>%1</td>", useValue))<br/>
+        end-for // b<br/>
+        print("</tr>")<br/>
+        end-for // a<br/>
+      </code>
+      <p>
+        This shows a 2-factor output. If you don't have temporary tables in your language or the implementation is too slow, then associative arrays (hash maps) can be used with some fiddling. Instead of using nested loops, sometimes you can just use the Order By clause.
+      </p>
+      <hr/>
+      <p>
+        <em>I didn't do it this way back then, but if I did it today I might use a templating-style language like Ruby .rhtml files in order to manage a lot of the outputting details, since, as you say, output requirements can change quickly. So I might have a Ruby .rhtml template file that looks like:</em>
+      </p>
+      <code>
+        <%<br/>
+        question = objectStore.getQuestion questionId<br/>
+        report = SurveyReport.new (question)<br/>
+        %><br/>
+        Q<%= question.order %>. <%= question.questionText %><br/>
+      </code>
+      <code>
+        \t<%<br/>
+        demographicCategories.each { |demoCat|<br/>
+        print demoCat.categoryName<br/>
+        print ("\t" * demoCat.options.size)<br/>
+        }<br/>
+        %><br/>
+        ANSWER\t<%<br/>
+        demographicCategories.each { |demoCat|<br/>
+        demoCat.options.each { |demoOption|<br/>
+        print demoOption.optionName + "\t"<br/>
+        }<br/>
+        }<br/>
+        %><br/>
+        <%<br/>
+        answers.each { |answer|<br/>
+        print answer.answerName, "\t"<br/>
+        demographicCategories.each { |demoCat|<br/>
+        demoCat.options.each { |demoOption|<br/>
+        cell = report.cell (answer, demoOption)<br/>
+        print cell.count + "  " + cell.percentage + "%"<br/>
+        print "\t"<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+        %><br/>
+      </code>
+      <p>
+        <em>Hm. Maybe that's getting side-tracked on templating styles and formatting. (I view this sort of task as being similar to HTML generation; you use a templating language to try to separate out the logic from the presentation, though sometimes that's harder than it sounds.)</em>
+      </p>
+      <p>
+        <em>Anyhow, one possibly useful feature of a setup like this is that if I delegate the data collecting and calculations to a SurveyReport class then it's possible for me to run unit-tests on the SurveyReport. I find it's easier to test OO code than procedural or SQL. -- francis</em>
+      </p>
+      <p>
+        Everybody will probably say that they find it easier in their favorite paradigm. 
+      </p>
+      <p>
+        <em>True. And if you're interested in having a discussion at all you might even ask me my reasons why. -- francis</em>
+      </p>
+      <p>
+        That is implied.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryExample.html">CategoryExample</a>
+      </p>
+    </div>
+  </body>
+</html>

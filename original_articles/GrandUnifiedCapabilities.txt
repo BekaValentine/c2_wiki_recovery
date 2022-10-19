@@ -1,0 +1,157 @@
+Hopefully soon, the Standard Model.
+
+Advantages: embodies OrthogonalSecurity, FineGrainedHistory, BidirectionalCapabilities
+
+the graph is made of nodes and directed edges
+* edges and nodes have version numbers
+* nodes keep track of all their past versions
+* edges keep track of the span of node versions they provide access for
+* edges are named in their source node
+* edges keep track of their partners (the name of the edge in the target which points back to the source)
+* there are two types of edges, full and null. fulls are object references, nulls are integer values.
+* the namespaces for full and null edges are disjoint in every node
+* the namespace for null edges follows a rigid syntax (integers only)
+* edges have standard trinary PermissionFlags corresponding to the 6 fundamental operations on the graph
+** read (send a message through an edge, read the names of #all full edges in a node, read the stats on a full edge #name, read the contents of a null node #integer-integer)
+** write (replace an edge at a given name)
+** delete (delete an edge)
+** create (create an edge to another node, create an edge-node)
+** watch (spy on operations performed by this edge)
+** override (change permissions on an edge's partner)
+* edges have extended trinary PermissionFlags
+
+CONSTRAINT:
+permissions for null edges are all absent and unchangeable, so that
+* null edges have all been optimized out of existence in the implementation
+
+message sends occur on edge names and versions
+
+on every message send through an edge,
+* check edge's override OR read is set, if so then GO
+* check if edge's read absent then check message's read
+* check if edge's override absent then check message's override
+* check if message's override AND read are unset, if so then NO GO
+* if the permission check failed then the message is returned
+* if the permission check succeeds then the message proceeds
+* if the message proceeds ''through'' the edge to its node then,
+* the message's permissions are modulated (modified by the edge's) in the following manner,
+** for each flag, if the edge's flag is set or unset then that is the new value of the message's flag
+** if the edge's flag is absent then the message retains its old value for that flag
+
+for every permission flag change operation on an edge,
+* modulate the message's permission flags then,
+* if override is set in the message's new permission flags then the operation proceeds
+
+for every permission flag change operation on an edge's partner,
+* if the message has override set and the edge's partner has override unset then the operation proceeds
+
+for every delete operation,
+* if you can change the perms (either through front or back) then you can close (delete) that edge and remove its partner from the node that contains it (which you must've had override permission for)
+
+for every operation on a node or edge
+* check if message's override OR the appropriate flag in the edge are set, if so then
+* then proceed with operation
+* update appropriate timestamps and stats on operation success
+
+(This means that you can change the permissions of edges which have override OFF so long as the message itself managed to preserve override ON by the time it reached that particular edge. This is necessary in order to guarantee that someone somewhere can always delete any particular edge.)
+
+additionally, for every modification
+* increment self's version number then
+** if operation was on edge (perm change) then create a new edge in the source node to replace the current one (this is a modification of the source node which does cascade)
+** if operation was on node (creation, writing, deletion) then update the partners of all edges to provide access to new version (this does not cascade further)
+** delay updating the partner of an edge until a message send through it asks for #latest or other unavailable version, perform spot check of the edge's liveness at that time
+
+timestamps for edges:
+* self created
+* self deleted
+* self read
+* self modified (perms changed)
+* self spied on
+
+timestamps for nodes:
+* self created
+* self deleted
+* self read
+* children (edges with override set or absent) modified (created, replaced, deleted)
+* parents (edges with override unset) modified (created, replaced, deleted)
+* self spied on
+
+statistics for edges:
+* self read
+* self modified (perms changed)
+* self spied on
+
+statistics for nodes:
+* size
+* self read
+* children modified (created, written, deleted)
+* parents modified (created, written, deleted)
+* self modified (perms changed)
+* self spied on
+
+CONSTRAINT:
+for frequently updated and/or very small objects,
+* all timestamps = current timestamp
+* all stats = default value
+* all versions = 1
+* extended permissions do not exist
+
+CONSTRAINT:
+absent/not_absent values for watch, delete, create, write and read are identical. therefore,
+* only need [rest = absent/not_absent, override = absent/not_absent]
+* reduces it down to the almighty 8 bits.
+
+IMPLEMENTATION DETAILS
+can store the flags using 2 bits each, for 12 bits total
+
+[watch, delete, create, write, read, override = set/unset][watch, delete, create, write, read, override = absent/not_absent]
+
+when absent, the corresponding flag must be ZEROed
+
+precompute all significant alternatives
+use the perm blocks as numbers into an array of possibilities which gives go or no go
+
+table conditioned on 6 bits so it's 64 states
+
+of course, this doesn't take into account extended permissions
+
+
+''I'm working hard on this, but it's remaining "unconnected" in my head - I'm having trouble anchoring it to what I think it's trying to accomplish. Perhaps a very specific, very small example of the problem it's solving and how it solves it would let me get a toe-hold.''
+
+Study hints:
+* Forget anything to do with versioning. Forget the distinction between fulls and nulls. Nulls are only here to show that I can optimize away the security when it's too expensive and completely useless.
+* Forget the distinctions between read, write, delete, and so on. Consider first how override affects message sends ''only''.
+* See the UserDomain NameSpace pattern emerging out of override's effect on message sends.
+* Override_set is a pathologically special case. Necessary to the model but not to your thinking about it. Just assume that a message send starts with all permission flags set by its sender.
+* With a couple of constraints forbidding pathological and unstable cases like override_set/override_set and cycles, you can assign override_set as the downwards direction, making the entire graph into a 3D lattice.
+* override_absent/override_unset goes downwards from the absent side to the unset side. unset/unset stays at the same level.
+* The model doesn't forbid such because they're immediately destroyed by the first user smart enough to take advantage of the idiot who created them, and actually preventing them is respectively too inelegant and way too expensive. So IN PRACTICE, those constraints will always apply and you can always see the system as a lattice.
+* Convince yourself that being able to change your partner edge's permissions means you can always change your own using a two-step process.
+* ?
+
+The point of this model is to make security practical to human users. Security is a difficult enough topic. Explaining why a particular abstract model of security is more practical for human beings than another ....
+
+''I appreciate that, and I'm trying to understand what you've described here. I think I'm missing some context. Maybe this is a case of "You can't learn something until you already almost know it".''
+
+[It would probably help immensely if you started out with a description of what each vertex and edge represents. You describe the data structures so abstractly that I can't tell what they're supposed to model. And ... what's a "null edge"?]
+
+In Smalltalk, a full edge is an object reference and a null edge is a byte pointer. In a filesystem, a full edge is an inode and a null edge is an index into a file's contents (eg, 534th byte).
+
+What are edges and nodes supposed to model? They're supposed to model EVERYTHING. The above model is the fundamental basis for implementing, handling and managing the security in ANY object-oriented system. It's caps based security exposed to normal users in a way that they will understand.
+
+So for instance, if you modified Smalltalk references so they were capabilities as per the above with all permissions absent, and you modified the object engine so it followed the above semantics on message sends, and you had it start off with all permission flags set at the beginning of message sends, then the above would be an exact model of that particular Smalltalk implementation.
+
+What would be the point though? The point would be that as soon as anyone threw in a couple of capabilities (Smalltalk object references) with override_UNset, then anyone making use of these capabilities would slam right into a brick wall of permissions, and then slam into another one, and then another one, and another, and however many the owners of those objects chose to put up. IOW, everything would function exactly as always until the TRIVIAL operation of switching off a couple of permission flags here and there.
+
+Going the other direction, it would also be possible to lobotomize the model so that it represented the actual Smalltalks. But THAT would have no point.
+
+So what can you do with the above security model? Everything that has to do with access security, everything that doesn't require cryptography (a topic that's been done to death in research and which is orthogonal to capabilities). Without any need for any "higher-level abstractions" or "managers", because it would all be built in at a low level. Except of course for things that should be higher-level abstractions like UserDomain''''''s. -- rk
+
+----
+I seem some similarities between this and Turing's B-Type unorganized network.
+
+----
+
+See also GeneralCapabilityModel
+----
+HasWantedPages

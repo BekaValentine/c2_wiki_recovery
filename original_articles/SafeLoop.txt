@@ -1,0 +1,148 @@
+Pattern: "Safe Loop"
+
+'''Problem'''
+
+	* Need to complete critical processing inside control loop
+'''Forces'''
+
+	* Errors can cause you to bomb out of loop
+	* Critical processing therefore not completed
+'''Solution'''
+
+	* Trap errors inside loop via ExceptionHandling.
+'''Consequences'''
+
+''Pros''
+		* Fault tolerance allows most iterations to be processed.
+''Cons''
+		* May waste resources on multiple errors if error global to processing instead of specific to iteration.
+
+'''Relationships'''
+
+	* Combine with Chain of Responsibility to handle overflow of errors.
+'''Code Example'''
+  for i in 1..n loop -- in Ada
+        declare CRITICAL_PROCESSING :
+        -- do critical processing
+        exception
+        -- handle errors within this iteration
+        end CRITICAL_PROCESSING ;
+  end loop;
+Source: Software Components in Ada by Grady Booch
+
+----
+For a pattern which covers more general cases, see BuckStopsHere. 
+----
+
+'''Discussion'''
+
+''Can you give a small, interesting example of this?''
+
+A:
+  Enumeration en = mailbox.getMessages();
+  while (en.hasMoreElements()) {
+        ((Message)en.nextElement()).process();
+  }
+----
+
+I HaveThisPattern too:
+In the SyncWare "lazy updated distributed database" software written for SalesKit corp, we did...
+  for each of the change requests from the remote...
+        try {
+        Process the client's change request.
+        } catch (types) {
+        Do error reporting and set-aside for later recovery.
+        }
+I also HaveThisPattern on a rail shipment tracking system...
+  for each update to an operating train schedule we receive...
+        try {
+        Update all shipments listed as being on that train.
+                (...and trigger proactive shipment management events.)
+        } catch (types) {
+        Do error reporting.
+        }
+Of course, things get annoying when your relational database server goes down, causing >all< transactions to fail.
+-- JeffGrigg
+
+----
+----
+
+Really an idiom. But I posted it for feedback. For more info, see ProtoPattern. Discussion died here and should be revived I'll place a link to this from that site as well before it gets deleted.  RK-CSC
+
+----
+
+To solve a similar problem, I defined an ExceptionCollection whose responsibilities include gathering thrown exceptions and then throwing an exception at the end of the loop.
+
+Something like
+ public interface ExceptionCollection {
+        public void addException(Exception e);
+        public void throwExceptionIfNotEmpty() throws SomeOtherException;
+ }
+Client code:
+ for (Iterator atX = collection.iterator(); atX.hasNext();) {
+        try {
+        operationThatThrowsException();
+        } catch (Exception e) {
+        exceptionCollection.addException(e);
+        }
+ }
+ exceptionCollection.throwExceptionIfNotEmpty();
+ continueNormalProcessing()
+----
+
+This doesn't give me an Ah-ha moment. To my mind an exception is something that happens in exceptional circumstances (server gone away, database down, out of resources, etc). If you have so many exceptional circumstances that you want to plough on regardless and then have to collect them all together to pass back to the caller, maybe they're not that exceptional after all? Maybe they're just error return values and should be handled that way?
+
+Perhaps the pattern statement needs more forces: when is it appropriate to use this idiom rather than redesigning the loop contents to not throw exceptions quite as vigorously? Even if the exception comes from third-party code that we're stuck with, I'd still give consideration to wrapping it in something to show the intent (that we're not using it in the fashion its author intended) more clearly.
+
+Or am I barking mad? Is it normal to UseExceptionsAsErrorReturns?
+-- DanBarlow
+
+I've used this idiom for some code that processed records in a database. When an exception occurred, I didn't want to stop the whole program - just stop processing that record and move on to the next one. But you knew that. The question is, "Ok, so why use exceptions, then?" The answer is, because the errors occur ''very deep'' relative to the outer loop, and exceptions avoid having to have error checks in all of the code between the loop and the code that discovered the error. You're right about there being no "aha" moment... this idiom will be reinvented without much fanfare by anyone doing much with exceptions. -- WayneConrad
+
+----
+
+The keyword in the forces for the above idiom is ''Critical processing.'' In an embedded system where somebody's safety or well-being may depend upon a fault tolerant system which doesn't crash with every little error that crops up it is important to identify areas of ''Critical processing'' which must take place, even if it is not completed in a perfect, error-free manner. Where such forces exist, it is likely that your program will also require exception handling to be pervasive within the system (e.g., an exception block covering the scope of each and every function/procedure in the system).
+
+----
+
+For me, the key points are (a) the iterations of the loop are independent, so that the failure of one does not affect the success of others; (b) the failures can be wholly handled at the point of the loop.
+
+The ''exceptionCollection.throwExceptionIfNotEmpty()'' example does not fit (b) and I feel really uncomfortable with it.
+
+There are plenty of examples of (a) and (b). A web-server is one. If one HTTP request fails, the next might succeed, so each request should have its own exception handler. A text editor is another. If we can't do one user command, eg a find-and-replace, eg due to being out of memory, we should still process other commands, eg a delete (to reduce memory consumption) or a save (to preserve data).
+
+I don't think this means exception handling must be pervasive. One needs to make sure that transactions are completed or rolled back, and that (eg) the text editor doesn't get its data corrupted, but there are idioms for things like that (eg ResourceAcquisitionIsInitialization). It's just that, instead of handling exceptions at the top-most level, ie around the loop, they are now handled one level down, ie inside the loop.
+
+Or have I completely misunderstood the idiom? -- DaveHarris
+
+----
+
+Yes, both of the "I HaveThisPattern" examples I gave above are processing a series of "independent transactions" per DaveHarris' "point (a)" above:
+The failure of one transaction typically '''does not''' indicate anything about the success or failure that will occur in the next transaction.
+These transactions don't depend on each other.
+In the rail system, this was even more pronounced:
+If we failed to process a status update for a train, it will only be a matter of time before we receive another status update for the train, and new data always overwrote the old in that system.
+(So if the new transaction succeeded, then our data would be correct and up-to-date, in spite of the first transaction's failure.)
+
+I tend to resort to putting a big catch statement at the highest level of the program that catches every conceivable exception and tries some recovery action.
+I do this because, when working with a relational database or with network communication, there's no telling where (in the program) the database or cross-network commands may fail, and there's no limit as to the creative new ways they'll find to fail. ;->
+
+Ideally, you'd want to separate the exceptions into those that will cause all future transactions to fail, and those that won't.
+But it's '''''really hard''''' to do that.
+Having the database or network go down will cause all the other transactions to fail.
+'''''BUT,''''' running out of extents in an Oracle table
+'''''may or may not'''''
+cause other transactions to fail, depending on the table and how the various transactions use it.
+Violating a unique key constraint on an Oracle table may be an isolated incident, or it may also cause all following transactions to fail; it depends a lot on how the application is structured, and the particular tables involved.
+-- JeffGrigg
+----
+To JeffGrigg:
+
+Thanx for the repeated feedback. Out of curiosity, what was the specific name of the rail shipment tracking system in which SafeLoop was used? It will give me something to write in the "Known Uses" slot of the pattern definition for this idiom.
+
+-- BobKauffmann
+
+PS-For the "big catch statement at the highest level of the program that catches every conceivable exception" were you referring to the BuckStopsHere pattern? It's essentially a superset of SafeLoop.
+ 
+----
+See Also: SeparateIoFromCalculation

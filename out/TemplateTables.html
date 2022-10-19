@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Template Tables
+      </h1>
+      <p>
+        This is an <a href="SqlPattern.html">SqlPattern</a>.
+      </p>
+      <hr/>
+      <p>
+        <strong>Intent</strong>
+        Create small template tables, that aid you to build the needed result set using SQL. These tables are often included in the <em>from</em> clause with <a href="CartesianProduct.html">CartesianProduct</a> and participate in complex additional restrictions in the <em>where</em> clause.
+      </p>
+      <hr/>
+      <p>
+        <strong>Context</strong>
+        You try to build a nontrivial resultset, involving relationships between records 'near' to each other, or need to generate rows that are not in the database from the exisiting ones using some rules. You seem to need a variable number of SelfJoins. 
+      </p>
+      <hr/>
+      <p>
+        <strong>Forces</strong>
+      </p>
+      <ul>
+        <li>
+          You can't express a variable number of SelfJoins reasonably in Sql (although a possible approach is to apply <a href="SliceResultVertically.html">SliceResultVertically</a> iteratively)
+        </li>
+        <li>
+          All the data you need are in the database, but you can't figure out the relational operations that will give the desired results.
+        </li>
+        <li>
+          Client-side processing is ineffective as you need to work on massive data
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        <strong>Solution</strong>
+      </p>
+      <p>
+        Create a small additional table (most often containing a single column with some integer numbers) and produce the <a href="CartesianProduct.html">CartesianProduct</a> with your table. Use the result to compute the needed fields and filter/group as necessary (<a href="ThinkSqlAsConstraintSatisfaction.html">ThinkSqlAsConstraintSatisfaction</a>).
+      </p>
+      <hr/>
+      <p>
+        <strong>Resulting context</strong>
+      </p>
+      <p>
+        The additional columns you get help to make the fields you need in the result. Having several copies of a row from the original table in the result set makes possible grouping of every row with its near ones (the predcessors and/or successors in an ordering), or to 'generate' new rows from a single existing row.
+      </p>
+      <hr/>
+      <p>
+        <strong>Example</strong>
+      </p>
+      <p>
+        For example, in order to calculate WeightedMovingAverage over the table <em>data_sequence</em>:
+      </p>
+      <code>
+        Idx        Value<br/>
+        ----------------------<br/>
+        ....<br/>
+      </code>
+      <ol>
+        <li>
+                   234.5
+        </li>
+        <li>
+                   245.8
+        </li>
+        <li>
+                   251.5
+        </li>
+        <li>
+                   250.3
+        </li>
+        <li>
+                   231.0
+        </li>
+        <li>
+                   252.6
+        </li>
+      </ol>
+      <code>
+        .....<br/>
+      </code>
+      <p>
+        you create table <em>moving_average_mask</em>:
+      </p>
+      <code>
+        Seq       Weight<br/>
+        -----------------------<br/>
+        -1        0.25<br/>
+      </code>
+      <ol>
+        <li>
+                  0.5
+        </li>
+        <li>
+                  0.25
+        </li>
+      </ol>
+      <p>
+        and execute SQL statement:
+      </p>
+      <code>
+        select (moving_average_mask.Seq + data_sequence.Idx), sum(data_sequence.Value * moving_average_mask.Weight)<br/>
+        from data_sequence, moving_average_mask<br/>
+        group by (moving_average_mask.Seq + data_sequence.Idx)<br/>
+        having sum(moving_average_mask.Weight)=1<br/>
+      </code>
+      <p>
+        The result of the <a href="CartesianProduct.html">CartesianProduct</a> is every row from <em>data_sequence</em> replicated three times, each copy paired with a row from <em>moving_average_mask</em>:
+      </p>
+      <code>
+        Idx        Value      Seq       Weight<br/>
+        ------------------------------------------<br/>
+        ...<br/>
+      </code>
+      <ol>
+        <li>
+                   245.8       -1         0.25
+        </li>
+        <li>
+                   245.8        0         0.5
+        </li>
+        <li>
+                   245.8        1         0.25
+        </li>
+        <li>
+                   251.5       -1         0.25
+        </li>
+        <li>
+                   251.5        0         0.5
+        </li>
+        <li>
+                   251.5        1         0.25
+        </li>
+        <li>
+                   250.3       -1         0.25
+        </li>
+        <li>
+                   250.3        0         0.5
+        </li>
+        <li>
+                   250.3        1         0.25
+        </li>
+      </ol>
+      <code>
+        ...<br/>
+      </code>
+      <p>
+        Every row is grouped with its neighbours as defined by <em>Idx</em> (usually this is a date column):
+      </p>
+      <code>
+        Idx        Value      Seq       Weight<br/>
+        ------------------------------------------<br/>
+        ...<br/>
+      </code>
+      <ol>
+        <li>
+                   245.8       -1         0.25
+        </li>
+        <li>
+                   251.5        0         0.5
+        </li>
+        <li>
+                   250.3        1         0.25
+        </li>
+      </ol>
+      <code>
+        ...<br/>
+      </code>
+      <p>
+        Then the average is easy to calculate. <em>Having</em> clause strips both ends that do not have preceding or succeeding entries in their groups.
+      </p>
+      <hr/>
+      <p>
+        Another example is if you have price quotes in time, and want to use a quote for day T for day T-1, T-2, up to T-n if you miss the quotes for these days in the database. You create a table with integers 0..n, make <a href="CartesianProduct.html">CartesianProduct</a>, use <em>dateadd(T_column,num)</em> instead of T_column and filter out the extra rows.
+      </p>
+      <p>
+        -- <a href="NikolaToshev.html">NikolaToshev</a>
+      </p>
+      <p>
+        <em>I have this pattern. I rediscover it every couple of years. Thanks for writing it down.</em>
+      </p>
+    </div>
+  </body>
+</html>

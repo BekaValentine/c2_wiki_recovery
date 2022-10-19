@@ -1,0 +1,157 @@
+''The name of this pattern comes from its similarity to protocol tunneling (in networking) and quantum tunneling (in particle physics).''
+
+One of the JavaIdioms:
+
+In the JavaLanguage, you must declare the CheckedException''''''s that are thrown by the methods of a class or interface.  The compiler ensures that checked exceptions thrown by a method are caught by callers of the method or declared to be passed on by caller to its callers.  Java also provides UncheckedException''''''s, the usage of which are ''not'' checked by the compiler.  As a rough rule of thumb, checked exceptions are used to indicate exceptional conditions that are out of the control of the program (for example, I/O errors), while unchecked exceptions are used to indicate programming errors (for example, dereferencing a null pointer).
+
+    -*-*-*-
+Sometimes you need to declare a class or interface that is so generic that you don't know what kinds of exceptions subclasses/implementations will need to 
+throw, or if they will not need to throw exceptions at all.
+
+An example is the VisitorPattern: concrete visitors encapsulate arbitrary operations and so need to throw an open-ended variety of exceptions that cannot be known by the designer of the visitor interface. Declaring visitor methods to throw java.lang.Exception (the root of the exception hierarchy) is a bad thing: DontThrowGenericExceptions!  Conversely, the visitor cannot discard exceptions that it doesn't understand: ThrowDontCatch!
+
+'''Therefore:'''Declare the generic interface not to throw CheckedException''''''s.  Each class that implements the generic interface and needs to throw exceptions should define a private UncheckedException class and throw instances of that class to report exceptions. Encapsulate usage of the concrete classes behind a ''Facade'' that catches  the private, unchecked exception and converts it into a descriptive, ''checked'' exception.
+
+     -*-*-*-
+By "tunneling" exceptions through interfaces in this manner you DontThrowGenericExceptions and don't need to over-specify the exceptions thrown by an interface.  Client code doesn't need to know about the use of the unchecked exception, and is prevented from knowing about it because its definition is private.
+
+Alternatively, the generic interface can define a base class for exceptions passed through it (HomogenizeExceptions) or pass all exceptions through the interface in wrappers (this is what the java.lang.reflect.Method class does, for example).  However, this is awkward when implementations of the interface do not throw exceptions.  Client code must catch and ignore these non-existent exceptions, which can then lead to bugs when the implementation of the generic interface is changed and clients are ignoring real exceptions.
+
+-- NatPryce
+
+----
+
+Example:
+
+ //  The SceneGraph class is the base class of scene graph nodes: 
+ //  objects that define a 2D graphical scene in terms of geometric 
+ //  shapes, transformations and compositions.
+ //
+ public abstract class SceneGraph {
+     void accept( SceneGraph''''''Visitor v );
+ }
+
+ //  Interface for visitors that process scene graphs.
+ //
+ public interface SceneGraph''''''Visitor {
+     void visit( Primitive sg );
+     void visit( Transform sg );
+     void visit( Composite sg )
+     ... etc ...
+ }
+ 
+ //  A Transform nodes applies an affine transformation to
+ //  another scene graph (DecoratorPattern).
+ //
+ public class Transform implements SceneGraph {
+      public SceneGraph getTransformedGraph() { ... }
+      public Matrix getMatrix() { ... }
+      ...
+ }
+ 
+ //  A Primitive represents a geometric shape
+ //
+ public class Primitive implements SceneGraph {
+      public boolean contains( Point2D p ) { ... }
+      ...
+ }
+ 
+ //  A Picker find the shape containing a point.
+ //
+ public class Picker implements SceneGraph''''''Processor {
+      private Point2D _point;
+      private Primitive _picked = null;
+ 
+      private class Pick''''''Failure extends RuntimeException 
+      {
+  NoninvertibleMatrixE''''''xception cause;
+  
+  Pick''''''Failure( NoninvertibleMatrixE''''''xception ex ) {
+       cause = ex;
+  }
+      }
+ 
+      //  Client code only accesses the Picker class through this function.
+      //  Exceptions are tunneled to this function inside the PickFailed
+      //  exception.
+      //
+      public static Primitive pick( SceneGraph sg, Point2D p ) 
+       throws NoninvertibleMatrixE''''''xception 
+      {
+  try {
+       Picker picker = new Picker(p);
+       sg.accept(picker);
+       return picker._picked;
+  }
+  catch( Pick''''''Failure ex ) {
+       throw ex.cause;
+  }
+      }
+ 
+      //  Constructor is private: class is accessed through static function
+      //
+      private Picker( Point2D pick ) { _point = pick; }
+
+      public void visit( Primitive p ) {
+   if( p.contains( _point ) ) _picked = p;
+      }
+ 
+      //  Process Transform's by transforming the picked point by the
+      //  ''inverse'' of the transform, and then picking the transformed
+      //  graph with the new point.  Inverting a transform can fail,
+      //  so the NoninvertibleMatrixE''''''xception must be tunneled up to the
+      //  code that created and used this visitor (the static pick method).
+      //
+      public void visit( Transform t ) {
+   Point2D old_point = _point;
+   try {
+        Matrix m = transform.getMatrix().inverse();
+       _point = m.transform( _point );
+   }
+    catch( NoninvertibleMatrixE''''''xception ex ) {
+       throw new Pick''''''Failure(ex);
+   }
+  
+   transform.getTransformedGraph().accept(this);
+   _point = old_point;
+      }
+ 
+      ... other visitor methods ...
+ }
+----
+
+In the discussion of HomogenizeExceptions, RandyStafford wrote:
+"The thing that bothers me about ExceptionTunneling is ViolatingTheSemanticIntent of RuntimeException, which by the javadocs is "the superclass of those exceptions that can be thrown during the normal operation of the JavaVirtualMachine", whatever that means."
+
+Yes, it does violate the intended use of RuntimeException''''''s.  This is why the use of tunnelled exceptions are encapsulated behind code that uses a private subclass of RuntimeException.  Thus, client code never has to deal with the (mis)use of the RuntimeException, and only with the semantically meaningful checked exception.
+
+-- NatPryce
+
+See NestedException for an alternative approach that doesn't use RuntimeException''''''s. -- BrianSlesinsky
+
+I don't understand.  How would using a NestedException allow you to avoid the use of a RuntimeException? -- NatPryce
+
+----
+
+I use a similar strategy except I just declare the generic "Exception". That way clients know that exceptions can be thrown (which is all they usually need to know anyway) but the interface isn't committed to any particular kind of exception. -- PhilGoodwin
+
+I used to use that but changed to use ExceptionTunneling because I had a lot classes that never threw exceptions, and so had a lot of empty catch clauses ignoring exceptions that would never (at that point in time) be thrown.  At a later date, if I change the implementation of one of those classes to actually throw exceptions , I will have go through the code to find and rewrite all those empty catch clauses.  If I miss one of them I am ignoring an error condition (ArianeFive anyone?).
+
+But, using ExceptionTunneling, classes that do not throw exceptions don't have to declare that they do, while classes that do throw exceptions can encapsulate that fact by using tunnelled exceptions internally and converting them to checked exceptions at the API used by client code.  Then, adding exceptions to a class in the future will cause compilation errors in code that expects there to be no exceptions.
+
+However, you can get the same effect by define your interface to throw Exception and encapsulating the empty catch clause behind a client API that does not throw exceptions.  Is this what you do?  In hindsight, this is cleaner, but I have not seen it used.  Perhaps it is a different pattern, one that is more useful when concrete classes that implement an interface are more likely to throw exceptions than not.
+
+Empty catch clauses are among the worst of CodeSmell''''''s. In general, you should either CatchWhatYouCanHandle or LetExceptionsPropagate. I'm not sure what they're buying you in your particular situation but my experience is that catch clauses should be few and far between, and that they should '''do''' something when they catch an exception. -- pg
+
+That's true.  And, if an interface is defined to throw a CheckedException but an implementation never actually throws that exception, code will become littered with empty catch clauses.  This will cause big problems if the class is later changed to throw exceptions: real errors will be ignored.  However, by encapsulating a ''single'' empty catch clause in the ''implementation'' of the class, that empty catch can be easily removed when the class is changed, and Java's linker or compiler will detect out-of-date client code.
+
+''...if an interface is defined to throw a CheckedException but an implementation never actually throws that exception, code will become littered with empty catch clauses.'''
+
+I don't think that that the first is a cause of the second. If the called code doesn't throw then the calling code has no reason to catch. Also, it's better to LetExceptionsPropagate so more throws shouldn't lead to more catches anyway. OnlyUseExceptionsToFail. If you know that an operation can fail, and you can tolerate its failure, then write a test that will determine whether the operation will fail and then call that operation only if the test passes -- and don't catch any exceptions that come from it. This has several advantages: clearer flow control, faster execution, and you only ignore those conditions that you know that you can afford to ignore. You can systematically rid yourself of empty catch clauses with ReplaceEmptyCatchWithTest. -- PhilGoodwin
+
+I don't understand your last point.  If an object will ''never'' throw an exception, despite what its interface declaration says, what is the point of replacing an empty catch with a conditional?  What am I testing for?  And what if the interface declaration does not allow one to throw an exception because Java, for obvious reasons, does not allow one to widen throws clauses?  That is the context in which ExceptionTunneling is useful. -- NatPryce
+
+----
+Compare with ExceptionFunnel
+----
+CategoryException

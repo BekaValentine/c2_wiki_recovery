@@ -1,0 +1,129 @@
+This optimization is largely related to GrokAliasing. 
+
+To be able to understand why some code compiles into faster code than others it is necessary to understand what the various address spaces are, and what the compiler can know about them.
+
+'''The Heap.'''
+
+About the Heap the compiler knows very little. If pointer pA may point into the heap then modifying using *pA = X; may affect the memory referenced via any other pointer that may point into the heap. Modifying the contents of a Type A object can affect the contents of a Type B object! This is especially true when Type A is a member of or a base class of Type B. To the best of my knowledge however The compiler is NOT allowed to assume that aliasing will not occur even when Type A and Type B are unrelated. 
+
+For example:
+ void Nasty_Math (float *F, char *exp);
+
+In C and hence in C++ 'exp' may refer to the byte that contains the exponent of the the float referred to by F! There exist applications, Math libraries that simulate Floating point arithmetic, that really need to be able to do this.
+
+'''Global Memory'''
+
+This is where all Globally declared variables, all static variables, and all static members of classes are stored. They are stored in a sequential order and if you reference out of bounds on one you will most likely hit another. It is however completely undefined what order they are in memory. Thus if the compiler knows that your pointer references Global Object A, then it knows that all modifications made using that pointer do not effect Global Object B.
+
+'''THUS'''
+
+Sometimes the use of globally (or statically) declared fixed sized buffers of data results in faster code that if the Buffer is on the Heap and a pointer to it is stored in a Local Static variable.
+
+'''Stack Memory'''
+
+The compiler knows even more about this memory. If the current function calls some other function (that is not Inlined) then the compiler must assume that all its knowledge about the contents of the heap and global memory is now Null and void. Thus many common subexpressions etc must all now be re-evaluated. If however, the common sub expressions only depend on local variables and the compiler knows that no one has ever been given the address of those variables then it knows no one can ever have changed them!
+
+''Not true in languages which know about pure functions'' -- EddieEdwards
+
+A pure function, if one exists in your language of choice guarantees that it does not produce side effects and thus the compiler can know that common subexpressions do not need to be reevaluated. This appears to be a feature of Fortran. The stack memory advice is true in C turbo-pascal C++ delphi ... 
+
+'''THUS'''
+
+Loops that test against Container.end() (ala stl) can be optimised by copying end into a local variable before the loop. By doing this you are doing something the compiler will never be able to do. You are promising that no operations in the loop result in end() being changed. In other words, don't try this when the loop modifies the Container :) ie GrokTheLanguage.
+
+''Also not true.  If the container is passed in as a const reference, or if all the members called in the loop are object-const (which they should be) the compiler knows that the object does not change.  Use const properly before applying compiler-specific optimizations like these!'' -- EddieEdwards
+
+''You may want it not to be and it might be nice if it wasnt true and it is probably very bad code if it is not true, but it is legal defined behavior to do some very nasty things in C++.
+If a pointer is const, and you pass it to a function then that function cannot change the contents of the memory it points to unless....
+	1 The function does a perfectly legal cast to remove the constness
+	2 The member was mutable.
+	3 The function has some other pointer, perhaps in a global variable, that is not const and points to the same place.
+	4 and perhaps more.
+No matter how naughty and against good style these things are the compiler cannot assume they can't be done. It is for this reason that I suggest GrokTheCompiler and G''''''rokTheLanguage. 
+
+Note that because of point 3 any function call that is not inlined forces a compiler's optimiser to forget all common subexpressions involving values that are on the heap.
+'' ---AlanChristiansen
+
+''Is that true? const behaviour is not guaranteed. Judicious use of casts can do an end run against const. const seem to be only for the programmer, not the compiler. -- SunirShah''
+
+What do you mean by "end run against const"?  I don't understand baseball analogies ;)
+
+Anything not in comments is for the compiler!  I think you mean it's "for" type-safety, not "for" optimization hinting.  Well, it's certainly useful as a compiler hint, for exactly the reasons I give ... whether or not your favourite compiler takes the hint is obviously implementation-dependent.'' -- EddieEdwards
+
+The only things that are (should be) implementation dependent are the undefined behaviors. If I write code that casts away constness in a language that allows it. Or allows aliasing via some other pointer that is not const. Then my favorite compiler will not take the hint.
+
+-- AlanChristiansen
+
+'''WARNING''' this code is Very bad code. It is however legal code. It exemplifies why the compiler cannot do certain things.
+
+module  Cheat1.c
+ extern int *pB;
+ extern int *pA;
+ void cheat() 
+ { 
+   if (pA) {pB = pA;}
+   pB--; 
+ }
+
+module  Cheat2.c
+ extern int *pB;
+ void cheat() { ; }
+
+module  Main.c
+ void cheat();
+ int *pA = 0;
+ int *pB = 0;
+
+ void looper(int const * const myA)
+ {
+    pB = pA;
+    for(int i=0;i<*myA;i++)
+    {
+ 	cout << i << endl;
+	cheat();
+    }
+ }
+
+ int main()
+ {
+	int Max = 10;
+	pA = &Max;
+	looper(&Max);
+	pA = 0;
+	for(int i=0;i<Max;i++)
+    	{
+ 		cout << i << endl;
+		cheat();
+        }
+	return 0;
+ }
+
+In this example main will be linked with one of the two Cheat modules. The optimizer MUST produce code that correctly works with both. The only way to do this is to re-evaluate the common sub expression *myA every loop. The value cannot be placed in a register. The loop cannot be unrolled. Only a programmer who KNOWS that aliasing will never occur can make such optimizations.
+
+In this code example (assuming I typed it right) the compiler cannot KNOW whether or not cheat changes anything.
+
+Note that even though Max is on the stack and is local to main, looper is not allowed to try and exploit this fact because anyone might call looper with a pointer to anywhere.
+
+Note also that the loop in main also cannot assume that cheat does not modify Max because once it gave away a pointer to Max. The fact that it later wiped that pointer pA to NULL is irrelevant because it cannot know what looper or cheat did.
+
+The above example I believe illustrates the extent to which you must GrokTheCompiler if you want to write really fast C or C++ code. 
+
+The is an extremely important distinction between 
+	* the code your boss will let you write. (Not the above)
+	* The code the compiler must let you write(The above)
+
+
+-- AlanChristiansen
+
+''Microsoft compilers have a flag that says "Honestly, I don't do any pointer aliasing" and pointer aliasing is much easier to avoid in C++ than in C.''
+
+''One of the causes of this problem is external linkage.  It is an abhorrent legacy feature of C++ that the C linker model is used at all.  Calling over a real API requires a loss of knowledge, but calling over an internal API should be a lot safer.  But it isn't, of course, because as far as the compiler is concerned any API not defined in this file is external.''
+
+''Your points about the dangers of compiler optimizations are good ones -I need reminding of these problems from time to time ... because the code I personally write simply doesn't have this sort of awful behaviour.  I've worked with programmers whose code did, however!!!''
+
+''My take is that - see my notes in GrokTheCompiler - a company serious about optimization should probably WriteTheCompiler.  And such a company should certainly be prepared to put what are strictly dangerous optimizations in, and fix the minority of resulting problems in the code.  If the code is well-written, this should take about zero time.''
+
+-- EddieEdwards
+
+----
+CategoryOptimization

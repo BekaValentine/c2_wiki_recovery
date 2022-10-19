@@ -1,0 +1,395 @@
+This is an example of the ideas described in IndependentVisitorPattern, with running code and disciplined refactoring. The goal is to show how the VisitorPattern can be refactored to eliminate circular dependencies. Two refactorings are shown, the first eliminating the dependence of the visitor on the structure, and the second eliminating the dependence of the structure on the visitor. Either refactoring alone would eliminate the circular dependencies; they are orthogonal and complementary. For example, if you want to pass in the whole object to the visitor, but still want to get rid of the circularity, just use the second refactoring alone.
+
+What follows are three versions of the code, each with my notes of the refactoring steps I used along with a class diagram. The first version was built up test-first, while the second and third didn't add any tests because they were just refactorings. The tests aren't included here. In the class diagrams, a solid upward line indicates class inheritance; a dashed sideways arrow indicates some other kind of dependency.
+
+-- JustinSampson
+
+----
+
+First I built up this sample code test-first. I was pleasantly surprised that going test-first took me gradually through these stages:
+
+	* When I first only wrote tests for single documents and directories, no traversal was necessary, so there was no VisitorPattern.
+	* When I added tests for a single directory with one level of documents underneath, I refactored the code into a simple VisitorPattern.
+	* When I added tests for complex directory structures, I refactored the code into a HierarchicalVisitorPattern.
+
+              +---------+
+              | Element | - - - - - - - - - - - - .
+              +---------+                         .
+                 |   |                            V
+                 |   |                         +---------+
+                 |  +----------+               | Visitor |
+                 |  | Document | < - - - - - > +---------+
+                 |  +----------+                  A
+      +-----------+                               .
+      | Directory | < - - - - - - - - - - - - - -
+      +-----------+
+
+'''Element.java'''
+
+    public class Element {
+
+        private String name;
+
+        public Element(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void accept(Visitor vis) {
+        }
+
+    }
+
+'''Document.java'''
+
+    public class Document extends Element {
+
+        public Document(String name) {
+            super(name);
+        }
+
+        public void accept(Visitor vis) {
+            vis.visitDocument(this);
+        }
+
+    }
+
+'''Directory.java'''
+
+    import java.util.*;
+
+    public class Directory extends Element {
+
+        private Array''''''List children = new Array''''''List();
+
+        public Directory(String name) {
+            super(name);
+        }
+
+        public void addChild(Element element) {
+            children.add(element);
+        }
+
+        public int getChildCount() {
+            return children.size();
+        }
+
+        public Element getChild(int index) {
+            return (Element) children.get(index);
+        }
+
+        public void accept(Visitor vis) {
+            vis.enterDirectory(this);
+            for (int i = 0; i < getChildCount(); i++) {
+                getChild(i).accept(vis);
+            }
+            vis.leaveDirectory();
+        }
+
+    }
+
+'''Visitor.java'''
+
+    public class Visitor {
+
+        private String result = "";
+
+        private String currentIndent = "";
+
+        public void visitDocument(Document doc) {
+            result = result + currentIndent + "[doc] " + doc.getName() + "\n";
+        }
+
+        public void enterDirectory(Directory dir) {
+            result = result + currentIndent + "[dir] " + dir.getName() + "\n";
+            currentIndent = currentIndent + "    ";
+        }
+
+        public void leaveDirectory() {
+            currentIndent = currentIndent.substring(4);
+        }
+
+        public String getResult() {
+            return result;
+        }
+
+    }
+
+----
+
+Next I wanted to do the first of my refactorings, to eliminate the circular dependencies. Here are the steps I took:
+
+	1. Change Visitor.visitDocument(Document doc) to Visitor.visitDocument(String docName)
+		* replace 'doc.getName()' to 'docName' in Visitor
+		* replace 'vis.visitDocument(this)' to 'vis.visitDocument(getName())' in Document
+		* compile and test
+
+	1. Change Visitor.enterDirectory(Directory doc) to Visitor.enterDirectory(String dirName)
+		* replace 'dir.getName()' to 'dirName' in Visitor
+		* replace 'vis.enterDirectory(this)' to 'vis.enterDirectory(getName())' in Directory
+		* compile and test
+
+Well, that was easy! The general idea here is to pass in the information that the visitor wants, instead of passing in a reference to the object providing the information. In this case, it's just the name of the document or directory. If anything would need to be iterated over, like the attribute map in the SAX example (see IndependentVisitorPattern), then create a new visit method for that kind of thing instead of passing a collection as a parameter.
+
+              +---------+
+              | Element | - - - - - - - - - - - - .
+              +---------+                         .
+                 |   |                            V
+                 |   |                         +---------+
+                 |  +----------+               | Visitor |
+                 |  | Document | - - - - - - > +---------+
+                 |  +----------+                  A
+      +-----------+                               .
+      | Directory | - - - - - - - - - - - - - - -
+      +-----------+
+
+Element.java
+
+    public class Element {
+
+        private String name;
+
+        public Element(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void accept(Visitor vis) {
+        }
+
+    }
+
+Document.java
+
+    public class Document extends Element {
+
+        public Document(String name) {
+            super(name);
+        }
+
+        public void accept(Visitor vis) {
+            '''vis.visitDocument(getName());'''
+        }
+
+    }
+
+Directory.java
+
+    import java.util.*;
+
+    public class Directory extends Element {
+
+        private Array''''''List children = new Array''''''List();
+
+        public Directory(String name) {
+            super(name);
+        }
+
+        public void addChild(Element element) {
+            children.add(element);
+        }
+
+        public int getChildCount() {
+            return children.size();
+        }
+
+        public Element getChild(int index) {
+            return (Element) children.get(index);
+        }
+
+        public void accept(Visitor vis) {
+            '''vis.enterDirectory(getName());'''
+            for (int i = 0; i < getChildCount(); i++) {
+                getChild(i).accept(vis);
+            }
+            vis.leaveDirectory();
+        }
+
+    }
+
+'''Visitor.java'''
+
+    public class Visitor {
+
+        private String result = "";
+
+        private String currentIndent = "";
+
+        '''public void visitDocument(String docName) {'''
+            '''result = result + currentIndent + "[doc] " + docName + "\n";'''
+        }
+
+        '''public void enterDirectory(String dirName) {'''
+            '''result = result + currentIndent + "[dir] " + dirName + "\n";'''
+            currentIndent = currentIndent + "    ";
+        }
+
+        public void leaveDirectory() {
+            currentIndent = currentIndent.substring(4);
+        }
+
+        public String getResult() {
+            return result;
+        }
+
+    }
+
+----
+
+Finally I wanted to try the Tour''''''Guide refactoring, so that Element et al. wouldn't be dependent on Visitor. Here are the steps I took:
+
+	1. Create empty Tour''''''Guide class
+		* compile
+
+	1. Move method Document.accept(Visitor) to Tour''''''Guide.traverseDocument(Document,Visitor)
+		* follow mechanics for MoveMethod (including compiling and testing)
+		* change all callers that call accept on a Document directly to now call traverseDocument passing in that Document
+		* leave Document.accept, delegating to the new method, for any callers that call accept on an Element
+
+	1. Move method Directory.accept(Visitor) to Tour''''''Guide.traverseDirectory(Directory,Visitor)
+		* similarly
+
+	1. Move method Element.accept(Visitor) to Tour''''''Guide.traverseElement(Element,Visitor)
+		* since Element is a superclass, create an instanceof conditional with branches for each of its immediate subclasses
+		* each branch delegates to the appropriate traverse method
+		* final else clause takes code from original Element.accept (nothing in this case)
+		* compile
+		* make Element.accept delegate to Tour''''''Guide.traverseElement
+		* compile and test
+		* remove Directory.accept and Document.accept, since they are redundant with Element.accept (all three just delegate to Tour''''''Guide now)
+		* compile and test
+		* replace all calls to Element.accept with calls to traverseElement
+		* compile and test
+		* remove Element.accept
+		* compile and test
+
+              +---------+
+              | Element | < - - - - - - - .
+              +---------+                 .
+                 |   |                    .
+                 |   |                 +-----------+       +---------+
+                 |  +----------+       | Tour''''''Guide | - - > | Visitor |
+                 |  | Document | < - - +-----------+       +---------+
+                 |  +----------+          .
+      +-----------+                       .
+      | Directory | < - - - - - - - - - -
+      +-----------+
+
+Element.java
+
+    public class Element {
+
+        private String name;
+
+        public Element(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        '''// removed accept(Visitor)'''
+
+    }
+
+Document.java
+
+    public class Document extends Element {
+
+        public Document(String name) {
+            super(name);
+        }
+
+        '''// removed accept(Visitor)'''
+
+    }
+
+Directory.java
+
+    import java.util.*;
+
+    public class Directory extends Element {
+
+        private Array''''''List children = new Array''''''List();
+
+        public Directory(String name) {
+            super(name);
+        }
+
+        public void addChild(Element element) {
+            children.add(element);
+        }
+
+        public int getChildCount() {
+            return children.size();
+        }
+
+        public Element getChild(int index) {
+            return (Element) children.get(index);
+        }
+
+        '''// removed accept(Visitor)'''
+
+    }
+
+Visitor.java
+
+    public class Visitor {
+
+        private String result = "";
+
+        private String currentIndent = "";
+
+        public void visitDocument(String docName) {
+            result = result + currentIndent + "[doc] " + docName + "\n";
+        }
+
+        public void enterDirectory(String dirName) {
+            result = result + currentIndent + "[dir] " + dirName + "\n";
+            currentIndent = currentIndent + "    ";
+        }
+
+        public void leaveDirectory() {
+            currentIndent = currentIndent.substring(4);
+        }
+
+        public String getResult() {
+            return result;
+        }
+
+    }
+
+'''Tour''''''Guide.java'''
+
+    public class Tour''''''Guide {
+
+        public void traverseDocument(Document doc, Visitor vis) {
+            vis.visitDocument(doc.getName());
+        }
+
+        public void traverseDirectory(Directory dir, Visitor vis) {
+            vis.enterDirectory(dir.getName());
+            for (int i = 0; i < dir.getChildCount(); i++) {
+                traverseElement(dir.getChild(i), vis);
+            }
+            vis.leaveDirectory();
+        }
+
+        public void traverseElement(Element elt, Visitor vis) {
+            if (elt instanceof Document) {
+                traverseDocument((Document) elt, vis);
+            } else if (elt instanceof Directory) {
+                traverseDirectory((Directory) elt, vis);
+            }
+        }
+
+    }
+----
+CategoryPattern CategoryRefactoring

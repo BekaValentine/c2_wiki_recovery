@@ -1,0 +1,231 @@
+SteveMolitor wrote on news:comp.object :
+
+I have a question about the LawOfDemeter.  If I understand
+correctly, the Law of Demeter roughly says that you shouldn't chain
+method calls.  I.e. instead of doing this:
+
+  customer.getMailingAddress().getLine1();
+  employee.getHomeAddress().getLine1();
+
+You should do this:
+
+  customer.getMailingAddressLine1();
+  employee.getHomeAddressLine1();
+
+The idea is to avoid coupling the internal structure of an object to
+clients.  But, to me this can sometimes conflict with the goals of
+creating a fine grained object model (ala MartinFowler's 'DomainModel'), factoring out common business abstractions into reusable
+classes and interfaces, and avoiding extra bridge or adaptor code
+(YAGNI).
+
+Here's a concrete example.  Let's say I have the following code,
+before refactoring anything:
+
+ // before refactoring
+ class Customer {
+  String getMailingAddressLine1();
+  String getMailingAddressLine2();
+
+  String getShippingAddressLine1();
+  String getShippingAddressLine2();
+ }
+
+ class Employee {
+  String getHomeAddressLine1();
+  String getHomeAddressLine2();
+ }
+
+ customer.getMailingAddressLine1();
+ employee.getHomeAddressLine1();
+
+Let's say I notice that addresses are a common abstraction whose
+interface is likely to change together.  For example, maybe we decide
+to go international and add a country code to all addresses.  An
+Address interface might make it easier to make changes to that concept
+in one place.  So, I refactor the code like this:
+
+ // after refactoring, before Demetering
+ class Address {
+  String getLine1();
+  String getLine2();
+ }
+
+ class Customer {
+  Address getMailingAddress();
+  Address getShippingAddress();
+ }
+
+ class Employee {
+  Address getHomeAddress();
+ }
+
+ customer.getMailingAddress().getLine1();
+ employee.getHomeAddress().getLine1();
+
+I can change the interface to Address in one place; adding a country
+code doesn't ripple through to lots of business domain classes. 
+However, the Law of Demeter would say (if I'm understanding it
+correctly) that I should further refactor to this:
+
+ // after Demeterizing
+ class Address { // same as above
+  String getLine1();
+  String getLine2();
+ }
+
+ class Customer {
+  Address getMailingAddress();
+  Address getShippingAddress();
+
+  String getMailingAddressLine1();
+  String getMailingAddressLine2();
+
+  String getShippingAddressLine1();
+  String getShippingAddressLine2();
+ }
+
+ class Employee {
+  Address getHomeAddress();
+
+  String getHomeAddressLine1();
+  String getHomeAddressLine2();
+ }
+
+ customer.getMailingAddressLine1();
+ employee.getHomeAddressLine1();
+
+The advantage of this, I guess, is that clients don't need to know
+that customer has a mailing address.  (They just have to know that a
+customer has methods called getMailingAddressLine1 and 2 -- what's the
+diff?)  Frankly it seems silly to me in this contrived example.
+
+But on the other hand, with a very fine-grained ObjectModel,
+PresentationLayer clients can get coupled to the interface of the
+domain model (not necessarily its implementation).  If the domain
+model changes, clients have to change.  So one can write adaptor or
+bridge code -- not necessarily a bad thing, but the coupling is still
+there; just localized to the adaptor.  But the Law of Demeter would
+say to put the bridge code in  the busines objects -- i.e.
+customer.getMailingAddressLine1().  That seems very brittle to me. 
+Every time a presentation tier client needs a nested business object,
+the business class has to change to provide the adaptor (forwarding)
+method.  On the other hand, forcing the presentation tier to know all
+the details of the domain model can also be brittle.
+
+So any heuristics on when to apply, and when not to apply, the Law of
+Demeter would be appreciated.  Or perhaps my understanding of the Law
+of Demeter is wrong.
+
+In general, I'm interested in approaches to shielding clients from
+changes to the business domain model, and balancing that concern
+against writing too much fluffy adaptor code and having too many
+layers (i.e. violating YouArentGonnaNeedIt).
+
+----------------------------------------------------------------------------------------------------
+GI:
+
+You shouldn't be too strict in following the law of Demeter.
+You should avoid long chains like a.getB().getC().getD().doSomething(); 
+
+The original code in your example is quite reasonable. 
+
+As an alternative, and without changing the interface, you can always create a helper class and delegate to it.
+
+TransactionAddressesSplitter adrs(customer,employee); 
+adrs.getMailingAddressLine1();
+adrs.getHomeAddressLine1();
+
+This technically solves the law of Demeter problem, and creates another "reusable" class, but may be unnecessary in such as small example.
+
+
+And btw, coupling localized in an adapter is always preferable to coupling in a larger module, and a program that is 100% coupling free is one that does nothing useful...
+
+----------------------------------------------------------------------------------------------------
+Daniel T. sez:
+
+''... Basically, LoD says, "remove gets", or as is also said from time to time, "TellDontAsk."''
+
+Exactly.  The Law of Demeter is not about chaining syntax.  It's about
+telling the object what you want to do instead of pulling information out of
+the object.
+
+So your code for the example was right on target.  What does the client want
+to do with the customer object?  Print its mailing address.  Okay, then,
+tell the customer object to do just that:
+
+  customer.printMailingAddress();
+
+Now, if you can't anticipate the needs of the client, or you don't want the
+customer object to "know" about printing, then use actions instead:
+
+  // Client code.
+  IAddressAction pma = PrintMailingAddressAction();
+  customer.performAddressAction(pma);
+
+where
+
+  public class PrintMailingAddressAction
+    implements IAddressAction
+    {
+    public boolean perform(
+      Address a)
+      {
+      String line1 = a.getLine1();  // Not a LoD violation.
+      System.out.print(line1);  // JDK call.
+
+      return true;  // Don't ask :)
+      }
+    }
+
+and
+
+  public class Customer
+    {
+    public boolean performAddressAction(
+      IAddressAction aa)
+      {
+      Address a = getAddress(); // Not a LoD violation.
+      return aa.perform(a);
+      }
+
+    private Address a_;
+    }
+
+Let's look at the results of applying the LawOfDemeter with actions:  (a)
+Reusable code for printing mailing addresses and (b)  A customer object that
+doesn't "know" about printing or have to be modified every time its clients
+need new functionality.
+
+I think some critics of LoD give up too easily.
+
+---
+Roger L. Cauvin
+
+The above example is very interesting. How can LoD be applied to presentation code that is querying a domain object. It seems like simple getters are easiest here, but would potentially violate LoD.
+
+''Yes, a bunch of getters for presentation code would likely be a violation of LoD.  However, there's an elegant solution:  All of the domain objects have a method to publish their internals to a data collector.  The data collector can be queried by the presentation layer without violating LoD.  I've often implemented this as a VisitorPattern, but other implementations are possible such as all domain objects publishing themselves onto an XmlDocument.  That XmlDocument could then be manipulated using XSLT in the presentation layer.''
+
+----
+
+The above example is a waste of time. It replaces a few lines of code with more lines of code, and in essence it does nothing other than move some bytes around for no good purpose (until proven otherwise).
+
+Think about how you scale it: you don't. Let's say you need not one object "contained" by customer, but a couple more (let's say Address, but also CreditRating, Preferences and a few more, possibly not all in the same block. Instead of getting the references from the customer and be done with it, you need to set up a complicated machinery to move the bytes around, so that you end up using references in a LOD kosher way. In essence you've done nothing but created more lines of code.
+
+Why not create a generic ReferenceCollector, that uses reflection to get you the references you specify and then pass you those in LOD conforming context ?
+
+In general you have a graph of objects, sometimes called ObjectModel sometimes called object schema, and in general you suck on very poor OO literature that operates with poorly defined concepts. Sometimes it happens that one object in a graph needs to access not only his neighbors, but maybe a couple of neighbours 2 edges away. Of course, that's a LOD violation, and you can set up more or less complicated tricks to solve that. 
+
+But if that's your only concern (avoiding LOD violations) you've done nothing in essence other than moving bytes around (a very fashionable trend in many OO circles lately). There is a code context that accesses several objects some distance away in the graph. Get on with it, that's life.
+
+-------
+
+A RelationalWeenie says, "Use a database to avoid hand-implementing all these verbs like set, get, find, delete, getNext, etc. Your code will be simpler."
+-------
+
+Interesting point. What is an example of this? You still need to provide access to data as fields no? So instead of
+getMailingAddressLine1():String, what would you have instead? 
+
+----
+
+
+See CanLawOfDemeterBeRefactoredAutomatically

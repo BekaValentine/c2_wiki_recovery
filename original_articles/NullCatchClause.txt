@@ -1,0 +1,229 @@
+This pattern appears in the various books like the JavaProgrammingLanguage. Sometimes a method throws an exception you could really care less about. Simply put, it catches the exception and throws it away. For example,
+
+	try {
+		thread.sleep(42);
+	} catch (InterruptedException e) {
+	}
+This might be interpreted as a brute-force technique to AvoidExceptionsWheneverPossible;
+alternatively, it could be interpreted as an extreme way to ConvertExceptions (transforming any exception into a "null" exception).
+
+On the third hand, this pattern is a likely alternative to ThrowDontCatch -- both this and that pattern are essentially an instance of the general precept that you DontDetectAnyErrorsYouDontKnowWhatToDoWith.
+
+-- BillTrost
+
+----
+
+One often knows that a particular piece of code will never throw exceptions, although it is called through an interface that declares that exceptions are thrown. You can use a NullCatchClause to avoid complicating code further down the call stack. For example:
+
+	interface CanDoSomething {
+		void doSomething() throws Exception;
+
+	}
+
+	class SomethingDoer implements CanDoSomething {
+		void doSomething() {
+			''... doesn't throw an exception...''
+		}
+	}
+
+	class X {
+		public void foo() {
+			CanDoSomething x = new SomethingDoer();
+	
+			try {
+				x.doSomething();
+			}
+			catch( Exception e ) {
+				// Never gets thrown by a SomethingDoer
+			}
+			}
+	}
+''Java-specific Comment''
+
+I have seen code where a NullCatchClause catches Exception (as above). This is actually a problem because it will also catch RuntimeException, which is typically not what one intends. Instead, the catch should catch RuntimeException''''''s and rethrow them before catching Exceptions with a NullCatchClause.
+
+----
+
+This strikes me as really, really dangerous. I don't EVER let my students do this. At the very least, you should log the fact that an exception occurred. For instance, VisualAge for Java uses NullCatchClause in its generated code. Unfortunately, they catch Exception, as the above note mentions, which leads to silent, impossible-to-debug failures. I can't tell you how many hours I've wasted chasing these things down only to find a RuntimeException was raised and then silently caught.
+
+-- KyleBrown
+----
+Kyle, you say "I don't EVER let my students do this." By "this", do you mean use NullCatchClause in general or do you mean catching overly generic exceptions such as Exception? --KielHodges
+
+---- 
+
+In general, both. There are times, obviously, when you must catch Exception if the alternative is five or more catch clauses, but I try to discourage it in all but the ugliest of circumstances. I believe NullCatchClause is just plain bad programming. As HansRohnert wrote on another page in this thread, Exceptions EXIST to be caught, and they're always there for a reason. Ignoring them in this way shows poor planning in most cases. It only takes a tiny bit of coding to add a generic "handleException()" or "log()" method that you can use in those cases where you want to bypass something quickly.
+
+-- KyleBrown
+
+----
+
+I don't think that a NullCatchClause necessarily shows poor planning. It is often the result of having to use a generic interface to do something specific. 
+Take, for example, the use of the VisitorPattern in a compiler. A parser generates a parse-tree that can be processed by visitors that implement the ParseTreeVisitor interface. Many types of processing are possible, some of which, such as semantic analysis, can fail and so must throw exceptions. Therefore the visitor methods and the ''accept'' method of the parse-tree nodes must be declared to throw exceptions. E.g.
+
+	interface ParseTreeNode {
+		void accept( ParseTreeVisitor v ) 
+			throws ParseTreeProcessingException;
+	}
+
+	interface ParseTreeVisitor {
+		 void visit( BinaryOperator x ) 
+			 throws ParseTreeProcessingException;
+
+		 void visit( UnaryOperator x ) 
+			 throws ParseTreeProcessingException;
+		 ...
+	}
+However, some visitors will not throw exceptions. In Java, at least, one must catch or declare exceptions that are declared to be thrown by called methods. So code that uses a visitor that does not throw exceptions must be wrapped in a NullCatchClause or declare that it throws exceptions when it doesn't actually do so.
+
+E.g.
+	ParseTreeNode parse_tree = parser.parse();
+
+	// A DumpVisitor writes the parse tree to a stream and never throws
+	// exceptions.
+	try {
+		parse_tree.accept( new DumpVisitor(System.out) );
+	}
+	catch( ParseTreeProcessingException e ) {
+		// Never thrown
+	}
+----
+
+I disagree. It does show poor planning, just one step ahead of how far you're looking at it. ''Currently'' a DumpVisitor may not throw the ParseTreeProcessingException, but in the future, some maintenance programmer working on DumpVisitor may come along and decide - "Oh, you know, all these IOExceptions that I'm catching and throwing away probably should be dealt with - tell you what, let me use ConvertExceptions and I'll change them from IOException to ParseTreeProcessingException!"
+
+Then, all of a sudden, you have silent failures in other classes! You see, to me, ignoring exceptions means that you're actually MORE strongly coupling the classes together than if you capture and log them. The one thing we should learn from Java's history is that '''everything''' changes, whether you expect it to or not. Just take a look at all the 1.0 event code we had to port to 1.1 :)
+
+-- KyleBrown
+
+
+Perhaps the use of IO in my example was a bad idea (although the PrintStream and PrintWriter classes do not throw exceptions). Consider a visitor class that walks the parse tree and counts the number of declared classes, or replaces identical string constants with references to the same string?  Such classes are only manipulate data structures and will never throw exceptions (apart from RuntimeException''''''s in the case of programming error).
+
+I think that it is important to help maintenance programmers understand the code they are maintaining, and so it is useful to mark that some code never throws exceptions even though it is called through a generic interface.
+
+What I do in my code is force users of visitors that do not throw exceptions to call a static method that creates and applies the visitor within a NullCatchClause. This provides a single point which needs changing if one decides to throw exceptions at a later date.
+
+E.g.
+
+	class DumpVisitor {
+		 private DumpVisitor( PrintWriter output ) ...
+
+		 public static void dumpTree( PrintWriter out, ParseTreeNode tree ) {
+			 try {
+				 tree.accept( new DumpVisitor(output) );
+			 }
+			 catch( ParseTreeProcessingException e ) {
+				 // Never thrown
+			 }
+		 }
+	}
+I guess this is an example of the ShieldPattern.
+
+----
+
+Even that approach could use a CatchBlock that throws an error instead of a NullCatchClause. Ignoring an impossible exception is about as safe as catching an AssertionError: another part of your code, an imported class, or an entire platform could InTheory have bugs that break some invariant which stops the exception from being thrown. The more you trust those invariants, the more cause for throwing an error if they fail - and the more time and profanity you'll save in the debugging if you throw it.
+
+This technique's cheapness, IMO, makes up for the tiny odds it will ever prove useful. It's also used often in the Java platform libraries (by methods which call clone(), for example). So I'm inclined to think of it as the standard approach to a CheckedException you expect never to face.
+
+----
+
+Poor planning '''on whose part'''?
+
+The example at the start of the page was a call to Thread.sleep. I was using the code in the context of a program that does animation at a steady rate. Presumably, this code would be called repeatedly to call the function that does the actual animation. Without exceptions, it would look like
+
+	for (;;) {
+		Thread.sleep(42);
+		animator.notify();
+	}
+Now, what does the exception from Thread.sleep tell me? That my sleep was interrupted. Presumably, all I want to do is sleep for the rest of the delay and then wake the animator as normal. But since I have no idea how long the delay was, all I can do is go back to sleep, possibly after waking up the animator.
+
+The poor planning in this case is either a failure for InterruptedException to tell me how long I was a sleep, or a failure of the library authors to provide be a sleep routine that throws no exceptions in the first place.
+
+-- BillTrost
+
+''If sleeping how long is something you need to know, you could have stored the time before the sleep and check it afterwards.''
+
+----
+
+''One often knows that a particular piece of code will never throw exceptions...''
+
+As mentioned elsewhere (cannot find it at the moment, WikiGnome please help), if that piece of code really really will never throw exceptions, go ahead and put a "System.exit(1);" or "throw new Error("<Your name> did sometime really dumb here!");" in catch block. Are you still so sure it will never happen now?
+
+----
+
+One shouldn't put System.exit() anywhere other than main() method because (1) System.exit() doesn't report where and why it happened, and (2) System.exit() breaks automated unit test suites. 
+
+So, "throw new Error("Unexpected exception", e)" is The Right Way (TM) to handle such cases. This both documents the programmer's assumption that exception is not possible here, and also provides a runtime assertion that the assumption holds true.
+
+Better yet, use a variant of UnhandledException idiom, a subclass of java.lang.Error that logs its message and cause right in the constructor. Consider logging it both to the logging framework and dump hte stack trace to stderr, to ensure that the exception will be recorded even when logging.
+
+-- AlexeyVerkhovsky
+----
+What about generic checked exceptions?  Perhaps that would solve this problem...
+    class ParseVisitor<E extends ParseTreeVisitorException> {
+      void visit(BinaryOperator x) throws E;
+      void visit(UnaryOperator  x) throws E;
+    }
+    class DumpVisitor extends ParseVisitor<()> {
+      // ...
+    }
+    class FooVisitor  extends ParseVisitor<(FooException, BarException)> {
+      // ...
+    }
+    
+
+    BinaryOperator foob = new Plus(new Negate(new Numeric("10")), new Variable("foo"));
+    foob.accept(new DumpVisitor);
+    try {
+       foob.accept(new FooVisitor);
+    } except (Exception e) {
+       e.printStackTrace(log);
+       exit(1);
+    }
+Ya know, someone should make a Java extension with that...
+
+----
+
+If a method you control says it throws an exception, and really it does not, then remove the "throws xxx" statement.
+
+If a method you do not control says it throws an exception, then it throws an exception, period. Ok, maybe not in today's implementation, but it may very well start throwing it in future, and the statement is there to make sure code will not get broken by this.
+
+Either way, catching an exception and doing nothing is wrong. Except every rule has its exceptions, of course :). But if you do this regularly, you are doing it wrong.
+
+----
+
+I have a pattern where I wait for an asynrhonous job like the following pseudocode: 
+
+Process job = createProcess();
+
+boolean done = false;
+
+while(!done){
+  try{
+    job.waitFor();
+    done = true;
+  }catch(InterruptedException ie){
+    ; // through the loop again!
+  }
+}
+
+Is there a more elegant way to do this?
+--RobMandeville
+
+----
+Rob: the real question is: do you expect to get interrupted during your wait? InterruptedException are no magic, they get thrown upon a call on your thread's interrupt method. So either you get some code that you expect will interrupt you, and then you'd better not stick into the loop; or you do not expect to be interrupted and this is an extremely problematic situation as somebody did something terribly wrong (interrupting threads that have not been specifically designed for that leads to unpredictable results).
+
+So either you do:
+  }catch(InterruptedException ie){
+    break; // we've been asked to give up!
+  }
+
+Or you do
+  }catch(InterruptedException ie){
+    throw new RuntimeException("Unexpected interruption",ie); // unexpected
+  }
+
+-- PhilippeDetournay
+
+----
+
+CategoryNull

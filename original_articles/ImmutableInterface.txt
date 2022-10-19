@@ -1,0 +1,272 @@
+This ProtoPattern is one of several JavaIdioms on the WikiWikiWeb. 
+
+'''Problem'''
+ 
+How can you emulate the C++ ''const'' keyword in Java?
+
+'''Context'''
+
+It is often useful to pass a ReferenceObject to another object and know that it will not be changed.  Conversely, it is useful to specify that a method or object will not modify a ReferenceObject to which it holds a reference.  C++ has a keyword, ''const'' that specifies that an object will not, or can not, be modified.  Java does not have this feature.
+
+''This is not quite what "const" in C++ does, see below.''
+
+'''Solution'''
+
+	1.  For a class that you want to be able to define as "const", define a static, nested interface that contains declarations of the methods that will not change the object.
+	2. Have the outer class implement the inner interface and define the accessor methods defined in that interface.  ''Last I checked, you can't do this!  It counts as a circular class dependence, doesn't it?  Has this been changed in recent Java versions? --DavisHerring''
+	3. Also add methods that modify the object to the outer class.
+
+'''Resulting Context'''
+
+References to objects of the class can be implicitly converted to references to the ImmutableInterface, just as in C++.
+
+An explicit cast is required to convert from the ImmutableInterface to the mutable class, just as in C++.
+
+Methods invoked through the ImmutableInterface are dynamically dispatched, even if their implementations are final. This may reduce performance.
+
+''Note:'' objects whose "type" is the immutable interface are not in fact immutable!  References can be of interface type, but objects cannot.  If the object is mutable, having a reference to it allows changing it through casting (although you could arrange for the "true type" of the object to be inaccessible to casting in some cases) or reflection.  In a security context, or in documentation that might end up in a security context, this distinction is important.
+
+'''Example Code'''
+
+This is a toy-example of a two-dimensional point that has an ImmutableInterface.	A C++ definition of the same class is included in the discussion about ValueObject.
+
+
+	public interface ImmutablePoint {
+		float getX();
+		float getY();
+	}
+	
+	public class Point implements ImmutablePoint {
+		private float _x, _y;
+		
+		public Point( float x, float y ) { _x = x; _y = y; }
+		
+		// ''Immutable interface''
+		public float getX() { return _x; }
+		public float getY() { return _y; }
+
+		// ''Mutable interface''
+		public void setX( float x ) { _x = x; }
+		public void setY( float y ) { _y = y; }
+	}
+
+Here is how it might be used to expose an attribute of a class:
+
+	public ImmutablePoint getPosition() { ... }
+
+Here is how one would specifiy that a method did not modify a point passed to it:
+
+	public void setPosition( ImmutablePoint new_position ) { ... }
+
+Here is how one would explicitly cast away immutability:
+
+	ImmutablePoint p;
+	((Point)p).setX( 1.0 );
+
+
+--NatPryce
+
+----
+
+Terminology (discussed below):
+	* Java ImmutableInterface is related to the ValueObject DesignPattern.
+	* COM "ImmutableInterface-s" are an unrelated concept.  ''(The interface declaration for any given 128-bit interface id must never change, else your programs will most likely crash.)''
+
+''[Should the Java "final" keyword be mentioned?  How's it related to this discussion?]''
+
+The Java keyword ''final'' has not much to do with immutability. A ''final'' class can not be extended; a ''final'' variable can not have a new value assigned to it, and the only moment it can have a value asigned at all, is during construction of the class.
+
+----
+
+There is a related pattern to this called ImmutableValue by Kevlin Henney.  At PLoP 98, it wasn't workshopped, but Kevlin put a stack on one of the tables and many of us grabbed copies.  I'm not sure how to get access to it.  I would suggest mailing him at mailto:kevlin@acm.org. --PhilipEskelin
+
+Kevlin Henney uses the term "Immutable Value" to refer to ValueObject s.
+--NatPryce
+
+----
+
+COM's idea of immutable interfaces is that interface ''definitions'' do not change between versions. Therefore you can upgrade components without breaking code that relies on old versions.
+
+This idiom defines an interface for an object through which it is impossible to modify the object's state.  Therefore you can expose the object and are guaranteed that it will not be modified.  You can also declare, and statically check at compile time, that a method will not modify an object that is passed to it. 
+
+The two concepts are orthogonal:  you can have an ImmutableInterface whose definition is immutable.
+
+--NatPryce
+
+''100% correct''
+----
+
+If this is what it takes to emulate ''const'', and given that the ability to declare something ''const'' is valuable, then surely there's a case for adding ''const'' to the language, the next time it gets revised? I realize that there may be some difficulty in the semantic overlap with ''finally'', and, of course, someone should rework all the libraries...
+
+--AndyRaybould
+
+----
+
+I did the following:
+
+	public final class Point 
+	{
+	 public interface Immutable
+	 {
+		int getX();
+		int getY();
+	 }
+
+	 public interface Mutable extends Point.Immutable
+	 {
+		void setY( int y );
+		void setX( int x );
+	 }
+	}
+
+This has the advantage that my intentions are clear, i.e. whenever I'm expecting an Mutable object I've got to declare my object as such. This is ofcourse a DoubleEdgedSword:
+	Point p = getPoint();
+becomes
+	Point.Immutable p = getPoint();
+which depending on your typing skills might become a problem.
+
+The ''final'' prevents users directly extending the Point class, instead either the Mutable or Immutable interfaces must be implemented. Being a class, the Point can not be implemented.
+
+-- GerritRiessen 
+
+If a Mutable Interface is given, then how can it be considered as a C++ const?
+-- LJS Narayana
+
+----
+
+It occurs to me that this pattern is a variation on a much larger one. I don't know whether this has been identified and named before or not, but in case it hasn't, I'm going to call it the RolePattern.
+
+Often, the interface you want to use for a class will depend on the context it is being used in. The ImmutableInterface is one example of that. You may need SetterMethod(s) for a Configurator of an object or for test cases, whereas in the rest of the system you might want the object to be hidden behind an ImmutableInterface. There may also be a difference between the APIs presented to the Configurator and the Test Case. A hack is to hide those methods by making them protected, but it seems to me there is a much more general solution in considering the role of the object in different contexts within your system.
+
+
+---- 
+
+To correct a misnomer at the top of the page:
+
+The ConstQualifier, in C++, does ''not'' declare an object to be immutable; it declares that an object may not be modified through a given reference.  Const (and volatile) are properties of ''variables'', not of objects.  Consider the following C++ code
+
+ class Integer {
+	private:
+	int i_;
+	public:
+	int get_val (void) const { return i_; }
+	void set_val (int i) { i_ = i; }
+	Integer (int i=0) i_(i) {}
+ };
+
+ void foo (void)
+ {
+	Integer *pi = new Integer (5);
+	const Integer *pj = pi;
+
+	cout << (pi->get_val()) << "\n";
+	cout << (pj->get_val()) << "\n";
+
+	pi->set_val(6);
+
+	cout << (pi->get_val()) << "\n";
+	cout << (pj->get_val()) << "\n";
+
+	// the following would be illegal
+	// pj->set_val(7);
+ }
+
+The above should print 
+ 
+ 5
+ 5
+ 6
+ 6
+
+Note that the fact that pj is declared to be const prevents us from modifying the Integer object through pj; but it doesn't prevent us from modifying it through pi.
+
+C++ provides no way to do things like:
+
+ const Integer *pk = new const Integer(4);
+
+where the object itself is immutable and may never be modified.
+
+> the second const is redundant. const Integer* pk = ... defines that the object may never be modified through the pk variable.
+
+The above discussion, of course, ignores the issue of casting away constness and the mutable keyword, both which complicate things.
+
+----
+
+It seems to me that this discussion stems from a common problem with C++ programmers becoming Java programmers (No offense is intended, I include myself in this category).  Since C++ doesn't have a ''true'' interface facility, C++ programmers often don't understand the idea of programming TO interfaces, and better enforcement of this concept is one of the stated regrets of JamesGosling.
+
+Instead of passing around actual objects (No semantic arguments here, please), the interface should be passed:
+
+public interface Point
+{
+	public int getX();
+	public int getY();
+}
+
+public class MutablePoint implements Point
+{
+	private int x;
+	private int y;
+
+	public MutablePoint() {};
+	public MutablePoint(int x, int y) { this.x = x; this.y = y; }
+
+	public int getX() { return x; }
+	public int getY() { return y; }
+
+	public void setX(final int x) { this.x = x; }
+	public void setY(final int y) { this.y = y; }
+}
+
+Now when using this concept it would be:
+
+  Point p = widget.getPoint(); // returns a Point interface, which is immutable by the fact there are no setters
+  ((MutablePoint)p).setX(100); // All Point interfaces are actually MutablePoint, but must be explicitly cast to use the setters
+
+This is very similar to the initial example given by NatPryce above (which incidentally doesn't seem to have much to do with the ''Solution'' section above (I don't think you can even have a static nested interface)), except that the emphasis is put on the fact that the primary object is the ''immutable'' point.  Our code would probably look pretty odd if we were passing around ImmutableString objects instead of String (different implementation, but the concept holds).  This concept could even be taken a step further, if the concrete implementation was to be hidden at all costs:
+
+public interface Point
+{
+	public int getX();
+	public int getY();
+}
+
+public interface MutablePoint extends Point
+{
+	public void setX(int x);
+	public void setY(int y);
+}
+
+public class DefaultPoint implements MutablePoint
+{
+	private int x;
+	private int y;
+
+	public MutablePoint() {};
+	public MutablePoint(int x, int y) { this.x = x; this.y = y; }
+
+	public int getX() { return x; }
+	public int getY() { return y; }
+
+	public void setX(final int x) { this.x = x; }
+	public void setY(final int y) { this.y = y; }
+}
+
+This would allow ''DefaultPoint'' to be switched out without affecting casts to MutablePoint.
+
+I guess my point with this is that there should be no need to ''emulate'' the const keyword from C++ in Java.  Programming to interfaces provides more flexible code, while ''const'' becomes an interface design element.
+
+MikeFeldmeier
+
+----
+
+I suppose this means you couldn't have getter methods returning references to standard mutable Java API objects like Vector, etc. because you cannot for example write an inner class Vector.Immutable or even a standalone class ImmutableVector, as far as I know. Out of interest, how would you deal with these issues with the standard API? Write your own standard library?
+
+I am of the opinion that writing immutable classes (i.e. they have a constructor and a bunch of query methods, but nothing that changes their state after instantiation) is the best compromise between development effort and value of checking in Java. I notice that a lot of standard Java classes are immutable -- I think some of the API developers agree. It makes a lot of my classes annoying to use and often inefficient but it makes them much simpler and safer because I can rely on class invariants (JavaBeans seem abhorrent to me from a DBC perspective!). I would much rather have it this way than to have a bunch of setter methods, with each and every method which performs a useful task having to check if the class' fields are even set before it proceeds. In the highly multi-threaded environments we work in, that kind of programming would cause much more complex scenarios and more bugs.
+
+GregMcIntyre
+
+----
+
+As for returning MutableCollections, it really depends on your intent.  If you are adament about not allowing these inner structures to be modified, there are static methods in the Collections class to return decorated collections (Set, List, and Map, for example) which throw UnsupportedOperationExceptions when methods which modify the collection are called.  I don't believe there is a public interface to flag these immutable collections, so you'll have to make it clear in your javadocs and other documentation if a returned collection is immutable.
+
+AndrewBowman

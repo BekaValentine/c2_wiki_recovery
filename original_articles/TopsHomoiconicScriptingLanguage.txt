@@ -1,0 +1,219 @@
+As a thought experiment, I've been kicking around the idea of a semi-Homoiconic scripting language (HomoiconicLanguage) that somewhat resembles C-syntax. It's not that I love C-syntax, but at least it would help in the acceptance of the language and make it more familiar and perhaps more natural than Lisp. This language is sort of a forced marriage between Lisp and JavaScript, with some simplification of concepts for conceptual conservation.
+
+It is based on nested UniversalStatement''''''s (function calls with optional named parameters), and a "tree-map". A tree-map is basically a tree where the nodes are non-positional and addressable like an associative array. 
+
+If you want to record positional info, such as with positional parameters, then one generally uses sequence numbers like "1", "2", "3", etc. in the tree. Lisp fans may find this annoying and is admittedly one of the uglier aspects of this language. But every language has ugliness, and one often has to accept the ugly stuff to get the good stuff (WaterbedTheory).
+
+The '''whole run-time image is one big tree'''. One can x-ray the tree to study or change any aspect (if interpreter permissions allow). All the variable stacks etc. are part of this tree. Here is an example tree generated from parsing:
+
+ // Example 1 - source code
+ print("hello world", device=foo);
+ printLn(foop, device="zert");
+ printLn("foop");  // note quotes, contrast with prior
+
+ // Run-time tree generated from Example 1
+ system.default.main.1.print.1 => "hello world"
+ system.default.main.1.print.device.var => "foo"
+ system.default.main.2.printLn.1.var => "foop"
+ system.default.main.2.printLn.device => "zert"
+ system.default.main.3.printLn.1 => "foop" 
+ 
+The "=>" indicates we are showing the value at the given array position given by the map-tree path. The above is essentially part of an array dump where the array is the system tree-map. You could get it by using:
+
+ print(dump("system"));
+
+Normally one does not have to give the whole path for variables because a scope system is used during execution which would assume function-only scope unless not found there.
+
+Above, "default" is the default name-space. This allows the possibility of multiple name-spaces, although I am not describing such a feature any further and it won't be part of our hypothetical version 1.0. 
+
+"main" is the main function, which will be assumed if no explicit "main" function is defined.
+
+There is no difference between variables and map arrays. Variables are just short-cut references. The following are all equivalent:
+
+ foo = 7;
+ foo.value = 7;
+ foo["value"] = 7;
+ foo['value'] = 7;
+
+The "value" convention makes the formal (tracked) distinction between a variable and an array (tree map) unnecessary. Array dumps normally don't explicitly show the "value" node. (If you wanted to check to see if something "is" a variable or array, you'd see if it had any elements other than "value".) 
+
+[How the run-time scoping works will be described later.]
+
+There are a few conventions to allow the syntax to stay almost C-like. First, there is no difference assumed between commas and semi-colons as separators. However, the convention is to use commas to separate parameters and semi-colons to separate statements. (A lint-like utility could find potential violations.)
+
+Second, there is no difference between parentheses and curly braces. However, the convention is to only use curly braces for control statements, such as an "if" statement. The interpreter will (by default) issue warnings if parenthesis are paired with curlies. This helps reduce matching problems and offers visual cues.
+
+Note the difference between a control statement in C versus this language:
+
+ // C-style
+ if(condition) {
+   foo();
+   bar();
+ }
+
+ // This language
+ if {condition,
+   foo();
+   bar();
+ }
+
+The slight difference is because the "if" statement is just a regular function call.
+
+Third, an assignment statement is really a "set" statement. The assignment syntax is simply a shortcut for "set".
+
+Here is another general set of examples and the resulting tree (only partial path shown for simplicity).
+
+ // Example 2
+ if { compare(foo,"<",7),
+   zap(a,"b",waz=2),
+   bar(),
+   x = 12 
+ }
+ 
+ // Equivalent to above
+ if ( cmp(foo,"<",7),
+   zap(a,"b",waz=2);
+   bar();
+   set("x", 12)  // see note
+ )  // note not a curly
+
+ // equivalent assignment statements (partial paths only)
+ if.1.cmp.1.var="foo";  // cmp stands for "compare"
+ if.1.cmp.2="<";
+ if.1.cmp.3=7;
+ if.2.zap.1.var="a";
+ if.2.zap.2="b";
+ if.2.zap.waz=2;
+ if.3.bar.paramCount=0;  // place-holder, needs work
+ if.4.set.1="x";
+ if.4.set.2=12;
+
+Note how "var" is used to distinguish between constants and variables.
+
+
+'''Miscellanious Notes:'''
+
+* To track whether statements used parenthesis or curly brackets, perhaps the setting of 'statement.quoteType="curly"' could be used.
+
+* Positions of named parameters are not tracked. If recreating a statement based on the tree, generally one puts them at the end in alphabetical order.
+
+* The modifier "@" can be used at the beginning of a variable or path references to return an empty string if the path does not exist. If used, only the root item in the path must exist to avoid an error. ("@" is half-borrowed from PHP's "ignore error" operator, but is much more narrow in power.)
+
+* OOP is not described here, but could be set up using function pointers (paths) and prototyping (cloning) for inheritance, along with some possible scope modifiers.
+
+* '''Any "Pointers" are simply tree paths.''' True, it may be RAM-hoggy to do it that way, but resource conservation is not the driving goal here. But do note that one can use relative paths as pointers, which is not too different than assembly/machine-language address offsets.
+
+* Once a function instance is complete (return), the entire stack of that instance is deleted from the tree. If you need a lasting structure, then declare it in "main" (global) or create it in the caller. This simplifies garbage management of the tree. (However, it may not address orphans in the underlying implementation of the tree array, such as the C-libraries use to write the interpreter.)
+
+* This language does not use internal type-flags. Everything is a map-array internally that essentially stores strings. For comparisons, the following letters can be used in the comparison operator:
+
+** N - Compare as numeric. Example: cmp(a, ">n", b) 
+** I - Round to nearest integer for comparing (and compare as number).
+** C - Compare as character (default)
+** T - Trim; no leading or trailing white-spaces used in comparison. ("T" assumes "C" such that they are both not needed at the same time. Same applies to other relevant letters.)
+** R - Reduce any internal white-spaces to one for comparing. Example: "**foo**bar**" becomes "*foo*bar*" (where * represents a space). Often used in conjunction with "T".
+** S - Case Sensitive - Otherwise, ignore case. (This language in general is case insensitive by default.)
+
+** One may notice that a type system can be added by using a "type" attribute. This wouldn't interfere with the "value" attribute. It's a "side flag" essentially.
+
+--Top
+----------
+'''Useful Library Functions'''
+
+* '''cat'''(a,[b],[c],[d],...) - String concatenation.
+
+* '''clone'''(<var>, [maxdepth]) - Copy tree/branch.
+
+* '''addr'''(var) - Gets absolute address of variable (as a tree path).
+
+* '''relAddr'''(var) - Gets relative address of variable based on current function instance. [needs some thought work as the run-time stack may or may not be part of the code branch.]
+
+* '''funcInstAddr'''() - Absolute tree path of current function instance. cat(functInstAddr(), '.',  relAddr(var)) is the same as addr(var).
+----------
+
+'''Q:''' Is 'value' a loopback, or a special tree value of its own? 
+ foo = 23;
+ foo.value = 42;
+ foo.value['value']["value"].value = 108;
+ how does 'foo.value' evaluate?
+'''A:''' That would be an error. Value has to be a leaf. A thoughtful question.
+
+'''Q:''' Tree assignment or 'value' assignment?
+ foo.y = 42;
+ foo.y.answers.1 = "Life";
+ foo.y.answers.2 = "Universe";
+ foo.y.answers.3 = "Everything";
+ foo.x = foo.y // assume 'foo.x' did not exist prior
+ how does 'foo.x' evaluate?
+ how does 'foo.x.answers.2' evaluate?
+'''A:''' print(foo.x) would return "42". Tree/branch copy would need a library function(s). The second one would be an error (unless "@" used).
+
+'''Q:''' Tree vs. Object Graph?
+ foo.y.answers = "Life, Universe, Everything";
+ foo.x = foo.y
+ foo.x.answers = "For whom the bell tolls";
+ how does 'foo.y.answers' evaluate? 
+'''A:''' As described above, assignment by itself does not do tree/branch copying. See "clone" function above.
+
+'''Q:''' Metaprogramming support: How do I quote a program? Homoiconic is somewhat pointless without it. Something like as follows is needed:
+ foo.x = '''quote'''(println(foo.y));
+ foo.x.println.1 = '''quote'''(foo.z);  // change from foo.y to foo.z
+ foo.x.println.device = "console";      // make device explicit
+ foo.x();                               // print a line
+ system.default.main.1 = foo.x;         // change the first behavior of the system.
+''(I'm still refining that. I'll consider this as a fall-back, though. --top)''
+
+'''Q:''' One of the examples shows how to call the "if" function using assignments, with if.1 containing the condition and if.2 and up containing the body.  How is this invocation distinguished from creating an array called "if"?  In other words,
+ if.1 = "This is the first array element"
+ if.2 = "This is the second array element"
+Looks like it would be interpreted as follows:
+ if { "This is the first array element",
+   "This is the second array element"
+ }
+'''A:''' Variable assignments are done through the "set" function, and thus will not be on the same tree level. They would actually only directly become part of the tree on the run-time stack (not shown yet), and thus the actual variables are in a different tree-space.
+----------
+'''Alternative Control Statements'''
+
+An approach that may simplify the implementation but complicate the syntax a bit is to have "lite" control statements that are stand-alone functions. Example:
+
+  if(cmp(a,"=",b));
+    foo(a);
+    bar(b);
+  endif();
+
+Here there is no direct nesting of the statements "foo" and "bar" within an "if" function. What would happen here is that the interpreter would jump to the appropriate "endif()" function if the statement was false.
+
+The run-time engine could perhaps look for a "jumpto" attribute in the given IF statement's sub-tree. If it does not find one by chance (such as first run), it then scans the function to calculate it. Remember that all statements are numbered within a function. Thus, it just has to find the matching statement number and put that into the "jumpto" attribute.
+
+A simpler run-time engine allows easier custom tweaks.
+
+-----------
+'''Discussion'''
+
+''Please implement it.  Call us when you're done.''  
+*It's already implemented.  It goes by the name IoLanguage.  --Samuel A. Falvo II
+* ''Looks like rather complex syntax to me. Here, everything is a function, with one exception for assignment statements. Nor is it based on one big tree.''
+* You must be talking about a different Io than I am.
+** '''Complex syntax''' -- the only syntax it actually offers is that of function application.  Control flow and iterative constructs are merely examples of this.  Research the syntax for the if() and while() methods, for example.
+** '''Everything is a function''' -- everything is an object, including methods, ''invokations of'' methods, and...
+** '''Nor is it based on one big tree''' -- ... entire programs, which is expressed as a web of abstract syntax tree nodes (yes, also objects).  The interpreter works off of the AST nodes directly; "macros" (methods which dynamically update and replace, in situ, other methods, potentially including themselves) are expressly permitted.
+*** One-big-tree is conceptually simpler. See new note above about pointers.
+
+** '''with one exception for assignment statements''' -- In Io, even assignment is treated uniformly.  By overriding the ''setSlot'' method on an object, you alter how the '':='' operator works (since := is merely syntactic sugar for invoking setSlot).  Likewise for ''updateSlot'' and the = operator.
+*** ''Ditto for this. Assignment is merely syntactic sugar for a SET function.''
+* I suggest you re-evaluate IoLanguage with an inquisitive, beginner's mind.  Visit the official website.  Visit the #io channel on IRC.  Visit the mailing list.  '''THEN''' make your determination.
+** RE: "an inquisitive, beginner's mind" - don't ask for the impossible. We all know TopMind is prejudiced, biased, and defensive of his own ideas, and consequently hostile towards acknowledging any evidence that would prove him wrong.
+** [Surely none of the holy triumvirate of Knuth, Djisktra, and TopMind could possibly be wrong, could they?  I can't believe that our own all-knowing successor to DrCodd is anything but the living embodiment of truth, knowledge, and righteous correctitude.]
+** ''And faster than a speeding Cray bullet point. Oh, by the way, EverythingIsRelative ;-P --top''
+
+I'd rather he implement his TopsQueryLanguage, but you know how well that's coming along.
+
+{I'm waiting for you to implement your AI-based language implementor to do it. Howzit comin' by the way? --top}
+
+Since I've neither conceived of nor designed an AI-based language implementor, I'd say it's well into its pre-pre-alpha stages.
+
+
+----
+OctoberZeroEight
+
+CategoryProgrammingLanguage

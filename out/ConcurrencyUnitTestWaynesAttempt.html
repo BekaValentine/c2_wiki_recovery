@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Concurrency Unit Test Waynes Attempt
+      </h1>
+      <p>
+        From <a href="ExtremeProgrammingChallengeFourteenTheBug.html">ExtremeProgrammingChallengeFourteenTheBug</a>
+      </p>
+      <hr/>
+      <p>
+        This test exposes the error with the message "producer1 blocked". It's verbose and it's slow (takes seconds to execute), and I <em>hate</em> that it's not deterministic. It can also report false errors if the process doesn't get any CPU time for 200 msec.
+      </p>
+      <code>
+        public void testTwoProducersTwoConsumers() throws Exception {<br/>
+        final int numberOfItems = 10000;<br/>
+        final Watchdog watchdog = new Watchdog();<br/>
+        final BoundedBuffer buffer = new BoundedBuffer(1);<br/>
+        Thread producer1 = new Producer(buffer, watchdog, numberOfItems);<br/>
+        Thread producer2 = new Producer(buffer, watchdog, numberOfItems);<br/>
+        Thread consumer1 = new Consumer(buffer, watchdog, numberOfItems);<br/>
+        Thread consumer2 = new Consumer(buffer, watchdog, numberOfItems);<br/>
+        producer1.start();<br/>
+        producer2.start();<br/>
+        consumer1.start();<br/>
+        consumer2.start();<br/>
+        watchdog.waitUntilInactive();<br/>
+        assert("producer1 blocked", !producer1.isAlive());<br/>
+        assert("producer2 blocked", !producer2.isAlive());<br/>
+        assert("consumer1 blocked", !consumer1.isAlive());<br/>
+        assert("consumer2 blocked", !consumer2.isAlive());<br/>
+        }<br/>
+      </code>
+      <p>
+        Watchdog is how I detect that nothing is happening. It allows the test to work on faster or slower CPUs:
+      </p>
+      <code>
+        private static class Watchdog {<br/>
+        private long msecOfLastReset;<br/>
+        public Watchdog() {<br/>
+        reset();<br/>
+        }<br/>
+        public synchronized void reset() {<br/>
+        msecOfLastReset = System.currentTimeMillis();<br/>
+        }<br/>
+        public void waitUntilInactive() throws InterruptedException {<br/>
+        while (msecSinceReset() < 200)<br/>
+        Thread.sleep(200);<br/>
+        }<br/>
+        private synchronized long msecSinceReset() {<br/>
+        return System.currentTimeMillis() - msecOfLastReset;<br/>
+        }<br/>
+        };<br/>
+      </code>
+      <p>
+        The producers and consumers are about what you'd expect (I expect):
+      </p>
+      <code>
+        private abstract static class Actor extends Thread {<br/>
+        protected BoundedBuffer buffer;<br/>
+        private Watchdog watchdog;<br/>
+        private int numberOfItems;<br/>
+        public Actor(BoundedBuffer buffer, Watchdog watchdog, int numberOfItems) {<br/>
+        this.buffer = buffer;<br/>
+        this.watchdog = watchdog;<br/>
+        this.numberOfItems = numberOfItems;<br/>
+        }<br/>
+        public void run() {<br/>
+        try {<br/>
+        for (int i = 0; i < numberOfItems; i++) {<br/>
+        act();<br/>
+        watchdog.reset();<br/>
+        }<br/>
+        }<br/>
+        catch (InterruptedException e) {<br/>
+        }<br/>
+        }<br/>
+        protected abstract void act() throws InterruptedException;<br/>
+        };<br/>
+      </code>
+      <code>
+        private static class Producer extends Actor {<br/>
+        public Producer(BoundedBuffer buffer, Watchdog watchdog, int numberOfItems) {<br/>
+        super(buffer, watchdog, numberOfItems);<br/>
+        }<br/>
+        protected void act() throws InterruptedException {<br/>
+        buffer.put(new Object());<br/>
+        }<br/>
+        };<br/>
+      </code>
+      <code>
+        private static class Consumer extends Actor {<br/>
+        public Consumer(BoundedBuffer buffer, Watchdog watchdog, int numberOfItems) {<br/>
+        super(buffer, watchdog, numberOfItems);<br/>
+        }<br/>
+        protected void act() throws InterruptedException {<br/>
+        buffer.take();<br/>
+        }<br/>
+        };<br/>
+      </code>
+      <p>
+        I added a new constructor to BoundedBuffer that takes the buffer size, as I wasn't able to reproduce the deadlock with the default buffer size of 4.
+      </p>
+      <p>
+        Also, my test for one producer and two consumers showed a deadlock, as did my test for two producers and one consumer. One producer and one consumer worked fine. When I changed the notify() to notifyAll(), all the tests passed. -- <a href="WayneConrad.html">WayneConrad</a>
+      </p>
+    </div>
+  </body>
+</html>

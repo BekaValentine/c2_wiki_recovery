@@ -1,0 +1,547 @@
+[Any way to factor out the general discussion after each solution? Many of the comments could be removed with clarifications to the ManyToManyChallenge page]
+----
+ManyToManySolutions
+
+'''''SQL Version'''''
+ CREATE TABLE Users 
+ ( user_id INTEGER NOT NULL PRIMARY KEY, 
+	user''''''name VARCHAR NOT NULL,
+	CONSTRAINT groups_uq UNIQUE (user''''''name));
+
+ CREATE TABLE Groups 
+ (group_id INTEGER NOT NULL PRIMARY KEY,
+  group_name VARCHAR ,
+  CONSTRAINT groups_uq UNIQUE (group_name));
+
+ CREATE TABLE r_users_groups (
+	user_id INTEGER NOT NULL ,
+	group_id INTEGER NOT NULL,
+	CONSTRAINT r_users_groups_pk PRIMARY KEY (user_id, group_id),
+	CONSTRAINT r_users_groups_fk1 FOREIGN KEY (user_id) REFERENCES users ON DELETE CASCADE ON UPDATE CASCADE,
+	CONSTRAINT r_users_groups_fk2 FOREIGN KEY (group_id) REFERENCES groups ON DELETE CASCADE ON UPDATE CASCADE
+  )
+
+  CREATE INDEX r_user_groups_idx1 ON r_user_groups (group_id);
+
+''What SQL dialect is this? Oracle 8 doesn't understand the "CREATE TABLE r_user_groups" statement for multiple reasons.''
+
+'''SQL version: 4-30 lines of code. (SqlLineCount''''''s are fairly arbitrary.)'''
+ 
+They only need to support the following basic condition clients should be able to realize in one statement any of the following operations: creating, updating, deleting, any of the object, querying for a set of objects matching a simple condition, creating a relationship between 2 instances , removing a relationship between 2 instances, "navigating" the relationship both ways in better than linear time. For all these, it took me 15 non empty lines of SQL code, and less than 60 seconds. I find it telling that rather than showing me the code, most OO advocates prefer to waste my time with various "explanations" and excuses. 
+
+''So where is the rest of the SQL code? I don't see any of the code requested in ManyToManyChallenge. This "implementation" just declared the tables and omitted any of the methods that operate on the tables.''
+
+RelationalHasLimitedModelingCapability?
+----
+'''''Python Implementation - FalkBruegmann'''''
+
+Here's an implementation in Python to get the discussion started, although I'm sure others will find much more elegant solutions.
+ class user_group_map:
+	def __init__( _ ):
+		_.rel = [] # a list holding tuples of (user, group)
+	def get_groups( _, user ):
+		return [ r[1] for r in _.rel if r[0] == user ]
+	def get_users( _, group ):
+		return [ r[0] for r in _.rel if r[1] == group ]
+	def has( _, user, group ):
+		return user in _.get_users( group )
+	def add( _, user, group ):
+		if not _.has( user, group ):
+			_.rel.append(( user, group ))
+	def remove( _, user, group ):
+		if _.has( user, group ):
+			_.rel.remove(( user, group ))
+
+This solution has the same number of lines as the SQL code, even though I'm not sure I would use it exactly like this in production code, except as a YAGNI thing. The great advantage for the programmer over the db based solution is that it's much easier to use, e.g.: 
+
+ me = "falk"
+ you = "costin"
+ db = "db heads"
+ oo = "oo heads"
+
+ ug = user_group_map()
+ ug.add( me, db )
+ ug.add( me, oo )
+ ug.add( you, db )
+
+ ug.get_groups( me ) # --> [ "db heads", "oo heads" ]
+ ug.has( me, oo ) # --> true
+ etc.
+
+Whereas in the db solution you would have to add code to make it usable, even in a procedural language. E.g., you don't want to try to insert a user-group-mapping that's already in the db, or remove one that isn't, and you'd surely put the code for that check into a procedure so you don't have to write it on every insert/delete. 
+
+In other words, the oo solution already contains a bit of logic and interface that you would have to write for the db solution anyway.
+
+Looking forward to critique and other suggestions!!
+
+-- FalkBruegmann
+
+''As you said, your code is not production code. First of all, you get linear time access over any relationship. Second you have no method to create/remove/update/delete/(query for) users and groups (clients of the SQL solution are just one statement away from doing any of those ) things. So in the above you only declared code equivalent for the r_user_groups table. As such your OO design is denormalized and suffer all the known consequences, it is not a particularly good OO design. Add the rest and let's talk about. In "db" solution, I don't really have to add code to make usable the functionality that's already there. True I need to do some mapping in a language like Java, or in environments like DelphiLanguage or VisualBasic I only need one click or two to define needed query components (no further LOC). Further more the above solution is not really persistent ready, doesn't support concurrency control out of the box, not to mention transactions. Add those and then we're talking lines of code and complexity.''
+
+Yes to most of what you say. I understood the original challenge as, "It's hard to express the idea of many-to-many in a simple way in oo languages", so I tried to come up with the simplest possible way to disprove that. Production quality code is hard to talk about without specifying the persistence solution, which could range in complexity from something like EJB CMP to something like the prevayler (in which case you might not even have to add anything to the above code).
+
+About linear access times: Yes, thought about that as well, but decided it was YAGNI. If it becomes a bottleneck, it's trivial to switch the single table to two hash''''''tables group -> list of users and user -> list of groups, which would add three lines to the above code.
+
+About the quality of OO design: Once you've got a user and a group class, just add trivial delegation code (class user: def has( _, group ): return _.user_group_map.has( _, group ) etc.). But those are really boring and don't add to "expressing the idea of many-to-many", so I didn't list them.
+
+All in all, if it's that kind of application and I'm free to use something like the prevayler, I guess I would need an order of magnitude less code to make the above persistent and thread-safe, than to create a full mapping to a relational database. Plus it would be much much cleaner.
+
+Alas, this is pretty much theory for me, as until now every client has required the use of a relational database. So I spend lots of my time bridging the oo-rdb gap, and wrestling with the related tools. Sigh... -- FalkBruegmann
+
+''Add the code that supports the missing functionality and let's talk, because you don't really know what you can't measure or what you haven't measured yet; make sure you include the logarithmic access time. I wasn't trying to say that it is "difficult" to express many to many relationships, but I'd definitely want to say that it is, by your own words,'''boring'''. Quite non-trivially boring and error prone.''
+
+''With regards to adding concurrency and persistence features. Yes you can do it with EJB CMP: yet more boring spaghetti code and descriptors for a broken model -- see EjbTernaryRelationshipExample, and you'd be using RelationalModel anyway, even if in a broken kind of way. Or, as you say, you could use ThePrevayler. I'm not aware of PrevalenceLayer for Python , but all I know is that the Java version is not really production ready. Quite frankly the likelihood of loosing data using the currently released prevayler is far worse than for Oracle, because they just don't handle correctly I/O errors and recovery. And for example, the Java code below, is very susceptible to face JavaSerializationIsBroken. Plus ThePrevayler really doesn't support any concurrency at all.''
+
+''The bottom line of this challenge (until proven otherwise) is to show that there are really no free lunches with ObjectModel''''''s. What for me took less than 60 seconds to express using stock SQL would take for you quite a few lines of code more, it would be boring, and it wouldn't be quite production ready.''
+----
+''''' Python version -- GregorRayman'''''
+ ''(using the sets which come with 2.4)''
+
+  class User:
+	def __init__(self):
+	self.groups = set()
+	def add''''''Group(self, group):
+	if not group in self.groups:
+	 self.groups.add(group)
+	 group.add''''''User(self)
+	def remove''''''Group(self, group):
+	if group in self.groups:
+	  self.groups.remove(group)
+	  group.remove''''''User(self)
+	def destroy(self):
+	for group in self.groups[:]:
+	 self.remove''''''Group(group)
+
+  class Group:
+	def __init__(self):
+	self.users = set()
+	def add''''''User(self, user):
+	if not user in self.users:
+	 self.users.add(user)
+	 user.add''''''Group(self)
+	# and so on for remove and destroy
+
+I have not tested this. The idea is, each user has a set of groups they belong to and each group has a set of its users. --GregorRayman
+
+''And what happens when say VB, FORTRAN, or Crystal Report applications need access to the same data?''
+
+CORBA, Web Services, XML-RPC, (D)COM (I believe Python has bindings for that). How many interprocess communication layers exist? Pick the one that supports your needs. You're not suggesting that your RDBMS is your IPC mechanism, I hope? At least that way you get to code the behavior once and provide it across languages, rather than having the same code repeated over and over. Does any FORTRAN implementation even provide a way to talk to any RDBMS?
+----
+'''''Java Version - AnonymousDonor'''''
+
+Here's some Java code:
+ public class User {
+	private static Set user''''''names = new Hash''''''Set();
+	
+	private String user''''''name;
+	private Set groups = new Hash''''''Set();
+
+	public User(String user''''''name) throws IllegalArgumentException {
+		if (user''''''names.contains(user''''''name)) {
+			throw new IllegalArgumentException("Duplicate user''''''name!");
+		} else {
+			this.user''''''name = user''''''name;
+			user''''''names.add(user''''''name);
+		}
+	}
+
+	public String get''''''User''''''name() {
+		return this.user''''''name;
+	}
+
+	public Set get''''''Groups() {
+		return new Hash''''''Set(groups);
+	}
+
+	void add''''''Group(Group group) {
+		groups.add(group);	
+	}
+
+	void remove''''''Group(Group group) {
+		groups.remove(group);
+	}
+ }
+
+ public class Group {
+	private static Set group''''''names = new Hash''''''Set();
+	private String group''''''name;
+	private Set users = new Hash''''''Set();
+
+	public Group(String group''''''name) throws IllegalArgumentException {
+		if (group''''''names.contains(group''''''name)) {
+			throw new IllegalArgumentException("Duplicate group''''''name!");
+		} else {
+			this.group''''''name = group''''''name;
+
+			group''''''name.add(group''''''name);
+		}
+	}
+
+	public String get''''''Group''''''Name() {
+		return this.group''''''name;
+	}
+
+	public void add''''''User(User user) {
+		users.add(user);
+		user.add''''''Group(this);
+	}
+
+	public void remove''''''User(User user) {
+		users.remove(user);
+		user.remove''''''Group(this);
+	}
+
+	public Set get''''''Users() {
+		return new Hash''''''Set(users);
+	}
+ }
+Or something like this. I stopped before I implemented the "proper" link back from Users to Groups. I say "proper" because you probably shouldn't be adding groups to users, you should be adding users to groups. This being said, it does make sense to include "back links" from the users to the groups to which they belong. I think you are also sweeping aside the entire infrastructure put in place by the SQL server dismissing it as "builtin functionality that any decent SQL database will offer you" but I think this code is pretty simple and expresses the same (barring the differences noted above) idea as your SQL statements plus the functionality of the SQL database. -- AnonymousDonor
+
+	* In the above code, the clients of the classes are not one statement away from: deleting a group, deleting a user. There are a few more trivial methods missing like getting a group by name, getting a user by name. Add those and let's count.
+	* I find the repetition of such set/get/find/delete code patterns really annoying. It is CodeSmell IMO calling out for some other kind of abstraction such that you code only what is different or unexpected rather than the same pattern over and over. 
+	* I also wonder what the OO crowd does for ad-hoc queries? Do you add new methods for every new query and then delete them when done, or just pile up over time? (Example queries: find all groups that users A and B have in common. Find all users who belong to groups containing the string "back" but not "back room".) 
+	* Regarding a hybrid database that does both OO and relational well, I am skeptical that such is practical (TablesAndObjectsAreTooDifferent).
+----
+'''''Java Version - WilliamUnderwood''''' 
+ {
+	A''''''List users = new List(User.class);
+	A''''''List groups = new List(Group.class);
+
+	Class user''''''Group''''''Relation''''''Class = Relationship.class(User.class, Group.class);
+	A''''''List relationships = new List(user''''''Group''''''Relation''''''Class);
+ }
+And we query it like this: [this particular usage is deprecated, I'll update this with my preferred API, which makes some magic much more robust]
+ {
+	A''''''List user''''''Relationships = new Join(users, null, relationships, relationships.query().get(User.class)));
+	A''''''List users''''''In''''''Group = user''''''Relationships.selectEqual(interesting''''''Group, user''''''Relationships.query().get(user''''''Group''''''Relation''''''Class));
+ }
+Gotto go work now, I'll flesh this out more when I get back; suffice to say that the implementations of User and Group are whatever you want them to be, Relationship is reasonably simple, and the real magic happens in List and Join. Give me a call if you want to know how it works. -- WilliamUnderwood
+
+Well, I just got some time, so here goes some of it at least:
+
+User and Group are your domain classes, I don't really care what they are. The only constraint is that they must implement an interface exposing their functionality. Not all that much to ask, in my opinion... I've been finding that I usually end up with an interface anyway to allow me to mock the objects, distribute them (which uses related magic, something similar to TransparentRmi), serialize them (with read''''''Replace(), etc), and so forth. But I digress.
+
+Relationship has very little magic involved, basically it's a weak hash map using class objects as the keys. Potential weakness, relationship between objects of the same class becomes tricky, although there's really no reason we couldn't use any object... the class based system is convenient for my purposes for now. The Proxy mechanism is used to create a distinct class for a given set of classes, so long as the same classes are supplied, the Relationship factory method will guarantee that the same class object is returned.
+
+Join is an extension to List, joining two lists by the supplied queries. These queries are really encapsulated method calls on an element of each list... elements which return equal results are combined into one proxy object in the join list, with the invocation manager handling dispatching calls to the appropriate real object behind the scenes (translation: I just implemented runtime multiple inheritance of implementation in java :)).
+
+List contains a bit more, and is related to the Join class.
+	* Supports constraining the contents to a given class.
+	* Supports several internal iterators for method objects (which are in turn based on a predicate system described by RobertDiFalco in BlocksInJava), as well as a few convenience methods, including the select''''''Equals() method as used in the query.
+	* Supports a distinct internal iterator (a no arg for''''''Each() method), which returns a proxy implementing the interfaces common to all objects in the list, plus a tag/control interface. Results from this are collected into a new list, and the proxy returned from that list. The original list can be obtained by casting the proxy to the control interface, and calling the $getList() method (named to avoid collisions in the general case).
+
+The query method in the List implementation deserves its own section: it involves the most magic, and is currently the most suspicious section of code in my implementation (read fragile). It returns a proxy class implementing common interfaces as above, with an exception: methods invoked on it don't get called on any real objects, instead, the method which is called is recorded as being an active query. When a join operation occurs, the most recent active query on each collection from the current thread is used to query the objects. At this time, the stored Method object is invoked on each element of the collection, and results used to join the two lists. Note that this means that the second and forth arguments of a new join are really just a convenient slot to put those method calls; there's nothing stopping one from creating a two arg constructor, and making the queries earlier, although the likely hood of messing up becomes much greater.
+
+--WilliamUnderwood
+(ps, you can also do some weird and wonderful things with persistance using some of the same techniques, but that's for another time)
+
+'''Regarding your relationship objects, are these created each time the application or page loads?'''
+	* When do you want them to load? If it makes sense to create them once and serialize/deserialize to disk, then one can do it that way. If short lived per-page objects make more sense, then we do it that way.
+
+'''What if there are hundreds of thousands of users? (such as Intel employees).'''
+	* Then we use an implemention of A''''''List which scales to millions of objects. Not that this is or isn't trivial, but the user of an implementation of A''''''List need not be concerned with it... they need only use the one labeled M''''''assivelyScalableToMillionsOfObjectsList, or the one labeled PDASizedList if they're looking for small size...
+
+'''What if other applications need to see or query users, groups, or combinations of? Do you create more classes or method for every new such query?'''
+	* The relationship class is generic much like a row in a database; it's the same class for any given relationship. You can join and query on any information already available from the object. I'll attempt to demonstrateon the university/college schema problem mention elsewhere when I have a bit more time, but suffice to say, each query operates on the same classes. In fact, if there is enough information available from the elements of a relationship to associate them to each other, then the relationship class isn't even necessary... you just join the two lists by the queries which identify them.
+
+'''Remote method calls?'''
+	* Given a Rmi package that supports working with arbitrary interfaces, no more additional code required.
+
+'''These are some of the issues that databases seem to make simpler. 100 different applications or languages may have 100 different access interfaces, protocols, and/or conventions. It just seems like databases better factor common and typical information sharing needs.'''
+	* Indeed. I couldn't agree more. Databases ''are'' one useful factoring of common and typical information sharing needs. What I'm describing ''is'' a database, except that this one integrates entirely into the application. A user of A''''''List doesn't need to be aware that this particular implementation happens to persist itself using technology ABC from vendor XYZ.
+
+Remembering of course, that the point of this page was modeling a many to many relationship with arbitrary queries without writing oodles of repetitive error-prone code.
+
+''One of the main purposes of a database is to make it easier to share lots of data among varied applications and languages. Your solution seems too tied to specific languages. IOW, it is not ShareFriendly. If it was, then this A''''''list thing would probably *be* a database. Whether it is a good one or not is another matter.''
+
+That's my point :)  A''''''List ''is'' a database. If we want external access to it, then we write an SQL API. I've read elsewhere that this is what SQL is really useful for: generic access to data stored in varied forms. It just so happens that my code doesn't have to deal with it. Perhaps this centralized database concept is what troubles the OO folk? Something vaguely like described in DistributedDynamicDatabases, except not really (reeeeal helpful, eh?). Something like Client: "Here's the type of data I want. [in SQL]" Central Database: "Okay, I know the database with the info you need... here's a reference." Client (to reference): "Show me... [in SQL]" Java-SQL Front End: "Okay, give me a sec... And there you go". Note that I'm specifically ''not'' talking about geographically distributed. I don't know, does this make any sense?
+
+''Not to me. Why not just set up a database to store the data in a central fashion, and query it or update it when you need it? The data will possibly outlive Java anyhow. Why tie the data to Java or any other app language?''
+
+Because the data isn't simply data. There's behaviour there as well. If you want, I'll write an externally accessible SQL layer. But why should my app be limited to it? My data is massive amounts of video data, interspersed with configuration data, times and locations, and the actions to deal with this. I want to be able to query for all video clips which happened on the fifth floor within ten minutes of activity on the camera pointed at the elevator on the first floor. And once I've got my clips, I want to be able to view them, and tell the Tape system to allocate more resources to the cameras where they came from. And I want the app to respond immediately. Can I do this with sql (honest question)? It's my understanding that getting callbacks from the database is tricky, and that the form of persistance is linked into that database (or should I  really centralize the storage of a terabyte of video into the rdbs ;) )
+
+''I don't see how the "behavior" issue or callbacks is a problem/issue. It sounds like a typical application pattern: query to get a hits, study the hits, and then act on them based on the hits. For example, suppose you query for specific scenes and get back a list of 30 matches. You could have a GUI grid component that displayes the results. You then issue commands to the grid rows (camera's?) that you want to do something special with. Maybe you type in commands to a Command column in the grid, right click to get a list of options, or select a row(s) and then select menu options, etc. (This is an estimated use case based on your rough description. I don't know your specific domain.) Who ever said that SQL is expected to do everything? Note that the RDB does not have to necessarily store the "clips" themselves, although I see no harm in it for the "big-iron" products. But I assume you are querying meta-data about scenes.''
+
+Re: ''Because the data isn't simply data. There's behaviour there as well.''
+
+Most "behavior" I see can be seen as or converted to typical DatabaseVerbs. For the sake of argument, if by chance it makes the last 20 percent of behavior handling harder, we are still better off in the end because it made the first 80 percent easier. -- top {Whoever has been tampering with my quotes, please stop.}
+
+----
+'''''Java Solution -- EricHodges'''''
+
+		P''''''rincipleTable users = new P''''''rincipleTable("users");
+		P''''''rincipleTable groups = new P''''''rincipleTable("groups");
+		R''''''elationTable userGroups = new R''''''elationTable(users, groups);
+
+In Java this is all that the developer would need to enter to setup this many to many relationship. The details would be hidden inside the classes. The classes could delegate to an RDBMS or implement it themselves (just as the RDBMS does). The fact that this solution is terse seems to bother some folks.
+
+
+''By 'the classes', you mean Principle/RelationTable, or the object classes themselves? Not to be contrary, of course :)  But I do believe this is starting to count as several trivial OO implementations. Assuming we can query the tables about the objects they contain, an RDBS is simply another choice which may or may not be advantagous. And in the same way, data sharing, persistance, distribution have their analogs... don't judge what I do by what you've seen Sun do, please! -- cwillu''
+
+By "the classes" I mean Principle/RelationalTable. I don't know what you mean by "object classes themselves". I don't understand the rest of your comment.
+
+--------
+
+'''Data Dictionary Version'''
+
+I would much rather define tables by filling in ControlTable''''''s or DataDictionary'''''s. I realize that perhaps some of it still has to have expressions, but the vast majority of it seems perfectly attributizable. (Example may come later.) --top
+
+----
+
+So we have rewritten the database in Java. Why would you want to do that?
+
+''No, we've provided a many to many relationship. One implementation would be to write an RDBMS. There are an infinite number of other implementations. Why? We were challenged to do so.''
+
+No, you were challenged to *compare* them. Of course it's possible to implement in Java. No one was claiming otherwise. From the challenge page:
+
+"Let me see how many lines of code it takes you, and at what complexity cost, to represent it as an ObjectModel of "live objects", in your OO language of choice, and having the same builtin functionality that any decent SQL database will offer you from only these statements."
+
+''My version represents it as an ObjectModel of live objects and has the same built in functionality that any decent SQL database offers. The challenge also says this:''
+
+''"We're talking about amount of setup / query code, not behind the scenes code to run the show. SQL does this in 4 lines, despite tens of thousands of supporting lines of code."''
+
+The SQL version shows the setup code in SQL. My version shows the setup code in Java. Neither show implementation.
+
+''The big difference is that the SQL implementations exist today. The Java classes for representing relations do not. As such we cannot compare the quality of the solution and we can't copy and paste it from wiki to a Java IDE and let it run. Too bad, the entry is invalid until the classes are written. The challenge was for something workable today, not for something how it can work in principle.''
+
+The classes are written. About 100 lines of Java.
+
+PrincipalTable.java:
+
+	package relations;
+	import java.util.ArrayList;
+	import java.util.Iterator;
+	
+	
+	public class PrincipleTable {
+		private ArrayList principles = new ArrayList();
+		private ArrayList relations = new ArrayList();
+		private String name;
+		
+		public PrincipleTable(String name) {
+			this.name = name;
+		}
+	
+		public void add(String name) {
+			principles.add(name);		
+		}
+		public void remove(String name) {
+			principles.remove(name);
+			for (Iterator it=relations.iterator(); it.hasNext();) {
+				RelationTable aRelationTable = (RelationTable)it.next();
+				aRelationTable.remove(this, name);
+			}
+		}
+		public void addRelation(RelationTable table) {
+			relations.add(table);
+		}
+	
+		public String getName() {
+			return name;
+		}
+	}
+
+RelationalTable.java:
+
+	package relations;
+	import java.util.ArrayList;
+	import java.util.HashMap;
+	import java.util.Iterator;
+	import java.util.List;
+	import java.util.Map;
+	
+	
+	public class RelationTable {
+		private List emptyList = new ArrayList();
+		private PrincipleTable table1;
+		private PrincipleTable table2;
+		private Map table1ToTable2Map = new HashMap();
+		private Map table2ToTable1Map = new HashMap();
+		
+		public RelationTable(PrincipleTable table1, PrincipleTable table2) {
+			this.table1 = table1;
+			this.table2 = table2;
+			table1.addRelation(this);
+			table2.addRelation(this);
+		}
+	
+		public void add(String name1, String name2) {
+			addAssociation(table1ToTable2Map, name1, name2);
+			addAssociation(table2ToTable1Map, name2, name1);
+		}
+	
+		private void addAssociation(Map map, String key, String value) {
+			List a''''''List = (List) map.get(key);
+			if (a''''''List==null) {
+				a''''''List = new ArrayList();
+				map.put(key, a''''''List);
+			}
+			if (!a''''''List.contains(value)) {
+				a''''''List.add(value);
+			}
+		}
+	
+		public List selectFrom(String tableName, String name1) {
+			List result=null;
+			if (tableName.equals(table1.getName())) {
+				result = (List) table1ToTable2Map.get(name1);
+			}
+			else {
+				result = (List) table2ToTable1Map.get(name1);
+			}
+			if (result==null) return emptyList;
+			return result;
+		}
+	
+		public void remove(PrincipleTable table, String name) {
+			if (table==table1) {
+				removeRelations(name, table1ToTable2Map, table2ToTable1Map);
+			}
+			else {
+				removeRelations(name, table2ToTable1Map, table1ToTable2Map);
+			}
+		}
+	
+		private void removeRelations(String name, Map ownerColumn, Map otherColumn) {
+			List tablesNameBelongsTo = (List)ownerColumn.get(name);
+			if (tablesNameBelongsTo!=null) {
+				for (Iterator it=tablesNameBelongsTo.iterator(); it.hasNext();){
+					String tableName = (String)it.next();
+					List tableMembers = (List)otherColumn.get(tableName);
+					tableMembers.remove(name);
+				}
+			}
+			ownerColumn.remove(name);
+		}
+	
+		public void remove(String name1, String name2) {
+			removeRelations(name1, table1ToTable2Map, table2ToTable1Map);
+			removeRelations(name2, table2ToTable1Map, table1ToTable2Map);
+		}
+	
+		public List selectFrom(String tableName, List names) {
+			ArrayList result = new ArrayList();
+			for (Iterator it = names.iterator(); it.hasNext();){
+				String aName = (String)it.next();
+				List partialResult = selectFrom(tableName, aName);
+				result.addAll(partialResult);
+			}
+			return result;
+		}
+	
+	}
+
+If you aren't happy with the performance of HashMap you can replace it with any map implementation. If there are behaviors you want but don't see, specify them.
+
+''Cool. That's a good start. I'd rather use Hash''''''Set or Treeset principles so that a user lookup removal be done in sub-linear time. Another issue would be to return clones rather than the unerlying internal lists in various query methods. Next we need to fix RelationTable.remove(key1,key2), that's trivial. Still we are quite a distance away from the power of a binary relation, but let's skip over that. Now let me ask you what kind of concurrency control do I get from these classes ? Is there any pbvious way we can design in concurrency control even remotely close to what SQL provides ?''
+
+Sure, we can design in any concurrency control used by any implementation of SQL if we want to. But this isn't a contest between implementations of SQL. The challenge was to show how a many to many relationship can be created in different languages. I showed that but you complained that it didn't work today. I made it work for all the unit tests I could imagine are implied by the challenge. If you paid me I could make it just like your favorite SQL implementation. But I'm a nice guy so I'd suggest you just pay for a copy of your favorite SQL implementation. You'd save a bundle.
+
+Now the biggest difference is gone. Any difference you can find can be removed, except performance. For those differences I'll give you the standard Java developer answer: "Buy faster hardware." I've shown how to create the user/group many to many relationship in Java. It's really that simple.
+
+''It's not really that simple as you claim. You have one big bug from the first round which you still haven't removed, and quite a few design mistakes, and you have no way to provide concurrency features as you claim. It's just that the Java design will not allow you to do that without suffering major pains. The other major observation I'd like to make is that using those classes you will no longer program the way you typically program ObjectModel''''''s , you'l program semi-relationally in Java depednign on the quality of the relational classes you write that might turn out to be pretty poor implementation, you essentially end up with an EmbeddedLanguage, which is a cool solution, but not for Java. There have been nice relational implementations in Erlang and Scheme. See MnesiaDatabase for example.''
+
+''And besides I don't need to pay for relational implementations, I can get a decent one for free. My claim from the above still stands: I wrote the SQL code in less than 60 seconds and have it production level quality right from the start. Your classes above are nowhere near, and it took you considerably more. Ok, if you get to write a decent relational engine you can amortize that over many projects, but that's in theory.''
+
+So the whole challenge was just a build vs buy argument? Feh. Yes, it is generally cheaper to buy an RDBMS than write your own. I thought you wanted to see the SQL code's equivalent in other languages.
+
+''Let me explain the purpose of this challenge (by the way, it was not presented as a challenge in the current form). Many OO developers complain about the fact that they "have to" use relational databases, instead of writing against their hand-crafted object models as in a persistent VM solution so that their objects are persisted "automagically". So fine I said, let me see how you realize such an extremely simple ObjectModel. The conclusion that you seem to have reached is that you'd have to rewrite something similar to a RDBMS. That's my conclusion also.''
+** ''...'''many''' OO developers complain about the fact that they "have to" use relational database...'' - Sorry, but I disagree with the characterization.  In fact, as an OO developer, I sometimes pass sets back my SQL server as XML or even (god-forbid) comma-delimited varchars.  Why would I NOT want to use a relational databaase to handle sets?  
+
+The requirements (now clarified by the explicit addition of concurrency support) call for all of the behavior of an RDBMS. To provide all of the behavior of an RDBMS you will have to write an RDBMS. There is no free lunch. What OO developers may have been complaining about is using an RDBMS when they don't need all of the behavior of an RDBMS. A simple many to many relationship can be implemented with much less code that that required for an RDBMS. We like being able to use just as much effort as required and no more to accomplish any given task. We think of that as "efficiency".
+
+See bottom half of YagniAndDatabases.
+
+----
+I hate to be contrary... but we're not quite there yet.
+
+We already know we can implement an sql server in java. Can we do this with a model of live objects? I.e., use, store and query a larger subset of Objects rather than just Strings? And while we're at it, can we do a full equivalence to relational algebra, namely product and division or equivalent operators? And I mean this in a rhetorical sense... I'm sure that we can. --cwillu
+
+''Strings are all we need to meet the challenge. The SQL version doesn't use anything but strings. If we need more operators we can add them, but you know that already.''
+
+----
+''The fact that this solution is terse seems to bother some folks''
+
+Reasonably enough. It is in no way a solution, after all.
+
+int answer = fermats_last_theorem(); // returns true if a^n + b^n = c^n has no solutions for n > 2. Details hidden inside the function.
+
+"I have discovered a truly marvelous demonstration of this proposition that this margin is too narrow to contain."
+
+''It is as much of a solution as the challenge called for. It is as much of a solution as the SQL version at the top of the page. It is obvious that the classes can be implemented. If a relational database can do it, Java can do it since it is possible to write a relational database in Java.''
+
+I think it's pretty clear there's more to the challenge than that. Most languages are Turing-complete, but that doesn't mean there's nothing to gain in discussions of ease of implementation, what's built in vs. what needs to be written etc. Declaring "game over" just because it's possible is missing the point.
+
+''Showing the implementation is missing the point. The challenge was not to show how one implements a many to many relationship. The SQL version doesn't show that. The SQL version shows what a user needs to enter to create the tables. So does my Java version.''
+
+As someone else observed, the difference is SQL implementations exist (and as a result, we know what queries, updates etc could be done). Yours doesn't even specify the interface for anything other than creation. If you were using functionality that existed in some library somewhere, you'd have a point. Until then, it's just posturing...
+
+''The SQL version doesn't "specify the interface for anything other than creation". It relies on the existence of an RDBMS that can interpret those SQL commands. Likewise my Java version relies on the existence of classes that provide the expected behavior. If the challenge is really to show how a many to many relationship is implemented then I doubt there is a SQL solution. I seriously doubt the implementation can be expressed in SQL.''
+
+Relational databases were designed in part to make ad-hoc queries simpler, and partly to allow multiple languages and tools controlled but flexible access to the data. (Query languages did exist before SQL and relational.) Your solution does not appear to easily provide either of these. We keep coming back to the core issues of the ObjectRelationalPsychologicalMismatch: sharing and the power of relational theory.
+
+''No, my solution does not provide those. The challenge does not call for them. It asks only to see the setup code required to create an ObjectModel of "live objects". The classes could provide these behaviors if needed (and an existing RDBMS wasn't a better solution.)''
+
+Er, again, that's not what the challenge said. From the challenge page: "represent it as an ObjectModel of "live objects", in your OO language of choice, '''and''' having the same builtin functionality that any decent SQL database will offer you from only these statements" (my emphasis). It does not say it's just set up code.
+
+''Then the disqualifications say:''
+
+        ''We're talking about amount of setup / query code, not behind the scenes code to run the show.''
+
+''My code shows the ObjectModel of "live objects" in the OO language of my choice. Those objects have the same builtin functionality as any decent SQL database. I only show the setup code because that's all the SQL versions shows. If the SQL version shows query code I'll add that to mine. Note that my solution is less verbose than the SQL solution from a user's perspective.''
+----
+
+If performance isn't a factor, the solution is straightforward. Create a collection of objects with class A. Each A class contains a collection of the corresponding objects in class B. You can easily iterate over all (A, B) pairs, test whether the pair satisfies some condition, and if so take the appropriate action. For thread safety, synchronize all public methods with a common monitor.
+
+If performance is a factor, you don't want to use a relational database, which is orders of magnitude slower than OO code for simple queries. During several years of coding, virtually all of my in-memory queries have been linear searches of small data samples, hash table lookups, or binary searches. Those operations are much faster than the time required to generate a SQL instruction, communicate with a database, and wait for the database to process the request. 
+
+It's difficult to implement fast arbitrary queries of large data samples in a self-contained OO program, but that's rarely necessary. Since the data generally persists in a database, you can query the database for rows that you're interested in, store the data in classes, process the data, and post any changes back to the database. That approach has always worked well for me.
+----
+The response to the challenge needs to be simple OO. You have four classes: User, Users, Group, Groups.
+ Users<>---User--->Groups
+ 
+ Groups<>---Group--->Users
+*Each ''instance'' of User has an ''instance'' of Groups as a property.
+*Each ''instance'' of Group has an ''instance'' of Users as a property.
+*Collection instances each represent the subset associated with the object of which it is a property.
+*Users and Groups instances are persistent collections with the usual collection interface, the difference being that changes to a collection persist.
+*Each collection instance is a first-class object represented by a gluon (globally unique object number) as the relevant property. This eliminates the deep copy problem. 
+
+Implementing this in a RDB without breaking encapsulation sends DBAs screaming into the night.  ''Hint: Code tables model the required structure.'' 
+
+Objects don't have relations--they have associations and collections. One way of contemplating the difference is by thinking about people and their marbles. In the OO world, if you want to see Alice's marbles, you ask Alice. In the relational world, you ask every marble in the universe whether it belongs to Alice or not.
+--MarcThibault
+
+Yeah, but then you have to arbitrarily assign somebody to be the "owner", and relational *can* ask every marble. It does not force a PrimaryNoun, it does not force one to care about ownership if they don't want to. Marbles can have shared ownership with Alice, the Rabbit, and the Queen, and we don't have to shuffle around as much stuff to get that. Why should asking for all green marbles, regardless of owner, be significantly different than asking for Alice's marbles? --top
+
+Top is confusing associations with attributes. In the relational model they are equivalent. In OO they are not. Producing a list of all the green marbles is logically a service of the marbles collection, producing a list of Alice's marbles is logically a service of the Alice object. 
+
+* Logically? Where is the formal proof? What about "list all of Alice's marbles that used to also be Bob's marbles?" Forcing every behavior to belong to one-and-only-one domain nouns is arbitrary. PrimaryNoun is inflexible modeling. Sets are a better way to classify behavior if we have a formal behavior classification system. All roads lead to sets and Relational Rome. Also no powerful classification system can work effectively by assuming mutual-exclusion. Greenset's Tenth Rule of Programming. --top
+
+You don't have to arbitrarily assign owners, that's a relational constraint that assumes the marbles are tagged with their owners names. An un-owned marble is just there--it fails to appear in any collection and waits for someone to pick it up (unless some anal-retentive "Marble-Manager" class keeps a collection of otherwise unassigned marbles--please no.) In OO, if you want shared ownership, Alice, the Rabbit, and the Queen each have their collection of marbles. If there is nothing constraining it, a particular instance of marble may appear in more than one collection; that's part of the difference between aggregate associations and composite associations. There's also nothing preventing objects of different types owning or sharing marbles (cue the scary music). 
+
+Unless there is a use case that needs to know the owners of a particular marble, the marble object carries no information about its owner(s). If it is needed, then the marble has a collection of owner objects. That's the OO design for many-to-many and it can be added any time in the future without disturbing existing code. This is also consistent with the real world in that Alice knowing which are her marbles and the marble knowing which are its owners are separate concerns. You want to be able to do the one by itself and then add the other if and when it crops up--with a minimum of fuss. 
+
+* The real world is or can be all over the place. "You are in charge of" can change on a whim. Relational thus tends not to hard-wire what it doesn't have to. If you want to limit who can see or change what, then you add constraints or passwords or what-not rather than revamp the structure. I consider '''being flexible to change more important than mirroring the "real world"'''. The real world is sometimes overly restrictive, and frankly, dumb. It may be bound to capricious political rules or the limits of 3D space. In cyber-land we can meta ourselves above many of these limits. If software allows us to play God with our models, then by-gum-it, I'm going to take advantage of that. Further, reporting requests often ask for stuff about the "other" relationships that physical-mirroring-style OOP is not very good at. OOP maximizes PrimaryNoun associations at the expense of other noun relationships. Report requesters will ask for many things (including relationships) that are hard to anticipate up-front. How many green people ate blue pies on purple holidays while wearing yellow shoes, etc. --top
+
+In the cleanest RDB implementation of this approach I know, you can add the reverse association (in fact any new association) without touching the database structure. The only code affected is in the Marble and Marbles classes (adding the owner collection) and the objects that use this new service. Unfortunately, it needs a table that sends DBAs screaming into the night. --MarcThibault
+
+''I don't blame them. --top''
+----
+I think this is cheating, but here's how I'd do it (in Python):
+
+	import axiom.item
+
+	class User(axiom.item.Item):
+		name = axiom.attributes.text(allowNone=False)
+
+	class Group(axiom.item.Item):
+		name = axiom.attributes.text(allowNone=False)
+
+	class Mapping(axiom.item.Item):
+		user = axiom.attributes.reference(allowNone=False, reftype=User,
+			whenDeleted=axiom.attributes.reference.CASCADE)
+		group = axiom.attributes.reference(allowNone=False, reftype=Group,
+			whenDeleted=axiom.attributes.reference.CASCADE)
+----
+ManyToManyChallenge | ManyToManySolutions | ManyToManyDiscussion

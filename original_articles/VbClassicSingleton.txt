@@ -1,0 +1,181 @@
+'''Problem:'''
+
+VbClassic Classes don't support static methods, or a mechanism equivalent to overriding new(), so singletons can't be implemented in the way you would in C++.
+
+----
+
+	Quoting from the MicroSoft VisualBasicDesignPatterns book...:	''"Implementing a Singleton design pattern in VisualBasic is not possible with the current language features."  (And then it goes on to show how to do it anyway.  ;-)''
+
+MicrosoftDotNet appear to have Singleton built in to the framework, and an article on MSDN is located at http://msdn.microsoft.com/library/default.asp?url=/library/en-us/dnbda/html/singletondespatt.asp
+
+----
+
+'''Context:'''
+
+You are in a context where you would normally use a singleton but the implementation is in VisualBasic
+
+'''Forces:'''
+
+	*Resorting to global variables has all the problems of correctness and maintainability that singletons were designed to prevent
+	*Rewriting the code in something other than VisualBasic is elegant and conducive to sanity yet all too often infeasible due to outside constraints
+	*Implementation details that depend on the programmer rather than language features need to be made transparent yet avoid overload.
+
+'''Solutions:'''
+
+	1. Make a "private" implementation class, and use a FactoryMethod on a general "singleton factory" class to create it.
+	2. AbstractFactory class controls creation of implementation class, in ActiveX DLL for enforcement.  ''(from the MicroSoft VisualBasicDesignPatterns book)''
+	3. HandleBody -- multiple "handle" instances all point to a single "body" instance; the singleton.
+	4. Procedural ClassFactory function (not an object), with ActiveX protection of singleton class
+
+'''Related Patterns:'''
+
+Singleton, FactoryMethod, IntentionSuggestingName, QualifiedClassName
+
+
+Contributors:  Stefan Kapusniak, JeffGrigg
+
+----
+----
+
+''But singletons '''can''' be implemented in VbClassic. It's just a different technique but the principle it's the same. All it really takes is a GlobalMultiuse class in the same ActiveX DLL as your Singleton class and a static module. I've described it below.'' :)
+
+''I have found that you can fake a lot of things using the different instancing properties of classes and standard modules in in VbClassic''
+-- AlfredoChavez
+
+----
+
+'''Problem:'''
+Ensure a class only has one instance, and provide a global point of access to it.
+
+'''Context:'''
+You are in a context where you would normally use a singleton but the implementation is in VisualBasic
+
+'''Implementation:'''
+I don't know if someone came up with this one before me, but I recently had a programming problem in a project that quite fits the context and forces described for the singleton pattern in many online catalogs. So here's my take on it:
+
+* If your target class isn't already in an ActiveX DLL project, create one and move your class into it.
+* Make your singleton-to-be class ''PublicNotCreatable''
+* Add a new standard module to your ActiveX DLL and declare a new variable. i.e. if I'm dealing with a ''CSesion'' class, then I'd use:
+ Public g_oSesion As CSesion
+* Create a new class (which I personally call "CAccesor", unless I have previously created a "CCreator" one, in which case I'll "recycle" the previous one) and make it ''GlobalMultiuse''
+* Add a new public '''Property Get''' procedure, which will grant public access to your singleton class. Using the example above, I'd use something like:
+
+ Public Property Get Sesion() As CSesion
+     If g_oSesion is Nothing Then
+         Set g_oSesion = New CSesion
+         ' add any initialization code here,
+         ' or better yet, IntroduceCreationObject here
+     End If
+     Set Sesion = g_oSesion
+ End Property
+* Finally, make sure you destroy your Singleton properly. A new '''Class_Terminate''' event handler will do nicely here:
+ Private Sub Class_Terminate()
+     Set g_oSesion = Nothing
+ End Sub
+-- AlfredoChavez
+
+----
+----
+
+'''Private implementation class, with a FactoryMethod:'''
+
+	*Create the classes which should be singletons as standard classes named in the form '''privateSomeClass'''
+
+	*Create a module called '''Singletons''' and create a GlobalAccessor for each singleton thusly:
+
+	public property get '''publicSomeClass'''() as privateSomeClass
+
+		static oInstance as privateSomeClass
+
+		if oInstance is nothing then
+			set oInstance = new privateSomeClass
+		end if
+
+		set publicClassName = oInstance
+
+	end property
+
+	*Heavily document that classes named in the form privateSomeClass, should only be accessed through their corresponding publicSomeClass interface.
+
+	*Call methods and set properties of '''publicSomeClass''' in your code in the usual way:
+
+	'''publicSomeClass'''.someMethod
+	'''publicSomeClass'''.someProperty = "someString"
+	Set someReference = '''publicSomeClass'''.someObjectProperty
+
+''Additional thought:  Make this an ActiveX DLL, and you can set the Instancing property to PublicNotCreatable, preventing DLL users from violating your creation rules.  Consider setting the ThreadingModel to SingleThread too.''
+
+Contributors:  StefanKapusniak, JeffGrigg
+
+----
+
+'''AbstractFactory class controls creation of implementation class, in ActiveX DLL for enforcement:'''
+
+Like the above, except that it...
+	* Uses a different TargetFactory (AbstractFactory) class for each singleton class -- with a CreateInstance function.
+	* Uses ActiveX Instancing property of PublicNotCreatable to prevent cleints from creating singleton class instances themselves.
+	* Sets the ThreadingModel to SingleThread to avoid one-instance-per-apartment.
+
+----
+
+'''HandleBody approach:'''
+
+The problem with this approach is it still relies on programmer's discipline not to instantiate the actual "private" class. I turn it around, and basically use the handle/body approach.
+
+	* Implement the actual class as module (MySingletonBody), with all data members private to the module. Provide access functions for all "public" properties.
+
+	* Create a class MySingleton, and delegate all methods and properties to those in the body module.
+
+	* If garbage collection is required, perform reference counting in the Initialize and terminate events of the class. The body can release its resources on the count going to zero, and re-acquire them when the count becomes non-zero.
+
+The result has many advantages
+
+	* Programmers can ''not'' create more than one instance as all the data is effectively static to the body module.
+
+	* Garbage collection is still possible
+
+	* You can get the "instance" reference by simply creating a instance of the handle class.
+
+	* It is relatively simple to move from a singleton to an ordinary class at a later date.
+
+	* The Implements feature is now available to allow you to  have polymorphic singletons.
+
+	* If you define this in an OLE server, you can export the handle class and get a PC-wide singleton (useful for sharing COM ports between apps).
+
+The only thing I can not find an easy way to do is to allow the classes to raise events. The only solution I have is for the body to maintain a collection of all created handles and call a"private" function in each instance telling them to raise their event.
+
+--KeithDerrick
+
+----
+
+'''Procedural ClassFactory function (not an object), with ActiveX protection of singleton class:'''
+
+Here's how you do it. Slightly long winded, perhaps, but it works.
+
+Create a new ActiveX DLL. Create in this your Singleton class with all its methods etc. Make sure you mark it 'Public not creatable'.
+
+Add a .BAS module with one function:
+
+Public Function getSingleton() as NameOfSingletonClass
+  Static Singleton as NameOfSingletonClass
+  If Singleton is Nothing then
+    set Singleton= New NameOfSingletonClass
+    ' add any initialisation calls you want
+  endif
+  Set getSingleton = Singleton
+  Exit Function
+End Function
+
+Create a new class; ensure it is marked MultiUse. Give it one method:
+
+public property Get SingletonInstance() as NameOfSingletonClass
+  Set SingletonInstance = getSingleton
+end property
+
+Add a reference to this AxDLL in your VB project and there's your singleton. What's so hard about that?
+
+Took me < 5 mins to type into Wiki; add in compiles etc and there is about 10 mins overhead.
+-- SimonSmith
+
+----
+CategoryVbClassic

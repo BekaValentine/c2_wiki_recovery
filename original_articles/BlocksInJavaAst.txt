@@ -1,0 +1,380 @@
+----
+Prev: BlocksInJavaIntro
+Next: BlocksInJavaCompositors
+Top:  BlocksInJava
+----
+'''Implementing the AST Package'''
+
+'''''Basic Concepts...'''''
+
+I split the class tree of the ''ast'' package into three basic clusters: 
+
+* ''Predicate''s that return a boolean to indicate if some logical expression '''is''' true or false
+* ''Function''s that '''eval'''uate some calculation and return an ''java.lang.Object'' representing its result
+* ''Procedure''s that '''run''' and have no result -- i.e. return ''void''
+
+Each cluster is composed of three root interfaces:
+* A ''No'' argument version
+* A ''Unary'' version -- one argument
+* A ''Binary'' version -- two arguments
+
+Each root is a Java Interface that extends ''Serializable'' so that our expressions can be persisted. The three clusters each with their three interfaces result in the following root interfaces for the ''ast'' package:
+
+* '''The Predicates'''
+** interface ''Predicate''
+** interface ''U''''''naryPredicate''
+** interface ''B''''''inaryPredicate''
+* '''The Functions'''
+** interface ''Function''
+** interface ''U''''''naryFunction''
+** interface ''B''''''inaryFunction''
+* '''The Procedures'''
+** interface ''Procedure''
+** interface ''U''''''naryProcedure''
+** interface ''B''''''inaryProcedure''
+
+Each ''interface'' has only a single ''member''. ''Predicates'' have the method '''is''', Functions have the method '''eval''', and Procedures have the method '''run''' (i.e. like ''java.lang.Runnable''. It is mainly due to Java's schizophrenic type-system that we give each cluster of interfaces a different ''action word''. However, it method name clearly indicates the difference between the interface and the interfaces in another cluster.
+
+To ease the use of these classes in a way that is similar to Smalltalk blocks, I provide a default implementation of each interface into a class called ''ast.Block''. The block class can still be used as the base for AnonymousInner closures, it will just be easier to type and simpler to use. The user need only remember one instead of nine class names. Consider the example we opened this page with:
+ Object item = names.detect( new ''U''''''naryPredicate''() {
+     public boolean '''is'''( Object arg ) {
+         return arg.equals( "some_name" ); } } );
+Using the helper class ''Block'', we can write the same code like so:
+
+ Object item = names.detect( new ''Block''() {
+     public boolean '''is'''( Object arg ) {
+         return arg.equals( "some_name" ); } } );
+Now consider the following three examples which show the versatility of the ''Block'':
+
+1. ''Block'' as ''U''''''naryPredicate''
+
+ Person joe = (Person)
+     names.''detect''( new ''Block''() {
+         public boolean '''is'''( Object each ) {
+             return ((Person)each).isName( "Joe" ); } } );
+	 :	BTW, let me say here how much I despise Java's type system!!! 
+
+2. ''Block'' as ''B''''''inaryFunction''
+
+ String sOnePerLine = (String)
+     collection.''inject''( new String(), new ''Block''() {
+         public Object '''eval'''( Object val, Object each ) {
+              return val.toString() + each.toString() + '\n'; } } );
+3. ''Block'' as ''U''''''naryProcedure''
+
+ final Mutable.Integer counter = new Mutable.Integer();
+ collection.''enum''( new ''Block''() {
+     public void '''run'''( Object each ) {
+        ++counter.value; } } );
+Before we get into the ''Block'' class, we need to define the foundational interfaces it simplifies. The basic package name I will use is ''ast'' for ''abstract syntax tree''. The full package name will be ''com.tripwire.rdifalco.ast''.
+
+----
+
+'''Implementation of Basic Interfaces'''
+
+If you recall, we have three clusters, each with three basic interfaces. I call these the AST ''foundational interfaces''. The pattern is well defined and consistent - each interface has a single member. The member takes zero, one, or two arguments as Objects and returns a boolean, an Object, or void. Each should be placed into its own source file:
+
+----
+
+'''Cluster: ''Predicate'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''Predicate'''
+     extends java.io.Serializable
+ {
+     boolean '''is'''();
+ }
+----
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''U''''''naryPredicate'''
+     extends java.io.Serializable
+ {
+     boolean '''is'''( Object arg );
+ }
+----
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''B''''''inaryPredicate'''
+     extends java.io.Serializable
+ {
+     boolean '''is'''( Object arg1, Object arg2 );
+ }
+
+----
+
+'''Cluster: ''Function'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''Function'''
+     extends java.io.Serializable
+ {
+     Object '''eval'''();
+ }
+----
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''U''''''naryFunction'''
+     extends java.io.Serializable
+ {
+     Object '''eval'''( Object arg );
+ }
+----
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''B''''''inaryFunction'''
+     extends java.io.Serializable
+ {
+     Object '''eval'''( Object arg1, Object arg2 );
+ }
+----
+
+'''Cluster: ''Procedure'''''
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''Procedure'''
+     extends java.io.Serializable,
+             ''java.lang.Runnable'' // NOTE:
+ {
+     void '''run'''();
+ }
+----
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''U''''''naryProcedure'''
+     extends java.io.Serializable
+ {
+     void '''run'''( Object arg );
+ }
+----
+ #package com.tripwire.rdifalco.''ast'';
+
+ public interface '''B''''''inaryProcedure'''
+     extends java.io.Serializable
+ {
+     void '''run'''( Object arg1, Object arg2 );
+ }
+
+I see a lot of ConceptualIntegrity here. The interfaces are simple and consistent. This is essentially all we need to build everything else. Note that the ''Procedure'' class extends ''java.lang.Runnable''. This allows us to use our ''ast'' abstractions anywhere, even in those places where java requires an ''Runnable'' instance, such as with the ''java.lang.Thread'' class.
+
+Without going any further, we can start using these interfaces for anonymous inners and InternalizeExternalIterators. For example, consider the following internalization of the java.util.Iterator:
+
+ public class ''Iterate''
+ {
+     static public
+     Object ''detect''(
+         List list,
+         '''U''''''naryPredicate''' ''aBlock'' )
+     {
+         Iterator at = list.iterator();
+         while ( at.hasNext() )
+         {
+             Object each = at.next();
+             if ( ''aBlock''.'''is'''( each ) )
+                 return each; 
+         }
+
+         return null;  ''// indicate none-detected''
+     }
+
+     static public
+     void ''enum''(
+         final List list,
+         final '''U''''''naryProcedure''' ''aBlock'' )
+     {
+        ''detect''( list, new U''''''naryPredicate() {
+            public boolean is( Object each ) {
+                ''aBlock''.'''run'''( each );
+                return false; } } );
+     }
+
+     ''[...]''
+ }
+And so on. You can do this for all the basic InternalIterator types - ''#inject'', ''#select'', ''#reject'', ''#collect'', and so on. We can start using this package now just with its basic interfaces. For example::
+
+ File file = (File)''Iterate.detect''( aFiles, 
+     new '''U''''''naryPredicate'''() {
+         public boolean '''is'''( Object each ) {
+             ((File)each).getName().equals( ''"temp.dat"'' ); } } );
+----
+
+'''Defining a Concrete and Universal Java Block'''
+
+With the block class, I can use ''detect'' without having to remember the name of the nine interface types. One can simply type ''Block'' and remember '''is''' for ''boolean'', '''eval''' for ''java.lang.Object'', and '''run''' for ''void''. The ''Universal Block'' class is incredibly convenient and straightforward. It essentially provides a default implementation for all of the interfaces we just defined. Besides providing a mapping from multiple interfaces to a single class, the ''Block'' implementation of the ''Function'' interfaces will forward to the ''Predicate'' interfaces and then convert its ''boolean'' result to ''java.lang.Boolean'' (i.e. an Object). The ''Predicate'' and ''Procedure'' interfaces, if not overridden, will call the ''Function'' interfaces and either convert or discard the return value appropriately.
+
+ #package com.tripwire.rdifalco.''ast'';
+
+ public class '''Block'''
+     implements Procedure, U''''''naryProcedure, B''''''inaryProcedure,
+                Function,  U''''''naryFunction,  B''''''inaryFunction,
+                Predicate, U''''''naryPredicate, B''''''inaryPredicate
+ {
+     //..The Procedures
+
+     /* [JavaDoc Header]
+      * Default implementation of a <code>Procedure</code> interface. This
+      * implementation calls the <code>Function</code> interface member
+      * <code>eval</code> and discards its return value.
+      */
+
+     public void '''run'''() {
+         eval();
+     }
+
+     public void '''run'''( Object arg1 ) {
+         eval( arg1 );
+     }
+
+     public void '''run'''( Object arg1, Object arg2 ) {
+         eval( arg1, arg2 );
+     }
+
+     //..The Functions
+
+     /* [JavaDoc Header]
+      * Default implementation of a <code>Function</code> interface. This
+      * implementation calls the <code>Predicate</code> interface member
+      * <code>is</code> and returns its <code>boolean</code> value as an
+      * instance of <code>java.lang.Boolean</code>.
+      */
+
+     public Object '''eval'''() {
+         return is() ? Boolean.TRUE : Boolean.FALSE;
+     }
+
+     public Object '''eval'''( Object arg1 ) {
+         return is( arg1 ) ? Boolean.TRUE : Boolean.FALSE;
+     }
+
+     public Object '''eval'''( Object arg1, Object arg2 ) {
+         return is( arg1, arg2 ) ? Boolean.TRUE : Boolean.FALSE;
+     }
+
+     //..The Predicates
+
+     /* [JavaDoc Header]
+      * Default implementation of a <code>Predicate</code> interface.
+      * This implementation calls the <code>eval</code> member of the
+      * <code>Function</code>, casts its result as a
+      * <code>java.lang.Boolean</code>, and returns the result of
+      * calling <code>booleanValue</code>.
+      */
+
+     ''// NOTE: No error checking!!''
+
+     public boolean '''is'''() {
+         return ((Boolean)eval()).booleanValue();
+     }
+
+     public boolean '''is'''( Object arg1 ) {
+         return ((Boolean)eval( arg1 )).booleanValue();
+     }
+
+     public boolean '''is'''( Object arg1, Object arg2 ) {
+         return ((Boolean)eval( arg1, arg2 )).booleanValue();
+     }
+ }
+----
+
+'''A Brief Excursion on Iterators'''
+
+I want to stop here to say that all of my ''abstract data types'' and foundational structures use InternalIterator functions like Smalltalk rather than the ExternalIterator objects talked about in DesignPatterns, used by STL, and supplied with the Java Collection Classes. Furthermore, I have done performance tests on all of these and the InternalIterator''''''s win every time over the ''java.util'' collections. Sometimes they are 4 or 5 times faster than their ExternalIterator equivalents. 
+
+The reason for this is pretty straightforward. When creating an ExternalIterator ''class'', iteration is decoupled from the data structure - it is ''not part of the collection.'' As a result, it must use the same public interface everyone else does. Even if you avoid this by exploiting package visibility and inner-classes, it is still an unbounded operation with little control. You cannot control how many times next is called and as such, each access calls a member of the collection object that must check the range of the specified index. Furthermore, it is difficult to implement an ExternalIterator for a distributed system or to control synchronization. For more on this, see ''Iterators: Signs of Weakness in Object-Oriented Languages'' at ftp://ftp.netcom.com/pub/hb/hbaker/Iterator.html. 
+
+Using iterator ''methods'' as Smalltalk and Lisp do is ''much'' more efficient. Since the iterator can ''share'' the implementation of the data structure, the author has complete control over the iteration! For example, the iterator function for an array class need not check the validity of its indices:
+
+ public void forEach( U''''''naryProcedure aBlock )
+ {
+     int end = m_nCount;
+     for ( int at = 0; at != end; ++at )
+         aBlock.eval( m_contents[ at ] );
+ }
+Simple. Since the function ''forEach'' is bounded, we need not perform a boundary check on each access. Now consider its usage:
+
+ list.''forEach''( new ''Block''() {
+     public void '''run'''( Object each ) {
+         Dbg.trace( "item: " + each ); } } );
+Contrast this to the following use of the Iterator DesignPattern:
+
+ Iterator iter = list.''iterator''();
+ while ( iter.''hasNext''() )
+     Dbg.trace( "item: " + iter.''next''() );
+We can zero out on the construction of the ''Iterator'' object since we must also create a ''Block'' instance with the internal version. However, every operation on Iterator must map to the ''list'' object's class and every iteration of the loop must check the current value of the Iterator against the boundaries of the collection represented by ''list''. 
+
+My big question is ''why didn't Java use iterator functions with code blocks rather than an ExternalIterator class?'' My guess is that because of its syntactical similarity to C++, it is easier for programmers to relate Java to C++ than to Smalltalk or Lisp. As a result, it was more natural for the designer of the Java Collections to take a more traditional C++ view of the world and support procedural over Object-Oriented iteration. Even though procedural iteration is not as optimal as fully-encapsulated O-O iteration, it either just didn't occur to them, or they did not have the courage to take the Java/C++ community in a new and different direction. Anyway, check out that paper I provided a link to earlier in this section. If you can get through some mighty ugly Lisp code, there are some interesting points to find.
+
+If you are interested, here are the iterators I support. If I get enough requests, I will also publish my ''adt'' (abstract data types) package. I use the traditional Smalltalk enumerators with a couple of additions and variations to accommodate Java's ''feel''. I'm just going to list the enumerators here and leave off the collection members:
+
+ interface Items    // a bunch of items (unordered collection)
+ {
+     ''the enumerators''
+
+     //* eval block for each
+     void '''enum'''( U''''''naryProcedure aBlock );
+
+     //* increment count for each true
+     int '''count'''( U''''''naryPredicate aBlock );
+
+     //* remove item for each block that answer true
+     void '''remove'''( U''''''naryPredicate aBlock );
+
+     //* detect first for block answers true
+     Object '''detect'''( U''''''naryPredicate aBlock );
+
+     //* inject value into block with each item
+     Object '''inject'''( Object value, B''''''inaryFunction aBlock );
+
+     //* answer new collection for each true
+     Items '''select'''( U''''''naryPredicate aBlock );
+
+     //* answer new collection for each false
+     Items '''reject'''( U''''''naryPredicate aBlock );
+
+     //* answer new collection of non-null results
+     Items '''collect'''( U''''''naryFunction aBlock );
+ }
+While it's a simple collection hierarchy, I have another interface for items that can be sequenced. This interface adds another bunch of its own enumerators in addition to those defined by ''Item'':
+
+ interface Item''''''Sequence extends Items     
+ {
+     ''enumerators''
+
+     //* apply block in reverse order
+     void '''enumBack'''( U''''''naryProcedure aBlock );
+
+     //* apply pairs to block.enum( at( n ), at( n + 1 ) )
+     void '''enumPairs'''( B''''''inaryProcedure aBlock );
+
+     //* detect last item for block.is( eachItem )
+     Object '''detectLast'''( U''''''naryPredicate aBlock );
+
+     //* detect first Index for block.is( eachItem )
+     Index '''atFirst'''( B''''''inaryPredicate aBlock );
+
+     //* detect last Index for block.is( eachItem )
+     Index '''atLast'''( B''''''inaryPredicate aBlock );
+
+     ''binary blocks for index,item pairs''
+
+     //* Like enum but for index and item
+     void '''withIndexEnum'''( B''''''inaryProcedure aBlock );
+
+     //* detect Index for block.is( eachIndex, eachItem )
+     Index '''withIndexDetect'''( B''''''inaryPredicate aBlock );
+
+     //* detect ''last'' Index for block.is( eachIndex, eachItem )
+     Index '''withIndexDetectLast'''( B''''''inaryPredicate aBlock );
+ }
+That's the basic set of enumerators (i.e. InternalIterator''''''s) I use. All of these work for most anything I would ever want to do in an abstract data type whether that be a List, Array, Sorted List, Set, Bag, Dictionary, whatever. I haven't had an instance for a long time where I felt I needed to code a ''for...next'' or ''iter.next()'' while loop by hand.
+----
+RobertDiFalco
+----
+Prev: BlocksInJavaIntro
+Next: BlocksInJavaCompositors
+Top:  BlocksInJava
+----
+

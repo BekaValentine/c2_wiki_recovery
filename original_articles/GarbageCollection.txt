@@ -1,0 +1,187 @@
+''"GarbageCollection (GC), also known as automatic memory management, is the automatic recycling of heap memory. GarbageCollection is performed by a garbage collector which recycles memory that it can prove will never be used again. Systems and languages which use GarbageCollection can be described as garbage-collected."''
+
+The preceding text was appropriated from the glossary of the Memory Management Reference, http://www.memorymanagement.org/glossary/g.html#garbage.collection.
+
+Other places to look include
+* The Garbage Collection Page - http://www.cs.kent.ac.uk/people/staff/rej/gc.html
+* Uniprocessor Garbage Collection Techniques - ftp://ftp.cs.utexas.edu/pub/garbage/bigsurv.ps
+* The Garbage Collection FAQ - http://www.iecc.com/gclist/GC-faq.html
+* The GarbageCollectionBook by Jones & Lins, ISBN 0471941484
+
+----
+'''Benefits and costs'''
+
+* Programmers don't have to expend time and brain power on the design and implementation of memory management policies. It is assumed that when something is no longer needed it is no longer referenced. This can be detected and the widget collected.
+* Memory management bugs become more or less impossible. If you don't have manual memory management, there's no way an object can be freed before it's finished with, and if you have GC, it's much harder for it to remain un-freed indefinitely after it ''is'' finished with. But see MemoryLeakUsingGarbageCollection.
+* Some styles of programming are very much less painful with automatic memory management. You can create objects and pass them around freely without having to copy them every time. (Imagine you're working with large matrices and you want to be able to write ''a = b*c+d''. What do you do about that temporary? ''Bad example - a SufficientlySmartCompiler doesn't create a temporary in this case.'' What if they're so big you can't fit one on the stack?)
+
+On the other hand,
+
+* There is some overhead in execution time, because the garbage collector has to work out which objects are reachable and which aren't.
+* There is some overhead in the amount of memory required, at least if you don't want the execution time penalty to be unacceptably large.
+* Widely considered inappropriate for hard RealTime systems and general SystemProgramming (although it has at times been used successfully in such domains - see http://citeseer.ist.psu.edu/baker78list.html for an algorithm which provides constant-time bounds for all operations, including allocation)
+* Known to be typically inappropriate on memory-starved systems, e.g. many EmbeddedSystems, because GC performance can be high when the ratio of unallocated to allocated RAM is high, but very bad when that ratio is reversed.
+* Can be more confusing than manual resource management because the ownership and lifetimes of objects are not explicit in the structure of the code.
+
+'''Basic techniques'''
+
+There are three main techniques for automatic memory management: reference counting, mark-and-sweep,
+and copying.
+
+* ReferenceCounting: each object contains a counter saying how many references to it there are. When you refer to an object, you increment the counter. When you're done with it, you decrement the counter. When the counter reaches 0, the object can be recycled.
+* MarkAndSweep: starting from the machine registers, stack, and static data regions, do a recursive traversal of all reachable objects and mark them as used. Then go through the heap recycling objects that haven't been marked.
+* MarkCompact: All reachable objects are marked, and then compacted into contiguous storage, so all of the free space becomes contiguous. See ftp://publications.ai.mit.edu/ai-publications/pdf/AIM-019.pdf
+* MarkRegion: Allocates into fixed-sized contiguous regions of memory with a bump pointer. Collects by performing mark-sweep and setting the mark bit of any region that contains an object; due to high probability of fragmentation, it generally requires a moving GC as a backup strategy. Currently only used in Immix (http://users.cecs.anu.edu.au/~steveb/downloads/pdf/immix-pldi-2008.pdf) and its hybrid reference-counting upgrade RC-Immix (http://research.microsoft.com/pubs/202163/rcix-oopsla-2013.pdf) Not to be confused with the ''other'' memory-management concept of regions.
+* StopAndCopy: the heap is divided into two regions. One contains objects, and the other is empty. You recursively traverse all the objects in the first region (as in mark-and-sweep), copying them into the second region. Then you interchange the roles of the two regions. No need to scan the unused objects in the first region.
+* HeapCompaction: objects are moved down in memory so that all the free space is consolidated at the end of the heap. This eliminates the problem of memory fragmentation, and speeds up allocation when memory is plentiful, but slows down garbage collection. StopAndCopy does this automatically when copying from the first heap to the second, but it is possible to compact a single region.
+* GenerationalGarbageCollection
+* TaglessGarbageCollection
+* TheTrainAlgorithm
+
+Each of these, as described, has serious drawbacks. All of them can be improved considerably at the cost of some complication. State-of-the-art garbage collectors thus perform a lot better than the naive ones that were once all that existed. As a result, some common ideas about how dreadful the performance of garbage collection is are too pessimistic.
+
+Some people prefer not to consider ReferenceCounting a variety of GarbageCollection at all, on the grounds that it doesn't do any sort of reachability analysis and therefore cannot collect garbage containing circular references. (Using it ''with'' GarbageCollection on the other hand means much less work for the collector (which only needs to clean up after circular references (which in turn can be avoided in the first place by using ImmutableObject''''''s)) and may be considered an optimisation.) The reference count is a form of reachability analysis; while it's not guaranteed to locate all unreachable objects, objects it does determine to be unreachable are guaranteed to be so, and can therefore be collected without requiring the additional step of searching the heap for references.
+
+Some people prefer not to consider StopAndCopy a variety of GarbageCollection, on the grounds that it collects the ''non-garbage'' and leaves the garbage to rot in the unused semispace :-). All three approaches, and their many variations, are certainly varieties of AutomaticMemoryManagement. For what it's worth, the book by Jones & Lins covers all three.
+
+'''Subtleties'''
+
+Any of the schemes described above can be implemented quickly, but doing GarbageCollection well is not easy. Issues to be aware of include:
+
+* ''Interactions with cache and virtual memory''. Reference counting systems tend to have poor locality of reference: when you update a pointer in one place, you have to diddle reference counts in two other places. It used to be thought that stop-and-copy would have better locality than mark-and-sweep because of its ability to compact all the actively used objects as it copies, but it turns out that it's usually worse because it avoids reusing memory and because at least half of the heap gets traversed entirely every collection (which tends to trash the cache; the effect is ameliorated for n-way caches where n>1). Just about any GC scheme will avoid reusing any piece of memory until after the next collection, which always hurts locality. GenerationalGarbageCollection (see below) helps a little with this.
+* ''Object lifecycle patterns''. It turns out that in many systems (but not all) almost all allocated objects are very short-lived. So you want your GC algorithms to take advantage of this. It also turns out that in many systems (but not all) objects tend to get allocated in clumps that die at about the same time. Again, you want your GC algorithms to take advantage of this. These effects, by the way, are among the reasons why dynamic memory allocation in general performs substantially better than the gruesome worst-case estimates provided by theory.
+* ''Avoiding long pauses''. Any of the simple algorithms described above can suffer long pauses during which object reclamation happens. (ReferenceCounting tends to suffer less than the other two, but a simple implementation can have to wait arbitrarily long when the last reference to a large, complicated data structure goes away.) One way to make big pauses rarer is ''GenerationalGarbageCollection'', also known as "Generation Scavenging": the idea is to divide the heap into regions according to the age of the objects, and usually only trace/copy the youngest objects; remember that in many systems objects mostly die young. Another is ''incremental GC'', where you only ever do a little tracing, copying or recycling at a time. (Contrary to popular belief, neither generational GC nor incremental GC implies using a copying collector, though both are easiest to implement that way.)
+* ''Interactions between the collector and the main program''. However, these clever techniques require some cooperation between the GC machinery and the program itself, in the form of a ''read barrier'' or ''write barrier'' by which some or all loads and stores of pointers are intercepted. This can be done efficiently by special-purpose hardware, but hardly anyone has that nowadays. Otherwise, you can implement it using the OS's virtual memory protection mechanisms, or make your compiler insert code around pointer reads and writes. Both of these carry some overhead.
+* ''Time/space tradeoffs''. In theory, you can make GC arbitrarily cheap by using an arbitrarily large amount of memory. In the limit, you never have to collect the garbage at all and allocation is as cheap as incrementing a pointer. Even if you assume that your program runs for long enough that it does have to GC, with a copying collector you can make that take a vanishingly small fraction of your CPU time. But (alas, alas) this isn't practical, (1) because you don't really have an infinite amount of memory, or even of address space, and (2) because if you never reuse memory then your locality of reference is bad and you lose on cache performance.
+* ''Uncooperative environments''. It would be nice to be able to use GC even when writing in C or C++. Unfortunately, C and C++ compilers are not written with GC much in mind, and objects in C and C++ don't necessarily contain the metadata that would be useful for GC, and there's a raft of other issues. You end up with two reasonably viable alternatives. (1) Write in C++ and make a SmartPointer template that does ReferenceCounting. This is likely to be slow. (2) Use a "conservative" collector, which assumes that anything that looks like it might be a pointer into the heap ''is'' one and therefore prevents the recycling of whatever it points at, and which never moves anything because the necessary pointer rewrites might accidentally rewrite some things that aren't really pointers. This is also likely to be slow, though not as slow as ReferenceCounting. There's another option: (0) use ReferenceCounting and write all the code that updates the refcounts yourself. You can do this, but it hurts.
+* ''Finalization''. Sometimes it's desirable for special things to happen as soon as an object is no longer in use. (Closing a file or a window, for instance.) With manual memory management, this is as easy to arrange as disposing of the object is. With reference counting, you make it happen when the reference count reaches 0. With other forms of GC, it's much more difficult. There may be an arbitrarily long delay between when the last reference to the object goes away and when it is finalized; and problems arise if the finalizer of an object can introduce new live references to other objects, previously only referred to from the finalizee - if they have been collected, they then need to be resurrected.
+* ''Multi-threading and concurrency''. If memory areas are shared between threads, then all threads must be stopped while GC is in progress.
+** UNLESS you use ImmutableObject''''''s.  See ImmutableObjectsAndGarbageCollection.
+** Concurrent GCs are a class of garbage collection which permit threads to operate for much of the GCs operation. These collectors have their own subtleties.
+
+There's plenty more. Read the book by Jones and Lins for some of it...
+
+'''Performance'''
+
+Garbage collection has a reputation for being slow and memory-hungry. This reputation is not, these days, entirely deserved.
+
+Back in 1993, Detlefs, Dosser and Zorn wrote a paper on ''Memory Allocation Costs in Large C and C++ Programs''
+(http://www.win.tue.nl/~stephanh/CU-CS-665-93.pdf for pdf and ftp://ftp.cs.colorado.edu/pub/techreports/zorn/CU-CS-665-93.ps.Z for PostScript). They took some real-world programs in C and C++ and swapped in a variety of implementations of ''malloc''/''free'', including (what is now a very old version of) the conservative collector of Boehm, Demers and Weiser.
+
+They found that, on average, using the conservative GC added about 20% to program execution time and multiplied heap size by about 2.5. This last figure is rather misleading, though; it is nearer the mark to say that a program that used ''N'' kilobytes of storage with a conventional ''malloc'' used about 1.2*N+550 kilobytes with the BDW conservative GC. On the other hand, it should be noted that of the various ''malloc''s they tested, the one they used as a baseline was the one with most fragmentation. Comparing with the most-fragmenting ''[should be least-fragmenting?]'' one, the formula would be approximately 1.5*N+600.
+
+These are ''upper bounds'' on how much ideal GC can cost, for several reasons.
+* They're for a conservative GC operating in a hostile environment. Languages and implementations designed with GC in mind should be able to do much better.
+* They're for an old version of the collector. Much has been learned about GC since then.
+* The programs under test were all written with explicit ''malloc''/''free'' in mind. When a program shows excessive memory usage under GC, it is often possible to improve it with a little tweaking, but no such tweaking was done. (For instance, one can tell the BDW collector that certain objects are guaranteed to contain no pointers, or explicitly clear variables that may contain references to objects that are no longer needed.)
+* The relative (time) cost of GC depends on how efficient the main program is. (For instance, a few cycles per pointer store to maintain a write barrier or update reference counts hurts a lot more in C than it would in an interpreted language like Python.)
+* Substandard garbage collectors have in fact been implemented frequently, and of course there are no bounds that can in general be placed on badly implemented versions of any algorithm.
+
+It is alleged that GC overhead in Smalltalk has been measured at 1%-3%. I'm not sure which version of Smalltalk, on what tasks, on what machine, or how it was measured.
+	 :	''Those were on ParcPlace VisualWorks Smalltalk, and widely published in the mid-eighties. GarbageCollection was one of the most hotly contested attributes of Smalltalk, and was thus highly optimized.''
+
+It is widely believed that copying GCs will more or less always be faster than mark-and-sweep ones. This is not true, or at least not as obviously true as sometimes thought.
+
+Also of interest: Andrew W. Appel, 1987 pages 275-279
+"Garbage Collection can be Faster than Stack Allocation",
+Information Processing Letters, volume 25 number 4; citeseer.nj.nec.com/appel87garbage.html
+
+----
+
+''I distinguish GC from "automatic memory management (AMM)" by the fact that GC has to look at the code to recover memory. AMM always knows what memory has been allocated and when it can be released. Many GC's must lock other threads to work or pause for a significant time to find the memory to release, whereas AMM does not. GC is normally done in big cycles whereas AMM is done incrementally. My AMM does no reference counting and uses 4 different techniques to allocate and automatically recover memory in a multi-threaded, shared memory environment.''
+
+----
+
+I've been looking at the possiblity of implementing a mark/sweep garbage collector (probably with a higher-than-normal execution cost) that does not have to stop the world to work. The cleaver part: the allocator allocates new objects already marked as reachable.
+
+----
+The main objection to GC is performance. However, when asked how people manage performance in non-GC languages they assume that memory management is without cost. (Most, but not all programmers)
+
+Hand written memory management is error prone.
+GC can increase performance if it compacts data. The end result is that page thrashing for virtual memory machines is reduced.
+A lot depends on the patterns of use. Stop and copy can be very quick if most objects don't survive.
+
+----
+'''What languages use GC?'''
+
+Almost all general-purpose languages designed since about 1990. (In these days of fast processors, large memory, and mature GC technology, the old arguments against GC seem unconvincing to many people. The cost in performance is small, and the benefit in productivity and bug-resistance is large.) Anyway, here's a very partial list of languages with GC.
+
+* Sometimes in CeePlusPlus (but nonstandard; see GarbageCollectionInCpp)
+* EiffelLanguage (BertrandMeyer considers GC essential if a language is to be called truly object-oriented...)
+* JavaLanguage
+* JavaPython
+* JavaScript (ref. counted)
+* LimboLanguage (used by InfernoOs)
+* LispLanguage (that is: every language in the LispFamily)
+* MozartOzLanguage
+* OberonLanguage
+* ObjectiveCaml (or any FunctionalProgrammingLanguage)
+* EDS's "OWL" language. (An OO research language, similar to Smalltalk)
+* PerlLanguage (ref. counted; future Perl6/Parrot will be general GC)
+* PrologLanguage
+* PythonLanguage (ref. counted)
+* RubyLanguage
+* SmalltalkLanguage
+* ToolCommandLanguage
+* CeeMinusMinusLanguage (?)
+
+(Contrast: LanguagesWithoutGarbageCollection)
+
+----
+
+Python's GC is done mostly by reference counting; then cyclic garbage is collected separately. The idea of the algorithm is this: keep all allocated container objects (i.e., objects capable of containing references to other objects) in a list. Then, to find cyclic garbage, go through the container objects decrementing the reference counts of other container objects they reference. Anything whose refcount reaches 0 is referenced ''only'' from other container objects. Now perform tracing only within the set of container objects, starting from the ones whose refcount is still positive. Anything we don't reach is referenced only from other container objects with no references from outside, and can therefore be recycled. Neil Schemenauer, who implemented the MarkAndSweep part, has written about it in more detail at http://arctrix.com/nas/python/gc.
+
+This scheme requires three words of extra space for every container object, which is uncomfortable (but bearable; Python's container objects all already use quite a bit of space). It is observed to add about 4% to the runtime of Python programs.
+
+----
+'''Problems with DistributedSystem''''''s'''
+
+I recently had a bad experience with GC. I was attempting to create a distributed object system, where one environment was in C++, and the other was was in another language (VeraLanguage). The languages are probably not important here - any distributed system would see the same effects. The issue is that neither could see all the references to all the objects.
+
+The basic design was simple. Objects from one language were proxied on the other. The first time an object was passed across the interface, the proxy was created, and stored in a collection. Future calls would reuse the same proxy-object (this allows equality to be implemented in terms of identity). Ideally, I wanted to remove the object from the collection when there were no more references in that part of the system.
+
+The GC system of vera is not exposed to the programmer, There are no weak links, nor even finalizers. In fact, there is no way to determine when the reference in the proxy-container was the only one remaining. The only solution was to require manual memory management. 
+
+''Actually, message passing handles this issue very well. See ErlangLanguage, for example. -- ScottVokes''
+
+{How does MessagePassing solve this issue in ErlangLanguage? Keep in mind that communications was not the problem. Distributed GC was the issue.}
+
+''With a few more years perspective...it isn't MessagePassing so much as Erlang's clean and relatively small type zoo that fixes things. In Erlang, everything is either a symbol (atom), a number, a "pid" (process ID), function, etc., or a list or tuple of the above, or a variable bound to the above. Every one of those has clear semantics for serialization, so streaming around a copied data structure is not a lossy conversion. This becomes much tricker in the presence of subtyping, changing class hierarchies/definitions, etc., but Erlang dodges that issue entirely. As GC goes, each process (which not a full OS process; the Erlang VM schedules them) has its own heap, which is (IIRC) collected by a generational copying GC.''
+
+{Memory management, though, is not the 'only' solution. If one uses two sets of object IDs - local and remote - then the communications system that maps from global IDs to local IDs becomes a gc-root to protect objects that are referenced only from global systems. If that much is achieved, then one doesn't require manual management of anything but the globalID->localID map, which may be maintained by explicit protocols for distributed GC. That said, partial failures and security issues can make distributed GC a serious challenge - i.e. it's theoretically impossible to have wholly correct distributed GC in the face of partial failures. One needs to use ''heuristic'' (mostly correct) distributed GC, and have some ability to recover (e.g. self-healing) after heuristic failures. Self-healing designs are considerably more resilient against a few hiccups in distributed GC, but generally require support for persistence and serialization (e.g. PersistentLanguage or MementoPattern) that is not offered by C++.}
+
+----
+Check out Eiffel for this problem. There is an option to ''pin'' an object which prevents it being moved in memory. Objects that exist in other systems are either owned by the GC language in which case they are covered using the finalize approach. For objects in the GC language that are owned by the other language, they will be garbage collected unless marked as being owned from elsewhere. In this case, they form part of the roots of objects that need to be marked and sweeped or copied depending on the GC approach.
+
+''EditHint: can someone improve the preceding paragraph?''
+
+----
+''Garbage collection in a DistributedSystem is still an unsolved problem and an area of active research. And for a distributed system, it may be a bad idea (as it requires GlobalConsensus as to the state of a system to implement). None of the languages in current use which feature (local) GarbageCollection feature distributed garbage collection, at least not that I am aware of.''
+
+The MozartProgrammingSystem includes a distributed VM (for OzLanguage), that has distributed GarbageCollection.
+
+Java uses leases for remote objects accessed via RMI. Are leases not a form of distributed garbage collection?
+
+	 :	They are, but whereas 'conventional' local garbage collection is generally merely a conservative approach, distributed systems, in order to avoid the GlobalConsensus issues mentioned above, have to be both quite aggressive and conservative: aggressive in that they can and will collect objects which aren't actually garbage yet, and conservative in that the algorithms themselves won't detect all garbage, in the same way (except more so) as local gc won't guarantee a complete collection (SemanticGarbage is the word, and the reference too I think).
+
+	 :	Among other things, there are issues with cycles, where A, B and C are distributed agents, and A passes a reference to B, which passes to C, which passes back to A.
+** It may or may not be appropriate for A to even detect that it is the same object it originally sent.
+** Given naive algorithms + mutation, we end up with the ReferenceCounting cycles issue, because there is no global consensus to (in effect, no outside observer who can) determine that it is a loop that nobody references.
+	 :	The idea with a lease is that agents are responsible for periodically stating which objects they care about, and therefore any objects which haven't been spoken for can be deleted. This tends to perform much better than attempting to achieve the consensus required to find loops and determine reachability, but it'll tend to delete too much: in the case where an agent becomes unreachable for some time, a leasing algorithm will remove objects even though that agent still refers to them. In the case of a reachability algorithm, they will stick around as long as necessary. This may or may not be a good thing.
+
+	 :	And there's the rub, to the effect that "sometimes you have to make hard decisions". It may end up being a choice between not losing data on one subsystem and but bring the entire system down, or losing that data but having the entire system still functional and limping along. RobustnessVsCorrectness.
+
+	 :	-- WilliamUnderwood
+
+* I.e. the purpose of leases isn't to implement GarbageCollection, it's to prevent it. ;-)
+
+Does it have to be that way?  You could use the ProxyPattern to make object proxies, which are actually serialized (and possibly cached) references to objects on other computers.  Depending on the language, this could be done painlessly and effortlessly, or it could require a lot of boilerplate; however, that isn't the issue at the moment.  The destructor, which the GC ''should'' call, could commit any cached data and notify the computer which "owns" that object that it has unsubscribed from the object.  Once there were no more subscribers to any given object, the manager object could remove that object from an internal list, and let the local GC take care of it.  The only problem that I can see is that there might be distributed cyclic references; however, as in CPython, a secondary tracing mechanism could intermittently scan for them.
+
+''I'm not so sure that there's any benefit to having non-local objects participate in garbage collection in the first place [discounting leases, which someone else said aren't "really" gc], except for maybe in niche scenarios like a beowulf cluster or supercomputer, where a perfectly reliable network and 100% reliable units is a good assumption--in which case, problems involving GlobalConsensus disappear anyway. I mean, let's assume that most objects are little more than data storage: these can and should be implemented as ImmutableObject''''''s and stored and garbage collected locally, so they are not part of the issue. Many objects could be transformed into this sort of object with functional programming techniques, so those aren't part of the issue either. So only objects with truly important global state, such as a database object or an open file, can't be handle by local garbage collection. Except the database object, being a persistent store, doesn't'' need ''garbage collection, because it's known in advance that it should live for the entire application life, and the file object needs a flush signal and (since it's open to other systems which, even if fully trusted, still might hang or experience power failure and thus fail to close the file) a timeout to ensure the file is unlocked eventually--at which point, the file object can be safely reclaimed and any further message-sends to that resource can result in 'request timed out'.''
+
+----
+See the loosely related subjects on DeterministicResourceManagement, ResourceAcquisitionIsInitialization.
+
+See also: LifesJustTooShort.
+----
+CategoryGarbageCollection

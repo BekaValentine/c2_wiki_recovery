@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Sql Strings And Security
+      </h1>
+      <p>
+        Having systems that accept all or part of SQL commands and clauses are sometimes a security risk because one can supply malicious substrings. An extreme example are RDBMS or APIs that allow multiple SQL commands per API call.
+      </p>
+      <code>
+        x = '1=1; delete from foo';<br/>
+        doQuery(x);<br/>
+        ....<br/>
+        function doQuery(x) {<br/>
+        return query('select * from foo where ' . x);<br/>
+        }<br/>
+      </code>
+      <p>
+        Ideally, some kind of validation of such strings should be done to make sure any part fed to SQL is what we think it is (scalar, Boolean expression, etc.). Example:
+      </p>
+      <code>
+        function doQuery(x) {<br/>
+        if (! isSqlBooleanExpression(x)) {<br/>
+        abort('Security problem!');<br/>
+        }<br/>
+        return query('select * from foo where ' . x);<br/>
+        }<br/>
+      </code>
+      <p>
+        Some think that part of the problem is SQL's "COBOL nature", and that some other <a href="RelationalLanguage.html">RelationalLanguage</a> would be better for programmer use.
+      </p>
+      <p>
+        <em>Or you just use parameterized queries and avoid all these problems altogether.</em>
+      </p>
+      <p>
+        But these often complicate the code. You have to make a function/method for every possible combination of parameters and operators.
+      </p>
+      <p>
+        <em>No it doesn't, it requires a simple generic api with something like aStatement.AddParam(aName,aValue), you still get to build your sql string as simply as before, and execute them simply, but you don't need to concat the params on...</em>
+      </p>
+      <code>
+        Statement aStatement = new Statement("Select * from users where name = ?");<br/>
+        aStatement.AddParam("name","Joe Smith");<br/>
+        return aStatement.Execute();<br/>
+      </code>
+      <p>
+        <em>Nothing difficult about that, it's quite generic and removes all the burden of bad strings in the params, and handles any encoding like doubling quotes, far simpler than just executing raw sql that you clean by hand.</em>
+      </p>
+      <p>
+        But that does not scale to more complex expressions.
+      </p>
+      <p>
+        <em>Sure it does.</em>
+      </p>
+      <p>
+        By the way, a shorter alternative:
+      </p>
+      <code>
+        executeSql("Select * from users where name = %1", sqlString(theName))<br/>
+      </code>
+      <p>
+        <em>Don't want functions... want objects, easier to extend and cache, or pass around than raw strings. If you like the one-liners, here you go.</em>
+      </p>
+      <code>
+        new Statement("Select * from users where name = %1").AddParam("name",theName).Execute();<br/>
+      </code>
+      <p>
+        I hardly see that as better. If you have specific scenarios where it's easier to "extend and cache", I would be happy to see it, but suspect it is for another topic.
+      </p>
+      <p>
+        By the way, how do you handle multiple parameters? Many OOP languages would choke on something like:
+      </p>
+      <code>
+        new Statement("Select * from users where name = %1 and foo = %2 or bar = %3").AddParam("name",theName).AddParam("foofld",foostuff).AddParam("barsdfs",sdfsfdd).Execute();<br/>
+      </code>
+      <p>
+        <em>{Uggh! You're mixing positional parameters with named parameters? Consider:}</em>
+      </p>
+      <code>
+        new Statement("Select * from users where name = $(name) and foo = $(foofld) and bar = $(barsdfs)").<br/>
+        SetParam("name",theName).SetParam("foofld",foostuff).SetParam("barsdfs",sdfsfdd).Execute();<br/>
+      </code>
+      <p>
+        <em>{or}</em>
+      </p>
+      <code>
+        new Statement("Select * from users where name = %1 and foo = %2 and bar = %3").<br/>
+        SetParam(1,theName).SetParam(2,foostuff).SetParam(3,sdfsfdd).Execute();<br/>
+      </code>
+      <p>
+        <em>Not that it matters much, but I don't know any OO language that would choke on that, it's a simple argument collector and can be done in any OO language, and that's exactly how it'd work.</em>
+      </p>
+      <p>
+        Perhaps we can find another topic to put all this so people can compare and get ideas, regardless of which paradigm they favor. I though I saw one once, but forgot the name.
+      </p>
+      <p>
+        <em>A decent framework will reduce the typing you have to do. Like, say:</em>
+      </p>
+      <code>
+        object_store.getUsers( 'name', theName )<br/>
+      </code>
+      <p>
+        <em>Or the second example:</em>
+      </p>
+      <code>
+        object_store.getUsers { |user| Query::And( user.name.equals( theName ), user.foo.equals( foostuff ), user.bar.equals( sdfsfdd ) ) }<br/>
+      </code>
+      <p>
+        <em>Of course, some languages support these sort of frameworks with more ease than others. -- francis</em>
+      </p>
+      <hr/>
+      <p>
+        <strong>Another important note: You can suffer from the same security problem if you fail to quote or parameterize string VALUES!</strong> - not just SQL boolean expressions.
+      </p>
+      <code>
+        function doQuery(String key) {<br/>
+        return query("select * from foo where key = '" + key + "'");<br/>
+        }<br/>
+      </code>
+      <p>
+        can be cracked if a cracker enters the string...
+      </p>
+      <code>
+        nokey'; delete from foo --<br/>
+      </code>
+      <p>
+        The single quote in the string terminates the string literal.
+        The dashes at the end comment out your one remaining single quote from the query, and anything that may occur after it in the program's query.
+      </p>
+      <p>
+        <em>This is a service that the "sqlString()" function mentioned above would perform. Generally, one could have:</em>
+      </p>
+      <ul>
+        <li>
+           sqlString - Prepare a string for SQL but escaping any internal quotes and putting quotes around it. 
+        </li>
+        <li>
+           sqlNumber - Make sure the value is a legitimate number. An invalid number raises an error and stops processing. Note that these should not be used for primary data validation, but as a final stopgap. For example, <a href="JavaScript.html">JavaScript</a> might be used on the form for primary validation, but in case <a href="JavaScript.html">JavaScript</a> is disabled, cracked, or crashes, one needs a server-side check as a last resort. Thus, the error handling for these functions does not have to be pretty.
+        </li>
+        <li>
+           sqlInteger - Make sure the value is a legitimate integer.
+        </li>
+        <li>
+           sqlDate
+        </li>
+      </ul>
+      <p>
+        <em>(In a similar vein, be sure to quote values for HTML output too - or be vulnerable to cross-site scripting, typically to steal cookies and hijack sessions from your customers.) -- </em><a href="JeffGrigg.html">JeffGrigg</a><em></em>
+      </p>
+      <hr/>
+      <p>
+        Lots of code is not a free lunch. More code is associated with more maintenance cost, more errors, <em>et cetera</em>. Generally, it depends on the nature and audience of the application. For small intranets, parameterized queries are often overkill.
+      </p>
+      <p>
+        <em>First, it's not lots of code; second, parameterized queries are never overkill, they're the simplest thing that works; concatenated sql doesn't work, it leaves you open to attack.</em>
+      </p>
+      <p>
+        <em>If you work hard not to </em><a href="ScatterSqlEverywhere.html">ScatterSqlEverywhere</a>, the problem on this page mostly disappears. -- francis<em></em>
+      </p>
+      <p>
+        Remainder of this discussion moved to <a href="DatabaseAbstractionLayer.html">DatabaseAbstractionLayer</a>.
+      </p>
+      <hr/>
+      <p>
+        One trick is to put all read-only queries under a separate login from writable ones. This way no matter how tweaked the string is, the database won't do anything to change information.
+      </p>
+      <p>
+        For writable queries, just have wrappers that check the validity and perhaps perform any quoting/escaping/validating that is needed. Example:
+      </p>
+      <code>
+        $sql = "update x set foo=".sqlText($foo)." where xID=".sqlNumber($xID);<br/>
+      </code>
+      <p>
+        (This repeats some stuff already above. I will factor it later. Thanks)
+      </p>
+      <hr/>
+      <p>
+        I've always hated the fact that I need to compose SQL as text in order to work with a database. Maybe I need to look into OODBMSs, but I'd really like a functional (or OO, or whatever, anything but passing arbitrary strings) interface to a database that didn't involve the composition of strings. I suppose it's <a href="PrematureOptimization.html">PrematureOptimization</a>, but using string formatting to compose code to convert data from the binary representation stored in the DB to the binary representation I need in my app has always seemed enormously clumsy. Especially with SQLs annoying inconsistencies, which make generating SQL for an update as opposed to an insert so obnoxiously different. -- ChrisMellon
+      </p>
+      <p>
+        Those are issues addressed in more detail under <a href="ExpressionApiComplaints.html">ExpressionApiComplaints</a> and <a href="PerniciousIngrownSql.html">PerniciousIngrownSql</a>, which are more about developer productivity than security.
+      </p>
+      <hr/>
+      <p>
+        (Moved from <a href="DynamicStringsVsFunctional.html">DynamicStringsVsFunctional</a>)
+      </p>
+      <p>
+        <img src="http://imgs.xkcd.com/comics/exploits_of_a_mom.png" />
+      </p>
+      <p>
+        <em>This seems like it belongs in a topic about SQL security issues, not here.</em> [context messed up because this was moved.]
+      </p>
+      <p>
+        It provides a fine example. There would be no security issue here if the SQL string wasn't constructed dynamically. Ultimately, code-injection is a security problem all 'dynamic string' systems must handle if they are to accept outside inputs from potentially malicious sources... and the problem becomes far less trivial when accepting real code, not just stuff that should be escaped to strings.
+      </p>
+      <p>
+        (Let's not add too many distractions; the picture above is intended to stand alone... a little bit humor, a little bit <a href="HaHaOnlySerious.html">HaHaOnlySerious</a>.)
+      </p>
+      <p>
+        <em>Most SQL injection could be solved by not allowing multiple statements by default (no semi-colons), and adding an "edit list" to ODBC interfaces. It would resemble:</em>
+      </p>
+      <code>
+        table    access <br/>
+        ---------------<br/>
+        empl        r<br/>
+        dept        rwd<br/>
+        store       w<br/>
+      </code>
+      <p>
+        Access Symbols:
+      </p>
+      <ul>
+        <li>
+           r = read
+        </li>
+        <li>
+           w = write (shortcut for insert or update)
+        </li>
+        <li>
+           i = insert
+        </li>
+        <li>
+           u = update
+        </li>
+        <li>
+           d = delete
+        </li>
+        <li>
+           a = all (non-schema, same as "rwd")
+        </li>
+        <li>
+           s =schema/directory-info.
+        </li>
+      </ul>
+      <p>
+        <em>Example using </em><a href="JavaScript.html">JavaScript</a>-like code:<em></em>
+      </p>
+      <code>
+        q = new query;<br/>
+        q.tableAccess("employees", "r");<br/>
+        q.tableAccess("dept", "rwd");<br/>
+        q.tableAccess("store", "w"); <br/>
+        q.sql = "SELECT * FROM dept, .....";<br/>
+        result = q.run();<br/>
+      </code>
+      <p>
+        Variation: 
+      </p>
+      <code>
+        q = new query;<br/>
+        q.tableAccess("employees", read:=true);<br/>
+        q.tableAccess("dept", read:=true, write:=true, delete:=true);<br/>
+        q.tableAccess("store", write:=true); <br/>
+        q.sql = "SELECT * FROM dept, .....";<br/>
+        result = q.run();<br/>
+      </code>
+      <p>
+        <em>Additions to the API could do something similar to columns for finer control. (Perhaps call the above method "entityAccess" instead of "tableAccess" to also cover views and derived tables.)</em>
+      </p>
+      <p>
+        <em>Or even designating read-only queries versus writing ones would go a long way. Plus, SQL injection is not a signif problem for intranet and reporting apps.</em>
+      </p>
+      <p>
+        <em>Here is kind of a compromise between the two:</em>
+      </p>
+      <code>
+        r = query(conn, 3, "rd", "select * from ...");<br/>
+      </code>
+      <p>
+        <em>The 2nd param tells it how many tables are specified and the 3rd tells it the access allowed (read and delete in this case) for the SQL. Another option to consider is maximum number of rows. If we expect the query to only return 1 row, we don't want an injection that grabs 5,000 rows, such as embedding " or 1=1" into the WHERE clause. --top</em> 
+      </p>
+      <p>
+        Yes, trust helps, backups help, and a proper security and operation control scheme would go a long way. You could even specify read/write/delete/update permissions per-query and per-table. (this query reads:empl,writes:store). Plus you can have orthogonal certificate-based CapabilitySecurity to control access rights all the way down to the per-row level. (That might be a good idea in any database with high-value confidential information, though it still leaves you with the <a href="ConfusedSheriffProblem.html">ConfusedSheriffProblem</a>). But, as I recall, none of this is SQL - you're actually extending the language to provide it.
+      </p>
+      <p>
+        Things become less trivial to secure when you're actually intent on allowing a certain degree of code injection... as is the problem you'll encounter when handling dynamic strings or allowing users to construct their own SQL statements... or where, for example, part of the expression comes from some database and another part comes from a user.
+      </p>
+      <p>
+        As a note on trust and "intranet and reporting apps": be aware that many attacks are performed or abetted by disgruntled employees or foolish ones (the latter possibly subjects of social hacking). You can trust away when the database is a low-risk investment, but if it has high-value or confidential data any dependency on trust should be minimized.
+      </p>
+      <p>
+        <em>I find that if an internal IT employee really wanted to cause havoc, there are so many opportunities that SQL string diddling is just a drop in the sea of potential exploits. To "clean" all that up, you'd need a much larger staff. Is it worth $500,000 to prevent potential $400,000 worth of damage? </em><a href="GoodSecurityIsExpensive.html">GoodSecurityIsExpensive</a>.<em></em>
+      </p>
+      <p>
+        It's worth $500,000,000 or more to make it so state-of-the-art COTS software and operating systems are secure enough that SQL string diddling <em>isn't</em> just a drop in the sea. The cost can be spread across consumers.
+      </p>
+      <p>
+        <em>Agreed. A COTS system spreads the risk to users all over the world, so they must be more careful than say an in-house summary reporting system.</em>
+      </p>
+      <hr/>
+      <p>
+        SQL Strings are known as "dynamic SQL" and this was and still is a very dominant security leak in almost every PHP 3/4 source snippet running on the internet. A lot of PHP sites (fully professional ones, big corporations, big forums) are hacked because of http GET variables (url variables, html form variables) that are not protected from injection.
+      </p>
+      <p>
+        This is not a drop in the ocean. At least hundreds of sites are hacked each week due to SQL injection, and at least hundreds of sites are hacked each month due to html injection.
+      </p>
+      <p>
+        Those who use Escape() functions with dynamic SQL thinking they've saved the day, don't realize that Escape() is not foolproof either. It has security issues that don't meet the eye. Plus, the Escape functions bloat up the code as much as the extra effort it takes to use parameterized queries anyway. Parameterized queries are not available in old MySQL databases, so use newer versions if you can. In other words, I recommend parameterized queries.
+      </p>
+      <p>
+        One solution for this injection problem is to design something better than parameterized queries.. such as strongly-typed procedures and functions that say only accept integers when you are modifying an integer field in the database, and will not except semicolons or anything ... i.e. a procedure-based or function-based language that is strong/static. The problem is that this is not flexible like the SQL language is... and anything that is sent over a TCP/IP connection is just a string in the end... a string of data. But, hiding this string of data from people and forcing them to use a secure layer that talks to this stream/string of data.. is the only way to make it more secure.
+      </p>
+      <p>
+        Parameterized queries are one way which some of the security is implemented on the server side (sometimes also client side protect partially, depending on what language is used). Securing the string sent over TCP/IP <em>both</em> on the client <em>and</em> the server side ultimately is needed for really strong security. (The client being the program that is sending the data even if it is running on a server, and the server being the database server accepting the string and compiling/executing it).
+      </p>
+      <p>
+        Parameterized queries also have the advantage that you can precompile them first for performance, if you are going to be reusing them... whereas dynamic SQL is regenerated. i.e. preparing your statements ahead of time.
+      </p>
+      <p>
+        <em>Parameterized queries are difficult to use with optional clauses, such as used in </em><a href="QueryByExample.html">QueryByExample</a>. Conditional clauses are very common in apps I work on.<em></em>
+      </p>
+      <hr/>
+      <p>
+        See more at <a href="SecurityExploits.html">SecurityExploits</a>, <a href="SqlPreparedStatements.html">SqlPreparedStatements</a>, <a href="SqlInjection.html">SqlInjection</a>
+      </p>
+      <p>
+        <a href="CategorySqlProgramming.html">CategorySqlProgramming</a>, <a href="CategorySecurity.html">CategorySecurity</a>, <a href="CategoryDatabase.html">CategoryDatabase</a>
+      </p>
+    </div>
+  </body>
+</html>

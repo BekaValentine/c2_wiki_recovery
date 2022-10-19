@@ -1,0 +1,229 @@
+In the functional world there is the idea of a module that
+seems very similar to an object to me. They are not the same,
+but I am unable to tell much of a difference. Can anyone explain
+the difference? 
+
+''I'll try.''
+
+	* Modules are static, as opposed to objects.  They can usually be parameterized with each other, and the calls between them are bound statically (that is like C++ templates).
+
+	* Modules can be seen through various signatures, which are akin to object-oriented interfaces but more powerful.  They can impose arbitrary compatible type restrictions on the contents of the modules, not only dropping away methods, as interfaces do.  And modules can be defined independent of the signatures.
+
+	* Modules can contain types, class definitions, function definitions, other modules, parametric types and so on, and they can get these definitions from each other.
+
+''The bottom line is, modules are the way of choice to encapsulation / code organization, higher order functions are the way to dynamic binding.  Of course, eg Ocaml adds to this the object system which provides nice type system facilities which are found in neither of the above.''
+
+''Your points:''
+
+	* A module doesn't have the instance concept, but the same purpose is attained using modules using a key into a module scoped data structure.
+
+''Yes, this is often used when it is not important for the data structure to dictate its own behavior at runtime, which is surprisingly often.''
+
+	* No inheritance. First class functions accomplish the same goal, imho, in less elegant way.
+
+''I can't answer this properly because it is so much a matter of taste.  I've never seen a use of inheritance (except inheriting from interfaces, which is equivalent to filling up a record of functions) that does not make the software harder to maintain and read in the long run.  And whenever possible, I do favor giving behavior (ie dynamic binding) as a parameter rather than put it into data structures, unless the point of those data structures ''is'' to contain behavior.  This makes the code easier to reason about.''
+
+Thanks for the elaboration. It seems, as you mentioned, a different take on
+encapsulation. I don't really understand though why it's ok to have keys map 
+to multiple attributes (records, tuples, lists), yet not to functions as well. 
+That's basically all this/self do. It's just a shorthand for stuff that needs 
+to be passed around in a functional program.  Guess I don't see a big deal
+difference in the end. 
+
+''Hm.  Because functions are values, there really is no distinction.''
+
+''Anyway.  I think sometimes functions are quite okay to put into data structures (after all, a first-class function is a very simple data structure containing a function), sometimes it's okay to mix functions and other data in data structures and sometimes even make state changes.  It's just that more often than not, I'll regret doing it unless I really had to do so.''
+
+''WRT "just a shorthand..." this, I disagree on.  Even leaving aside designs enabled by LazyEvaluation, which are different from most OO designs indeed, functional programs tend to be arranged very differently from OO ones.  One usually builds very generic tools that get specialized as high in the code hierarchy as possible (by giving them parameters that specialize them).  In OO, the specialization is on the lowest level of the code hierarchy, because all data is coupled with the routines that are supposed to deal with it.  Both models have their uses, but I find them quite different.''
+
+ObjectFunctional programmers do not seem to find any conflict.
+----
+
+If you can pass in a function in at the highest level, then that specifies
+what must happen at the lowest level, because whatever level uses the function
+must know about the function and use it. How is that different?
+
+''It differs in where the behavior is ''specified''.  I'll try and give a simple example (unfortunately, this is somewhat geared towards functional).  Let's say we're formatting a list into HTML.  This is too simple to actually benefit from factoring like this, but anyway:''
+
+ bracket_with_actions left right fn arg = left >> fn arg >> right
+
+ sequence actions = foldl (>>) (return ()) actions
+ iterate = sequence . map
+
+ output_list_html list =
+	 bracket_with_actions (print "<ul>") (print "</ul>")
+	    (iterate
+	      (bracket_with_actions (print "<li>") (print "</li>") print)))
+	    list
+
+''It might be hard to see why make it like this (and indeed somebody might say this is not good practice), but it is easy to see how to (again) make the output_list_html function more generic by passing the brackets and/or the item printing function as a parameter.  So the specialization endlessly boils up:''
+
+ output_list beg end left right pr list =
+ 	 bracket_with_actions (pr beg) (pr end)
+	   (iterate (bracket_with_actions (pr left) (pr right) pr)))
+	 list
+
+ output_list_ul = output_list "<ul>" "</ul>" "<li>" "</li>" print
+
+ output_list_table = output_list "<table><tr>" "</tr></table>" "<td>" "</td>"
+ 			print
+
+''The point is to keep the low level routines generic but intelligent, so you have an ever-growing repertoire of services you can use for new tasks.  In this way, functional languages are superb for OnceAndOnlyOnce - you can factor anything to a separate function, loop patterns, function-defining functions, and so on...''
+
+''Let's look at the (equally overkill) OO solution:''
+
+ class HtmlListNode:
+
+ 	def __init__(s, value):
+		s.value = value
+
+	def output_as_list(s):
+		print "<li>%s</li>" % s.value
+	
+	def output_as_table(s):
+		print "<td>%s</td>" % s.value
+
+ class HtmlList:
+
+ 	def __init__(s, nodes):
+		s.nodes = nodes
+
+	def output_as_list(s):
+		print "<ul>"
+		for el in s.nodes: el.output_as_list()
+		print "</ul>"
+
+	def output_as_table(s):
+		print "<table><tr>"
+		for el in s.nodes: el.output_as_table()
+		print "</tr></table>"
+
+''Now the behavior is specified at the same level as the data.  One can also have different kinds of behaviors in the same list.  The code is clearly not as mobile and refactorable as the code above, and I'm second-guessing what kind of interface I should provide for the list.''
+
+''I could emulate the functional solution with formatter objects, which is arguably what should be done here.  But what kind of structure will list then have, is it not to protect itself from outside access?  And building helpers like bracket_with_actions is relatively cumbersome in non-functional languages.  And the OO code isn't even parameterized with respect to printing, so I have to add new methods if I want to output to another media.  Or should this be handled by an outputter object?  Why does the OO solution suddenly have more things to pass down?''
+
+''It would seem that the functional code is restricted by its use of ">>" as a nonchangeable sequencing operator.  But this is a generic monadic operator, which can take many meanings depending on the monad we work in...''
+
+Normally you would write to a stream object which can be tied to many different
+types of output. That is far more useful than printing to no place in particular.
+After you are done can you count the number of characters? Can you apply another
+transform that must be applied to a completed document? Can you send the output to
+a file, browser, and socket?
+
+''Of course.  Just pass something other than print there.''
+
+''By the way, how would you handle this in an OOP setting?  Would you give the stream object as an argument, or would you have something less functional-style?  In a functional language, on the other hand, even if I had not anticipated the need to print to various places in various ways, I could easily do this by changing the monadic environment the list handlers work in...''
+
+----
+''The point is to keep the low level routines generic but intelligent, so you have an ever-growing repertoire of services you can use for new tasks.''
+
+You would then use an abstract interface that would be a first class entity in
+the system and that would be clear and well documented. There's no need to 
+combine the data at all. As the number of options grows, as would happen 
+in the html example, it can be easily and transparently extended. You would
+need to expand the number of arguments to the degree of specialization. Don't
+you find the passing around of arguments tedious and error prone and difficult
+to extend? For the html example I can easily see 30 or more such functions
+to pass in. 
+
+''Often one does not make generic routines based on anticipations, but in the process of factoring common functionality away.  At that point, it will be quite clear whether or not it pays to combine the common functionality.''
+
+''One has to make choices between generality and form.  The less a function imposes form (specialization), the less interesting it becomes (kind of like bracket_... above, which is really unnecessary).  The key is to find those specializations that are widely useful.  This, by the way, is in no way specific to FP; clearly you can overdo (as in this example has been done) modularity in both FP and OOP solutions.  But in this case, the functional version just lead to more modular code in the same LOC. <shrug>''
+
+''Whatever example I may come up with, you can easily thwart by taking it into an extreme.  But the problem is with methodological / design extremism, not any particular style of programming.''
+
+Also, I am interested in how you would implement the factory concept. For example,
+you are hard coding literals and passing them in. You would have to hard code
+the same literals everywhere. That seems a maintenance nightmare to me if you
+wanted to change your approach. A factory approach to creation would allow
+you to easily setup reasonable defaults that wouldn't have to be spread
+everywhere in the code. 
+
+''I'll have to check what factory means.  I'll respond then.''
+
+''Okay, I suppose you mean FactoryPattern.  Well, that's particularly simple.  Both constructors and factories are kinds of functions, so you represent them as functions and pass these functions around.''
+
+''You must have misunderstood me.  It's almost as if you say I claimed "You must raise everything you can as parameters or ... what?".  This doesn't make sense, because there's ''nothing'' that can'''not''' be raised as a parameter.''
+
+----
+
+I just don't see it. I want to see it. I just don't. The functional approach
+in your example doesn't seem the best way to solve the program on many
+fronts.
+
+''What do you mean by "solving the program"?''
+
+''It isn't the best way to do everything, but then it isn't the only way of programming FP supports - others include OOP, monadic style(s), FunctionsAsData, InfiniteDataStructures, etc...  I just wanted to present you one typically functional style of ''arranging'' a program, as opposed to the particularly object-oriented style of arranging it.  At no stage was the point to prove the superiority of FP, just its feasibility and the differences between the two ways of seeing the program.''
+
+''If you really want to see the light, I might not be the best person to talk to - after all, I'm not even trying to convert you.  Besides, one doesn't learn much by listening to people they're already suspicious about.  The learning comes by using multiple ways to structure problems.  Grip Ocaml, for example, read the tutorial, get going.  If you don't like the syntax, try Scheme instead.  Read example code.  Compare different ways of doing the same thing.  That way, one learns.  BTW, Haskellists are particularly good at (ab)using functional features.''
+
+I really do appreciate your effort and I realize you aren't trying to convert me.  But I am trying to be converted. I guess I take FPs feasibility (at least non-pure) for granted. Now I'm trying to see what works better imho. Sure, if I needed laziness then FP would be better, but that's not the type of problem I usually work on.  I like pattern matching, built in tuples, etc. Love erlang's process concept and message passing. I use map stuff in OO all the time, but some syntactic sugar would be nice. Yet the OO method of encapsulation seems clearer to me. Modules just go half way, imho.
+
+''Laziness is one of these things: you don't miss what you don't use.  For me, laziness is a way to get away from the "what it does" domain into the "what it produces" domain.  This is a tremendous performance boost for me.  Moreover, lazy evaluation enables ways of programming that would not otherwise be possible.  It works as a communication mechanism between functions with local state (thus providing yet another answer to your "state threading" question), enables separating of end conditions from loop code, and so on.''
+
+
+As I do a lot of embedded programming we need more control over resource usage.
+
+
+''WRT modules: when you first break referential transparency (which is what you usually do with every object - object usually have changeable state), you drop from the domain of reliable, constant services into the domain of practical services that correspond to something you don't have control over.  They no longer work as the building blocks of your arbitrary program logic, but as the building blocks of the model of the problem domain.  They are bound to the problem domain, and are suspect to domain changes, incorrect domain analysis, and so on.''
+
+In the port example, that's not referentially transparent because the data
+structures could have been changed from call to call. [''What port example?'']
+
+The port example was introduced and removed. (''By whom?'') It is if you have a module that
+represents a tcp port, the port id is the key and you need to keep a complex
+data structure representing the port that indexed by key. A lot of programs
+need to use state in this way which is not referentially transparent.
+
+''It does not make sense for a module to ''represent'' a TCP port, however it does make sense for a module to provide services to deal with TCP ports.''
+
+----
+
+[... breaking referential transparency...]
+
+''What does this mean in practice?  You think: "hmm.  I have a clear concept (say a user in an ircd-like product).  Should I give it its own state to handle destructively, or should I keep the state?  Should it talk directly to its neighbors, or should it just return what it has to say?"  If you do the latter, you might end up cursing the passing of state back and forth (though you might want to model this with coroutines / messagefilter / somesuch).  But if you do the former, you're going to have to poke the user object for everything: changing connections, rollback actions, persistency, and any ad-hoc queries you might have, to name a few.  And if you guess wrong which neighbors it needs, you have to rearrange your program heavily.  And every service's code is split in two parts which make their ''own'' integrity constraints.  The user object is endlessly doomed to have state and to be unusable as a generic service and limited in how it can be used for building new services.''
+
+I guess I don't see this. If you could be specific. It's like the html example. You pass in some functions and the same thing is attainable from an abstract base class.  A change does not impact the code any more or less. In fact, the class solution is more maintainable because there are a lot fewer things being passed around. In OO you poke an object, in FP you get the data from somewhere and pass it around.  If the user account has changed then all the other clients need to know about the change. Copies aren't good for that sort of thing.  
+
+''You say the class solution is more maintainable, but my experience says contrariwise.  There are many ways to reduce the number of things passed around.  And in functional programming, you often don't need to change the behavior of a specific service (other than to correct misbehavior), because they are just services and you can build a new service whenever the functionality provided by the old one is not what you need.  The services don't "own" anything you would need access to by that specific service exactly.''
+
+''WRT abstract base classes:  I thought you were well aware that abstract base classes references _are_ practically function pointers (to functions that possibly have associated data), which in turn are practically functions without closures.  Because you can emulate closures with the implementation-object-associated data, first-class functions and references to abstract base classes are semantically equivalent.  But the building of closures creates so much clutter in OO code (just watch my example at OnMonads) that it becomes infeasible.  So the difference is not so much in the underlying mechanisms but in the way you arrange the program.''
+
+''You seem to be frustrated by how little my example demonstrates.  Of course, I would rather have made a real example where abstractions mechanisms are of some use, but that's a lot of code and I would be subject to all kinds of criticism because I wrote the OO code myself.  So I propose this: why don't you write a real-world OO example here (and also explain what it tries to do, ie what problem it solves), and I'll try and make an equivalent functional-style program.  The functional program will be almost certainly shorter.  Then let's propose (in turns) different modifications, and see how much trouble they cause in functional and in OO setting.  I think this will be enough to prove my point.''
+
+-----
+''WRT abstract base classes:  I thought you were well aware that abstract base classes references _are_ practically function pointers (to functions that possibly have associated data), which in turn are practically functions without closures.''
+
+That was part of my point. The differences aren't great enough to get all excited about.
+
+'''''Now''' you are getting to a wholly unrelated point.  Yes, OO is not technically weaker than FP.  But if I need no more lines (of code) to make objects from functional concepts than I would need to make objects in some language called "object-oriented", while I have to write tens of lines of extraneous code whenever I want to emulate a closure, '''that''', I think, matters.  For me the experience of writing in, say, Java after writing in Ocaml is like, "why the $@!�# do I have to do all this?"  Just go and try.  Don't waste your time arguing with me.''
+
+----
+
+''But the building of closures creates so much clutter in OO code (just watch my example at OnMonads) that it becomes infeasible.''
+
+Depends on what you think is important. I like that fact that classes must be created
+and documented. I'm not saying I wouldn't like the ability to make a quick closure,
+but in general it helps to make things real in the program. What I see are a lot of blocks
+that are just created and have no explanation at all. This style confuses me as a reader,
+though for the composer it is easier, as often are gotos.
+
+''Oh please.  It was an example to show how '''functional and OO code are structurally different'''.  You can have documentation for functions, you know that?  But closures are everywhere - it took me long to learn that I don't have to pass arguments to inner functions.  It's all about how you don't miss what you don't use.''
+
+''Writing monadic code in OOPL is pure hell.  Functional programs don't have off-by-one errors - why?  Because loops are implemented by higher order functions.  Writing interpreters in OOPL requires at least half extraneous work, because you can't model the output of parsing as a native function.  Writing parsers in OOPL is hell to the point that we have parser _generators_ instead of parser _libraries_.  Jeez.''
+
+''I believe you if you say that you never need things like these or that it doesn't matter you whether you have to write extra code.  But if you really want to see the advantages, just go and try yourself.''
+
+----
+''You say the class solution is more maintainable, but my experience says contrariwise.''
+
+Let's extend you output_list_html example to do something other than pass through
+hardcoded constants. What if you want to do some verification? What if you wanted
+to make building of table easier? What if you wanted to create an html document
+then apply xslt to it to create another format? Let's have a bunch of default
+options for various html formats. Let's make those options globally and locally
+configurable.
+
+''What if you provided a better example?  I don't see why any of the above would cause any problems.  (Besides, the code is so small that nothing would cause significant changes anyway.)  And I don't understand the "building of table easier" question.''
+----
+CategoryFunctionalProgramming

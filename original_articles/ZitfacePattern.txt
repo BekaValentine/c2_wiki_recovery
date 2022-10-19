@@ -1,0 +1,144 @@
+By KarlKnechtel. Pattern write-up to come. 
+
+Basically, this is a combination of PimplIdiom, a particular variant on NullObject, and optionally an AbstractFactory. The intent is to reuse the indirection needed for polymorphism to set up the Pimpl (or is that the other way around?), while allowing for transparent "nulls" and providing as smooth an interface as possible to the client code. The NullObject is, basically, a single instance of the base implementation (which is not otherwise instantiated). Note that this instance is not explicitly made a Singleton - since YouArentGonnaNeedIt WRT ensuring a single instance, and the instance won't actually be accessed directly, but instead by delegation through the Pimpl-wrapper.
+
+For now, a sample:
+
+Animal.h
+ #ifndef ANIMAL_H
+ #include ANIMAL_H
+
+ struct AnimalImpl; 
+
+ struct Animal {
+   // Default: handle for the Null Object
+   Animal();
+
+   // Constructor assuming ownership of an implementation-object.
+   explicit Animal(AnimalImpl* impl): impl(impl) {}
+
+   // We could make other constructors that pass arguments to the implementations...
+
+   // Rule of 3 stuff...
+   Animal(const Animal& other);
+   Animal& operator=(const Animal& other);
+   ~Animal();
+
+   // Public interface of animal.
+   void makeNoise();
+   int value();
+ 
+   private:
+   AnimalImpl* impl;
+ };
+ #endif
+
+AnimalImpl.h
+ #ifndef ANIMAL_IMPL_H
+ #define ANIMAL_IMPL_H
+
+ struct AnimalImpl {
+   // Default implementations, which the Null Object will use
+   // 'Animal' is probably a bad example in that a "default animal" is a bit odd :)
+   virtual void makeNoise() {}
+   virtual int value() { return 0; }
+
+   // For the base class, we don't actually clone, because the base class is only
+   // instantiated to make the Null Object.
+   virtual AnimalImpl* clone() { return this; }
+
+   static AnimalImpl instance;
+   protected:
+   // whatever is common to all animals
+
+   private:
+   // Nothing: but noone should instantiate the base AnimalImpl except for the one instance.
+ };
+ #endif
+
+AnimalImpl.cpp
+ #include <algorithm>
+ #include "Animal.h"
+ #include "AnimalImpl.h"
+
+ // Now we have enough information to implement Animal properly.
+ // First, the Null Object
+ AnimalImpl AnimalImpl::instance;
+
+ // Basic ctor
+ Animal(): impl(&AnimalImpl::instance);
+ // Rule of 3. Clone the implementation; delete only if not the Null Object
+ Animal(const Animal& other): impl(other.impl->clone()) {}
+ Animal& operator=(const Animal& rhs) {
+   Animal other(rhs);
+   std::swap(impl, other.impl);
+   return *this;
+ }
+ ~Animal() {
+   if (impl != &AnimalImpl::instance) {
+     delete impl;
+   }
+ }
+
+ // Delegate interface
+ void Animal::makeNoise() { impl->makeNoise(); }
+ int Animal::value() { return impl->value(); }
+
+Chicken.h
+ // Yes, I didn't take time to separate interface from implementation here :(
+ // But it's just a really short example
+
+ #include <iostream> 
+ #include "AnimalImpl.h"
+ 
+ class Chicken: public AnimalImpl {
+   void makeNoise() { std::cout << "cluck cluck" << std::endl; }
+   int value() { return 1; } // in chicken-units of course :)
+
+   Chicken* clone() { return new Chicken(*this); }
+ };
+
+Cow.h
+ // Similarly.
+
+ #include <iostream> 
+ #include "AnimalImpl.h"
+ 
+ class Cow: public AnimalImpl {
+   void makeNoise() { std::cout << "mOoOoOoO" << std::endl; }
+   int value() { return 50; } // I have no idea how many chickens a cow is actually worth
+
+   Cow* clone() { return new Cow(*this); }
+ };
+
+Farm.cpp
+ // The Animal Factory :)
+
+ #include "BankAccount.h" // not relevant to the pattern itself, 
+                          // but just to embellish the context :)
+ #include "Chicken.h"
+ #include "Cow.h"
+ // We need to know about the interface-wrapper in addition to all the implementations.
+ #include "Animal.h"
+
+ Animal buy(string name, BankAccount& ba) {
+   // notice no need for a pointer or auto_ptr or anything
+   Animal toBuy; // null object by default
+
+   if (name == "cow") {
+     toBuy = Animal(new Cow());
+   } else if (name == "chicken") {
+     toBuy = Animal(new Chicken());
+   }
+
+   // Because of the delegation work, there's no pointer syntax here. This is the
+   // additional benefit that Pimpl gives us versus just a smart pointer
+   if (!ba.transaction(toBuy.value())) {
+     // Can't afford it.
+     toBuy = Animal(); // reset to "factory default"
+   }
+   
+   return toBuy;
+ }
+
+Now client code can use the purchased Animal as if it were a value class, get polymorphic behaviour, and never worry about memory management - AND we made sure of separating interface from implementation - at least at the base-class level.

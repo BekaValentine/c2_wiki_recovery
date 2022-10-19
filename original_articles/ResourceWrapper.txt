@@ -1,0 +1,73 @@
+Yeah, so I'll flesh this one out, as I understand it.  -- RusHeywood
+
+'''Pattern''' ResourceWrapper
+
+'''Context:''' You need to allocate some sort of resource that your software will need to use for a bit, and then release them so as to be friendly to your platform.  These resources can be things like open file handles, threads, memory, database transactions, IO port handles, etc.
+
+'''Problem:''' The trouble is, forgetting to correctly release resources (i.e., a ResourceLeak) causes a huge number of software problems, the most common of these being MemoryLeak''''''s.  The consequences of failing to release these resources can be minimal, or they can be catastrophic and Byzantine, resulting in a filled open-file table or a system crash (especially if your system has not-so-great resource allocation facilities, such as MacOS Classic.)
+
+'''Solution:''' Bind the scope of the resource allocation to the scope of a particular class of objects.  Then, constructing and initializing such an object will result in the allocation of a single resource of some type.  Similarly (and most importantly) destroying the object will result in the deallocation (freeing) of the resource.  This strategy reduces all resource allocation worries to a single kind: object allocation.
+
+'''Example:''' In communicating with a transaction-based database (which is every kind, these days), one must begin and end transactions in some regular fashion so that the DB engine can commit the changes made and release the "undo stack" that is created to ensure that your changes can be rolled back during the transaction if necessary.  If one forgets to close/commit a transaction, there is no notification from the engine; it just gets slower and slower as more and more transactions are opened without a corrresponding close, until finally the database is restarted.
+
+To reduce the worry of transaction closing, one might create a TransactionWrapper which opens a transaction on construction, and closes the transaction when it is destroyed.  (It's other methods typically also handle the other aspects of database communication, such as executing statements, but it isn't interesting to include that complexity for the example.)
+
+	   class TransactionWrapper {
+		 private:
+			int transID;
+			Database *d;
+
+		 public:
+			TransactionWrapper (Database *db) {
+			    d = db;
+			    transID = d->beginTransaction();
+			}
+
+			~TransactionWrapper () {
+			    d->commitTransaction (transID);
+			}
+		}
+
+One might then use a TransactionWrapper within a function, like this:
+
+    void writeUserToDatabase (Database *db) {
+	 TransactionWrapper t(db);
+
+	 // ... statement executions...
+    }
+
+Even though the programmer here did not explicitly include any code to end the transaction, the transaction was still committed successfully and quickly because the TransactionWrapper used to manage the transaction was a stack variable within writeUserToDatabase.  Since stack variables are destroyed as they go out of scope at the end of their containing function, the transaction was closed.  If the programmer uses transactions in this way, no additional cleanup code was necessary, even if the function throws an exception or has multiple exit points.
+
+
+'''Consequences:''' This strategy works extremely well when it is appropriate to use ResourceWrapper objects as stack variables.  Then, deallocation is implicit regardless of how the containing function terminates, and the programmer need add no additional logic to free the resource.  However, not all languages support stack-resident objects, and not all resource holdings are so short-lived that it makes sense for them to be bound to the scope of a function.  Further consequences:
+
+	* Without the programmer doing anything else, resources will be freed ''whenever the enclosing function returns.''  This is true even if the function has many return points, or does not always complete normally (i.e. if it throws an exception.)
+
+	* Sometimes resource holdings must outlive a function call. Specifically, if the allocation is inside some API or some server, and the resource must be held across multiple client calls, the stack-binding strategy won't work.  In case the likelihood that the resource will be correctly deallocated is equivalent to the likelihood that your program contains a MemoryLeak (forgotten object deallocation).  The workaround to this is that you provide a facility to the client where the resource that you are holding as a server corresponds to some resource that you provide to your clients; this just pushes the burden of allocation and deallocation down to them and hopes that they use ResourceWrapper to manage your resource.)
+
+	* Not all languages support stack-resident objects.  In particular, Java allows only heap-resident objects because of the risk that you might return a reference to a stack object from your function call, which would of course be invalid as soon as the function completed.  (Can you tell which language I know the most about?)
+
+	* Some languages (especially a GarbageCollectedLanguage) have heavily conditional, uncertain semantics regarding object deallocation, and this can monkey-wrench the ResourceWrapper pattern.  For example, in Java 1.1 it was possible for the VirtualMachine to be run in a mode where, when objects are collected, their finalizer method (or destructor) was not called.  This would make it possible for the ResourceWrapper objects to be freed without actually freeing the corresponding resource, so leaks happen anyway.
+
+	* If a , resource allocations may needlessly pile up and make the interval over which the resource is held unacceptably long.  Simple implementations of GC have been known to do things like avoid GC until the end of the program, in the hopes that your code won't allocate much memory and the OS will just destroy the program's heap space automatically.  This obviously would not do for dealing with a high-speed database engine.
+
+	* Some GarbageCollector''''''s don't collect garbage until memory appears to be exhausted. On a machine with a lot of memory, garbage collection might not happen often enough. The program may really terminate before garbage collection even becomes necessary.
+
+	* Here is the Java way to use this pattern: instead of using the finalizer to do the resource release, make resource release an explicit method, and then instruct users of the ResourceWrapper to do this:
+
+	  void functionCall () {
+	      ResourceWrapper w;
+	      try {
+		  // resource allocation
+		  w = new ResourceWrapper (key);
+
+		  // ... resource usage ...
+
+	      } finally {
+		  // resource release
+	          w.releaseResource();
+	      }
+
+	* This is not as good as the stack-resident object strategy, because the user still must remember to release the resource.  However, by putting the release code in an outer finally block, the user has the guarantee that the resource will always be released, regardless of how the enclosing function terminates.  (Such are the semantics of the finally block, which is not without its problems; FinalizerDisaster, for example.)
+
+

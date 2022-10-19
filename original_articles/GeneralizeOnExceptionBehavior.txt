@@ -1,0 +1,614 @@
+This pattern is a work in progress, but feel free to refactor...
+ 
+This proto-pattern attempts to provide a different point of view than that taken by MartinPool''''''s in RefineExceptions. This could also be called ''Really''''''HomogenizeExceptions''.
+
+''-- RobertDiFalco''
+
+----
+
+'''The Problem'''
+
+Most Exception hierarchies are a mess (in a manner quite related to LimitsOfHierarchies). The nodes of this tree are tightly coupled to ''class behavior'' (the behavior of the classes that use the exception) and their names reflect the classes that use them instead of being named to model generalized ''exception behavior''. As a result, most exception hierarchies snake in and out of each package rather than being its own abstraction that is ''given usage-context by its placement in code instead of its type name''.
+
+'''Solution'''
+
+Refine exceptions based on ''generalized exception behavior'' rather than the class abstractions that can ''cause'' those behaviors. For example, the exception type ''A''''''rrayIndexOutOfBoundsException'' is ''tied'' to the ''Array'' class. It should be replaced by ''I''''''ndexOutOfBoundsException''. This in turned can be further generalized by ''Range''''''Exception'' - which can be used for any bounds violations, not just in Arrays or Indexed objects.
+
+''Note that there already is an IndexOutOfBoundsException and ArrayIndexOutOfBoundsException is a subclass of it.''
+
+''Range''''''Exception'' models the ''exception behavior'' and not a specific case of that behavior (such as a range error in an array). Using generic exceptions that model ''exception'' behavior allows users to become more familiar with the exception class names and to simplify exception handling (i.e. less entities == less complexity). Coupling between exceptions and implementations are loosened while cohesion is strengthened.
+
+Another example is ''N''''''egativeArraySizeException'' which should be replaced with ''Underflow''''''Exception''. Particularly frustrating examples are exceptions with names like ''Class''''''Not''''''Found''''''Exception'', ''Acl''''''Not''''''Found''''''Exception'', and even ''No''''''Such''''''Method''''''Exception'' and ''No''''''Such''''''Field''''''Exception''. All of these could have been replaced by ''Missing''''''Exception'' without losing any context. After all, the context is provided by the code. Do we add the name of the class to the name of methods in that class? Does a class named ''Person'' have members named ''personAge'' or ''personFirstName''? Of course, not. Just as the context for a method is its class, the context for an exception (or exception behavior) is its ''usage instance'' - i.e. the boundary exception that occurs in the array abstraction. However, we don't even blink an eye when concatenating this redundant information onto the name of an exception. Consider the following which provides a hypothetical alternative to ''C''''''lassNotFoundException'':
+
+''Note that if the context must be provided by the code, you don't have the context if you don't have the code. For example, if code you didn't write throws a ClassNotFoundException, you can tell (from the exception class name in the exception report) that what was missing was a class. If the exception name was MissingException and if the message didn't mention or imply the fact that what was missing was a class, you'd have no idea what was missing.''
+
+ try
+ {
+    Class aClass = Class.forName( "S''''''omeClassName" );
+ }
+ catch ( Missing''''''Exception e )
+ {
+    Dbg.assert( e.getOrigin() instanceof Class );
+ }
+
+Do you really need the class of this exception to be ''C''''''lass''NotFoundException or can you extrapolate from the context provided by its placement in your source code? What extra value do you get by specializing the exception for ''Class''? The drawback is that you have tightened coupling. Now consider the same exception being caught the following code:
+
+ try
+ {
+    Method msg = Class.getMethod( "someMethodName", null );
+ }
+ catch ( Missing''''''Exception e )
+ {
+    Dbg.assert( e.getOrigin() instanceof Method );
+ }
+Does this really need to be ''No''''''Such''''''Method''''''Exception''? Isn't it clear from the context what is happening? In diagnostics, you can even look at the ''getMessage'' and ''printStackTrace'' for even further information. But for dealing with it in the here and now, why isn't the above enough? Can you imagine how much complexity one could eliminate if this pattern was rigorously applied to refactor existing code. In just this example we reduced complexity 2 to 1. This example is particularly absurd. For the ''Class'' interface Sun gave us ''C''''''lassNotFoundException'' while for the ''Method'' query Sun decided to give us ''N''''''oSuchMethodException''!!! At the very least, if they ''had'' to specialize, why didn't they give us ''C''''''lassMissingException'' and ''M''''''ethodMissingException'' both of which descended from the same basic exception behavior?
+
+''For what it's worth, the exceptions have different name styles for a reason: when trying to load a class, one is searching a conceptually unbounded space of class definitions (on disk, over the network, generated on demand by a clever class loader), and if nothing is found it is perhaps "because you didn't look hard enough".  On the other hand, trying to access a method/field/constructor involves a search through a fixed list; if the search fails, it is because the target definitively doesn't exist.  --DavisHerring''
+
+----
+'''Variations on a Theme'''
+
+In those times when you need to propagate the exception, I think you will be pleasantly surprised how much cleaner it is to propagate ''M''''''issingException'' than it is to propagate ''C''''''lassNotFoundException''. This is because the ''M''''''issingException'' describes ''generalized failure behavior'' instead of domain specific usage.
+
+However, when you do need more context than ''generalized exception types'' can provide and more than what is provided by the ''description'' field you can use ''aggregation'' in one of two ways.
+
+
+'''''Generic Exception Wrapping'''''
+
+You can wrap a generalized exception type instance in a class-specific exception container. For example:
+
+ class Foo
+ {
+    public static class Exception extends E''''''xceptionContainer
+    {
+        public Exception( B''''''asicException e ) { super( e ) }
+    }
+
+    [...]
+
+    public void bar( ) throws Foo.Exception
+    {
+        throw new Foo.Exception( new S''''''ubclassResponsibility() );
+    }
+ }
+
+You can then handle errors in ''Foo'' by catching ''Foo.Exception'' and find the problem by either querying or nesting a ''try...catch'' in order to ''throw Foo.Exception.getExceptionBehavior()''.
+
+
+'''''Using a Polymorphic Origin Field'''''
+
+Another simpler method, and the method I sometimes prefer is have my B''''''asicException constructor require a description and/or some object representing the entity that ''threw'' the exception. This can be a string or any other instance but my favorite is to use the class object as the origin. I simply added an ''m_origin'' field to the basic checked and unchecked exception types as well as the members ''getOrigin'', ''getOriginString'', and ''getMessageWithOrigin''. Whenever an exception is thrown one can specify the ''origin'' field with the ''Class object'' or ''this'' on the line where the exception was thrown from. For example:
+
+ public Object itemAt( int at ) throws R''''''angeException
+ {
+     throw new R''''''angeException( "at=" + at, getClass() );
+ }
+
+Since all behavior in Java is within a class, ''origin as Class object'' makes the most sense. Then you can scope exception handling with ''instanceof''. However, you can use whatever convention fits your usage scenario.
+
+It's pretty simple. However, I should tell you that while I do ''use'' this method, I've '''never''' ''needed'' to use this extra information conveyed by the origin for ''active'' exception handling or recovery. I've only use it for diagnostic information and reporting after the fact.
+
+
+'''''More on Generic Exception Wrapping..'''''
+
+Let's go back to NestedException''''''s. I put this in the same category as Collecting Exceptions. The only difference is that the O''''''uterException in the former contains only one object while the later contains an ordered collection of exceptions (such as the exception that occurred during a transaction). What is unique is that all of these methods use ''AbstractionThroughAggregation'' to increase reuse and decrease complexity instead of inheritance (i.e. A''''''rrayIndexOutOfBounds extends I''''''ndexOutOfBounds). For NestedException''''''s, I create a ''single'' direct descendent of ''java.lang.Exception'' that can aggregate other B''''''asicException objects. Unfortunately, in Java, I have to implement everything twice if I want both Checked and Unchecked exception types!! Ugh!! Anyway, these classes can be used as an exception container for one or more ''general failure exceptions''. This acts as an ''Outer''''''Exception'' class that I can specialize for a particular class or package or just use as is. If I do specialize it, the Outer''''''Exception becomes a simple domain-specific ''wrapper'' for a generic exception instance. Consider the class ''com.tripwire.agent.AgentException'':
+
+ #package com.tripwire.agent;
+
+ public class A''''''gentException extends O''''''uterException
+ {
+     public A''''''gentException( B''''''asicException e )
+     {
+         super( e );
+     }
+ }
+Then, any class in the ''agent'' package can use NestedException''''''s. For example, consider I have a ''com.tripwire.agent.Finder'' class that has a method like the following:
+
+ public Agent lookup( String sAgentName )
+     throws A''''''gentException
+ {
+     .
+     .
+     .
+     if ( ''<name_not_found>'' )
+     {
+         throw
+             new Agent''''''Exception(
+                 new M''''''issingException( sAgentName ) );
+     }
+ }
+
+This uses ''abstraction through aggregation'' to avoid creating a slew of ''A''''''gentXXXException'' classes. Instead of subclassing, I reduce complexity and the proliferation of new names through aggregation. Once again, over an entire system, I can exponentially reduce the complexity of my global namespace and exception hierarchy.
+
+
+'''Refactoring Made Simpler with Generic Exception Types'''
+
+Can you also see how much these techniques ease ones ability to refactor? If need be, you can change or add to the nested exception behavior ''without having to change the exception prototype''. As a result refactoring these declarations do not impact client code. You get the benefits of Unchecked Exceptions without the drawbacks of Checked Exceptions.
+
+----
+'''Some Examples'''
+
+'''''A Generic Checked Exception Superclass with Origin'''''
+
+As an extension for diagnostics, I talked about adding an ''Object m_origin'' (i.e. the ''who'') field to your B''''''asicException type. This along with the description (i.e. the ''what'') have been all the delineation one needs to provide generic exception types with a unique identity. Grant it this is easier to do in Java than in CeePlusPlus which as no class type or base Object. Consider the following definition of a ''base'' Checked''''''Exception type in Java. Unfortunately, Java required you to reproduce the code if you want both Checked and Unchecked versions:
+
+ ''/**''
+  ''* A basic Checked Exception for Java''
+  ''*/''
+ public class '''Checked''''''Exception''' extends java.lang.Exception
+ {
+     ''/// Implementation.''
+
+     private Object m_origin;   ''// e.g. Class, String, Instance''
+
+
+     ''/// Interface.''
+
+     public Checked''''''Exception()
+     {
+     }
+
+     ''/**''
+      ''* Create a new <tt>Checked''''''Exception</tt>. Creates a new exception''
+      ''* with the specified string as its message text.''
+      ''*''
+      ''* @param what the message text''
+      ''*/''
+     public Checked''''''Exception( String what )
+     {
+         super( what );
+     }
+
+     ''/**''
+      ''* Create a new <tt>Checked''''''Exception</tt>. Creates a new exception''
+      ''* with the specified string as its message text and the specified''
+      ''* object as its origin. The origin object is usually the class''
+      ''* object of the instance the exception originated from.''
+      ''*''
+      ''* <b>Example:</b>''
+      ''* <blockquote>''
+      ''* <pre>''
+      ''*     throw new C''''''heckedException( "badness", this.getClass() );''
+      ''* </pre>''
+      ''* </blockquote>''
+      ''*''
+      ''* @param what the message text''
+      ''* @param who the origin of the exception''
+      ''*/''
+     public Checked''''''Exception( String what, Object who )
+     {
+         super( what );
+         m_origin = who;   ''// who threw...''
+     }
+
+     ''/**''
+      ''* Returns an object indicating the origin of this exception.''
+      ''*''
+      ''* @return an Object, often an instance of the class this''
+      ''*         exception was thrown from.''
+      ''*/''
+     public Object '''getOrigin'''()
+     {
+         return m_origin;
+     }
+
+     ''/**''
+      ''* Returns the origin as a string.''
+      ''*''
+      ''* @return a String, often the name of the class this''
+      ''*         exception was thrown from.''
+      ''*/''
+     public String '''getOriginString'''()
+     {
+         if ( m_origin == null )
+             return "<unknown>";    ''// NOTE:''
+
+         return m_origin.toString();
+     }
+
+     public String '''getMessageWithOrigin'''()
+     {
+         return
+             ( getOrigin() != null )
+                 ? getOriginString() + ": " + getMessage()
+                 : getMessage();
+     }
+
+     /**
+      * Ugly version of <tt>toString</tt> for debugging. Prints
+      * something like:
+      *
+      *    M''''''issingException[who:F''''''ruitArray,what:Apple]
+      */
+     public String toString()
+     {
+         String msg = getLocalizedMessage();
+         String org = getOriginString();
+
+         String''''''Buffer sbuf = new String''''''Buffer( getClass().getName() );
+         if ( msg != null || org != null )
+         {
+             sbuf.append( '[' );
+             if ( msg != null )
+             {
+                 sbuf.append( "[who:" ).append( getOriginString() );
+                 sbuf.append( org == null ? ']' : ',' );
+             }
+
+             if ( org != null )
+             {
+                 sbuf.append( "what:" );
+                 sbuf.append( getLocalizedMessage() );
+             }
+
+             sbuf.append( ']' );
+         }
+
+         return sbuf.toString();
+     }
+ }
+I can then use this class to build up my Generic Exception hierarchy for Checked''''''Exceptions. I can use these in code as follows:
+
+ class I''''''ndexedCollection {
+
+     [...]
+
+     public Object remove( final Object item )
+         throws M''''''issingException
+     {
+         Index at = detect( new Block() {
+             public boolean is( Object each ) {
+                 return item.equals( each ); } } );
+
+         if ( at == this.end() )
+             throw new Missing''''''Exception( item.toString(), getClass() );
+
+         return removeAt( at );
+     }
+
+     [...]
+ }
+Basically, in your throws, you now always add one more parameter to your Exception constructor, the origin of the thrown exception. You can also use the ''getOrigin'' message during exception ''handling'' to disambiguate exceptions. While one would never write code like the following, you can still use getOrigin to help you out:
+
+ try
+ {
+     Method m = Class.forName( class_name ).getMethods( method_name );
+ }
+ catch( Missing''''''Exception e )
+ {
+     if ( e.getOrigin() == Class.class )
+         Dbg.trace( "Class.forName failed" );
+
+     else if ( e.getOriginString().equals( class_name ) )
+         Dbg.trace( "class_name.getMethod failed" );
+ }
+I have to say, I usually just use ''getOrigin'' for diagnostic messages. I've rarely written code in the RealWorld that ended up needed the origin class in order to disambiguate exceptions. The context of the code has almost always been enough to tell me how to handle the exception.
+
+----
+'''Parting Shots'''
+
+The approach taken by the JDK clearly increases coupling and pollutes the global namespace with a lot of useless specializations. Exception types should be very general and '''not''' tied to specific domain abstractions. They should be named to represent generalized ''exceptional behavior''. When you do need to specialize an exception to a domain abstraction, that exception should extend a generalized exception type.
+
+Don't think of your exception hierarchy being in the service of your concrete classes. Instead, let the exception hierarchy be its own class library that ''models generic exception behaviors''. Here's a partial list of Exception class-tree ''leafs'' that use this proto-pattern:
+
+ class Missing''''''Exception;
+ class Overflow''''''Exception;
+ class Underflow''''''Exception;
+ class Range''''''Exception;
+ class Empty''''''Exception;
+ class Full''''''Exception;
+ class Unknown''''''Exception;
+ class State''''''Exception;
+These are just some examples.
+
+''-- RobertDiFalco''
+
+----
+'''Discussion'''
+----
+
+Why stop there? Why not genericize further?:
+
+Exception''''''Exception (exception for exceptions)
+Boundary''''''Exception (replaces under, over, empty, full)
+Exception (replace unknownexception)
+
+''You could be right, let me think about this. Does it add value to have Overflow, Underflow, Range, and Empty or is Boundary enough? I'm not sure. My instinct tells me you are probably right. The message text, origin, and code context should provide all the detail needed. Any further thoughts on this? -- RobertDiFalco''
+
+----
+
+Right on, Robert. Thanks for giving names (DontRefineExceptions and ReallyHomogenizeExceptions) to these ProtoPattern''''''s - I HaveThisPattern in both cases.
+
+In fact, Missing''''''Exception might even be abstractable to Could''''''Not''''''Access''''''Exception - an access was attempted on something (e.g., a Class.forName("Some''''''Class''''''Name") and the something could not be accessed. If you believe in DesignByContract, then this can be viewed as a case of the forName() method not being able to fulfill its contract to client code - so Could''''''Not''''''Access''''''Exception is a kind of Contract''''''Fulfillment''''''Exception. As I described on HomogenizeExceptions, I have been using exceptions of these names on my last two projects, and I find it to work well.
+
+Here's are a couple of proposed renamings of these ProtoPattern''''''s that are hopefully positive and intention-revealing: RefineExceptionsBasedOnGeneralizedExceptionBehavior and HomogenizeExceptionsBasedOnGeneralizedExceptionBehavior.
+
+-- RandyStafford
+
+----
+
+I don't understand what the advantage is of this pattern. It seems like when reporting errors, more detail is better. Take a slightly more complicated example:
+
+ void fun1() {
+   try
+   {
+     Class aClass = Class.forName( "Some''''''Class''''''Name" );
+     fun2(aClass);
+     fun3();
+   }
+   catch ( Missing''''''Exception e )
+   {
+   }
+ }
+
+ void fun2() throws Missing''''''Exception {
+    Method msg = Class.getMethod( "someMethodName", null );
+ }
+
+ void fun3() throws Missing''''''Exception {
+     I''''''nputStream is = new File''''''Input''''''Stream("asdf");
+ }
+It seems rather unlikely to me that all three errors should be handled by the same catch clause. Error-handling would be more awkward, and you're more likely to accidentally catch the wrong exception.
+
+Also, if the exception is logged, it's much easier to figure out what the problem is from File''''''Not''''''Found''''''Exception or Class''''''Not''''''Found''''''Exception than a generic MissingException.
+
+BTW, the reason a class member is named "age" and not "personAge" is because the class defines the namespace. However, Person.age and Car.age are not the same field!  The analogous thing to do with exceptions would be to define nested classes such as Class.Missing''''''Exception and File.Missing''''''Exception.
+
+-- BrianSlesinsky
+
+Hmmm.. I think it is easier to DontRefineExceptions. In fact, you just said yourself that each of the three errors would have their own catch clause in their own context. So what value is the extra information? If you look at the way code is ''really'' written, this ambiguity does not occur. As for logging, what's the problem? The exception description will tell you the origin and cause of the original exception. While there might be problems with this proto-pattern, I don't think those you mention are among them. -- RobertDiFalco
+
+''BTW, the reason a class member is named "age" and not "personAge" is because the class defines the namespace. However, Person.age and Car.age are not the same field! The analogous thing to do with exceptions would be to define nested classes such as Class.Missing''''''Exception and File.Missing''''''Exception.''
+
+Wasn't that my whole argument? I don't find anything contradictory in in ''Class.Missing''''''Exception'' or ''File.Missing''''''Exception''. Both are just ''Missing''''''Exception''. ''[No, ''Class.Missing''''''Exception'' is not ''Missing''''''Exception''; it would be a subclass, wouldn't it?]''Of course, I question whether one would really need this extra level of specialization. The class provides the context just like the flow defines the context for exceptional behavior. But, to be a little pedantic, the analogy was more abstract than you are thinking. I wasn't saying Exceptions are Methods, and so you take the analogy too far when you say Class.methodName and Class.Exception''''''Name are equivalent. Methods are ''not'' exceptions - your example provides a syntactic rather than a ''semantic'' analogue to methods.
+
+Methods deal with data-abstractions tied to objects. Therefore, the context of an instance method is its object. On the other hand, an Exception isn't tied to the object, it is ''tied to the flow of execution''. Therefore, the context of an Exception is the ''flow of execution''. This is the analogy I was trying to make. Stated another way, ''the flow of execution provides the context for an exception in the same way an object provides the context for an instance method''.
+
+Of course, this doesn't mean there is anything wrong with NestingException (I'm not talking about ''collecting'' or ''aggregate'' Exceptions). In fact, I like the ''idea''. I have just never found it necessary to use in an actual production environments. -- RobertDiFalco
+
+The difference between fields of an object and exceptions is that, while fields are always accessed through an instance of the object that provides context information, exceptions are often caught in parts of the code where the original context is no longer available. For example (contrived, but illustrates the point):
+ 
+ Method m;
+ try {
+     m = Class.forName( class_name ).getMethod( method_name );
+ }
+ catch( M''''''issingException ex ) {
+     // What's missing, the class or the method?
+ }
+I think that the important point being brought up here is that you need ''hierarchies'' of exception types. E.g. C''''''lassNotFoundException and M''''''ethodNotFoundException could be both derived from MissingException.
+
+The C++ standard library provides a useful hierarchy of abstract exception types, for example. The Java exception hierarchy is a mess, both in the ways that you have pointed out, and in other ways (e.g. two base classes for uncaught exceptions, one of which is derived from the base class for caught exceptions).
+
+More emphasis needs to be made on ''refactoring'' exception hierarchies. They are as important abstractions as any other classes in the system.
+
+-- NatPryce
+
+----
+Nat, I agree and I emphatically agree with you about C++. What is this Checked and Unchecked Exception stuff? It reminds me of the Java type system. It seems like areas they couldn't commit on they just decide to do both (typed and untyped or checked and unchecked). Ugh. Since we have this checked/unchecked weirdness, one should be able to create a R''''''angeException that is checked in some uses and unchecked in others. However, because of the method they chose to implement this behavior, one cannot have a single base exception type hierarchy but must have two hierarchies!! This is because, as Nat points out well, the unchecked base is Runtime''''''Exception and the checked base is Exception which is the base class of Runtime''''''Exception!!!! Wow!! Trying as hard as I can to forget this weirdness about the JavaLanguage... When I think about Exception hierarchies, I always think about the original Booch Components for CeePlusPlus. While quite out of date now, these did a great job with Exception types. And I agree that the standards committee did a decent job with the exceptions in the CppStandardLibrary.
+
+However, I still think that the need for a specialized ClassNotFoundException that is distinct from a MethodNotFoundException is a myth - or at the very least, '''a missed opportunity to use abstraction through aggregation''' (such as associating an exception ''origin'' with each Exception instance or creating a <package name> outer Exception that wraps the Generic Exception types). Creating two distinct types often adds needless complexity to the type hierarchy. In actual usage, one tries to encapsulate discrete behavior in atomic logical units, so I don't think the example you provide occurs much in actual systems (which you said yourself). In my own exception hierarchy, I use a hierarchy that is similar to the original Booch Components and also includes a "what" and "who" (i.e. origin) that is also similar. Mostly to aid in logging and debugging, I have a ''who'' field (i.e. the origin Class object) for each of my exception types that augments the ''what'' (i.e. ''getMessage'') field provided by ''java.lang.Throwable''. However, I am truly surprised at how rarely I actually use this ''who'' field to ''handling'' exceptions (beyond diagnostic reporting).
+
+Back to your "forName, getMethod" example. In an actual system, one would be more likely to require the user first have the Class object before querying a Method object. The user might already has an instance of the Class they want to send a message to or the object that they can query the class instance from. For example:
+
+ Object invokeOn( Object rcvr, String sMethod )
+     throws M''''''issingException
+In this case, you already have the class-object by calling ''getClass'' on the receiver. If an exception is thrown during ''invokeOn'', you will know from combining the method name with the exception type that "sMethod" could not be found in the class of the receiver. 
+
+As a quick exercise to everyone, look at some of your production code and see how often you actually ''use'' the level of specialization added by subclassing a generalized exception for a specific class? (i.e. ''A''''''rrayEmptyException'' extends ''E''''''mptyException'') In how many places can you refactor your code to eliminate ''A''''''rrayEmptyException'' by replacing it with ''E''''''mptyException''?  Of course, if you are not using generic exception behaviors as your base classes, then you cannot run this exercise. But if you can, now see in how many of those cases you can remove the specialization by rearranging the code or using the context provided by the flow of execution. 
+
+When I did this, I was surprised to find that in those places where I thought I needed the specialized exception type could be eliminated. I further found that I was able to get rid of ''great gobs'' of code by eliminating these specializations and that my class interfaces where simplified. In other cases when I needed to change my flow of execution in order to provide the correct exception context, my code improved. As always, YMMV.
+
+''-- RobertDiFalco''
+
+----
+
+I just don't see how relying on context can be a safe thing to do. Take this snippet of code:
+
+ try {
+     openFile(fileA);
+ catch(MissingE''''''xception e) {
+     dialog("file not found: "+fileA);
+ }
+This code looks right (if you are relying on context) but actually contains a bug. Suppose openFile() internally needs to load a class, and fails. It will throw a MissingException in that case too! We get a "file not found" error when actually a class is missing. Better to say what you mean and catch FileMissingException.
+
+However, even if you catch FileMissingException, there is another bug: suppose that openFile(), in the process of opening fileA, needs to open fileB (a preference file containing the directory to use), and fails! The corrected code looks more like this:
+
+ try {
+     openFile(fileA);
+ } catch(FileMissingException e) {
+     dialog("file not found: "+e.getMissingFile());
+ }
+-- BrianSlesinsky
+
+----
+
+How does catching the two types of exception fix your bug?!? It's still there. Of course, if its a checked exception, the "Missing''''''Exception" from the class loader wouldn't be able to propagate beyond ''openFile'' so you can comfortably use the tools at your avail to reduce the complexity of your code. I believe what you propose doesn't add any debugging value and further, makes the code more complex. -- RobertDiFalco
+
+----
+
+Well, I think it's simpler to catch FileMissingException than it is to write boilerplate code everywhere that catches MissingException and rethrows it if the target of the exception isn't a file. Also, if openFile() is supposed to throw a MissingException, and the class loader also happens to throw a MissingException, type checking is just going to let it propagate.
+
+But perhaps I'm misunderstanding the idea. How would you rewrite this snippet of code?
+
+-- BrianSlesinsky
+
+I'm not sure what you mean but I'd probably write it as you had it initially, using ''Missing''''''Exception''. Let's say the ''openFile'' message is a method of the class ''Foo''. I might put in debugging code like:
+
+ catch ( Missing''''''Exception e )
+ {
+    Dbg.assert( e.getOrigin() == Foo.class );
+ 
+    e.printStackTrace()
+ }
+Honestly, the problem is too isolated to say anything for ''either'' point of view. As they say, WhyAreExamplesExamplesOfBadProgramming. As a test, we should try something more complex and ''real-world''. It would be unfair for me to come up with it as I choose something that doesn't challenge my point of view. Why don't you post or propose something based on some of your actual codebase that you believe could not work with this idiom? I find ''real'' scenarios are usually much different that theoretical ones. This way, I can either concede the point or show how I would handle it the problem differently. As with anything, there are going to be trade-offs. All in all, I have found this technique's ability to bring my codesize down and increase the utility of generic exceptions to far outweigh its drawbacks. However, I am eager to take on some actual test cases. -- RobertDiFalco
+
+I think the examples I've given so far demonstrate specific problems pretty well. I'll try to come up with some others, but I'm not sure how much that will prove. After all, coming up with a way to misuse something doesn't show that there's no way to do it right - it just means I don't fully understand where you're coming from. It is your proposal after all.
+
+Perhaps you could give a simplified version of code where generic exceptions worked well for you?
+
+-- BrianSlesinsky
+
+I pretty much use these type of exceptions hierarchies everywhere in C++ and in Java. I started after using the Booch Components for C++ back in 1991. I was hoping to get a good example from you so I could speak to your objections. -- rad
+
+----
+
+My solution to Brian's code just above: openFile should never allow the Missing''''''Exception from the class loader to propagate to the caller of openFile. It's an implementation detail and is not the caller's 'fault'. If opening a file requires a class to be loaded, and that class is not available, then the Missing''''''Exception from the class loader should be wrapped in an appropriate generic exception indicating that something's gone wrong which is pretty much independent of what the caller requested. (Runtime''''''Exception sounds fine to me, if you want a generalized exception name, although that specific name is a bad choice since Java already has one.)
+
+Missing''''''Exception has an obvious meaning in the context of opening a file - that the file is missing. That's obviously the caller's 'fault', at least in general (ask the user for a new file, or generate a new temp file name, or something..), and can probably be dealt with effectively. If the file can't be opened because, for example, the gzip decompression filter class can't be loaded, then there probably isn't much the caller can do, since it's quite likely that any other file proposed as a replacement needs that filter too =)
+
+Just my two cents, anyway.. I HaveThisPattern and hoped I could make things a little clearer. -- TorneWuff
+
+----
+Without having read the full page [this is (too) ''long''!], but only the start, a GoodThing is to have ''general'' exceptions, like described here, and ''then'' make them more specialized. In C++ terms: class CorbaServiceNotFound : public CorbaException, class CorbaException : public std::exception. -- JuergenHermann
+
+----
+I tend to go overboard in creating exception classes. However, I do not need to catch each exception type by name. The Java ''A''''''rrayIndexOutOfBoundsException'' is a subclass of ''I''''''ndexOutOfBoundsException''; so is ''S''''''tringIndexOutOfBoundsException''. If I need to worry about catching these exception types explicitly, I can write code like:
+
+  // Unrealistic Example.
+  try {
+    char c = str.charAt(42);
+    int  i = arr[17];
+  }
+  catch ( ''A''''''rrayIndexOutOfBoundsException''  e ) {
+    recover_array_problem (e);
+  }
+  catch ( ''S''''''tringIndexOutOfBoundsException'' e ) {
+    recover_string_problem(e);
+  }
+I can consolidate these catch clauses if the program cannot recover from these errors.
+
+Programming requires decisions. The decision whether to catch exceptions specifically or generally should be made depending upon the ability of the program to recover from the exceptional condition. If it can't, write a general catch clause, and pick up the pieces however you can. If it can, use exceptions in as granular a fashion as you deem necessary.
+
+Incidentally, the JDK documentation for String.charAt says that it throws ''I''''''ndexOutOfBoundsException''. It actually throws the subclass. So, I guess Sun agrees with you; use the general exception unless it is absolutely necessary to use the specific one. -- EricJablow
+
+This is cool for un-checked exceptions but becomes more difficult for checked-exceptions. Generalizing on exception behavior makes it much easier to declare throw clauses and refactor Java code. I'm still waiting to need specialized exception types. In fact, I'm starting to lean even closer to Nat's point of view and making ''Checked''''''Exception'' (or ''Failure'') the '''only''' Exception type that is declared in throws clauses. ''Failure'' would be a nested exception so if I need more detail I would embed it into the ''Failure'' instance. In this way, I make the programmer aware that the method he is calling might throw an exception (hence he is required to write a ''try...catch'' block) while at the same time, allowing the code to be easily refactored. It's amazing to see that the more modular my code is, the less I need to know anything other than if what I called failed or succeeded. -- RobertDiFalco
+
+----
+Well, that is really the point. Is it worth the extra complexity (introducing yet more stuff into the namespace) for an admittedly unrealistic example? I say, no. Moreover, why ''Index'' O''''''utOfBounds? Why not just ''Range''''''Exception'' or ''B''''''oundsException''? Eliminating ''Index'' makes the class an even ''more'' reusable generalized concept. -- RobertDiFalco
+
+Why be that detailed? A range exception or bounds exception is a programming error, and that's all the information you need in practice. There is no need for exceptions more specialized than ProgrammingError. That can cover dereferencing null, invalid array indices, illegal argument values, failed preconditions or invariants, etc. When the exception is thrown (within a unit test, hopefully), the developer can use the debugger to pinpoint the reason. If the exception is thrown in a deployed system, the runtime can print a detailed bug report for the user to send to the developers. Even better, the program can dump core and the developers can examine it in a post-mortem debugger. (As usual, UNIX was right all the time ;-)
+
+Exceptions that are caused by situations outside the programmers' control probably need to be more detailed because the program may have to react to them or report them to the user in such a way that they can locate and fix the problem. E.g. missing files, host not found, network not reachable etc, HTTP 404, etc. all have different causes and different fixes.
+
+-- NatPryce
+----
+In my mind, if you find that you do not need to differentiate between two exceptions thrown by the same ''try'' block, you should catch the Exception class and NOOP (or whatever you have to do). Another option is to place the catch blocks for the exceptions you are interested in before the catch block for the Exception class and deal only with the exceptions you have to. I tend to use the RefineExceptions pattern and catch superclasses of my exceptions when I'm not interested in detail.
+
+I think that there is room here for some variation of the StrategyPattern or FactoryPattern. It seems to be the usual discussion: ''Should I create a whole whack of subclasses to add precision?''
+
+Also, if you are refactoring, wouldn't the process go something like this (standard disclaimers about the unrealness of this code apply):
+
+''Code block 1''
+
+ public class My''''''Exception extends java.lang.Exception {
+   public My''''''Exception(String message) {
+      super( message );
+   }
+ }
+
+ :
+
+ public class Example''''''Class {
+   public void doSomethingWithDatabase() throws My''''''Exception {
+      if (''no database connection'') {
+         throw new My''''''Exception("Database connection failed. Please try again");
+      } else {
+         ''do something with the database connection''
+      }
+   }
+
+   public void doSomethingElseWithDatabase() throws My''''''Exception {
+      try {
+         doSomethingWithDatabase();
+      } catch (My''''''Exception me) {
+         me.printStackTrace();
+
+         ''// Try to recover from the exception by attempting''
+         ''// to reconnect periodically to the database''
+      }
+
+      if (''something is wrong'') {
+         throw new My''''''Exception("Something went wrong");
+      }
+   }
+ }
+This would be refactored to become:
+
+''Code block 2''
+
+ public class My''''''Exception extends java.lang.Exception {
+   public My''''''Exception(String message) {
+      super( message );
+   }
+ }
+
+ public class My''''''Database''''''Exception extends My''''''Exception {
+   public My''''''Database''''''Exception(String message) {
+      super( message );
+   }
+ }
+
+ :
+
+ public class Example''''''Class {
+   public void doSomethingWithDatabase() throws My''''''Exception {
+      if (''no database connection'') {
+         throw new My''''''Database''''''Exception("Database connection failed. Please try again");
+      } else {
+         ''do something with the database connection''
+      }
+   }
+
+   public void doSomethingElseWithDatabase() throws My''''''Exception {
+      try {
+         doSomethingWithDatabase();
+      } catch (My''''''Exception me) {
+         me.printStackTrace();
+
+         ''// Try to recover from the exception by attempting''
+         ''// to reconnect periodically to the database''
+      }
+
+      if (''something is wrong'') {
+         throw new My''''''Exception("Something went wrong");
+      }
+   }
+ }
+This could then produce code like:
+
+   try {
+      ''something here''
+   } catch (My''''''Exception me) {
+      if (me instanceof My''''''Database''''''Exception) {
+         ''handle the database exception''
+      } else {
+         ''handle the generic exception''
+      }
+   }
+Or like this:
+
+   try {
+      ''try something here''
+   } catch (My''''''Database''''''Exception mde) {
+      ''handle database exception''
+   } catch (My''''''Exception me) {
+      ''handle generic exception''
+   }
+Obviously, the My''''''Exception entry in both of the previous examples could be generalized to be the Exception superclass. I guess my point there is that if you do enough refactoring, useless Exception subclasses should become apparent and should be eliminated or absorbed by their superclasses.
+
+-- IainLowe
+
+----
+I can't help the impression that the wrong questions are being asked here. If the idea is to do with fewer exception classes, you can have it: use only one class, Exception (and maybe RuntimeException) in all of your code. If you are sure that you don't care about the exception type then throw/catch Exception will always do the trick. You aren't obliged to differentiate between exception types, but you can if you want. And I agree that in many situations, you really don't care. Especially, I never care about R''''''untimeExceptions, so the examples above (A''''''rrayIndexOutOfBoundsException etc.) don't bother me at all. I will only ever see them in the log output and then the class name is helpful for debugging.
+
+'''Remember that the exception type serves three purposes:''' 
+1) At runtime it provides information for error diagnostics, but this could as well be provided by the text message so it's not necessary
+2) As part of the method signature it tells the client programmer what exceptions to expect. Here, the type is all the programmer has (you could of course add some detailed Javadoc but you can never rely on that) so if you want to differentiate between exceptional situations then you have no choice but to define different exception types. For that purpose, it's actually not helpful to know that a method might throw a MissingException if I have no idea what it is that could be missing. This is no better than just saying "something went wrong".
+3) In consequence, it enables the client programmer to programmatically handle exception situations according to their type. For this purpose, you could also differentiate the exception situation by the contents of the exception object(which may hold an error number or whatever). This is somewhat less elegant than the standard Java mechanism but it's possible.
+
+In conclusion, differentiating exception types is only worthwhile if it benefits the client programmer. It's not worthwhile for debugging purposes only. But the client programmer can only benefit if the differentiation is sufficiently fine-grained, otherwise, none at all might be better. Organizing the types in a fine-grained class hierarchy looks like a good, flexible and maintainable solution.
+
+-- ToniMenninger
+
+----
+CategoryException | CategoryJava

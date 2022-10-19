@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Doc Query In Sql
+      </h1>
+      <p>
+        A <a href="RichardHenderson.html">RichardHenderson</a> production. Enjoy.
+      </p>
+      <p>
+        <em>I am going to describe a moderately complex subset of a design I did some years ago for a Wall Street bank. I designed and implemented the core query architecture based on my earlier work with Bill Of Materials systems, for which I created the </em><a href="TreeInSql.html">TreeInSql</a>. The next part of this is called <a href="PushDocQueryInSql.html">PushDocQueryInSql</a> .<em></em>
+      </p>
+      <p>
+        <em>The system was a web portal to proprietary financial research information, with a search on documents by their categorized attributes. The idea was to put all that expensively compiled research in one place where people could search for it (after paying the requisite fee of course). Initially these attributes were just things like 'Foreign Exchange' and 'Brazilian Real'. Things then started getting complicated...</em>
+      </p>
+      <hr/>
+      <p>
+        Documents are often catalogued by attributes. These attributes are usually category:keyword pairs. So a document can, in principle be found by matching a pattern of desired attributes with those documents that have those attributes. This is the essence of document retrieval systems and clipping services.
+      </p>
+      <p>
+        One solution is the web search style solution where we simply search all the documents for the keywords. Unfortunately this is unreliable and scoring is problematic. Performance and scalability also become an issue where documents are any larger than a couple of pages of text.
+      </p>
+      <p>
+        A better solution is to do the attribution of a document up front. This allows synthetic attributes to be applied (no keyword in text), and allows any attributes to be structured as a 'flyweight' tree in the database.
+      </p>
+      <p>
+        'Structured attributes', two small words that open Pandoras Box. The idea is that if we ask for a document about 'Geography:Rio De Janeiro', then we'd like documents in more general, related attributes, like 'Geography:Brazil', to be returned with a lower score. If a general attribute such as 'Geography:Brazil' is entered, then more specific attributes should also be included to generate a scored list of attributes. Subtrees rooted from the specified attribute had a score of 100. Parents of the specified attribute were given steadily lowering scores. For this document I only consider the 100s, the subtree rooted at the query attribute. Other scoring heuristics were considered but this scheme has the advantage of simplicity and predictable performance.
+      </p>
+      <p>
+        The clients also wanted structured categories. Only another two words :). This was designed to assist menuing on the screen. It also allowed categories to be more meaningful. The requirement was rare, appearing in 'Geography' root categories among others. This allowed an attribute to naturally express its context. Thus the subcategories of 'Geography' were 'Region', 'Country' and 'City' among others. In retrospect a full tree seems heavyweight but it didn't greatly inconvenience the query process. The examples above would be modified to become 'Country:Bazil', 'City:Rio De Janeiro'. I'll assume all categories are unstructured here.
+      </p>
+      <p>
+        Back to the our structured tree of attributes. What we are doing is creating a semantic inference network. It expresses containment and peer relationship. We are inferring from an attribute all its related child attributes. 
+      </p>
+      <p>
+        So, we elaborate a given set of attributes into the larger set of all inferred attributes. This has just made the problem bigger. In a highly structured system of attributes, a high-level attribute such as Asia can return a large number of sub-attributes.
+      </p>
+      <p>
+        How do we do a query of all documents which satisfy this larger set of query terms? How does this elaboration change the logic of the query?
+      </p>
+      <p>
+        Before I get into this pseudocode I feel obliged to point out what an evil hack the child extraction query uses. If rdb's pushed down substring operators to the index optimizer then I wouldn't be doing this. Perhaps it can be done in one of the myriad explicit syntaxes of Oracle. Most companies wrap it in a huge application and sell you it for about $10K per seat (Vignette, Verity, SybaseIQ etc.). The overriding issue at the time was performance. This technique is one of my most devilish: synthesizing a range from a point query.
+      </p>
+      <p>
+        Hack detail: We want to get all the children of a query term. This is the same as all nodes whose leftmost elements are the same as the query term's <keystring>. The naive approach is to use a query like so:
+      </p>
+      <code>
+        select keywordtree.keystring<br/>
+        from keywordtree, queryterms<br/>
+        where<br/>
+        left(keywordtree.keystring, length(queryterms.keystring)) = queryterms.keystring<br/>
+      </code>
+      <p>
+        Some SQL parsers choke on this, and even good ones like Sybase's tend to do a cartesian product of the two tables before evaluating the included tuples. This is bad. Very very bad.
+      </p>
+      <p>
+        Indexes need subrange expressions to work efficiently. So firstly I define a sentinel value for the atomic child index. This value was 'ZZ' in my digit-only keys. It never appeared in the keys, and was guaranteed to be larger than any key. This allowed me to create a range query returning all children of all query terms plus the query terms themselves. Not only that, the query is optimal given the right index.
+      </p>
+      <p>
+        To pseudocode:
+      </p>
+      <p>
+        <strong>tables:</strong>
+      </p>
+      <code>
+        <doc>  = <docid> <static attributes><br/>
+        <keyworddocxref> = <docid> <categoryid> <keywordid><br/>
+        <keyword> =  <categoryid> <keywordid> <name> <keyword stuff><br/>
+        <category> = <categoryid> <name> <category stuff><br/>
+        <keywordtree> = <keystring> <categoryid> <keywordid> <br/>
+      </code>
+      <p>
+        <strong>parameter table:</strong>
+      </p>
+      <code>
+        <queryterms> = <keystring> // derived from <category> <keyword> pairs.<br/>
+      </code>
+      <p>
+        <strong>temporary tables:</strong> 
+      </p>
+      <code>
+        <allterms>  = <keywordid> <categoryid><br/>
+        <result1>   = <docid> <categoryid><br/>
+      </code>
+      <p>
+        <strong>elaboration query:</strong>
+        <SQL>
+      </p>
+      <code>
+        // We want to get all the relevant keyword terms<br/>
+        // This version only gets children<br/>
+        // Sybase style create temp table on fly using 'select into' clause<br/>
+        // Spot the hack.<br/>
+      </code>
+      <code>
+        select keywordtree.keywordid "keywordid" , keywordtree.categoryid "categoryid"<br/>
+        into #allterms<br/>
+        from queryterms, keywordtree <br/>
+        where<br/>
+        queryterms.keystring <= keywordtree.keystring and<br/>
+        queryterms.keystring+'ZZ' > keywordtree.keystring <br/>
+      </code>
+      <p>
+        </SQL>
+      </p>
+      <p>
+        Now, the query logic itself. We may want a scored list of documents or we may only want the documents that satisfy the exact original query. So we need to define the query logic.
+      </p>
+      <p>
+        The query is generated by the user by selecting a bunch of attributes. Related attributes (same category) are assumed to be OR'd. Unrelated attributes are assumed to be AND'd. This is a natural query type for documents. An example query would be: 'Get me all documents which satisfy Geography(Brazil OR Paraguay OR Mexico) AND FinancialArea(ForeignExchange OR Equity) AND Currency(Dollar) .' <em>[Note that this is a normalized form and can be extended to arbitrary queries by synthesizing categories. -- RIH]</em>
+      </p>
+      <p>
+        The elaborated set will increase the number of terms inside each parenthesis but leave the category unchanged (related attributes always belong to the same [root] category). If we can find a query that satisfies the original query, then it will also work for the elaborated set. Here's the next sneaky query.
+      </p>
+      <p>
+        <SQL>
+      </p>
+      <code>
+        // ! Note group by clause<br/>
+        select docid, categoryid<br/>
+        into #result1<br/>
+        from #allterms, keyworddocxref<br/>
+        where<br/>
+        keyworddocxref.keywordid = #allterms.keywordid and<br/>
+        keyworddocxref.categoryid = #allterms.categoryid<br/>
+        group by docid, categoryid<br/>
+      </code>
+      <p>
+        </SQL>
+      </p>
+      <p>
+        The above 'group by' clause effectively collapses the OR members in the query parenthesis. As a result we have all documents which belong to at least one of the categories. Next up, the scored list. We simply define the score to be the number of categories that the document satisfies. This is the final query here though typically there would be ordering and other issues to sort out.
+      </p>
+      <p>
+        <SQL>
+      </p>
+      <code>
+        select docid, count(*) "score"<br/>
+        from #result1<br/>
+        group by docid<br/>
+      </code>
+      <p>
+        </SQL>
+      </p>
+      <p>
+        Like most optimized stuff, a lot of writing for a very little code. If we only want the fully satisfied documents, then we need to know the number of categories in the original query. Lets call it <querycategories>. Then the above query simply needs a 'having count(*)=<querycategories>' appended to it.
+      </p>
+      <p>
+        That's it for the stemmed, scored, document query using trees and hackery in SQL. With the right indexes this algorithm is optimal (I just love saying that).
+      </p>
+      <p>
+        To see how I made these queries superoptimal, and made IBM cry, see the next episode:
+        <a href="PushDocQueryInSql.html">PushDocQueryInSql</a>, when I get round to it.
+      </p>
+      <p>
+        -- <a href="RichardHenderson.html">RichardHenderson</a>
+      </p>
+      <hr/>
+      <p>
+        If anyone knows a better (as in less hacky) way of getting the children, then let me know. Thanks. --RIH.
+      </p>
+      <hr/>
+      <p>
+        Richard
+      </p>
+      <p>
+        Assuming that the hierarchy is a tree, then the following seems to work quite well. The trick is to add a couple
+        of float columns to the keyword table (lowvalue, highvalue). The root element is then given an arbitrary range, say
+        (1, 1E7) and each time a child is allocated, it is given half of the interval of the parent term - a sort of Zeno's Paradox 
+        allocator :-)
+      </p>
+      <p>
+        The parent/child hierarchy is held as normal, i.e. straight relational links between the two values, but all children of a node 
+        are strictly contained within the interval (lowvalue, highvalue) of the parent.
+      </p>
+      <p>
+        Here's the sample table and the SP for calculating the boundary values (Transact-SQL)....
+      </p>
+      <p>
+        CREATE TABLE elementtype
+        (
+      </p>
+      <code>
+        elementtypeId int,<br/>
+        parentId      int,<br/>
+        lowvalue      float,<br/>
+        highvalue     float<br/>
+      </code>
+      <p>
+        )
+      </p>
+      <p>
+        CREATE PROCEDURE dbo.CalculateElementBounds
+        (
+      </p>
+      <code>
+        @parentId int,<br/>
+        @lowbound float OUTPUT,<br/>
+        @highbound float OUTPUT<br/>
+      </code>
+      <p>
+        )
+        AS
+      </p>
+      <code>
+        IF EXISTS(SELECT * FROM elementtype WHERE parentId = @parentId)<br/>
+        SET @lowbound = (SELECT MAX(highvalue) + 1 FROM elementtype WHERE parentId = @parentId)<br/>
+        ELSE IF EXISTS(SELECT * FROM elementtype WHERE elementtypeId = @parentId)<br/>
+        SET @lowbound = (SELECT lowtypeValue + 1 FROM elementtype WHERE elementtypeId = @ParentId)<br/>
+        ELSE<br/>
+        SET @lowbound = 1<br/>
+        IF EXISTS(SELECT * FROM elementtype WHERE elementtypeId = @parentId)<br/>
+        BEGIN<br/>
+        -- Determine the end of the range<br/>
+        SET @highbound = (SELECT highvalue - 1 FROM elementtype WHERE elementtypeid = @parentId)<br/>
+        -- Grab half of it <br/>
+        SET @highbound = ((@highbound - @lowbound) / 2) + @lowbound<br/>
+        END <br/>
+        ELSE<br/>
+        SET @highbound = 1E7<br/>
+      </code>
+      <p>
+        GO
+      </p>
+      <p>
+        This is similar to Celko's schema but using float rather than int for the boundary values means that you don't have to rebalance the tree or assume anything regarding the breadth/depth upfront.
+      </p>
+      <p>
+        -- <a href="PaulHatcher.html">PaulHatcher</a>
+      </p>
+      <p>
+        <strong>Urrrrgh. Please forgive me, but that's pretty ugly. My way effectively treats the key as a long decimal fraction so no need for coding bounds as they are implicit in the collation order. Obviously this assumes a simple collation order and an appropriate string comparison operator, otherwise such a scheme may be necessary. Another problem is the collapse of low and high bounds due to limits of precision, analogous to a string-length limit.</strong>
+      </p>
+      <p>
+        <strong>Nevertheless a float would be much more efficient storage-wise, I must think on this some more, thank you for the input.....</strong>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategorySqlProgramming.html">CategorySqlProgramming</a>
+      </p>
+    </div>
+  </body>
+</html>

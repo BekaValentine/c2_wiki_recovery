@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Java Singleton Problems
+      </h1>
+      <p>
+        Using the <a href="SingletonPattern.html">SingletonPattern</a> in a Java application seems to be a straight forward task. However, the reality is different. There are at least the following issues in Java when it comes to the singleton design patterns (detailed descriptions follow this list):
+      </p>
+      <ul>
+        <li>
+           Garbage collection of the singleton instance
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Locking/Synchronisation
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Multiple class version
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        <strong>Garbage collection of the singleton instance</strong>
+      </p>
+      <p>
+        The "classic" example of a singleton implementation in Java looks like:
+      </p>
+      <code>
+        public class LogManager<br/>
+        {<br/>
+        private java.io.PrintStream m_out;<br/>
+      </code>
+      <code>
+        private LogManager( PrintStream out ) <br/>
+        {<br/>
+        m_out = out;<br/>
+        }<br/>
+      </code>
+      <code>
+        public void log( String msg ) <br/>
+        {<br/>
+        System.out.println( msg );<br/>
+        }<br/>
+      </code>
+      <code>
+        static private LogManager sm_instance;<br/>
+        static public LogManager getInstance()<br/>
+        {<br/>
+        if ( sm_instance == null )<br/>
+        sm_instance = new LogManager( System.out );<br/>
+        return sm_instance;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>Usage:</em>
+      </p>
+      <code>
+        LogManager.getInstance().log( "some message" );<br/>
+      </code>
+      <p>
+        But does this work? Not in Java 1.1 up to Java 1.1.5 (excluding). And it is less of a problem in Java 2.
+      </p>
+      <p>
+        The Singleton implementation suggested by the <a href="GangOfFour.html">GangOfFour</a> has an interesting failure mode in Java: If the sole reference to the singleton is from the class, then the java 1.1 collector will collect the instance and unload the class. The next retrieval of the singleton will reload the class and manufacture a newly initialized singleton instance.
+      </p>
+      <p>
+        This is especially a problem is the singleton holds some state (e.g. a counter), or if the istantiation of the object has some side effects.
+      </p>
+      <p>
+        The solution is to register singleton instances in some system wide table so that it is protected from garbage collection. Consider using latent threads:
+        Create a thread for each singleton at the time that the singleton instance is created. Do not schedule the thread to  run, this is not the purpose of the thread. The mere existence of the thread will protect the singleton.  Also consider using a registry class which maintains a collection of the singleton instances.  Create one latent thread for the registry instance.  Both the registry and any singleton instances it has references to will be protected from garbage collection and it only uses one thread.
+      </p>
+      <p>
+        Alternatively, store the instance in a system property when it's first instantiated, as a pre-built registry.
+      </p>
+      <p>
+        Note that with more recent versions of Java (post-JDK1.1.5 or so) this whole issue is no longer a big problem.  Classes that are loaded via the default class loader can't be garbage-collected until their <a href="ClassLoader.html">ClassLoader</a> has been garbage collected, which means that
+      </p>
+      <ol>
+        <li>
+           You have explicit control, if you want it; and
+        </li>
+        <li>
+           In typical applications and applets (even when classes are loaded using RMI) the right thing happens naturally.
+        </li>
+      </ol>
+      <p>
+        The behavior that allowed classes to be collected while the <a href="ClassLoader.html">ClassLoader</a> was still reachable was acknowledged as a bug in the spec. 
+      </p>
+      <p>
+        It's a minor problem in JDK1.2, still.  The spec states that classes loaded by the default class loader will not be GC'ed; however, classes that are loaded by a custom class loader are eligble for GC. But, the classes loaded by a custom class loader can't be collected until the class loader itself has been collected.  For that to happen, essentially all classes that ever referenced the singleton class have to also be unloaded <strong>first</strong>.  You have to work to achieve such a situation.
+      </p>
+      <hr/>
+      <p>
+        <strong>Locking/Synchronisation</strong>
+      </p>
+      <p>
+        When using a <a href="SingletonPattern.html">SingletonPattern</a> in a multithreaded environment, it has become
+        common to also apply the DoubleCheckLock pattern as an optimization for
+        accessing the singleton instance:
+      </p>
+      <code>
+        public class BrokenSingleton {<br/>
+        private BrokenSingleton() { }<br/>
+      </code>
+      <code>
+        public static BrokenSingleton getInstance() {<br/>
+        if (_theInstance == null) {<br/>
+        synchronized (BrokenSingleton.class) {<br/>
+        if (_theInstance == null) {<br/>
+        _theInstance = new BrokenSingleton();<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+        return _theInstance;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        It turns out that this will not work reliably.  This issue turns out to have become a major point of discussion and resulted in The "Double-Checked Locking is Broken" Declaration:
+        <a href="http://www.cs.umd.edu/~pugh/java/memoryModel/DoubleCheckedLocking.html">http://www.cs.umd.edu/~pugh/java/memoryModel/DoubleCheckedLocking.html</a>
+      </p>
+      <p>
+        See also: <a href="DoubleCheckedLockingIsBroken.html">DoubleCheckedLockingIsBroken</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>Multiple class version</strong>
+      </p>
+      <p>
+        Each class loader in Java has its own name space. One can load the very same class through two or more different class loaders. If this class is a singleton, then each of the class loaders used to load the class holds an own instance of the singleton. This might not be the intention with a singleton.
+      </p>
+      <p>
+        The issue is used to circumvent <a href="AnotherJavaSingletonProblem.html">AnotherJavaSingletonProblem</a>
+      </p>
+      <hr/>
+      <p>
+        See also:
+      </p>
+      <ul>
+        <li>
+           <a href="InheritedJavaSingletonProblem.html">InheritedJavaSingletonProblem</a>
+        </li>
+        <li>
+           <a href="AnotherJavaSingletonProblem.html">AnotherJavaSingletonProblem</a>
+        </li>
+        <li>
+           <a href="DoubleCheckedLockingIsBroken.html">DoubleCheckedLockingIsBroken</a>
+        </li>
+        <li>
+           <a href="JavaSingleton.html">JavaSingleton</a>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        Contributors are (in no particular order): <a href="MartinPool.html">MartinPool</a>, <a href="SteveFreeman.html">SteveFreeman</a>, GadiGuy, <a href="GlennVanderburg.html">GlennVanderburg</a>, <a href="MartinSchwartz.html">MartinSchwartz</a>, <a href="StevenNewton.html">StevenNewton</a>, <a href="ThomasWeidenfeller.html">ThomasWeidenfeller</a>.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryJava.html">CategoryJava</a> 
+      </p>
+      <hr/>
+    </div>
+  </body>
+</html>

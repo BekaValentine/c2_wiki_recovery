@@ -1,0 +1,164 @@
+''Would someone mind explaining this 'closure' concept in a little more detail?  How does SmalltalkLanguage block code?  How is that different than the way, say, CeePlusPlus, does?  Thanks!''
+
+I'll try ...
+
+A Smalltalk Block is an object. That object is an instance of Block (or a similarly-named class). If the block has no parameters, as in [fred+ethel], it responds to the message #value, and that message answers, in this case, the value of the sum of fred and ethel. Those variables are bound to whatever they were bound to when the block was created.
+
+Suppose a class Lucy, with instance variables fred and ethel. The class includes a method #getBlock:
+
+ Lucy>>getBlock
+	^[fred + ethel]
+
+and creation methods
+
+ Lucy class>>fred: fredInteger ethel: ethelInteger
+	^self new setFred: fredInteger ethel: ethelInteger
+
+ Lucy>>setFred: fredInteger ethel: ethelInteger
+	fred := fredInteger.
+	ethel := ethelInteger.
+
+We do the following code:
+
+ lucy := Lucy fred: 10 ethel: 15
+ block := lucy getBlock.
+ val := block value.
+
+val will contain 25. We can hold on to that block as long as we want, send it value whenever we want. The block is bound to the instance variables of the lucy object we created. If we sent lucy messages changing its variables, then the next send of value would get the new answer:
+
+ lucy setFred: 1 ethel: 1.
+ newVal := block value.
+
+newVal will be 2.
+
+So, as I understand closures in the Lisp sense, a Smalltalk block is in fact a closure bound to the variables in effect at the time of creation. Holding on to the block can hold on to the object in question.
+
+It is generally considered very poor programming style to pass blocks around and hold on to them for extended periods. It's an artifact of the language design that blocks are used for conditionals, but these are generally ephemeral and not held on to for ages.
+
+Other Smalltalk wizards: the above is off the cuff. Replace or improve it as you will.
+
+-- RonJeffries
+
+The phrase "closure" came from the functional programming language community. If you really want to understand closures, read StructureAndInterpretationOfComputerPrograms, one of the great books of computer science.
+
+Consider a function like f(x)=2*x.  The body of the function definition uses only variables that are arguments to the function.  The expression 2*x has one free variable, but the definition of f has no free variables, because all the free variables in its body are defined as arguments.
+
+But consider the function f(x)=y*x.  The value of f(3) depends on the value of y, which is probably a global variable of some type.  Unless the language lets you write something like
+
+ g(y,z) = {
+     f(x) = y*x;
+     f(z) }
+
+In this case y is an argument of g, though it is still "global" to f. CeeLanguage programmers find this strange, because you can't nest function definitions in C, though you can in Pascal, Ada, Modula, and other languages of the Algol tradition.  
+
+The really interesting problem arises if you were to write something like
+
+ g(y,z) = {
+     f(x) = y*x;
+     f    }
+
+Now, g returns a function.  g(2,3)(4) should be legal.  What does it return?  If the language is Scheme then g(2,3) is f with y bound to 2, and f(4) with y bound to 2 is 8.  Similarly, g(3,2)(4) will be 12. g returns a different function each time you call it, and that function depends on the values of the arguments to g.
+
+The value returned from g with this interpretation is called a closure. This is not the only interpretation.  Early versions of Lisp did not use closures, but instead let y remain a free variable in f, and the virtual machine would use the value of y in the calling environment whenever it would evaluate f.  So, g(2,3)(4) would cause an error if you hadn't bothered to define y.  And
+
+ {  y = 1;
+    g(2,3)(4)
+ }
+
+would have the value 4, because y would be bound to 1.  This way of interpreting functions was called "dynamic binding" or "dynamic scoping" of variables and for a long time was always what people meant by dynamic binding.  But the Lisp people eventually realized that this was a mistake, and CommonLisp uses static scoping like most other languages.  Almost all the functional programming languages provide closures.
+
+CeeLanguage does not allow nested functions, and PascalLanguage does not let you return functions from a function (though functions can be parameters) so neither of them let you have closures.  Closures only occur when you can return a function that was defined in another function and that used variables defined in the outer scope.  Either you can use dynamic scoping (which HOPELESSLY out of date!) or you can use closures and static scoping.
+
+The original implementation of blocks in Smalltalk was not exactly the same as closures.  This was because block arguments were not the same thing as method arguments, but were actually temporaries in the method that defined the block.  Thus, if you evaluated the block, the system did not allocate space for the arguments, but just reused some existing variables.  If you called the block twice, the second time would just write over the variables used the first time.  If the block called itself recursively, this would change the arguments that you used the first time.
+
+SchemeLanguage programmers thought this was horrendous.  How could anybody be so stupid!  But in fact this almost never was a problem, because Smalltalk programmers use blocks in very limited ways, as Ron indicated.  I've never seen a normal Smalltalk program with a recursive block.  In fact, the only time the original implementation of blocks is a problem is in a concurrent program.
+  1 to: 20 do: [:each | [block value: each)] fork]
+If blocks aren't full closures then each time the block is evaluated and a process is created, the earlier processes will have their argument changed.  But it isn't hard to make blocks be perfect closures; all the modern Smalltalks except SqueakSmalltalk do it, and I bet Squeak will be changed soon to do it, too.
+
+Scheme programmers use closures in very complicated ways, while Smalltalk programmers never do.  I think one of the main reasons is that Scheme programmers use closures to make objects, while Smalltalk programmers do not have to.  It is interesting to me how objects can make life simpler. Of course, a Scheme or ML programmer might see things differently.
+
+-- RalphJohnson
+
+''I'm under the perhaps mistaken impression that the distinction between blocks and closures became a major pain-point when the Smalltalk community needed a real exception system. Closures and continuations were used in Lisp environments (as I recall, CLOS was the first place I saw them) to provide "catch" and "throw" capabilities, which in turn evolved into the early exception systems (which is why we "catch" and "throw" exceptions"). ParcPlace led the way towards making  blocks "real" closures, marking one of the more painful version upgrades in Smalltalk's evolution. -- TomStambaugh''
+
+-----
+
+
+''Thank you, Ron and Ralph.  You guys are my ''
+'''heroes'''!  
+''I'll get back to you in a coupla of months after I digest all this!''
+
+''Ah, Ralph, again we see why you are the educator!  --r''
+
+For completeness, here is the corresponding Smalltalk code:
+
+ g := [:y :z |
+        |f|
+
+        f := [:x | y * x].
+        f
+      ].
+
+ (g value:3 value:2) value:4.
+ (g value:2 value:3) value:4.
+
+--ClausGittinger
+----
+The problem in Java now: http://www.theserverside.com/news/thread.tss?thread_id=62487
+
+It is a mess, but it is already solved in Smalltalk 80 (since 1980), nearly 16 years before Java was invented.
+
+According to the above article, SotL is the preferred syntax, which is this:
+
+// SotL
+public List<T> schwarz(List<T> x, Function<T, Pair<T,V>> f)
+{
+    return map(#{T w -> makelist(w, f.apply(w))}, x)
+    .sort(#{Pair<T, V extends Comparable<T>> l -> l.get(1)})
+    .map(#{Pair<T, V extends Comparable<T>> l -> l.get(0)});
+}
+
+The code looks ugly and incredibly difficult to understand.
+
+In Smalltalk, a closure is just a block. The name closure implies that there are no global variables, but instead all activations (valuations) of a block refer to the values bound at the moment the block was defined, not at the time it was executed, which means the language is well defined. The same happens in Java by the way, since in anonymous classes all variables must be final, hence they can't refer to other values (although since Java is not a functional language, objects referred by those variables may have mutated state). So technically speaking closures in Java would not be real closures, and by the way, that can also happen in Smalltalk, therefore they are not real closures either. But pretty close.
+
+In Java, if closures were methods (or functions) since functions are a special kind a blocks, instead of the ugly code above:
+
+#{T w -> makelist(w, f.apply(w))}
+
+We could have:
+
+#(T w) { #return makelist( w, f.apply( w ) ); }
+
+#return instead of return, since return is reserved for returning from the method the closure is defined on.
+
+Even if we followed the convention used in Smalltalk, the last expression evaluated in the block is the value of the block:
+
+#(T w) { makelist( w, f.apply( w ) ); }
+
+It looks better than SotL.
+
+// SMALLTALK'S LIKE
+public List<T> schwarz(List<T> x, Function<T, Pair<T,V>> f)
+{
+    return map(#(T w) { makelist(w, f.apply(w))}, x)
+    .sort(#(Pair<T, V extends Comparable<T>> l) { l.get(1)})
+    .map(#(Pair<T, V extends Comparable<T>> l) { l.get(0)});
+}
+
+Generics makes it a bit uglier, compare with this:
+
+// SMALLTALK'S LIKE, no generics
+public List schwarz(List x, Function f)
+{
+    return map( #(T w) { makelist(w, f.apply(w))}, x)
+    .sort( #(Pair l) { l.get(1)})
+    .map( #(Pair l) { l.get(0)});
+}
+
+Isn't it easier to understand?
+
+----
+See also RubyBlocksVsSmalltalkBlocks
+----
+CategoryClosure CategorySmalltalk

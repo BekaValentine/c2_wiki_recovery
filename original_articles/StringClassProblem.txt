@@ -1,0 +1,125 @@
+The "string" class, part of the CeePlusPlus standard library, is a useful addition to the language. Unlike CharStar''''''s (the "old" way of doing strings in C/C++), the string class handles things like memory management transparently; eliminates errors due to buffer overflow and failure to null-terminate, has versions for both 8-bit and wide characters, etc.
+
+Yes, but some implementations are better than others.  Don't try to call string::~string more than once with the GNU ISO C++ Library [3.3.1]:
+/usr/local/gcc-3.3.1/include/c++/3.3.1/bits/basic_string.h lines 354-355
+
+  ~basic_string()
+	{ _M_rep()->_M_dispose(this->get_allocator()); }
+
+
+Plus, it provides many ways, through the magic of OperatorOverloading to seemlessly integrate with CharStar''''''s - a necessary thing because there no (convenient) way to specify a string literal without using text in double-quotes, which in C/C++ is always a CharStar. (A const one, actually).
+
+You can do things like this:
+
+ string s = "Foo"; // Foo is type const char*
+ cout << s << "\n";	// prints Foo
+
+ if (s == "Foo") // true
+	cout << "Cool!\n";
+
+But lurking in the background is rather obnoxious bit of nastiness.
+
+ string s1 = "Aaa";
+ string s2 = "Bbb";
+
+ if (s1 < s2) 
+	cout << "Yup!\n";  // This works OK
+
+ if (s1 < "Bbb")
+	cout << "Hooray!\n"; // This does too.
+
+ if ("Aaa" < "Bbb");  
+	cout << "Uh-oh!\n"; // This does NOT
+
+The third comparison, you will notice, is not what a naive user will expect. It isn't a comparison between two strings (the first example) or between a string and a const char * (the second), instead it compares ''two const char *''s. In other words (in most C++ implementations) it is ''comparing pointers'' and determining which string lies at a lower address in memory, and not which string is lexicographically "smaller".
+
+This, and similar issues when mixing strings with CharStar''''''s, are a constant source of errors in C++ code. And without a major redefinition of the language (such as abolishing the CharStar, or introducing a new type of string literal which is automagically of type string), there isn't anything the string library can do about it.
+
+''This is a specific instance of the more general problem that arises when an OO language has things that aren't objects. Ints that aren't objects, for instance, also cause problems.''
+
+I don't think so. In C++, int values are treated like user-defined objects (or rather, C++ classes define types that are treated exactly the same as built in types). The problem above is a result of hidden coercions. The C++ compiler generates lots of code that other languages would force the programmer to write themselves. In this case, it is adding code that constructs a temporary string object from "Bbb". If the user was forced to be explicit about how and when the program converts between different types, they would be less likely to hit  this kind of misconception.
+
+''That's a strange retort; it doesn't actually contradict what I said. Consider. If everything was an object in C++, including literal strings as some kind of string object (even if a different class than '''string''') then there would be even '''more''' auto-coercion, and the code would just work, period. Compare that with your "solution", which is to eliminate auto-coercions, so that the whole program becomes incorrect at compile time, notifying the coder that he's screwed up, and more has to be done by hand, after which there's no problem.''
+
+''Your comment about '''int''' is unintelligible. It is not a class, period. Try doing something classlike with it.''
+
+Okay, how about by calling int's copy constructor?  '''int a(5);  // sets a to 5'''
+
+(Certain things became clearer to me once I realized that C+ treats a lot of things like objects, including integers.)
+* Then your understanding is regressing, because it does not. Your example here is merely of syntactic sugar, where for consistency C++ allows ''int a(5)'' to be a synonym for ''int a=5'', that's all. But try this: "class foo : int { ... }" and you will get a '''syntax''' error. If ''int'' were a class, that would not be illegal syntax even if it were semantically prohibited.
+* All of the really low-level primitives in C++ (int, char, char literals, double) are types whose instantiations are ''values'', not objects, and thus those types are not classes, by definition.
+
+Note: the "autoboxing" feature of Java 1.5 also results in similar confusing behaviour for the same reason.
+
+[This particular problem with StringClass occurs because the following operation (and similar ones):
+
+ bool operator < (const char *, const char *);
+
+is already defined by the language; and may not be changed. C++ lets you define new operators on new classes/structs; it does not let you redefine operations on fundamental types - including all pointers. (Nor may you define new operators which work entirely on existing type - C++ will not let you define multiplication on pointers, for example.)
+
+I'm not sure the fact that char (and char *) is not an object is the cause; unlike Java which treats the fundamental types (int, bool, double, char, etc.) as bastard stepchildren; CeePlusPlus is quite good at treating non-objects on equal footing with objects. Other than the limitation above on not redefining existing behavior, you can mix and match ints with classes as you like.
+
+The solution to this particular string class problem is never use unadorned string literals. Any instance of "foo" in code really ought to be replaced with string("foo"), unless the string declaration is clearly redundant. If you use an internationalization library in C++, this ought to come for free - the output of _("foo") (to use the syntax of one popular i8ln library) ought to be a string and not a CharStar.
+
+]
+
+The '''point''' is that, if everything were an object, then an unadorned string literal would already '''be''' the same thing as '''string("foo")'''!
+
+''Yes and no. Were CeePlusPlus a clean design rather than an extension to CeeLanguage - doubtless this would be true. However, C compatibility dictates that the type of a string literal is a character array or a CharStar, depending on context. Were char * and and char [] proper "objects", this wouldn't change one whit - BjarneStroustrup and the C++ committee simply cannot redefine the semantics of string literals without breaking lots and lots of existing code.''
+
+''As mentioned above, the distinction between an "object" (a struct/class instance in C++) and a "non-object" in C++ is much looser than languages such as Java or ObjectiveCee. Java has the universal superclass Object, from which everything save int/bool/char/long/short/byte/float/double derive; and quite different semantics for Objects and non-Objects. Objects can only be heap-allocated; non-objects cannot be heap allocated (unless wrapped up in an enclosing Object). There is a rather sturdy wall between the two.''
+
+''In C++, the dichotomy is '''much''' weaker. Objects and primitives equally may be allocated on the heap, stack, data/bss, or wherever else you like (due to the magic of PlacementNew). There is no universal supertype. Most operations on types (forming pointers/arrays), can be applied to both primitives and objects. Via enum, you can create new primitive types just as easily as new classes. This expressive power comes at a rather steep price - the design of C++ is complicated as a result, and it makes it rather easy to shoot yourself in the foot; it has often been argued that other OO languages are better because (among other reasons) they reign in the ultra-permissive C-legacy mess that is the C++ object model. And I won't disagree with that. :)''
+
+''Fans of Smalltalk like to point out that ''everything'' is an object. In C++, it wouldn't be too much of a stretch to suggest that ''nothing'' really is...''
+
+''At any rate, I think we mostly agree here, and are debating semantics. (Which is kinda fun, you gotta admit. Plus you occasionally learn something)''
+
+Agreed. But I reserve the right to make my agreement more vehement. ;-)
+
+Actually I am not convinced that the situation you outline is absolutely a foregone conclusion due to retaining C semantic compatibility etc. I think that much better is possible, but would take more imagination than C++ has shown. But skipping what might have been, and sticking to what actually did happen, yeah, ok.
+
+At this point I will reiterate, because I don't think there has been any direct disagreement: This is a specific instance of the more general problem that arises when an OO language has things that aren't objects. Ints that aren't objects, for instance, also cause problems. But yes, C++ is like that for a reason.
+----
+In ObjectiveCee string literals declared with a lead '@' automatically become instances of NSString. @"Abc" is equivalent to [NSString initWithCString("Abc")]. The compiler is said to be smart enough to have multiple occurrences of the same literal all refer to the same instance.
+----
+''There are other C++ string class problems besides this one, btw.''
+
+A listing of 'em ought to be nice.
+
+----
+
+ ''if ("Aaa" < "Bbb");  ''
+	''cout << "Uh-oh!\n"; // This does NOT''
+
+If you want to compare strings, then compare ''strings''.
+
+ if (string("Aaa") < string("Bbb"))
+	cout << "See? It does work." << endl;
+
+''If you ask me, this is redundant; implied by above discussion. Also note that the terminology leans towards the ambiguous, since "char *" is universally called "string" in C and therefore often in C++.''
+
+yes there is a name confusion issue but the simple fact is you are not complaining about a problem within the std::string class itself - the problem is that string literals are const char arrays, which are not first class types in c++. i.e. this page is really about arrays decaying to pointers not about problems in std::string as the title would suggest -- JamesKeogh
+
+Agreed.  There is not a single "string class problem" presented in this discussion.  This page should properly be called StringLiteralProblem. -- MarcGallagher
+
+----
+A big wart of std::string is just how inconsistently it is applied in C++'s very own standard library.  E.g. there is ''cin.getline(ch_array)'' vs. ''getline(cin, str)'', or how in many instances a class method accepts a ''const char *'' but not a string (such as the constructors for streams).
+
+----
+"Don't try to call string::~string more than once with the GNU ISO C++ Library [...]"
+
+Wait, what? What's the connection with std::string? Don't try to call A::~A twice for any A. -- YakovGalka
+
+''Should a destructor ever be manually called?  It will be called again when the program leaves the scope in which an instance of the class was created.''
+
+Sometimes:
+
+ void* mem = get_memory();
+ A* a = new(mem) A(42); // placement new
+ a->~A(); // destruct
+
+Think of an implementation of a container that reserves memory. -- YakovGalka
+
+----
+CategoryCpp

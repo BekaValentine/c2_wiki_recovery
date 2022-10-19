@@ -1,0 +1,130 @@
+(Type-related discussion moved from AllaireColdFusion) 
+
+Re: Non-"type flag" or "type tag" dynamic typing. It may reduce the "hidden flag" confusion that sometimes happens in PHP and similar type systems, leading to a more WYSIWYG and simpler typing system. You don't have to mentally model a "side tag" separate from the value when attempting to understand or predict code behavior. See below under the title "No Type Tags Example".
+
+''Please don't perpetuate imaginary rubbish.  There is no computer science basis for your 'non-"type flag" or "type tag"' dynamic typing notions.  A reader unfamiliar with your past postings will have no idea what you're on about.  If you wish to point out that PHP/ColdFusion/JavaScript/etc. exhibit differing dynamic type behaviour, then that would be accurate.  However, all of these languages tag values with type signatures.'' 
+
+I've seen no evidence that ColdFusion has "type signatures" or "type tags" on scalar (non-collection) types. PHP and JavaScript do. It's more comparable to Perl than JS or PHP. If you'd like to present evidence for tags to justify your rude "rubbish" statement, be my guest.
+
+''Do you genuinely believe that ColdFusion, after having parsed and recognised a string, integer, or floating point value, throws away that information and requires each operator -- upon invocation -- to re-parse its arguments as a series of bytes in order to determine whether they represent a string, integer, or floating point value?''
+
+Externally it does indeed act as if it tosses such info. Internally, I have no idea if it does such as an optimization. As far as the programmer's viewpoint, there's nothing I am aware of exposed to the programmer to suggest it "keeps" a tag around. For example, there is no operation that returns a value's "type", only Boolean operations that confirm if it can be ''evaluated as'' a given type. (Although, there are low-level accessors that expose some of the internal "guts", I rarely use them, primarily to ensure compatibility.) Possibly related: EmpiricalTypeBehaviorAnalysis.
+
+In other words, if somebody wrote a clone interpreter that did not "keep" any type tags, it would produce identical output compared to the existing interpreter/compiler (it's a hybrid). If the existing one uses tags internally for speed, it may affect performance, but not results (to the best of my knowledge). By the way, there are two open-source clones I believe. -t
+
+A second way of saying this is that one could model the language's exact behavior using a typing model that lacked (internal) type tags. Thus, if the product actually does use type tags under the hood, they are probably only for performance enhancement. For the sake of this discussion, I will only consider the language's external observable/testable "behavior" (I/O analysis) and not actual under-the-hood implementation. We are talking about a language and not a specific implementation of the language. The tag model may be a UsefulLie when compared with the actual implementation, but still useful. (Languages shouldn't be defined by implementation anyhow.)
+
+-------
+
+'''Implementation Speculation'''
+
+So, how might the above efficiency technique work? One possibility is that internally each variable is composed of a record or structure resembling:
+
+* Type tag indicator byte
+* Length in bytes
+* Value (Multiple bytes, indicated by Length)
+
+Whenever an operation or assignment is done that "requires" it to be a certain type or implies it being a certain type; it is parsed as that type, the type tag is changed to reflect that type, and the "Value" becomes a binary sequence of bytes instead of a string (the default). If another assignment happens later, the interpreter attempts to convert/parse it to the current type tag. If it can't be converted, then it reverts back to the catch-all default, a string. The optimizing assumption here is that once it's used as a certain type, it will typically keep being that type for the length of execution. (If the assumption is wrong for a given app, then it may be more costly to have this mechanism.)
+
+This approach differs from "tag sensitive" languages in that no operation changes its computation result based on the type tag. It's merely an internal optimization tool, not a processing tool. It won't have to re-parse the variable's value as a string upon read's. If a prior operation/assignment determined that it can be represented as a number, for example, then there's no need to repeat that determination. 
+
+In a way, this approach resembles internal compression more so than "type management". That fact that something is internally compressed shouldn't affect how it's used in computations. For example, in MS-Windows if you set dynamic disk compression on, a compressed file shouldn't act any different than a non-compressed file from an application's perspective (outside of speed or resource usage differences).
+
+ColdFusion has overloading (a mistake in my opinion), but it depends on the value, not a tag. For example, "x = a + b" will attempt to evaluate the operands as numeric (+'s default). But if it cannot, then it assumes it is a string concatenation. (It also has the "&" operator for explicit concatenation.)
+
+''Interesting speculation, but in DynamicallyTyped (often interpreted) languages a type tag is often needed simply for identification of parsed values.  For example, given the following four byte value in memory...''
+ 54 4F 50 00
+''...is it a three-character null-terminated string, a four-byte integer, or single-precision IEEE 754 float?''
+
+* The internal "type" would be determined when setting a variable. Data is not put into the "value" portion without a determination step being done first as part of the assignment process. Thus, it won't ''ever'' be left floating around with an "unknown" type tag. The 2 steps are tied together using GateKeeper enforcement. -t
+
+''Some languages do represent all parsed values as strings, but they either require explicit disambiguation of operators -- e.g., you must explicitly indicate whether you want (say) string concatenation or integer addition, or you must explicitly specify whether to use floating point addition or integer addition -- or must re-parse the strings at the point of operator invocation.  E.g., an "+" operator will attempt to convert its operands to integers; failing that, it will attempt to convert to floating point values; failing that it will perform string concatenation.''
+
+CF's disambiguation rules do not depend on the type tag. Or more specifically, do not require knowledge of the type tag (unless there's an implementation bug). The type tag in this model only tells us we can use a shortcut to read it from memory or prepare it for registers etc. It's merely a storage and/or processing shortcut, not a language "feature". Two identical programs, one using the shortcut interpreter/compiler and one not using the shortcut, should always produce identical results given the same inputs (outside of speed and machine resource footprints). 
+
+Using the file compression analogy (above), similarly, two identical apps processing identical files on two OS's, one with file compression active and one without it, should in theory produce identical results from the OS's user's perspective (assuming we don't bypass OS services and bust into the disk at the bit level).
+
+As far as your "+" example, CF does use the "priority" method you listed in the last sentence, if I'm not mistaken. At least comparing does. (Again, I am generally against overloading most of the usual symbols). Regardless of the type tag (if any), it will try conversion/casting in a certain order of "type" priorities, string concatenation being at the bottom of the rung.
+
+My main point is that a system/language can take advantage of type tags for speed/efficiency purposes without the language user (app programmer) having to care about or "see" such tags. -t
+--------
+'''No Type Tags Example'''
+
+Here's an example of simpler code in JavaScript compared to ColdFusion:
+
+ // Java''''''Script blank detection
+ function isEmpty(obj) { 
+   if (typeof obj == 'undefined' || obj === null || obj === '') return true; 
+   if (typeof obj == 'number' && isNaN(obj)) return true; 
+   if (obj instanceof Date && isNaN(Number(obj))) return true; 
+   return false; 
+ }
+
+ // Cold''''''Fusion C-style script syntax mode for easier comparison
+ function isEmpty(obj) {
+   return(len(trim(obj)) EQ 0)   // EQ means "equals"
+ }
+
+Plus, the JS version didn't handle multiple empty spaces.  The only real drawback is that there is no equivalent of database nulls. However, I rarely needed that feature, and could use something like Oracle's NVL(theColumn,"(NULL)") the few times that an empty space and null meant something different (which is usually bad DB or convention design anyhow because it's anti-WYSIWYG, in my opinion). Note the triple equal signs in the JavaScript version ("===").
+
+''Wouldn't the following JavaScript suffice?''
+
+ String.prototype.trim = function() {
+    return this.replace(/^\s*/, "").replace(/\s*$/, "")
+ }
+
+ function isEmpty(obj) {
+	return (obj == null || obj.toString().trim().length == 0)
+ }
+
+Perhaps, but it's arguably still longer if you count "trim", and arguably less intuitive.
+
+''I boggle at how you can believe six lines of '''simpler''' source code are somehow "arguably still longer" than six lines of '''more complex''' source code, but leaving that aside, you should at least note that the trim() function I've provided is practically canonical, appearing in virtually any non-trivial JavaScript program that does any appreciable string handling and it's usable anywhere you need a trim().  Therefore, it doesn't count.''  
+
+* I'm not sure where you are getting the six line count. As far as the definition of "trim" not counting, I'm not sure I agree. It may be named different in different libraries, for example. How about we split the difference. (JS should include a built-in trim, but it doesn't.)
+* [Actually, JS does include a built-in String.prototype.trim method as of JavaScript 1.8.1. It's part of the ECMAScript 5 spec, even, and it's supported in all modern browsers. (There are of course polyfills for old Internet Explorers, as there are for many other useful methods.) -DavidMcLean]
+
+''Or are you merely quibbling for the sake of it?  Couldn't you simply have written "thanks for the code!" or some such, and left it at that?''
+
+* Okay, thanks for the code. But, you are missing the main point. It's not clear to one whether your JS handles all the cases in the original without actually testing or knowing lots of trivia about JS. (I grabbed it off the web from one of those "Free JS Scripts" sites.) There's too many non-WYSIWYG "modes" to JS variables, and that's my primary complaint. '''It's hard to know if you truly handled all the modes and combinations of modes when writing functions like this'''. (Same questions may also apply to a Trim function.) CF stores every scalar as a string and only a string (or at least acts that way to the programmer). It's conceptually much cleaner in my opinion. The simplicity of not having to worry about weird modes or surprise tags far '''outweighs the times that such modes are useful''' in my observation. One just has to change their thinking slightly to accommodate. It's a LiberatingConstraint. More on this in JavaScriptSucks. -t
+
+* [JavaScript's value types are perfectly "WYSIWYG" when used in a development context. Bring up your JS console. Try printing out a number, a string, a null, an array, whatever (either with console.log or by just entering an expression that evaluates to the relevant value). They're all printed in a form that clearly indicates the value's type: Strings are quoted, objects are prefixed with their constructor name and shown formatted, and so on. There's even syntax highlighting, at least in Firefox, and you can tree-view objects and arrays on-the-fly. Of course, output to the ''user'' has different conventions, but why would that matter in development? -DavidMcLean]
+
+* Continued at WysiwygTypeSystemDiscussion
+
+''By the way, mine handles multiple "empty" (there's another kind?) contiguous spaces.''
+--------
+Incidentally, ColdFusion has recently '''added a Null''' special-value to it's type system, mucking up the simpler model in my opinion. I never really missed it even when doing SQL-heavy apps. It's probably because people expect it when dealing with RDBMS and are not aware of how to adjust to life without it. It's a WhenInRome feature and CF is often used with RDBMS. Before it, null numbers came out as empty strings on the CF side, providing a way to test for Null-ness; and null strings are rarely useful anyhow. In the rare cases one needs to determine the difference between a query output column that is null or zero-length string, they can use something equivalent to Oracle's NVL function on the SQL side[1] to make a special value (see below). Far more often, CF converting nulls to blanks saved me from having to "clean up" the result set for display or transfer. Nulls are annoying as hell. -t
+  SELECT NVL(stringColumn, "{null}") AS stringColumn FROM ...
+Fortunately, CF chose to not use the "poison pill" convention used in some other languages whereby a null anywhere in an expression turns the entire expression into Null. String concatenation treats null variables as a zero-length strings, for example (if I'm not mistaken). They probably had to do this for backwards compatibility.
+
+It's a useful idea though: keep a type-tag around internally for the rare times that special values may not "cut it", but otherwise don't design the language to depend on the tag's value. Still, CF could have worked around it by having a special attribute that tells the result which special string value to use for Nulls:
+  <!--- hypothetical null-handling alternative --->
+  <cfQuery name="qry" datasource="std" '''nulltranslate="{nul}"'''>
+    SELECT * FROM foo WHERE bar > 9 
+  </cfQuery>
+  <cfif qry.myColumn is "{nul}">     <!--- "is" is equality --->
+     <h1>I found a Null, Mom!</h1>
+  </cfif>
+Any "null" column variables then have the string "{nul}" in them. (I realize this technique is probably a bad idea in some SystemsSoftware where the rare case that an actual value could be the same as the special indicator could crash a system. But I'm assuming custom application land here.)
+----
+''From above: "could crash the system". The idea that systems software needs to be reliable, and custom application software need not be reliable, is nonsense.''
+
+"Reliability" is a probability issue. One weighs the probability of things against the resources and time and comes up with an economic estimate of the best course of action. Trade-offs, my friend. If you come up to the owner of the company, and ask, "Do you want to spend $20,000 more to prevent a bad input that would lose a customer's bill once every 300 years on average?", most would likely the answer would be "no". Some people with over-anal-retentive personalities don't seem to get this for some reason. Related: WorseIsBetter.
+
+''It doesn't cost $20,000 to type three more characters (int) to ensure the parameter is an integer.''
+
+That's not the scenario laid out above. And it perhaps ''can'' if you have to type it and (mis) read it 3,000 times.
+
+''Was talking in general, not about a specific example. With validation techniques you still have to type it and mis read it 3,000 times (isNumber). It's like robbing peter to pay paul, it doesn't solve the problem, it just moves it elsewhere. Some people think unit testing solves type safety issues, which is moving it elsewhere. Likewise with validation you are just reinventing safety using some other technique, but manually rather than automatic.''
+
+Not true in my experience in business applications. (SystemsSoftware may differ.) More often than not, if you are just passing a package along, you don't have to open it up and hard-wire your code section to its type. It's not the job of the delivery boy to open and check every package: they are just movers. Further, a DataDictionary may be a better place to store info about field type/validation. Note that if this discussion is drifting away from ColdFusion or "tag-free" in particular and into the wider "strong versus weak" typing debate, then a topic such as BenefitsOfDynamicTyping may be more appropriate.
+
+----
+Footnoes
+
+[1] This wouldn't work if one is given a stored procedure to work with and has to live with its output as-is and have to distinguish between a null string and an empty string. But it's a situation combo I never encountered in all my CF work. The driver/api's optionally replacing nulls with the string "[null]" may still be sufficient for such still.
+--------
+See Also: ComparingDynamicVariables, EmpiricalTypeBehaviorAnalysis, TypelessVsDynamic, DefinitionOfTypeTag, TagFreeTypingRoadMap
+--------
+CategoryTypingDebate, CategoryLanguageTyping, CategoryProgrammingLanguage, CategoryPerl (similar typing model)

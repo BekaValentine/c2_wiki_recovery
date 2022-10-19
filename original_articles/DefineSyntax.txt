@@ -1,0 +1,397 @@
+define-syntax refers to the high-level SchemeLanguage macro system defined in R5RS [RevisedReportOnAlgorithmicLanguageScheme].
+
+See http://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-7.html#%_sec_4.3
+
+Unlike the more traditional LispMacro''''''s the syntax transformations defined with syntax-rules are ''hygienic'' and respect Scheme's LexicalScoping:
+	* New bindings introduced by the syntax transformation never shadow bindings that already exist at the point of expansion. Conflicts are resolved by effectively renaming the identifier that is introduced by the macro expansion throughout its scope.
+	* The bindings surrounding the expansion of a syntax transformation never shadow the free bindings contained in the syntax transformation. Syntax transformations record the environment in which they are defined; free references to an identifier introduced by the expansion of a macro are resolved to refer to the binding that was visible when the syntax transformation was defined, regardless of the bindings at the point where the expansion occurs.
+
+This facility of pattern based syntax transformers works by matching and binding of syntax objects and transformation through a template language.
+Contrast this with traditional quasiquotation systems (LispMacro''''''s), which are full-featured Lisp functions that operate on EssExpressions. But remember that Scheme also has quasiquote, unquote-splicing and such.
+
+define-syntax makes basic syntactical transformations very simple; however more advanced uses (that require nested macros) can be surprisingly difficult. See http://pobox.com/~oleg/ftp/Scheme/macros.html for a discussion of some of the pitfalls of define-syntax - and some mind-numbing examples for its power.
+----
+I have finally gotten around to learning define-syntax, the R5RS macro system which was also provided as an appendix to the R4RS and whose most popular implementation is called "syntax-case." And I think I've fallen in love with the damned thing.
+
+One of my favorite simple macros is this one:
+
+  (define-syntax replace
+    (syntax-rules (initially with until just-before)
+      ((replace <var> initially <value> with <newvalue> until <done>)
+        (let loop ((<var> <value>))
+          (if <done> <var> (loop <newvalue>))))
+      ((replace <var> initially <value> with <newvalue> until just-before <done>)
+        (let loop ((old #f) (<var> <value>))
+          (if <done> old (loop <var> <newvalue>))))
+      ((replace <var1> <var2> initially <value1> <value2> with <newvalue1> <newvalue2> until <done>)
+        (let loop ((<var1> <value1>) (<var2> <value2>))
+          (if <done> (list <var1> <var2>)
+            (loop <newvalue1> <newvalue2>))))))
+
+  (replace x initially 1 with (* x 2) until (> x 1000)) => 1024
+
+  (replace x y initially 1 1 with y (+ x y) until (> x 1000)) => (1597 2584)
+
+  (replace x initially 1 with (* x 2) until just-before (> x 1000)) => 512
+
+It's just like English! -- EdwardKiser
+----
+The Scheme macro system is TuringEquivalent. I once defined a macro that did an infix-to-postfix conversion. It was really a simple operator-precedence parser. It had a stack. The way I set up the stack, I could easily have had two stacks. If it had two stacks, it would be a Post machine, which is TuringEquivalent.
+
+Just for fun, here it is.
+
+ (define-syntax infix
+   (syntax-rules (plus times stack input eof)
+     ((infix (stack 1) (input (stack <stack> ...) (input <input> ...)))
+       'error) ;; rule 15, runaway stopper for rule 1
+     ((infix (stack 1) (input <expr> <input> ...))
+       (infix (stack 2 <expr> 1) (input <input> ...))) ;; rule 2
+     ((infix (stack 2 <morestack> ...) (input plus <input> ...))
+       (infix (stack 3 plus 2 <morestack> ...) (input <input> ...))) ;; rule 3
+     ((infix (stack 2 <morestack> ...) (input times <input> ...))
+       (infix (stack 4 times 2 <morestack> ...) (input <input> ...))) ;; rule 4
+     ((infix (stack 3 <morestack> ...) (input <expr> <input> ...))
+       (infix (stack 5 <expr> 3 <morestack> ...) (input <input> ...))) ;; rule 5
+     ((infix (stack 4 <morestack> ...) (input <expr> <input> ...))
+       (infix (stack 6 <expr> 4 <morestack> ...) (input <input> ...))) ;; rule 6
+     ((infix (stack 5 <morestack> ...) (input times <input> ...))
+       (infix (stack 4 times 5 <morestack> ...) (input <input> ...))) ;; rule 7
+     ((infix (stack 5 <expr1> <s1> plus <s2> <expr2> 1) (input plus <input> ...))
+       (infix (stack 2 (+ <expr1> <expr2>) 1) (input plus <input> ...))) ;; rule 8
+     ((infix (stack 5 <expr1> <s1> plus <s2> <expr2> 1) (input eof))
+       (infix (stack 2 (+ <expr1> <expr2>) 1) (input eof))) ;; rule 9
+     ((infix (stack 6 <expr1> <s1> times <s2> <expr2> 1) (input times <input> ...))
+       (infix (stack 2 (* <expr1> <expr2>) 1) (input times <input> ...))) ;; rule 10
+     ((infix (stack 6 <expr1> <s1> times <s2> <expr2> 1) (input plus <input> ...))
+       (infix (stack 2 (* <expr1> <expr2>) 1) (input plus <input> ...))) ;; rule 11
+     ((infix (stack 6 <expr1> <s1> times <s2> <expr2> 1) (input eof))
+       (infix (stack 2 (* <expr1> <expr2>) 1) (input eof))) ;; rule 12
+     ((infix (stack 6 <expr1> <s1> times <s2> <expr2> 3 <morestack> ...) (input eof))
+       (infix (stack 5 (* <expr1> <expr2>) 3 <morestack> ...) (input eof))) ;; rule 14
+     ((infix (stack 6 <expr1> <s1> times <s2> <expr2> 3 <morestack> ...) (input times <input> ...))
+       (infix (stack 5 (* <expr1> <expr2>) 3 <morestack> ...) (input times <input> ...))) ;; rule 16
+     ((infix (stack 6 <expr1> <s1> times <s2> <expr2> 3 <morestack> ...) (input plus <input> ...))
+       (infix (stack 5 (* <expr1> <expr2>) 3 <morestack> ...) (input plus <input> ...))) ;; rule 17
+     ((infix (stack 2 <expr> 1) (input eof))
+       <expr>) ;; rule 13
+     ((infix <input> ...)
+       (infix (stack 1) (input <input> ... eof))) ;; rule 1
+     ))
+
+ (infix 3 times 10 times 10 plus 6 times 10 plus 5) => 365
+
+The way this macro works is, first it rewrites itself with an initial stack and an input (by rule 1). The stack is a list that starts with the symbol "stack" and has its top on the left. The input is a list that starts with the symbol "input" and has its first symbol or expression on the left. Then it uses simple shift-reduce rules to rewrite the stack and the input. Effectively, it can pop symbols off the input, and push and pop on the stack. The shift moves are rules 2, 3, 4, 5, 6, and 7, and the reduce moves are 8, 9, 10, 11, 12, 14, 16, and 17. When the rewriting is done, you have an equivalent Scheme expression composed of calls to + and *, which is cleaned up and output by rule 13.
+
+The symbols "plus" and "times" are the operators, and are the only permitted ones! However, nearly any Scheme expression can be used in place of a number:
+
+ (let ((a 3) (b 10)) (infix a times b plus a)) => 33
+
+There are some Schemes in which the "infix" macro doesn't work. It does work in Gambit with the syntax-case extensions, but you have to load the syntax-case extensions first, then paste the macro into the interpreter, because the extensions (at least according to their own documentation) don't modify Gambit's load command.
+
+Despite the fact that syntax-rules macros are Turing equivalent, the only way to implement something like the BuildSyntax with syntax-rules is to write a macro that basically does
+
+  (eval (build (quote <build-syntax-stuff>)))
+
+because of the hygienic nature of the macros. (It is technically possible to do it in a Peano sort of way, but -- that would be frustrating.) -- EdwardKiser
+----
+The hygienic properties of the macro system were the first thing that tripped me up, of course.
+
+You can't write a macro (with-pi <expr>) that evaluates <expr> in an environment where pi is 3.14. The reason why you can't do the obvious
+
+  (define-syntax with-pi
+    (syntax-rules ()
+      ((with-pi <expr>)
+        (let ((pi 3.14)) <expr>))))
+
+is the hygienic nature of the macro; the "pi" you define in the macro will be invisible to the <expr>, which came from outside the macro.
+
+You can, however, write a macro like this:
+
+  ; (with-pi-named <pi> do <expr>)
+
+  (define-syntax with-pi-named
+    (syntax-rules (do)
+      ((with-pi-named <pi> do <expr>)
+        (let ((<pi> 3.14)) <expr>))))
+
+  (with-pi-named pi do (* pi 2)) => 6.28
+
+That way the name and the expression ''both'' come from outside the macro.
+
+This really isn't more powerful than
+
+  (define with-pi (lambda (func) (func 3.14)))
+
+  (with-pi (lambda (pi) (* pi 2))) => 6.28
+
+...but a "with-pi" macro doesn't exactly demonstrate the power of the system. -- EdwardKiser
+
+All Scheme systems I've used have an implementation of syntax-case.  Syntax-case does allow you to define the with-pi macro above. -- NoelWelsh
+
+I ''am'' using syntax-case. I couldn't get "with-pi" to work until I did this:
+
+  (define-syntax with-pi
+    (syntax-rules ()
+      ((with-pi <expr> ...)
+        (eval (quote (let ((pi 3.14)) <expr> ...))))))
+
+The reason why this one with "eval" worked and the (far) above didn't is ''because the macros are hygienic.'' -- EdwardKiser
+
+To implement with-pi using with-syntax, you can break the hygiene of pi:
+
+  (define-syntax with-pi
+    (lambda (x)
+      (syntax-case x ()
+        ((k e1 ...)
+         (with-syntax ((pi (datum->syntax (syntax k) 'pi)))
+           (syntax (let ((pi 3.14))
+                     e1 ...)))))))
+
+I think this is the "right" way to do it with syntax-case -- KenShirriff
+
+Small note: syntax-case provides a form called syntax-case (surprise!) that offers more power than syntax-rules gives you. It is possible to define traditional Lisp defmacros (i.e. non-hygienic macros) using the syntax-case form. The best reference I know is http://www.scheme.com/tspl2d/syntax.html. Hope that clears up any confusion. -- NoelWelsh 
+
+Ah. I didn't know that. Thanks! -- EdwardKiser
+
+Ugh. "TheSchemeProgrammingLanguage" may be a good reference for syntax-case, I suppose, but as a tutorial I found it impenetrable. Look for KentDybvig's "Writing Hygienic Macros in Scheme With Syntax-Case" (Indiana University Computer Science Department Technical Report #356, June 1992, available from http://library.readscheme.org/page3.html) for ''lots'' of examples. But some of the best tutorials I've seen on syntax-case were examples posted to the "Little-Languages 1" [''Do you mean Lightweight Languages 1, http://ll1.ai.mit.edu/ ?''] mailing list:
+
+  ;; Anaphoric IF macro, as seen in Paul Graham's "On Lisp"
+  ;; Here, WITH-SYNTAX creates an IT symbol as if it had been
+  ;; found in the same s-expr as the as the AIF.  That way we
+  ;; can refer to it in the expansion just like TEST and THEN.
+  ;; We refer to that symbol via the different variable name
+  ;; IT-ID for clarity.
+  (define-syntax aif
+    (lambda (expr)
+      (syntax-case expr ()
+        ((aif test then)
+         (with-syntax ((it-id (datum->syntax-object (syntax aif) 'it)))
+           (syntax
+            (let ((tmp test))
+              (if tmp
+                  (let ((it-id tmp)) then))))))
+        ((aif test then else)
+         (with-syntax ((it-id (datum->syntax-object (syntax aif) 'it)))
+           (syntax
+            (let ((tmp test))
+              (if tmp
+                  (let ((it-id tmp)) then)
+                  else))))))))
+
+  ;; Execute the body forms B1 B2 ... over and over again.  To exit,
+  ;; call the 1-argument function BREAK; that value is returned.
+  ;;
+  ;; Again, we inject the BREAK symbol into the FOREVER scope.
+  (define-syntax forever
+    (lambda (expr)
+      (syntax-case expr ()
+        ((forever b1 b2 ...)
+         (with-syntax ((break-id (datum->syntax-object (syntax forever) 'break)))
+           (syntax
+            (call-with-current-continuation
+             (lambda (break-id)
+               (do () (#f #f) b1 b2 ...)))))))))
+
+  ;; Common-lisp-style define-macro, implemented on top of syntax-case.
+  ;;
+  ;; Note that this is a macro that generates another macro (with the
+  ;; appropriate name).
+  ;;
+  ;; This is the weirdest one.  It...
+  ;;  * strips all syntax information out of the incoming s-exp,
+  ;;    leaving raw symbols.
+  ;;  * runs the result through the transformer function
+  ;;  * injects that result back into the original scope
+  ;;  * returns the final result for processing
+  ;;
+  ;; Note that because we're generating the *entire* result through
+  ;; DATUM->SYNTAX-OBJECT, we don't need to quote or expand anything
+  ;; with SYNTAX.
+  (define-syntax define-macro
+    (lambda (stx)
+      (syntax-case
+       stx ()
+       ((_ (macro . args) . body)
+        (syntax (define-macro macro (lambda args . body))))
+       ((_ macro transformer)
+        (syntax (define-syntax (macro stx2)
+                  (let ((v (syntax-object->datum stx2)))
+                    (datum->syntax-object stx2
+                                          (apply transformer (cdr v))))))))))
+
+And, of course, as I'm adding these comments, I think I finally grok the SYNTAX
+keyword. SYNTAX applies an anonymous, hygienic syntactic context to otherwise
+raw data. So
+
+  (with-syntax ((bar-id (datum->syntax-object (syntax foo) 'bar))) bar-id)
+
+creates BAR in the context of FOO, and returns it, while
+
+  (with-syntax ((baz-id (datum->syntax-object (gen-context) 'baz))) baz-id)
+  (with-syntax ((baz-id (syntax baz))) baz-id)
+  (syntax baz)
+
+all create BAZ in a new hygienic context and return that (assuming the
+existence of a suitable GEN-CONTEXT).  But SYNTAX is smart enough to let
+identifiers that are already syntax pass through unchanged.
+
+----
+The system I'm using (DrScheme) allows the following:
+
+  (define-syntax with-pi
+    (syntax-rules (pi)
+                  ((with-pi <expr>)
+                   (let ((pi 3.14)) <expr>))))
+
+Which seems to work the way you wanted because it tells Scheme that the pi is just a literal that should be inserted as is when replacing the macro. -- JefferyWalker
+
+You might notice that your version of with-pi provides a much more precise value to pi than 3.14 :-)  The above code assigns 3.14 to a hygienic temporary variable, and then <expr> is evaluated using DrScheme's value of pi; the macro is a no-op.  -- KenShirriff
+
+----
+It might look a bit intimidating, but this is a more portable way to write with-pi in syntax-rules.  There were some articles by Al* Petrofsky and/or OlegKiselyov (can't remember which) posted on comp.lang.scheme that described more general way to write this kind of macros, and it has theoretical background (ContinuationPassingStyle).
+Anyway, here's my take (revised...). There may be flaws, since I'm not at all an experienced Schemer/Lisper... -- pelpel
+
+  ; CAVEAT?/FEATURE?: pi and break are keywords, so they can be shadowed
+  ; by surrounding lexical variables, just like other scheme keywords like
+  ; => as described in R5RS...
+  ;
+  ; Examples:
+  ; (with-pi pi) => 3.14159265
+  ; (let ((pi 10)) (with-pi pi)) => 10
+
+  (define-syntax %reverse
+    (syntax-rules ()
+      ((_ () <result>) <result>)
+      ((_ (<hd> . <tl>) <result>)
+       (%reverse <tl> (<hd> . <result>)))))
+
+  ; Some R4/5RS macro implementations can't handle this...
+  ; It's actually two-macros-in-one: tree-subst and what could be called
+  ; tree-subst-but
+  (define-syntax %subst  
+    (syntax-rules ()
+      ; 1. Three argument form: substitute <new> for all occurrences of <old>
+      ; in <form> 
+      ((_ <new> <old> <form>)
+       (letrec-syntax
+         ((f (syntax-rules (<old>)
+               ; (1) Substitution complete, reverse the result.
+               ((_ () <result>) (%reverse <result> ()))
+               ; (2) recurse into sublists (deferred)
+               ((_ ((<hd> . <tl>) . <rest>) <res>)
+                (f <rest> ((f (<hd> . <tl>) ()) . <res>)))
+               ; (3) These two rules does (substitute <new> <old> ls)
+               ((_ (<old> . <tl>) <res>)
+                (f <tl> (<new> . <res>)))
+               ((_ (<hd> . <tl>) <res>)
+                (f <tl> (<hd> . <res>))))))
+         (f <form> ())))
+      ; 2. Four argument form: substitute <new> for all occurrences of <old> in
+      ; <form> but those inside of sublists (<but> ...).  Useful for defining
+      ; macros that can be nested.
+      ((_ <new> <old> <form> <but>)
+       (letrec-syntax
+         ((f (syntax-rules (<old> <but>)
+               ((_ () <result>) (%reverse <result> ()))
+               ; (4) ignore (<but> ...)
+               ((_ ((<but> . <tl>) . <rest>) <res>)
+                (f <rest> ((<but> . <tl>) . <res>)))
+               ((_ ((<hd> . <tl>) . <rest>) <res>)
+                (f <rest> ((f (<hd> . <tl>) ()) . <res>)))
+               ((_ (<old> . <tl>) <res>)
+                (f <tl> (<new> . <res>)))
+               ((_ (<hd> . <tl>) <res>)
+                (f <tl> (<hd> . <res>))))))
+         (f <form> ()))) ))
+
+  ; I don't know why it works without pi and break
+  ; given as syntax-rules keywords
+  (define-syntax with-pi
+    (syntax-rules ()
+      ((_ . <body>)
+       (let ((tmp 3.14159265))
+         (%subst tmp pi (begin . <body>))))))
+
+  (define-syntax loop
+    (syntax-rules ()
+      ((_ . <body>)
+       (call-with-current-continuation
+         (lambda (k)
+           (let f ()
+             (%subst k break (begin . <body>) loop)
+             (f)))))))
+
+  ; I'm bored at work, so here's also anaphoric if in
+  ; syntax-rules, with the caveat that it can't handle
+  ; single symbol consequents (easy to fix... add two
+  ; rules to the four argument part of %subst) 
+  (define-syntax aif
+    (syntax-rules ()
+      ((_ <condition> <consequent>)
+       (let ((temp <condition>))
+         (if temp
+           (%subst temp it <consequent> aif))))
+      ((_ <condition> <consequent> <alternative>)
+       (let ((temp <condition>))
+         (if temp
+           (%subst temp it <consequent> aif)
+           <alternative>)))))
+----
+What does hygienic mean in this context?  My dictionary just says it refers to health.
+
+Hygienic means clean or sanitary.  Something is hygienic if it does not contaminate unrelated things.  For example, surgical practices are hygienic if they do not leave blood and guts lying around to contaminate a wound.  Scheme macros are hygienic if they do not affect code outside of their proper scope.
+----
+Can someone help me with the basic understanding of this concept?
+I've been thinking of writing a macro to abbreviate "lambda (x)" to "fnx" so I can type, say, (find (fnx (eq? x 4)) list).
+Would the fact that the macros where hygienic make this easier or harder?
+I tried it using one of the macro systems in Chicken, I don't know if it was hygienic or not, but I figured that it would mean trouble to rely too heavily on functions that were declared using fnx since the x variable would get clobbered in certain contexts. What is the best solution to this lazyness-founded problem? --Anon
+
+Here you go.
+
+  ;; quick lambda declaration w one parameter 'x'
+  ;; (fx (+ x 1)) => (lambda (x) (+ x 1))
+
+  (define-syntax fx
+    (lambda (expr)
+      (syntax-case expr ()
+        ((fx expr)
+           (with-syntax ((x-id (datum->syntax-object (syntax fx) 'x)))
+             (syntax (lambda (x-id) expr)))))))
+
+-jason
+
+----
+
+Dang! I thought I was starting to understand this but of course I'm clearly missing something. I'm trying to create a cond-like construct that has one fewer set of parentheses (example usage included) AND to include an anaphoric reference using 'it' list the aif example above. I've tried a number of permutations. Here is one.
+
+  (define-syntax switch
+    (lambda (x)
+      (syntax-case x ()
+        ((_) (syntax #f))
+        ((_ e) 
+         (with-syntax ((it-id (datum->syntax-object (syntax switch) 'it)))
+           (syntax 
+             (letrec ((tmp (eval (car 'e)))
+                      (value (cadr 'e)))
+               (let ((it-id tmp))
+                 (if tmp (eval value) #f))))))
+        ((_ e1 e2 e3 ...)
+         (with-syntax ((it-id (datum->syntax-object (syntax switch) 'it)))
+           (syntax
+             (let ((t (eval (car 'e1))))
+               (if t (eval (cadr 'e1)) (switch e2 e3 ...)))))))))
+
+  (switch (#f 23) (2 it))
+
+In trying this (with MzScheme) I get a "reference to undefined identifier: it"
+
+I just can't seem to get it to correctly resolve to its value. Isn't "it" fun :-)
+
+Any pointers would be most appreciated.
+
+- Jason
+
+''Use (syntax _) instead of (syntax switch). In the definition of aif above, aif just happened to be both the name of the macro and the name of the first syntax object of the pattern; it appears that it's the syntax object which is important. Oh and i'd get rid of those 'eval's if I were you...''
+
+----
+CategoryScheme CategorySyntax

@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Finalize Instead Of Proper Destructor
+      </h1>
+      <p>
+        <em>[Voting on </em><a href="JavaDesignFlaws.html">JavaDesignFlaws</a> page.]<em></em>
+      </p>
+      <p>
+        Without C++'s destructor we need to wrap every resource encapsulation like so ...
+      </p>
+      <code>
+        Resource r = null;<br/>
+      </code>
+      <code>
+        try {<br/>
+        r = ResourceManager.allocate();<br/>
+        // do risky, exception throwing stuff<br/>
+        } finally {<br/>
+        if(r != null)<br/>
+        r.deallocate();<br/>
+        }<br/>
+      </code>
+      <p>
+        ...or else risk leaking non-memory resources. Memory is an import resource, but not so important that you should manage it at the expense of network connections, database cursors, and graphics contexts.
+      </p>
+      <hr/>
+      <p>
+        What about:
+      </p>
+      <code>
+        Resource r = ResourceManager.allocate();<br/>
+        try {<br/>
+        // do risky, exception throwing stuff<br/>
+        } finally {<br/>
+        r.deallocate();<br/>
+        }<br/>
+      </code>
+      <p>
+        The try-block ensures deallocation when the resource has been successfully allocated. It does not protect the allocation itself.
+      </p>
+      <p>
+        <em>Of course you are technically right here, and that is what I wrote at first, but when you have the more general case of allocating several resources at once you want to implement a transaction-like mechanism. You can either do this by nesting several try-finally resource allocations or by expanding what's at the top of the page.</em>
+      </p>
+      <p>
+        ["finally" is a bad replacement for destructors as you have to think of it <em>at every use</em>, while destructors are implemented <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a>.  A better replacement is "with" in C#, but to make it safe, "with" should also wrap the allocation and a with-like method should be the only way to allocate some ressources.  This only works if you have lightweight syntax for anonymous functions (lambda or blocks), which was "forgotten" in Java.]
+      </p>
+      <hr/>
+      <p>
+        This seems largely a syntax issue - caused by those awful 'try/catch/finally' blocks.  The 'Finalize' wouldn't be nearly so bad if it had better syntax for its application (such that it could be utilized with macros and provided tighter locality of reference).  Consider a slightly different syntax:
+      </p>
+      <ul>
+        <li>
+          <strong>catch</strong> - catches any exceptions thrown by previous statements in the block, but not by any statements outside the block.  In a sense, any block with a 'catch' in it is a 'try/catch' block.  You give a block of operations to perform after the catch.  Any further statements after said block are executed normally.  If there is no exception, the 'catch(x) {...}' is basically a NOP.  Useful: pass 'abort/retry/ignore' continuations as part of the exception.
+        </li>
+        <li>
+          <strong>fini</strong>  - Called in reverse order of specification in a block.  After the program passes the 'fini' statement, will (eventually) be called exactly once no matter which continuation is taken to leave the block (e.g. whether you 'throw' or 'return').  Prevents exceptions (because one might already be 'throwing' an exception), but you can catch and log exceptions within the block.  Will not be called if the program doesn't reach the 'fini' statement.  In this sense, quite similar to C++ destructors (which are called only if the constructor completed, and which are called in reverse order of construction).
+        </li>
+      </ul>
+      <code>
+        {<br/>
+        r1 = ResourceManager.allocateX();<br/>
+        fini { r1.deallocate(); catch(e) { send_to_log(e); }}<br/>
+        r2 = ResourceManager.allocateY();<br/>
+        fini { r2.deallocate(); }<br/>
+        // do risky, exception-throwing stuff that throws both handled and unhandled exceptions or perhaps returns prematurely...<br/>
+        catch(handled_exception& e) { ... }<br/>
+        } // r2.deallocate() and r1.deallocate() called here, in that order, with any exceptions squelched (but logging exceptions from r1.deallocate())<br/>
+      </code>
+      <p>
+        This is a bit verbose on its own, but it makes for very easy use with expansive macros (which can expand into both the allocation <em>and</em> the associated 'fini' block).  Importantly, it would be meaningful even in those languages that are either not strongly object-oriented (functional or procedural languages) or that exclusively use garbage collection (w/o static analysis to determine what it can kill ASAP) and, thus, either don't provide 'destructors' or do so but execute them with highly erratic timing.
+      </p>
+      <p>
+        A side-note: <a href="DeeLanguage.html">DeeLanguage</a> has this exact feature, written as scope(exit) obj.dealloc(). That and scoped(Foo).
+      </p>
+      <hr/>
+      <p>
+        <em>Finalize</em> does have a nice property in that it would provides a clean delimiter for the legal extent of continuations (<a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a>) - basically the idea being that any 'finally' block must be executed at least once AND at most once.  Unfortunately, there are no languages that use <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a> that also perform this sort of analysis for procedural correctness.
+      </p>
+      <hr/>
+      <p>
+        Unfortunately, the semantics of the C++ destructor have problems -- the transitive closure of the dead object is traversed, precluding the reliable use of generation-scavenging garbage collectors. The constructor and destructor semantics of C++ are among its most apparent failings, and motivation for Java to leave them behind.
+      </p>
+      <p>
+        [C++ destructors have perfectly well defined semantics.  They just don't map to Java.  It is well known that Java's designers didn't like C++, but that doesn't make it nearly as broken as you imply here.]
+      </p>
+      <p>
+        <em>I don't understand this. Partly because it has a high </em><a href="GingerFactor.html">GingerFactor</a>, and partly because I don't think it makes any sense when my mind untwists it:<em></em>
+      </p>
+      <ul>
+        <li>
+           C++ doesn't have implicit--i.e. baked into the language lika lambdas in Lisp--transitive closures; it only has implicit lexical closures (namespace scopes). The explicit transitive closures (pointers to other objects) don't affect the GSGC in any special way that would be different from other languages with transitive references (those member pointers again).
+        </li>
+        <li>
+           The constructor and destructor semantics in C++ are very successful. It's a far stretch to claim they are C++'s "most apparent failings," especially when they are more powerful than Java's resource allocation model.
+        </li>
+        <li>
+           You can write a GSGC for C++ if you really felt like it.
+        </li>
+        <li>
+           Java doesn't necessarily use GSGCs, nor does a C++ garbage collector necessarily have to be a GSGC. In fact, a truly advanced garbage collection system is some complicated hybrid. I don't see how C++'s destructor semantics would get in the way of Java's garbage collection model based on your statement. 
+        </li>
+      </ul>
+      <p>
+        <em>Actually, I believe the anonymous comments are similar to </em><a href="TomStambaugh.html">TomStambaugh</a>'s comments on the other <a href="GarbageCollection.html">GarbageCollection</a> pages. So, if I interpret the sentence thusly, I respond: <strong>No</strong>, the destructor semantics are still well-defined. <strong>Yes,</strong> you have to search for dead objects as well as live objects, which is the same in other good garbage collected languages (not Smalltalk--stupid thing leaks file handles).<em></em>
+      </p>
+      <p>
+        <em>Now, a good reason why Java can't add destructors now is that Java explicitly allows an object to ressurrect itself in the finalize() method by building a strong reference to it somewhere. e.g. finalize() { </em><a href="GodObject.html">GodObject</a>.instance.register(this); }, whereas once a C++ destructor has been called, the object is non-resurrectable. Consider this scenario:<em></em>
+      </p>
+      <code>
+        struct God { ... };<br/>
+        struct Base {<br/>
+        // Resurrect myself<br/>
+        virtual ~Base() { God.pInstance->push(this); } <br/>
+        };<br/>
+      </code>
+      <code>
+        #include <cstdio><br/>
+        using namespace std;<br/>
+        struct Subclass : Base {<br/>
+        Subclass() { pFile = fopen("foo","r"); }<br/>
+        ~Subclass() { fclose(pFile); }<br/>
+        FILE *pFile;<br/>
+        };<br/>
+        ...<br/>
+        {<br/>
+        Subclass *pSubclass = new Subclass;<br/>
+        } // Force loss of *pSubclass...<br/>
+      </code>
+      <code>
+        ...<br/>
+      </code>
+      <code>
+        // ... which God resurrects in the meantime (lame, I know, but whatever)<br/>
+      </code>
+      <code>
+        ...<br/>
+      </code>
+      <code>
+        Subclass *pSubclass = dynamic_cast<Subclass *>(God.pop());<br/>
+        fgetchar(pRef->pFile); // CRASH! -- pFile is invalidated<br/>
+      </code>
+      <p>
+        <em>Of course, this will break in Java too if Subclass deallocates a resource in its finalize() and then Base resurrects the object when it gets a turn. But that's why resurrection is evil. If you're looking for design flaws, that would be a good one. -- </em><a href="SunirShah.html">SunirShah</a><em></em>
+      </p>
+      <hr/>
+      <p>
+        Java only collects resources it knows about. You can tie your resource management to the garbage collector via <strong>finalize()</strong> but this isn't called immediately. Many Java garbage collectors don't run if the machine is busy, leading to escalated memory usage. The collectors in <a href="VisualAge.html">VisualAge</a> VM and the JDK thrash. Also referenced but forgotten resources might need deallocation of elsewhere in the code.
+      </p>
+      <hr/>
+      <p>
+        What about the following block in Resource:
+      </p>
+      <code>
+        public void finalize() {<br/>
+        this.deallocate();<br/>
+        }<br/>
+      </code>
+      <p>
+        If it's important enough to explicitly free up a resource when it is no longer needed, then it should be explicit.  If it's not that important then it's OK to leave it up to the garbage collector to reap the object when memory is needed.  For the in between case, a pool of instances would be an ideal solution, so you'd do something like this:
+      </p>
+      <code>
+        try {<br/>
+        // blah blah <br/>
+        } finally {<br/>
+        ResourceManager.return(r);<br/>
+        }<br/>
+      </code>
+      <p>
+        And write Resource to be able to handle being re-used.
+        -- <a href="StevenNewton.html">StevenNewton</a>
+      </p>
+      <p>
+        Say that again?
+      </p>
+      <p>
+        <em>If you have resources allocated that you absolutely </em>'must<strong> be sure get released </strong>at a certain time<em>' (for example to avoid deadlock or something like that) then you should explicitly release those resources. If you don't really care when the resources get released, just wait for the garbage collector to clean them up. The fact that you need to free up resources is undeniable. When that is done depends on the context.</em>
+      </p>
+      <p>
+        I still don't follow. One doesn't want to explicitly put clean-up code at every return value, for instance, because that sort of thing quickly gets out of sync. It's much better to have access to the language's built-in scoping mechanism directly, as with C++ destructors, or with Java and C#'s <strong>finally</strong>. C++ destructors have an advantage of being automatic and centralized, so you don't have to depend on the client programmer to remember to clean up. However, destructors don't make sense in a garbage collected environment, so Java added <strong>finally</strong>. Trading explicit memory management for explicit resource management.  -- <a href="SunirShah.html">SunirShah</a>
+      </p>
+      <p>
+        <em>If you don't really care when the resources get released, just wait for the garbage collector to clean them up. </em>
+      </p>
+      <p>
+        This is not entirely true.  You want your objects to correspond to real world items.  When you release your object you also want the real world item released.  You do not want to discover when you create an object that its real world counterpart is still locked waiting for the garbage collector.  Make the object and its resource identical simplifies management of the resource especially under error conditions.
+      </p>
+      <p>
+        [It also doesn't work.  Released resources may not ever get cleaned up, at it is not guaranteed that finalize() will ever be called.]
+      </p>
+      <hr/>
+      <p>
+        By the way, what is shown above is not the same as the finalize() method which <em>does</em> exist in Java and serves the same (or at least a very similar minus the memory de-allocation stuff) function as the C++ destructors. What is shown above is the third part of a try-catch block which is a feature that does not (to my knowledge) exist in C++. That third part is guaranteed to execute regardless of the result of the try-catch part. It has <em>nothing</em> to do with the destruction of the object (the one that contains the try-catch block).
+      </p>
+      <p>
+        <em>I wouldn't agree that finalize() is like a destructor. They don't have similar behavior nor does finalize() have the same guarantees as a destructor. But let's be honest, destructors in Java would make very little sense</em>
+      </p>
+      <p>
+        Well, what might make sense is some mechanism to say "as soon as this object is no longer reachable, call this function so I can free resources it no longer needs". Currently, the Java guarantee that finalize is called "before the memory the object occupied is reused" seems a little late in the day. -- <a href="AnthonyLauder.html">AnthonyLauder</a>
+      </p>
+      <p>
+        But this is exactly what finalize() does! As soon as an object is known to be not reachable, finalize() is called. That is, at GC time.  O, you want the runtime to note immediately when you drop the last reference?  Sorry, that is not possible without basically doing a full GC after every  assignment (or giving up on cycles and use refcounting).
+      </p>
+      <ul>
+        <li>
+           <em>It isn't possible in the general case, but it is possible to determine this statically in the </em>'common<strong> case.  If Java programmers had a clean guarantee that an object they create inside a block and never share with objects that have a scope beyond the block would be deleted at the end of the block, there wouldn't be as much a problem; they could use 'finalize' to the same effect that C++ programmers use their destructors simply by being careful about how they use their objects (i.e. by creating objects especially for their action-on-finalize).  What is important is the </strong>guarantee<strong> - it would need to be part of the language standard, much like the </strong><a href="TailCallOptimization.html">TailCallOptimization</a> is part of Scheme's standard (and makes oh so many things possible).<em></em>
+        </li>
+      </ul>
+      <p>
+        So the Java runtime is really doing the best you could hope for.  Now, we could say to the language: "I promise I will only use this resource in the dynamic context of the current method", which is basically what C++ <em>forces</em> you to do, or manage lifetime by hand. If you make this promise, then the language can clean up the object after you leave the current dynamic context. That's what destructors do. That's, incidentally, also exactly what finally does. Now I agree that the nice thing of destructors is that they are called automatically. However, the right way to solve this in a GC language is not to add destructors, but to use a pattern I called <a href="ResourceAcquisitionIsInvocation.html">ResourceAcquisitionIsInvocation</a>. Which is used a lot by Smalltalk, Lisp, Scheme and other winning languages.
+      </p>
+      <p>
+        -- <a href="StephanHouben.html">StephanHouben</a>
+      </p>
+      <p>
+        I don't understand what you mean when you say
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd>"I promise I will only use this resource in the dynamic context of the current method", which is basically what C++ <em>forces</em> you to do.</dd>
+      </dl>
+      <p>
+        There's nothing in C++ that forces method scoping. <em>Much later...</em> I'm still particularly perturbed about this claim. C++ gives you much more freedom in choosing how you manage resources than Java or Smalltalk. You are free to use lexical scopes or dynamic scopes or self-management or even garbage collection. So, if you are going to make a claim like that, you need to be much more accurate in your description.
+      </p>
+      <p>
+        On the other hand, note that these other languages have opted for garbage collection simply because the types of resources they manage are typically constrained by the provided language libraries. Thus, the language implementors can "see" all the resources in question. As soon as you take these languages out of their chosen problem domains to touch new contexts, you are left with the cruddy and unmaintainable task of manual balancing. But, you see, you're not supposed to do that with most garbage collected languages, so it's really handy for the collector to be there. Consider that Java collects all sorts of useful objects from memory, to files, to sockets, but not database connections. -- <a href="SunirShah.html">SunirShah</a>
+      </p>
+      <p>
+        <a href="SmugLispWeenie.html">SmugLispWeenie</a>s will contest that "unmaintainable" claim.  <a href="LispMacro.html">LispMacro</a>s make it easy. -- <a href="DanBarlow.html">DanBarlow</a>
+      </p>
+      <p>
+        Actually, functional programming style make this easy, and you can do this in most languages:
+      </p>
+      <code>
+        Block>>value: anObject handle: onException final: aFinalizationBlock<br/>
+        self value: anObject handle: onException.<br/>
+        aFinalizationBlock.!!<br/>
+      </code>
+      <code>
+        Object>>with: aBlock handle: onException<br/>
+        | anInstance |<br/>
+        anInstance := self new.<br/>
+        aBlock value: anInstance handle: onException.<br/>
+        anInstance finalize.!!<br/>
+      </code>
+      <p>
+        and instance methods
+      </p>
+      <code>
+        Object>>finalize<br/>
+        !!<br/>
+      </code>
+      <code>
+        MyResource>>finalize<br/>
+        self cleanup!!<br/>
+      </code>
+      <p>
+        and then write
+      </p>
+      <code>
+        MyResource with: [ some stuff ] handle: [ on exception ].<br/>
+      </code>
+      <p>
+        whereas in Java, one would need
+      </p>
+      <code>
+        interface Destructable {<br/>
+        void destruct();<br/>
+        }<br/>
+      </code>
+      <code>
+        class Scope {<br/>
+        abstract void eval( Destructable object );<br/>
+      </code>
+      <code>
+        static void with( Destructable object, Evaluatable evaluatable ) throws( Throwable ) { <br/>
+        try {<br/>
+        evaluatable.eval( object );<br/>
+        } finally {<br/>
+        object.destruct();<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        class MyResource : implements Destructable { ... }<br/>
+      </code>
+      <code>
+        ... // Code fragment<br/>
+        Scope.with( new MyResource(), new Scope {<br/>
+        void eval( Destructable anObject ) {<br/>
+        MyResource resource = (MyResource)anObject;<br/>
+        do stuff with anObject;<br/>
+        }<br/>
+        });<br/>
+      </code>
+      <p>
+        and Perl--well, it's not necessary with Perl because it is reference counted, but they plan to add a garbage collector soon, so--
+      </p>
+      <code>
+        package Destructable;<br/>
+        sub with($&) {<br/>
+        my $class = unshift;<br/>
+        my $self = new $class;<br/>
+        my $code = unshift;<br/>
+        eval { &$code };<br/>
+        destruct $self;<br/>
+        }<br/>
+      </code>
+      <ol>
+        <li>
+          ;
+        </li>
+      </ol>
+      <code>
+        package MyResource;<br/>
+        @ISA qw( Destructable );<br/>
+        sub destruct {<br/>
+        my $self = shift;<br/>
+        $self->cleanup;<br/>
+        }<br/>
+      </code>
+      <code>
+        ... # Code fragment<br/>
+      </code>
+      <code>
+        with MyResource { $self->doStuff(); };<br/>
+      </code>
+      <p>
+        but this only helps you manage one resource at a time, and it still doesn't help you if you create a MyResource directly. -- <a href="SunirShah.html">SunirShah</a>
+      </p>
+      <hr/>
+      <p>
+        In <a href="ForthLanguage.html">ForthLanguage</a>, you can define a LATER> construct, like this:
+      </p>
+      <code>
+        : LATER>  R> R> SWAP >R >R ;<br/>
+      </code>
+      <p>
+        which can be used to manage resources too.
+      </p>
+      <code>
+        : rtuck<br/>
+        POSTPONE R> POSTPONE SWAP POSTPONE >R POSTPONE >R ; IMMEDIATE<br/>
+      </code>
+      <code>
+        : WITH-FILE<br/>
+        OPEN-FILE THROW DUP rtuck LATER> R> CLOSE-FILE THROW ;<br/>
+      </code>
+      <code>
+        : WITH-MEMORY<br/>
+        ALLOCATE THROW DUP rtuck LATER> R> FREE ;<br/>
+      </code>
+      <p>
+        etc.  Typical use:
+      </p>
+      <code>
+        : dump-logs<br/>
+        S" myLogFile" R/O WITH-FILE BEGIN dup at-eof? NOT WHILE dup get-and-print-line REPEAT ;<br/>
+      </code>
+      <p>
+        --SamuelFalvo
+      </p>
+      <hr/>
+      <dl>
+        <dt> </dt>
+        <dd>"I promise I will only use this resource in the dynamic context of the current method", which is basically what C++ <em>forces</em> you to do, <strong>or manage lifetime by hand</strong>.</dd>
+      </dl>
+      <p>
+        Have you heard of <a href="SmartPointer.html">SmartPointer</a>s? You can make the object take care of itself. You can also use a garbage collector to have the system reap the object for you. --ss
+      </p>
+      <p>
+        Well, the beginning of this page already contains a discussion why
+        GC should not be used to release other resources than memory. In
+        particular, conservative GC (the only option available for C++) doesn't
+        give any guarantees that a finalizer will be called at all. So GC+finalizers
+        is only a viable option if you actually don't care for the resource to
+        be cleaned up, in which case just leaking the resource works fine, too ;-)
+      </p>
+      <p>
+        As for reference counted "smart" pointers: this is effectively
+        a virtualisation strategy, and only moves the problem from managing
+        the original resource to managing the pointers, which again gives you the 2
+        choices we had before: rely on a dynamic context to clean them up
+        or manage them explicitely. I recognise that smart pointers can make
+        things more tractable, but they don't fix the fundamental problem of
+        resource management. Note that this is not a critique on C++: after all,
+        determining the exact spot in a program after which a resource is
+        no longer needed is uncomputable. -- <a href="StephanHouben.html">StephanHouben</a>
+      </p>
+      <p>
+        Well, what I'm tripping on is basically what's the big difference between <a href="SmartPointer.html">SmartPointer</a>s and garbage collection? (Noting that I've written a few <a href="SmartPointer.html">SmartPointer</a>-based mark-and-sweepish GCs before.) --ss
+      </p>
+      <p>
+        <em></em><a href="SmartPointer.html">SmartPointer</a>s can implement GC.  They can also implement different things.  In particular, SPs can implement reference counting and thereby support complex usage patterns (though without cyclic references) with prompt destruction.<em></em>
+      </p>
+      <hr/>
+      <p>
+        What Java really needs is a standard interface for deallocation so we don't have to look up what method we need to call each time. Perhaps java.lang.Resource could declare a standard destroy() method (or java.lang.Object itself!), and we wouldn't have to remember close(), delete(), kill(), and whatever else names are used for deallocation by different classes.
+      </p>
+      <p>
+        <em>Perhaps it should take a leaf out of C#'s book, with the Dispose() method defined in the interface IDisposable (should be implemented by any class that has resources to manage.)</em>
+      </p>
+      <p>
+        <em>Of course, </em><a href="MicroSoft.html">MicroSoft</a> then proceeded to gild the lily with the using operator:<em></em>
+      </p>
+      <code>
+        ...<br/>
+        using (SomeDisposableThing theThing = new SomeDisposableThing ())<br/>
+        {<br/>
+        [do some work here]<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>and now theThing.Dispose() will be automatically called when it goes out of scope.</em>
+      </p>
+      <p>
+        Hey, for all practical purposes in C# both <em>lock</em> and <em>using</em> are macros.  <em>lock(obj) stmt</em> expands to
+      </p>
+      <code>
+        Monitor.Enter(<em>obj</em>);<br/>
+        try {<br/>
+        <em>stmt</em><br/>
+        } finally {<br/>
+        Monitor.Exit(<em>obj</em>);<br/>
+        }<br/>
+      </code>
+      <p>
+        and <em>using(var-declaration-with-initialization) stmt</em> expands to
+      </p>
+      <code>
+        {<br/>
+        <em>var-declaration-with-initialization</em><br/>
+        try {<br/>
+        <em>stmt</em><br/>
+        } finally {<br/>
+        ((IDisposable)<em>var</em>).Dispose();<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Honestly, they should borrow a page from <a href="NemerleLanguage.html">NemerleLanguage</a> and build in extensibility rather than individually sweetening officially sanctioned patterns. -- <a href="JeffreyHantin.html">JeffreyHantin</a>
+      </p>
+      <hr/>
+      <p>
+        I've found that most external resource problems go away when you <a href="TellDontAsk.html">TellDontAsk</a> an object what to do.  Don't give clients the opportunity to leave resources hanging - provide methods which handle it for them.  Hmm, maybe I'm trying to say MakeUnmanagedResourcesPrivate.  Oh, having just read <a href="ResourceAcquisitionIsInvocation.html">ResourceAcquisitionIsInvocation</a>, maybe that's a better pattern, although I can't be sure because I didn't grok the pseudo-code :-)
+      </p>
+      <hr/>
+      <p>
+        Do the  PhantomReference and ReferenceQueue classes help?  I doubt it.  They just tell you when a referent is finalized, right? -- <a href="EricJablow.html">EricJablow</a>
+      </p>
+      <hr/>
+      <dl>
+        <dt> </dt>
+        <dd>"I promise I will only use this resource in the dynamic context of the current method", which is basically what C++ <em>forces</em> you to do, <strong>or manage lifetime by hand</strong>.</dd>
+      </dl>
+      <p>
+        Really? <a href="LinearTypes.html">LinearTypes</a> (possibly implemented via C++'s unique_ptr) ensure that there is no unmanaged sharing of resources--everything has exactly one owner (T foo) and other objects may borrow it (T& foo) or ownership may be transferred to them (T&& foo). Making sure to null old references after transferring ownership seems like enough copy-paste code to cause bugs (rather than simply annoying the programmer for his/her constant typing of try { } finally { }).
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryJava.html">CategoryJava</a>
+      </p>
+    </div>
+  </body>
+</html>

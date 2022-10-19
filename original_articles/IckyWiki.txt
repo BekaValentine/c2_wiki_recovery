@@ -1,0 +1,329 @@
+''Just'' under 100 (91,76) lines of PythonLanguage - a little more squished-looking than normal Python.
+Inspired by the ShortestWikiContest.  Provides all basic features from WikiPrinciples, 
+including AutomaticLinkGeneration, ContentEditableByAll, BackLink''''''s, and TextFormattingRules.
+
+See also: NicksWiki
+
+-- DirckBlaskey
+----
+  #!/usr/local/bin/python
+  """ IckyWiki - still runs under Python 1.5.2 """ 
+  ### DirckBlaskey 9/4/01 12:21PDT http://www.danbala.com/
+
+  import os, sys, re, popen2, cgi, cPickle
+  pickle,rex,ML = cPickle, re.compile, re.M
+
+  Root = "c:\\xitami\\dwiki\\"    # configurable stuff
+  WFile,Default,DWiki = Root+"pickled\\dwiki.pkl", 'FrontPage', "dwiki.py"
+  Grep = "cd/d c:\\xitami\\dwiki & ggrep -l %s *"
+  RLink = '[<a href="%s">d^:</a>]' % DWiki
+  def huh(w): return "<h2>%s ???huh???</h2>" % RLink   #minor oops
+  rpairs = [('\r', ""), ('&',"&amp;"), ('<',"&lt;"), ('\n\n',"\n<p>\n"),
+            ('\n{*',"\n<ul>"),('\n*',"\n<li>"),('\n}*',"\n</ul>"),
+            ('\n{#',"\n<ol>"),('\n#',"\n<li>"),('\n}#',"\n</ol>")]
+  Args = {}
+  for i in cgi.FieldStorage().list: Args[i.name] = i.value
+  try:    Words = pickle.load(open(WFile,"rb"))
+  except: Words = {}
+
+  class Main:
+      def __init__(self):
+          print "Content-type: text/html\r\n\r\n",
+          op,word = Args.get('op', "get"), Args.get('word', Default)
+          if not word.isalpha(): op,word = "get",Default # close hack door
+          print getattr(self, op, huh)(word)  # self.op(word) or ?huh?
+
+      def get(self, w):
+          d = wikifi(load(Root+w, "Undefined: %s" % w))
+          return '''<html><head><title>%s</title><body><h2>%s%s</h2><hr><p>%s
+                    <hr>%s</body></html>''' % (w, RLink, 
+                        wlink(w,"search"), d, wlink(w,"edit","edit page"))
+
+      def edit(self, w):
+          d = load(Root+w, "Describe " + w)
+          return '''<html><head><title>%s</title></head><body>
+                    <form action="%s" method="POST"><h2>%s
+                    <input type="hidden" name="word" value="%s">
+                    <input type="submit" name="op" value="save"></h2>
+                    <textarea name="Data" rows=25 cols=80>%s</textarea>
+                    </form></body></html>''' % (w, DWiki, w, w, d)
+      
+      def save(self, w):
+          dump(Root+w, Args["Data"].replace('\r',"")) #bomb if bad args
+          if w not in Words:
+              Words[w] = 1; pickle.dump(Words, open(WFile,"wb"), 1)
+          return self.get(w)
+
+      def search(self, w):
+          d = '<p>'.join(wlink(w) for w in popen2.popen2(Grep%w)[0].readlines())
+          return '''<html><head><title>Searched %s</title><body><h2>%s
+                    Search results for: %s</h2><hr>%s<hr></body>
+                    </html>''' % (w, RLink, wlink(w), d)
+
+  def wikifi(s):
+      for old,new in rpairs: s = s.replace(old, new)
+      s = rpl(s, wsearch, wreplace, 2)
+      s = rpl(s, rex("http://[\S]+").search,lambda s: "<a href=%s>%s</a>"%(s,s))
+      s = rpl(s, rex("^ +", ML).search, lambda s: "<br>"+"&nbsp;"*len(s))
+      s = rpl(s, rex("''.*?''", ML).search, lambda s: "<i>"+s[2:-2]+"</i>")
+      return rpl(s, rex("^-{4,}", ML).search, lambda s: "<hr>")
+
+  def wlink(w, op="get", v=None):
+      return '<a href="%s?op=%s&word=%s">%s</a>' % (DWiki, op, w, v or w)
+
+  def rpl(a, search, replace, g=0):
+      r = ""
+      while 1:
+          m = search(a)
+          if not m: break
+          s, e = m.start(g), m.end(g)
+          r, a = r + a[:s] + replace(a[s:e]), a[e:]
+      return r + a
+
+  wsearch = rex("(^|[^A-Za-z0-9\?=]+)(([A-Z][a-z]+){2,})").search
+  def wreplace(w):
+      if Words.get(w): return wlink(w)
+      else:            return w + wlink(w, "edit", "?")
+
+  def dump(file, data): open(file, "w").write(data)
+  def load(file, default):
+      try:    return open(file, "r").read()
+      except: return default
+
+  if __name__=="__main__":
+      try:    Main()
+      except: cgi.print_exception()
+----
+'''(note: the discussion below often refers to earlier revisions of the above program.)'''
+
+''Curious:  Is the use of popen2(Grep) above safe?  What keeps the user from searching for: "echo; rm -rf ." (or is that "echo & deltree /y .")?  I couldn't find anything in the Python docs that helped.''
+
+Excellent question - I hadn't thought of that.  No, it's not safe, it could be hijacked as you suggest.  Now it checks the input to make sure it's just one word - probably in a way that won't work for hi-bit european chars.  Also added checks to get/edit/post.
+
+--d
+
+''I'm wondering if the header parsing couldn't be more efficient if you just grabbed the first argument, rather than checking specifically for "get", "search", etc.''
+
+It probably would be more efficient to not use the cgi module at all, but it would be longer.  (Efficiency wasn't in the requirement spec :)
+
+--d
+
+''I mean space-efficient.  Since I read ElseConsideredSmelly, those nested if's were starting to tickle my nose, and I thought main() could be reduced.  So when I got home, I whipped this new version of main() up.  10 lines, it performs the isalpha check on the wiki-word OnceAndOnlyOnce and defaults it to FrontPage, so we don't need those checks elsewhere.  This saves us six lines (yay me!) even though it's now 60% Else clauses.  But, if we could replace that '''Env("REQUEST_METHOD")''' with another '''in Args''', we could replace the whole mess with a dictionary lookup like PikiPiki does.''
+
+ def main():
+     print "Content-type: text/html\r\n\r\n",
+     word = Args.get("edit") or Args.get("search") or Env("QUERY_STRING")
+     if not word.isalpha(): word = "Front''''''Page" # Close off all backdoors.
+     if not Args: print get_page(word)
+     elif Env("REQUEST_METHOD") == "POST": print post_page(word, Args['Data'])
+     elif "edit" in Args: print edit_page(word)
+     elif "search" in Args: print search(word)
+     else: print "<h2>"+ RLink +  " ???huh???</h2>"
+
+One question, though: Why make the Words database a dictionary instead of a list?
+
+--NickBensema
+
+Ahh, very interesting.  A little bit dense for my tastes, but some good ideas I will definitely integrate.  I think the vertical elif/elif/elif/else thing is actually less visually pleasing than going ahead and using the cascading format.   It is tighter, vertically, though.  ElseConsideredSmelly is interesting, but if you read it in detail, I think the argument is mostly about much larger constructs.  (I've seen if and else clauses that go on for pages).  Actually, anytime you use an ''if'' it's a good idea to at least think about what the ''else'' case means, especially if you don't think you need one.
+
+Words is a dictionary so the lookup in wiki_word will be quicker.
+
+My next set of mods have to do with getting it to run under Python 1.5.2 (my ISP has 1.5.2), which means removing the ListComprehension''''''s, the string methods, replacing isalpha, and, oddly enough, a change to the re_wiki expression because the 1.5.2 re doesn't match a WikiWord on the beginning of the line.  Time to wade through the re docs yet again...  Nope, it's not beginning of line, but beginning of text, not specific to 1.5.2 either.
+
+The code probably won't retain any notes about history, trying to keep it small, but I'm already thinking about some features that I'd like to stick in, which directly conflicts with the whole ShortestWikiContest motive.  Oh well.  It's always something.
+
+--DirckBlaskey
+
+My ISP has 1.5.2 as well, but I'm just toying around so I don't mind.  Indeed; I just started seeing how much better I could make it look to myself and keep it compact; I actually found myself making some of the code longer.  Particularly, when I modified the "search" function to work without spawning a grep process.  I also changed Words to a list, but found that while it made things a little clearer, it didn't save much space at all.  Besides which, it seems like the perfect place to store a last-modified date and IP number.  I'll probably change it back.  I also did LikePages in ten lines; I wonder if I should just start a code fork:
+
+def like(w):
+    first, last = re.match("^([A-Z][a-z]+).*?([A-Z][a-z]+)$", w).groups()
+    findFirst = re.compile("^%s[A-Z]" % first)
+    findLast = re.compile("[a-z]%s$" % last)
+    matchesFirst = "<li>".join([wiki_word(page) for page in Words if findFirst.search(page)])
+    matchesLast = "<li>".join([wiki_word(page) for page in Words if findLast.search(page)])
+    return ('''<html><head><title>Pages like %s</title><body>
+               <h2>%sPages like: %s</h2><table><tr><td valign=top><ol><li>%s
+               <td valign=top><ol><li>%s</body></html>''' %
+            (w, RLink, wiki_word(w), matchesFirst, matchesLast))
+
+
+--NickBensema
+
+Seems like we could use a cvs server about now.
+
+Just posted the updates for 1.5.2, as well as some re-orgs inspired by your main above.  Sitting at 75 lines, with some minor sacrifice of readability, though there are still no lines longer than 80 characters.  There's no longer a main, but the run method is pretty short.  Great idea to stick the IP and time in the Words dictionary, but in this case that would mean re-writing the Words pickle after every update.  I'm still a bit spooked about locking, haven't done the appropriate tests yet for open() default behaviour.  Words should probably be a shelve, anyway, but I didn't want to muck with that yet.  Lost your SixSingleQuotes formatting fix, oh well.
+
+Had to change the args protocol a bit to get it to squeeze pretty.  Note the interesting bug if somebody manually uses op=run.
+
+How's it look?
+
+--DirckBlaskey
+
+----
+
+That's pretty slick, and that run() is close to what I had in mind.  I imagined a dictionary of valid subroutines, but this works too.  Perhaps a prefix would eliminate the "op=run" bug; it'll look for "op_run" and crash out.
+
+Also, in the save() method, I changed the "w" in the write() call to a "wb", and I no longer needed the msvcrt stuff.
+
+I'm thinking you could probably save horizontal space by using the wiki_word function a little more liberally.  In fact, wiki_word could probably be made much more flexible.  Wouldn't pay off in SLOC, but it might break up that sea of triple-single-quoted HTML a little.
+
+And BTW, here's the popen-less search.  It's not 1.5.2-friendly, in fact now there's two ListComprehension''''''s, but they're quite easily converted to filter and map, respectively.  but it's the same number of lines, and a little clearer.  Line three of this is a little long, though, and trying to change it to a filter() call seems to just make it worse.
+
+    def search(self, w):
+        m = re.compile(w)
+        pages = [x for x in Words.keys() if m.search(open(Root+x).read())]
+        lines = '<p>'.join(map(wiki_word, pages))
+        return ('''<html><head><title>Searched %s</title><body>
+                   <h2>%sSearch results for: %s</h2>
+                   <hr>%s<hr></body></html>''' % (w, RLink, wiki_word(w), lines))
+
+--NickBensema
+
+''(Ouch, I just lost my last attempt at this edit.  Here we go again.)''
+
+Using __init__ gets rid of the run bug.  The save "wb" fix is interesting, but it only works because the open is "r", which is disconcerting.  Without msvcrt, if the opens match, all the saves double the end of lines.  Also, msvcrt fixes some problems in the cgi module, with headers and stuff, and is required for getting or posting attachments, which I'd like to add as an option.  (In fact, I think the msvcrt stuff ought to be in cgi in stdlib, or at least in a FAQ somewhere, since Python cgis under Win32 don't really work without it.  Some people recommend the -u unbufferred command line option, but that doesn't really fix the problem.)  It is 5 lines that aren't needed under unix, though.  
+
+The HTML stuff is pretty ugly, but I like to keep the strings close to the % (tuple).  An improvement would be to use a macro/templating engine, and stick the HTML out in template files.  I've got one called pymacro that I use a lot, and there's another one in the active state cookbook http://aspn.activestate.com/ASPN/Python/Cookbook/
+
+That ListComprehension in search() is pretty cool.  Amazing what one line of Python can do, isn't it?
+The grep is brutal, but probably quick enough.  It would also find files that may have been dropped from the pickle.  I was thinking that a 'reconstruct' method might be required.
+
+I don't know if I'm going to take this further, or just go find another WikiClone.  I have a lot of ideas that probably aren't in other Wikis, but recreating common functionality is probably OutOfScope for me right now.
+
+I hope you're having fun.  I've got one of these plugged in at ''[unplugged]'', just for laughs.
+
+--DirckBlaskey
+
+I'm just excited because it's the first time in a long time I've coded anything for fun.  Also, at work I often have to work in a language where it takes a lot of code to do anything useful, so PerlGolf sorts of things appeal to me right now.  Last year I optimized the factorial function in FalseLanguage.
+
+Of course, if you measure the score in characters rather than lines, using wiki_word() a little more would save you quite a few characters.
+I saved 32 characters by replacing all that HTML with a single %s, and combining '''DWiki, w''' into '''wiki_word(w)''' only gained me four characters, making a grand savings of 28 characters.
+
+Imagine the savings if you could do this instead:
+
+  def wiki_word(w, op="get", text=None):
+      if Words.get(w): return '<a href="%s?op=%s&word=%s">%s</a>' % (DWiki,w,op,text or w)
+      else:            return '%s<a href="%s?op=edit&word=%s">?</a>' % (w,DWiki,w)
+
+Adds 31 characters, four of them whitespace so effectively 27 characters, though I did end up spilling a line over 80 characters.  This allows you to optimize Main.get() with '''wiki_word(w, "search")''' and '''wiki_word(w, "edit", "Edit Page")'''.  Of course, now the function probably needs a new name.
+
+Incidentally, I used your "x = re.compile(y).search" idea to make the line lengths a little more sane in my like() and search() definitions.
+
+Furthermore, perhaps you don't even need the pickle file.  It would be trivial to make something like this work double to gather last-modified dates, even if it is probably slower:
+
+ Words = {}
+ for word in filter(re_wiki.match, os.listdir(Root)): Words[word]=1
+
+When I get home tonight, I'm going to see if I can get it to escape < and & characters, probably by using a {regexp: function} dictionary in wikifi() that can be expanded to do other markup.  That'll be better security for the clients.  Or I'll end up writing a scorekeeper for PythonGolf.  :)
+
+--NickBensema
+
+Now I see where you're going with the wiki_word function, it could definitely improve readability.  I'm thinking of a one-liner called wiki_link.  Maybe I'll post another update later.  Let me suggest opening up a NickysWiki page, so you can post whatever variations you're currently playing with.
+
+(Later) Ok, just posted the wlink version, dropped wiki_word entirely.  We're now up to 83 lines, but that includes 15 (''fifteen!'') blank lines for readability.
+
+--DirckBlaskey
+
+----
+
+Good idea; I hesitated starting my own page for two reasons: first, didn't have explicit permission, and second, if I moved it to my own page we might lose this PairProgramming''''''ish thing we've got going here.  Today's nitpick: lambdas for huh and the wlinks would save three characters (oh woohoo) and wlink2 could have a better name.  flink, for example (for "feature link").  At this point, you can tell I'm reaching... we'll see what happens when I come back to it again.
+
+--NickBensema
+
+Made wlink one function, that's a little bit cleaner.  Also renamed wiki_search as wsearch, just because.  I think the lambdas would decrease readability.  Still at 83/68, and looking fairly loose, but there are 4 semi-colons.
+
+--DirckBlaskey
+
+Lambdas are the way to ObfuscatedPython, you made the right choice.  If I do write a PythonGolf scorer, I shall assign penalties for "func = lambda" assignments.  Even so, you can get rid of one semicolon here:
+
+  def wlink(op, w, v=None):
+      return '<a href="%s?op=%s&word=%s">%s</a>' % (DWiki, op, w, v or w)
+
+--NickBensema
+
+Excellent! --d
+
+(I didn't get your lambda suggestion at first - never thought of using symbol=lambda m:tblah.  def is still better.)
+----
+
+More on NicksWiki.
+
+----
+
+Cool code, although the <pre> formatting is a bit of a hack. I'm suprised, because all you need to to do fix it is replace "\n" with "<p>" in def get() and take out the <pre> tags, a la:-
+
+      def get(self, w):
+          try:    d = wikifi(open(Root+w).read()).replace('\n','<p>')
+          except: d = wikifi("Undefined: %s" % w)
+          return '''<html><head><title>%s</title><body><h2>%s%s</h2><hr>
+                    %s<hr>%s</body></html>''' % (w, RLink, wlink("search",w), 
+                    d, wlink("edit",w,"edit page"))
+
+it's a bit messy, but contains no extra lines! -- SeanPalmer
+
+Er... then again perhaps this would be better in the last line of def wikifi():-
+
+     return (r + a).replace('\n','<p>')
+
+----
+The <pre> stuff is also most annoying in actual practice - it makes editing the wiki tedious.
+It was just my initial thought - "oh this will be ok" - and it's sort of where the whole "icky" feel comes from.
+
+Traditionally, it should look for "\n\n" when replacing with "<p>".  It's also been suggested that allowing raw-html is hazardous, but for a wiki of this scale, I don't think it's worth fussing over too much.  Maybe I can come up with another line or two of formatting code, then the wiki will fit all basic WikiPrinciples.
+
+--d
+----
+OK, finally came back and put in some TextFormattingRules, but it cost a number of lines.  The rules are somewhat non-standard.
+We have:
+	*escapes of & and <
+	*\n\n becomes <p>
+	*\n---- becomes <hr>
+	*\n{* \n* \n}* for unordered lists
+	*\n{# \n# \n}# for ordered lists
+	*<pre>-ish formatting of lines with leading blanks
+	*autodetection of http://links (white space required at end)
+
+Note: no TAB characters required.
+
+Also: split the try: open away from the wikify: bugs in the wikifi would be caught be the open try.
+Phantom problem with the open(file,"r") setting the modification date on the read action - came and went.
+
+--d
+
+''I just realized that cgi.escape() could have been used to escape all those HTML metacharacters.  I'll take a further look at all this once I get back from Vegas.''
+
+That probably wouldn't buy much - theres only a couple of tuples for & and <.
+
+--d
+
+(8/10/01) Some more changes;
+	*Added support for ''italics.''  
+	*Integrated Nick's minor change to the wlink signature.  
+	*Also re-organized a bit, moving some of the fiddly bits up top to the bottom, it reads a little better.  
+	*Dropped this bit:
+  if sys.platform == "win32": # before invoking cgi.*
+      import msvcrt
+      msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+      msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+because this little bit:
+      Args["Data"].replace('\r',"")
+takes care of the problem in this case, and it also makes the WikiWord files on Unix platforms text-tidy.
+The O_BINARY stuff would be needed if/when I put in support for attachments.
+
+There are a couple of funny formatting issues in the presentation code above, where the code triggers WikiWiki's formatting.
+These have been left in, in order to make it easy to pull or push the code.  ''I hope your editor has block in/dedent''.
+
+This particular version isn't intended to grow, feature-wise, I have another version that I'm playing with that will grow.  
+This one is intended to be the minimally-useful version, and hopefully interesting in itself.
+
+Maybe at some point the historical bits here will be cleaned out - but they are kind of interesting in themselves, as well.
+
+--d
+
+The <pre> stuff is annoying   - it makes editing tedious.
+It was just my initial thought - "oh this will be ok" - and it's sort of where the whole "icky" feel comes from.
+
+Traditionally, it should look for "\n\n" when replacing with "<p>".  It's also been suggested that allowing raw-html is hazardous, but for a wiki of this scale, I don't think it's worth fussing over too much.  Maybe I can come up with another line or two of formatting code, then the wiki will fit all basic WikiPrinciples.
+----
+CategoryWikiImplementation

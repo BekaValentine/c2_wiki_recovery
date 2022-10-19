@@ -1,0 +1,56 @@
+I'm trying to find a reasonable alternative to DCL for my object cache. I came up with the code below.
+
+Only read performance and consistency are concerns, the object retrieved from the cache are immutable. In the pseudo-code below I also skipped the invalidation scheme for the objects, but that will be handled on a per object basis and will escalate from the thread local to the global cache.
+
+This should hopefully mean that synchronization only occurs when an object is invalid, whereas with only a global cache, the lazy initialization/invalidation would force the use of synchronization for every get().
+
+I haven't been able to do any comparative testing of speed yet, and most likely the use of ThreadLocal is not a good idea in JDKs previous to 1.4.
+
+Anyway, here's the code. Could this be a reasonable option? Comments?
+
+   public class Cache {
+
+   private static T''''''hreadLocal threadCache = new T''''''hreadLocal() {
+      Object initialValue() {
+         return new H''''''ashMap();
+      }
+   };
+
+   private static final H''''''ashMap globalCache = new H''''''ashMap();
+
+   public static Object getFromCache(Object key) {
+      Object value = ((H''''''ashMap) threadCache.get()).get(key);
+      if (value==null) {
+         value = getFromGlobalCache(key);
+         ((H''''''ashMap) threadCache.get()).put(key, value);
+      }
+      return value;
+   }
+
+   private static Object getFromGlobalCache(Object key) {
+      synchronized (globalCache) {
+         Object value = globalCache.get(key);
+         if (value==null) {
+            value = getFromSlowSource(key);
+            globalCache.put(key, value);
+         }
+      }
+      return value;
+   }
+
+   private static getFromSlowSource(Object key) {
+      return new Object();
+   }
+   }
+
+-- FredrikNylander
+
+-------
+
+It may be just me but this strikes me as using a howitzer to kill a fly.  If your problem is synchronization because of lazy initialization in the global cache, then don't lazy initialize the global cache! --KyleBrown
+
+Ah, the example might be a bit misguiding in that sense. The synchronization isn't only a problem at initialization, but also when objects in the cache get invalidated and reloaded, which might happen at any get(). This way, there's no synchronization except when the item is missing or invalid. If I use a singleton/static H''''''ashMap as a cache I basically have to synchronize the entire H''''''ashMap on every access. The line:
+   if (value==null) {
+is in reality:
+   if (value==null || value.isInvalid()) {
+-- FredrikNylander

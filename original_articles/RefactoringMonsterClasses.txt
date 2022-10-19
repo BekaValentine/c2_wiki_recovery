@@ -1,0 +1,100 @@
+In a "spare time" project, I've been experimenting with all the "bright ideas" I'm not allowed to use at work:  TestDrivenDevelopment, DoTheSimplestThingThatCouldPossiblyWork, ReFactoring, etc.  Recently I came to a point where I remembered some old code I'd written a few years ago when I first went from C to C++, and thought it might be a good fit.
+
+Ugh.
+
+It was a monster-sized class, and the LargeClass stench rose from it in visible clouds.  It implements a text-based, request-response network protocol almost but not quite entirely unlike XML.  The text-based messages are of the variety:
+
+ GetObjectColor(door)
+ GetObjectColorResponse(door, ok, white)
+ GetObjectStateResponse(door, failed, no_door_found)
+ 
+ SetObjectColor(door, white)
+ SetObjectColor(door, white, ok)
+ SetObjectColor(door, white, failed, out_of_white_paint)
+
+ SendObjectCommand(door, close)
+ SendObjectCommandResponse(door, close, ok)
+ SendObjectCommandResponse(door, close, failed, foot_caught_in_door)
+
+Obviously, the actual messages were a lot more complicated, but these will do.  There are fifteen of these action/response pairs; every action message has a corresponding response.  Unfortunately, coming straight from (very poor) C coding practices, I made One Big Class to handling parsing of these things.  It went something like this:
+
+ class Message {
+    enum {GET_COLOR, GET_COLOR_RESPONSE,
+          SET_COLOR, SET_COLOR_RESPONSE,
+          SEND_COMMAND, SEND_COMMAND_RESPONSE, ...
+    } commandType;
+   string rawText;
+   ParseMessage(const string& text);
+   SetObjectTarget(const string& obj);
+   SetState(const string& obj); // ONLY USE ON SET AND COMMAND! 
+   SetResult(const string& result, const string& reason); // ONLY USE ON RESPONSES!
+ }
+
+Yuck.  Lots of refactorings can be done: switch statements (in ParseMessage) and large class for starters.
+
+So I opened the RefactoringBook and sure enough, it listed four refactorings: for "large class": Extract Class, Extract Subclass, Extract Interface, and Replace Data Value with Object.  I chose Extract Subclass, so then I had this:
+
+ class Message {};
+   class GetColorMessage : public Message {};
+   class GetColorResponse : public Message {};
+   class SetColorMessage : public Message {};
+   class SetColorResponse : public Message {};
+
+Of course, now I saw another refactoring opportunity:  splitting out the "message-ness" or "response-ness".  So I had this:
+ class MessageBase {};
+   class Request : public RequestBase {};
+     class GetColorRequest : public Request {}; 
+     class SetColorRequest : public Request {};
+   class Response : public Response {};
+     class GetColorResponse : public Response {};
+     class SetColorResponse : public Response {};
+
+But then I came across another problem:  GetColorRequest and GetColorResponse shared a lot of code.  So I tried to apply ExtractSuperclass, and fell immediately into the "diamond" multiple inheritance problem:
+
+         MessageBase
+             /            /  \                      
+           /    \       
+     Request    GetColorMessage
+           \    /
+            \  /
+             \/
+     GetColorMessageRequest
+
+This became as bad as the original to maintain!
+
+''So, where did I go wrong?"
+
+----
+
+You're relying on inheritance too much instead of composition.  You have two types of message: request and response.  Of those, some requests get a named, typed data item and others set a named, typed data item.  I would structure your messages like this:
+
+ class Message { ... };
+ class Request : public Message { ... };
+ class Response : public Message { ... }
+ 
+ class GetRequest : public Request {
+     std::string name;
+     ...
+ };
+ 
+ template <class T>
+ class GetResponse<T> : public Response {
+     T value;
+     ...
+ };
+ 
+ template <class T>
+ class SetRequest<T> : public Request {
+     std::string name;
+     T new_value;
+ };
+
+ class ErrorResponse : public Response {
+     std::string message;
+ };
+ 
+And so on...
+
+----
+
+Continue refactoring, using StrategyPattern, StatePattern, BridgePattern, FactoryPattern, and more. Read AsdPpp for pointers on when and how to apply these patterns. 

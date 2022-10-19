@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Resource Wrapper
+      </h1>
+      <p>
+        Yeah, so I'll flesh this one out, as I understand it.  -- <a href="RusHeywood.html">RusHeywood</a>
+      </p>
+      <p>
+        <strong>Pattern</strong> <a href="ResourceWrapper.html">ResourceWrapper</a>
+      </p>
+      <p>
+        <strong>Context:</strong> You need to allocate some sort of resource that your software will need to use for a bit, and then release them so as to be friendly to your platform.  These resources can be things like open file handles, threads, memory, database transactions, IO port handles, etc.
+      </p>
+      <p>
+        <strong>Problem:</strong> The trouble is, forgetting to correctly release resources (i.e., a <a href="ResourceLeak.html">ResourceLeak</a>) causes a huge number of software problems, the most common of these being <a href="MemoryLeak.html">MemoryLeak</a>s.  The consequences of failing to release these resources can be minimal, or they can be catastrophic and Byzantine, resulting in a filled open-file table or a system crash (especially if your system has not-so-great resource allocation facilities, such as MacOS Classic.)
+      </p>
+      <p>
+        <strong>Solution:</strong> Bind the scope of the resource allocation to the scope of a particular class of objects.  Then, constructing and initializing such an object will result in the allocation of a single resource of some type.  Similarly (and most importantly) destroying the object will result in the deallocation (freeing) of the resource.  This strategy reduces all resource allocation worries to a single kind: object allocation.
+      </p>
+      <p>
+        <strong>Example:</strong> In communicating with a transaction-based database (which is every kind, these days), one must begin and end transactions in some regular fashion so that the DB engine can commit the changes made and release the "undo stack" that is created to ensure that your changes can be rolled back during the transaction if necessary.  If one forgets to close/commit a transaction, there is no notification from the engine; it just gets slower and slower as more and more transactions are opened without a corrresponding close, until finally the database is restarted.
+      </p>
+      <p>
+        To reduce the worry of transaction closing, one might create a TransactionWrapper which opens a transaction on construction, and closes the transaction when it is destroyed.  (It's other methods typically also handle the other aspects of database communication, such as executing statements, but it isn't interesting to include that complexity for the example.)
+      </p>
+      <code>
+        class TransactionWrapper {<br/>
+        private:<br/>
+        int transID;<br/>
+        Database *d;<br/>
+      </code>
+      <code>
+        public:<br/>
+        TransactionWrapper (Database *db) {<br/>
+        d = db;<br/>
+        transID = d->beginTransaction();<br/>
+        }<br/>
+      </code>
+      <code>
+        ~TransactionWrapper () {<br/>
+        d->commitTransaction (transID);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        One might then use a TransactionWrapper within a function, like this:
+      </p>
+      <code>
+        void writeUserToDatabase (Database *db) {<br/>
+        TransactionWrapper t(db);<br/>
+      </code>
+      <code>
+        // ... statement executions...<br/>
+        }<br/>
+      </code>
+      <p>
+        Even though the programmer here did not explicitly include any code to end the transaction, the transaction was still committed successfully and quickly because the TransactionWrapper used to manage the transaction was a stack variable within writeUserToDatabase.  Since stack variables are destroyed as they go out of scope at the end of their containing function, the transaction was closed.  If the programmer uses transactions in this way, no additional cleanup code was necessary, even if the function throws an exception or has multiple exit points.
+      </p>
+      <p>
+        <strong>Consequences:</strong> This strategy works extremely well when it is appropriate to use <a href="ResourceWrapper.html">ResourceWrapper</a> objects as stack variables.  Then, deallocation is implicit regardless of how the containing function terminates, and the programmer need add no additional logic to free the resource.  However, not all languages support stack-resident objects, and not all resource holdings are so short-lived that it makes sense for them to be bound to the scope of a function.  Further consequences:
+      </p>
+      <ul>
+        <li>
+           Without the programmer doing anything else, resources will be freed <em>whenever the enclosing function returns.</em>  This is true even if the function has many return points, or does not always complete normally (i.e. if it throws an exception.)
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Sometimes resource holdings must outlive a function call. Specifically, if the allocation is inside some API or some server, and the resource must be held across multiple client calls, the stack-binding strategy won't work.  In case the likelihood that the resource will be correctly deallocated is equivalent to the likelihood that your program contains a <a href="MemoryLeak.html">MemoryLeak</a> (forgotten object deallocation).  The workaround to this is that you provide a facility to the client where the resource that you are holding as a server corresponds to some resource that you provide to your clients; this just pushes the burden of allocation and deallocation down to them and hopes that they use <a href="ResourceWrapper.html">ResourceWrapper</a> to manage your resource.)
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Not all languages support stack-resident objects.  In particular, Java allows only heap-resident objects because of the risk that you might return a reference to a stack object from your function call, which would of course be invalid as soon as the function completed.  (Can you tell which language I know the most about?)
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Some languages (especially a GarbageCollectedLanguage) have heavily conditional, uncertain semantics regarding object deallocation, and this can monkey-wrench the <a href="ResourceWrapper.html">ResourceWrapper</a> pattern.  For example, in Java 1.1 it was possible for the <a href="VirtualMachine.html">VirtualMachine</a> to be run in a mode where, when objects are collected, their finalizer method (or destructor) was not called.  This would make it possible for the <a href="ResourceWrapper.html">ResourceWrapper</a> objects to be freed without actually freeing the corresponding resource, so leaks happen anyway.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           If a , resource allocations may needlessly pile up and make the interval over which the resource is held unacceptably long.  Simple implementations of GC have been known to do things like avoid GC until the end of the program, in the hopes that your code won't allocate much memory and the OS will just destroy the program's heap space automatically.  This obviously would not do for dealing with a high-speed database engine.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Some <a href="GarbageCollector.html">GarbageCollector</a>s don't collect garbage until memory appears to be exhausted. On a machine with a lot of memory, garbage collection might not happen often enough. The program may really terminate before garbage collection even becomes necessary.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Here is the Java way to use this pattern: instead of using the finalizer to do the resource release, make resource release an explicit method, and then instruct users of the <a href="ResourceWrapper.html">ResourceWrapper</a> to do this:
+        </li>
+      </ul>
+      <code>
+        void functionCall () {<br/>
+        <a href="ResourceWrapper.html">ResourceWrapper</a> w;<br/>
+        try {<br/>
+        // resource allocation<br/>
+        w = new <a href="ResourceWrapper.html">ResourceWrapper</a> (key);<br/>
+      </code>
+      <code>
+        // ... resource usage ...<br/>
+      </code>
+      <code>
+        } finally {<br/>
+        // resource release<br/>
+        w.releaseResource();<br/>
+        }<br/>
+      </code>
+      <ul>
+        <li>
+           This is not as good as the stack-resident object strategy, because the user still must remember to release the resource.  However, by putting the release code in an outer finally block, the user has the guarantee that the resource will always be released, regardless of how the enclosing function terminates.  (Such are the semantics of the finally block, which is not without its problems; FinalizerDisaster, for example.)
+        </li>
+      </ul>
+    </div>
+  </body>
+</html>

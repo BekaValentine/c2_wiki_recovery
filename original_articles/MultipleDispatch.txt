@@ -1,0 +1,205 @@
+When a dynamic dispatching mechanism for a function uses more than one piece of information to determine which function to actually call. Usually the pieces of information are the types of the parameters passed to the function.
+
+'''Java-style method overloading isn't multiple dispatch.''' In multiple dispatch, the 'switch' is done on the dynamic (run-time) type tag of the object -- but Java's (and C++'s) overloading only considers the static (compile-time) type of the object reference.
+
+Let's declare an overloaded method in an Appraiser class, which appraises the value of different things:
+
+  class Appraiser {
+    public void Appraise (Vehicle v) { println ("Appraising a vehicle..."); }
+    public void Appraise (Tractor t) { println ("Appraising a tractor..."); }
+  }
+(Tractor extends Vehicle.) Now let's make a Tractor, but refer to it with a Vehicle reference:
+
+  Vehicle myVehicle = new Tractor();
+What is the output of the following method call?
+
+  myAppraiser.Appraise (myVehicle);
+Answer: "Appraising a vehicle..."! But this isn't what we want, because tractors have special features that most vehicles don't have, and we won't get the real price for our tractor.
+
+With true MultipleDispatch, the Tractor-specific version will be called, and we'll cash in like we should!
+
+''That sounds like DynamicDispatch, not MultipleDispatch...''
+
+
+
+
+It is describing a -lack of- MultipleDispatch (DoubleDispatch in particular).  But it needs to be extended a bit to show why.
+
+  class T''''''ractorHead extends Appraiser {
+    public void Appraise (Vehicle v) { println ("Boring...");           }
+    public void Appraise (Tractor t) { println ("I LOVE TRACTORS!!!!"); }
+  }
+
+  Appraiser myAppraiser = new T''''''ractorHead();
+  Vehicle   myVehicle   = new Tractor();
+  myAppraiser.Appraise(myVehicle);        // outputs: "Boring..."
+
+Clearly we have DynamicDispatch because only the T''''''ractorHead has the behavior of printing 'Boring...'.  But this is '''single''' dynamic dispatch because it was 'dynamic' only on a single argument (myAppraiser).  If we had true MultipleDispatch (even just DoubleDispatch) then "I LOVE TRACTORS" would have been printed; the method selected (by the method 'dispatcher') would have automatically chosen the more specific instance of 'Appraise'.
+
+-----
+
+Ideally, since we're talking about features Java and most languages ''don't'' have, we could also further specialize in one class without introducing couplings in the base class.  Example:
+
+  class T''''''ractorHead extends Appraiser {
+    ... as above ...
+    public void Appraise (U''''''nfavoredBrandTractor ubt) { println ("Meh.");   }
+    public void Appraise (J''''''ohnDeerTractor jdt) { printlin ("J''''''ohnDeer tractors are the best!"); }
+  }
+
+  Appraiser myAppraiser = new T''''''ractorHead();
+  myAppraiser.Appraise( new U''''''nfavoredBrandTractor() );  // prints "I LOVE TRACTORS!!!!"
+  Vehicle myVehicle = new J''''''ohnDeerTractor();
+  myAppraiser.Appraise( v ); // prints "Boring..."
+
+In this case, what we actually want are "Meh." and "J''''''ohnDeer tractors are the best!" respectively.  But even if Java provided MultipleDispatch, these selections would be unlikely because they aren't overriding methods in Appraiser; i.e. we're demanding a '''non-virtual''' DynamicDispatch for myAppraiser.  This can be obtained, note, by making the dispatch-method itself 'dynamic' such that each derived class automatically overrides the dispatch method and chooses an appropriate method call based on the actual types of the parameters.  
+
+However, something like the above might be achieved via runtime reflection on both the Appraiser and the other parameters.  One could even make it generic, wrapping all that functionality into something like:
+
+  class Dispatcher {
+     public void dispatch1(Object methodSrc, String sMethod, Object parameter1) { ... impl ... }
+     public void dispatch2(Object methodSrc, String sMethod, Object parameter1, Object parameter2) { ... impl ... }
+  }
+
+  Dispatcher myDispatcher = new Dispatcher();
+  Appraiser myAppraiser = new T''''''ractorHead();
+  Vehicle myVehicle = new J''''''ohnDeerTractor();
+  myDispatcher.dispatch1(myAppraiser,"Appraise",myVehicle);  // prints "J''''''ohnDeer tractors are the best!"
+
+Using reflection, it may be feasible to grab the actual method list from myAppraiser, filter it down to those matching the string "Appraise", grab the dynamic type of parameter1, and dispatch the specialized parameter to the correct specialized method.  Essentially you're overriding the default Java dispatcher.  Without a doubt, doing all this would be more expensive than what Java is doing (that being function-pointer lookups in a virtual table, for most implementations), but the flexibility can be useful and (just as importantly) you're avoiding the 'coupling' that comes from requiring 'Appraiser' know about every possible vehicle type.
+
+I'm curious if someone has an implementation for Dispatcher.  I wouldn't be surprised; based on the example below, one might use something like:
+
+ class Dispatcher {
+   public void dispatch1(Object src, String sMethod, Object p1) {
+      Method m = src.getClass().getDeclaredMethod(src,new Class[](p1.getClass());
+      m.invoke(src,new Object[](p1);
+   }
+ }
+
+This should give true DoubleDispatch between any two objects without depending on virtual overrides, and without mucking up the interfaces to 'Vehicle', and without creating coupling to some 'Appraiser' base class.
+
+  Object myAppraiser = new T''''''ractorHead();
+  Object myVehicle   = new Tractor();
+  new Dispatcher().dispatch1(myAppraiser,"Appraise",myVehicle);  // prints "I LOVE TRACTORS!"
+
+The extension to more than one parameter (to true non-virtual MultipleDispatch) should also be possible.  
+
+However, calling it MultipleDispatch is a bit misleading.  It provides that possibility, but this seems to strictly be more general... and a lot less optimal and a lot less safe (this solution is not much for compile-time checks).
+
+----
+
+In languages that only support single dispatch (C++, Java, Smalltalk), one can use DoubleDispatch, which though not MultipleDispatch, does handle most cases you might need.  But since TwoIsAnImpossibleNumber, you should feel just a little dirty for this hack.
+
+----
+
+This is not a problem. Make a virtual string cast method on vehicle and call it from appraise. The most derived string cast will be called. You might like the appraiser method signature to have such smarts ... but what difference does it make? Oh, you're gonna talk about performance. I just know you're gonna stand there with a bald face and talk about performance ... and that's just stupid.
+
+----
+You can come close in Java without using DoubleDispatch, which (IMHO) clutters the target object's interface:
+
+  class Appraiser {
+
+    public void Appraise(Vehicle vehicle) {
+      // Grab the correct method using Vehicle's run-time type, and explicitly invoke it
+      Method m = this.getClass().getDeclaredMethod("Appraise", new Class[]{vehicle.getClass()});
+      m.invoke(this, new Object[]{vehicle});
+    }
+    public void Appraise(Tractor tractor) {
+      System.out.println("Appraising a tractor");
+    }
+    public void Appraise(Truck truck) {
+      System.out.println("Appraising a truck");
+    }
+  }
+
+This works in cases where Vehicle is an abstract base class (i.e., something that can't be appraised itself). If Vehicles aren't abstract, then you need to add additional logic to prevent an infinite call loop. This also has problems with superclasses (e.g., a PickupTruck, even if it extends Truck, needs either its own Appraise() method or needs an upclass invocation (and object.getClass().getSuperclass() in nested try/catch blocks scales worse than just doing an instanceof cascade).
+
+Still, if your system can use it, this strategy might help, and it reads better than the instanceof stuff...
+
+''you've lost the idea that double dispatch allows you to work with stuff you don't know a priori, your solution is pointless.''
+
+Ummm...  No.
+
+First, this example is not multiple dispatch.  It's in the same neighborhood, and it provides a method to get run time typing into the code which can be extended with additional logic (e.g., for superclass navigation) that can take care of the problem I mentioned above, but which obfuscates the example.  In the above example, you know you have a Vehicle class and a Tractor subclass inside the Appraiser class.  The Appraiser also know he has a method called Appraise.  DoubleDispatch is appropriate for specific applications, but if you don't need to clutter up an object's interface with unrelated method signatures, you shouldn't.
+
+With DoubleDispatch, you'd have to have a method:
+  class Vehicle {
+    public void Appraise(Appraiser app) {
+      app.Appraise(this);
+    }
+  }
+
+I believe this method would have to be overridden by each Vehicle subclass (''which, of course, couples the 'Vehicle' interface inextricably with the 'Appraiser' interface... so NOT cool.'')
+
+What don't you know here that I anticipate in my example?  It looks to me like not only will Appraiser have to have overloaded methods (which, after all, is what we're trying to do), but that each individual vehicle subclass has to know it can be Appraised by an Appraiser.  Adding that method is an artifact of an implementation, and it smells.  Sometimes you have to do it, but if there's a cleaner way that works, i think you should try that first.  
+
+I did point out that you do lose the superclass magic by using the strict run time type, but you can roll your own by using a stack and exception catching (grabbing the least generic type by simply taking the first one that doesn't throw an exception).  If you're feeling quite daring, you can even grab a list of method signatures from Appraiser and roll your own dynamic dispatch.
+
+----
+in the example above, near the top, the following line is wrong [if you want a tractor]:
+Vehicle myVehicle = new Tractor();
+you don't "get" the tractor-ness of the vehicle this way
+as soon as you set it as the parent, you lose the "extensions" of the child
+so you don't have a tractor and the line "appraising a vehicle" IS the expected outcome
+right?
+i am doubting the java knowledge of the person writing that they want to appraise a tractor but they passed the appraiser a vehicle
+
+''Yes, you do "get" the tractor-ness of the vehicle this way, if you evaluate Vehicle methods that are overridden by Tractor.  In the example, myVehicle references a Tractor instance.  If you invoke a Vehicle method -- e.g., myVehicle.getEngineSize() -- you will get the engine size of a Tractor if Tractor has overridden getEngineSize().  However, invoking myAppraiser.Appraise(myVehicle) will only invoke Appraise(Vehicle v), regardless of the run-time type of the instance that myVehicle references.''
+
+--
+i see your point, but when you "down-reference"/"up-assign" [or whatever you want to call it] you don't really have a "run-time type" tractor? you only really have treated vehicle like an interface and used tractor as the implementor rather than the extender
+
+i guess I am confused with why someone would be surprised that a Vehicle is treated like a Vehicle
+
+i cannot see when this would come into play
+
+{EnglishPlease.  Capitalize those sentences.}
+
+{The basic reason for desiring something like MultipleDispatch above is that you wish to allow for behavior to diverge on two or more orthogonal paths, but you need to work with the components at the interface level.  Extending the above example, the Appraiser above might be appraising a whole collection of 'Vehicles', including Trucks and Tractors and Jet Planes.  DoubleDispatch is especially common to the VisitorPattern and such things as PrettyPrint''''''ers.}  
+
+{More generic MultipleDispatch (on more than two features) is not something I've seen often in practice.  One example might be Artist/Palette/SceneGraph (with artists that will utilize certain palette-specific features to draw certain objects in a scene if those features are available).  This isn't just a toy example; Artist/Palette/SceneGraph actually applies well to drawing GUIs (an InteractiveSceneGraph) while supporting different toolkits (Palettes) and styles (Artists).}
+
+[
+OK. Thanks. I am learning.
+]
+--
++
+[ (Following up here), 
+based on what you say, then the example is just bad. 
+There are no interfaces in play...
+]
+
+''I'm not sure of the relevance of interfaces here, but it is (at best) perhaps an example of the lack of dynamic dispatch in Java.  See MultiMethods for a (somewhat) better description.''
+
+{Interfaces?  I supposed didactically... Would using a Java Interface for the Appraiser have led you more immediately to the notion that there could be multiple different appraisers? }
+
+What?
+You mentioned interfaces ('need to work with the components at the interface level'). Re: the Appraiser being an interface: what? The Vehicle needs to be an interface, and again, that is effectively what the bad construct has done. 
+
+Also, the line of code declaring a parent object but referencing a child is just bad code. That's just not how you do it in JAVA, which I guess is the point of the thread here. If the only examples we can have demonstrating a lack of multiple dispatch are like this, then i don't think it is a significant problem. 
+Thanks
+
+''It's perfectly good code.  Declaring a variable of some base class and assigning it a derived instance is a classic OO idiom (not just Java) used in contexts where polymorphism is implemented via inheritance rather than by interface, i.e., in cases where your algorithms work with an abstraction (the base class) that is implemented by one or more concrete derivations of the base class.  While the original example is perhaps not the best illustration of the lack of multiple dispatch, it is perfectly acceptable code.  The way Appraiser is used is quite typical on occasions where the classes to be appraised (Tractor and Vehicle) may not be modified for whatever reason.  A more appropriate application of multiple dispatch is in implementing the VisitorPattern as part of a language parser for a complex grammar; in the absence of multiple dispatch it requires an awkward festoonment of class and method declarations.''
+
+Everyone knows polymorphism by inheritance is sound/good/acceptable code. I was referring to the example as not being the best demontration of a lack of MultipleDispatch.
+Thanks for taking the time to explain your position. I am learning.
+
+''Ah.  A bit more clarity would help your criticism.  When you wrote "the line of code declaring a parent object but referencing a child is just bad code," I assumed (as would many readers, I suspect) you meant in general.''
+----
+
+----
+The following compiler adds multiple dispatch amongst other things to Java:
+    http://pec.dev.java.net/
+
+The following is an OtherLanguagesForTheJavaVm which supports MultipleDispatch:
+
+  http://nice.sourceforge.net/
+
+----
+See also: ExternalPolymorphism, GenericFunction''''s, MultiMethods, ImplementingMultipleDispatch, DoubleDispatchExample
+
+Compare PredicateClasses, and consider PredicateDispatching
+
+AugustZeroEight
+
+CategoryPolymorphism, CategoryConditionalsAndDispatching

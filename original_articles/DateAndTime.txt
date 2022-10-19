@@ -1,0 +1,117 @@
+Date and time always seems more complicated than it ought to be. Or, maybe the complexity lingers because it actually does solve problems. The following posting to the squeak mail list could be a good start to an exploration of patterns for date and time. -- WardCunningham
+
+----
+
+''It seems like a time without a frame of reference would be a time interval, probably stored as a number of seconds, with accessors for seconds, hours, and days. These objects wouldn't translate to dates, as the concept of 'Date' implies a specific calendar, which in turn defines a frame of reference.''
+
+This can be problematic. It is best to store intervals as "broken-down" time intervals - i.e. years, months, days, hours, minutes, and seconds.
+
+For instance the time interval of one month is not the same as a constant number of days. For the *real* annoying problems, keep reading.
+
+----
+ 
+''GMT and UTC are, as far as I know, the same thing for most purposes (there may be some technical differences in definition, which I'd be interested to know). The primary difference is terminology; the GMT label hasn't been officially used for a number of years.''
+
+GMT, technically, is a time zone that is no longer in use. It was last used in England, many decades ago. GMT is often used to be "synonymous" with UTC, and for ~ 1 second accuracy, it is. UTC, however, has this annoying detail of a leap second... a second inserted into the calendar about once every year or two. This means that in UTC not all minutes are 60 seconds long. Every now and then, one has 61 seconds. The situation is not too different than the one mentioned above with months. The problem is Nobody expects months to be the same length, and almost everybody expects minutes to be, including most of the OS's that will be hosting Squeak.
+
+For details, see http://www.apparent-wind.com/gmt-explained.html.
+
+UTC was instituted 1960-01-01, and the year included a "drift" component that was semi-regularly updated, which ranged from 1.4 to 4.2 seconds over the period from then until 1972, when it was replaced by inserting leap seconds at judicious points every few years or so at the start of January or June (the most recent (as of 2003-01-21) being 1998-12-31 23:59:60 UTC). 32 seconds' worth, so far.
+
+----
+
+Not all days have 24 hours.
+(I'm not talking about leap seconds;
+I'm talking about a much larger discrepancy.)
+Do you know why and when?
+See below.
+-- PaulChisholm
+
+----
+
+''If you have it available, take a look at the code required in VisualWorks to handle this stuff.''
+
+Beware, VisualWorks TimeZone class is a very rough implementation, and is incorrect for the US if you go to dates before 1987, the last time the US changed the DST rules.
+
+Having done quite a bit with Timestamps in Smalltalk, let me assure you: Timestamps should be based on UTC/GMT (the difference is irrelevant for most applications). Using local time for the internal state of said stamps will cause nothing but headaches. And if you ever have to write code that deals with more than one time zone, you will be in *big* trouble.
+
+Having the OS/VM/Computer know about the "local" time zone, often causes people to write code that assumes this is the only relevant timezone. Next thing you know, this "default" time zone becomes a global variable riddled through your code. This is bad.
+
+The best approach I've found for Timestamp classes that wish to deal with UTC and leap seconds (as the X3J20 conformant application must), is to base the stamp internally on a 'minutes' instance variable, and use (possibly fractional) seconds only when necessary. Usually, for most applications, minutes resolution is all that is needed, and you don't need to worry about the difference between UTC and GMT. Forcing the application developer to explicitly think about the seconds, either makes them aware of the problems, or prevents them from doing stupid things like using equality of timestamps to determine if something has changed. (Yes, in these days of fast computers, the response to a change can actually happen in the same second as the change was made).
+
+-- MikeKlein
+
+----
+
+Which days don't have 24 hours?
+If a day is "midnight local time to [epsilon before] midnight local time the following day,"
+most days have 24 hours.
+The first day of DaylightSavingTime has 23 hours;
+the first day after DaylightSavingTime has 25 hours
+
+''Oh, you silly timezones hanging on to a relic of the world wars...  Ahhhhhhhh, Saskatchewan, where the days always have 24 hours (+- a second)''
+
+We found our database server
+(Sybase SQL Server 11)
+doesn't understand DaylightSavingTime;
+that is, it couldn't distinguish between 1997/10/26 2:30 a.m. EDT and 1997/10/26 2:30 a.m. EST,
+and thought 1997/10/26 2:59 a.m. EDT was '''after''' 1997/10/26 2:01 a.m. EST
+(instead of being a couple of minutes '''before''').
+I imagine Microsoft SQL Server has the same problem.
+
+''Problem:''
+DateAndTime '''is''' always more complicated than it seems it ought to be.
+
+'''Therefore:'''
+Get a good pair of classes for DateAndTime and TimeInterval, and use that pair '''everywhere''' in your system.
+Especially use it for all date arithmetic,
+even for trivial (seeming) increments and decrements.
+(The only exception might be for timestamps,
+e.g., the C/Unix ''time_t'' type.)
+
+''Problem:''
+Date arithmetic can be very expensive
+(when measured in machine resources).
+Examples:
+One of the Perl CPAN modules takes about one second to do any date operation.
+Even finding the current time
+(even as a ''time_t'') can be expensive.
+I worked on an interobject communications framework;
+we profiled it, and found that the Unix ''time''(2) system call was the performance bottleneck!
+
+'''Therefore:'''
+Try to keep date arithmetic,
+and as many DateAndTime operations as possible,
+outside the inner loop of your software.
+Example:
+In the interobject communications framework,
+we cached the "current time,"
+and used it in code that we knew ran shortly after the last 
+call to ''time''(2).
+(We only had to know the current time accurate to about one second.)
+
+-- PaulChisholm
+
+----
+If you want to write a good date package, you should read CalendricalCalculations. It has algorithms for finding holidays and for converting from one calendar system to another.
+----
+
+I was the original author of the ANSI DateAndTime and Duration protocols. I just searched Google and Google Groups to see what anyone has done with those protocols. I did find a few common questions/complaints and thought I would give my answers. I suppose that at this point my answers are no more valid than anyone else's, but for what they're worth...
+
+How to implement <DateAndTime> #clockPrecision. Honestly, I have no idea. My expectation was that the implementation could query the hardware either directly or by running some tests. The problem is the word "guarantee". This is difficult or impossible to guarantee. My suggestion would be to read "guarantee" as "pretty damn sure" and give it your best guess. The intent was so that an application would have some idea of the level of timing precision available. While lots of OSs can return millisecond values, it is often the case that the precision is much more than a millisecond.
+
+How to implement <DateAndTime> #timeZoneName and #timeZoneAbbreviation. These values are totally implementation dependent. Return anything you want to. If you know the local timezone name, then return it, otherwise return nil or an empty string, or what I did in my implementation, the offset printString. I probably should have specified that as a default lacking any other meaningful value.
+
+Lots of complaints about the name DateAndTime. Not my fault. All the other names had been captured by one or more of the major implementations with incompatible protocols. DateAndTime was the only vaguely reasonable thing left.
+ 
+Some complaints about the performance. I implemented DateAndTime as the number of seconds before/since some date in the 1600s and an offset Duration. The seconds was always in UTC. The epoch date was chosen because it made lots of calculations very easy. I don't remember what it was, though. Most DateAndTime operations were very fast because they were just done in seconds. The querys and toString were somewhat slower, but because of the choice of the epoch, still fairly fast. Durations were just a number of days and a number of seconds. Separating days made the leap second stuff possible.
+
+At least one person complained about removing leap seconds, which were in one of the early drafts. Not my doing; the committee decided that. My implementation included them and it was easy. Plus, because of the way the protocol was specified, a conforming implementation was not required to implement leap seconds. All it had to do is report that there were no known leap seconds.
+
+-- DouglasSurber
+----
+
+GPS receivers have their own time, WGS-84 time, which has no leap seconds and so is easier to work across intervals with. The constellation data that receivers download include the current offset from GPS time to UTC, so this fact is usually hidden from end users. GPS time does, however, roll more regularly than normal systems; one wraparound has already occurred and confused some older GPS receivers when it happened.
+
+----
+CategoryTime CategoryPattern

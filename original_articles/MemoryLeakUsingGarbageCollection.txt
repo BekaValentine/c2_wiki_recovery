@@ -1,0 +1,84 @@
+It has been said in GarbageCollection that memory leaks were just impossible provided you were using some GarbageCollector mechanism.
+
+I'm afraid I have to contradict the author, but I think this is just plain wrong.
+
+One common reason for a desktop JavaApplication to run slower and slower as time goes comes from MemoryLeak''''s. As there is less and less spare memory into the heap to play with, the GarbageCollector tries to reclaim sooner and sooner every little object that can be finalized. Just before crashing due to an OutOfMemoryError, the application is just running nothing but the GarbageCollector. (That's why it's rare to come that far, most of the time you just close and restart the application, which solves the problem).
+
+The GarbageCollector will reclaim every object that is not reachable anymore. Great! But do you know every reference there exists to your wonderful MyJTabbedPanel? Well, the parent JFrame, sure, but it is also a listener to some other widgets. Also, since you're using ModelViewController, the panel, which happens to be the view, is also listening on the model. That makes a reference, right? Then don't forget about that nice popup menu that was created long, long ago and that is holding a reference to some JList sitting within your MyJTabbedPanel. Does that count? Maybe, maybe not, the JList could hold a reference to its parent.
+
+So when the user decides it is not interested into your nice panel anymore, you will remove it from the shell. And you will forget to unregister the panel from the model, and you will forget about this KeyListener, and you will forget about this popup menu, and you will forget about everything else: why should you bother unititialise all that mess since there is a GarbageCollector that will, eventually, clean everything up?
+
+Ergo, your MyJTabbedPanel is still hanging around in the memory. Of course, that panel is holding a lot of strong references to other data, such as this three-megabyte background image…
+
+I think it is crazy that this issue is never taught to students, nor even mentioned anywhere! The day you will code a CyclicBuffer, how will you design the ''clear'' method? By writing something like ''_read=_write=_size=0''? Congratulations, you’ve just created a huge memory leak: even though it claims to contain no element at all, your buffer still holds tons of strong references to some user's data. You ''must'' scan through all elements and set them explicitly to null (or create a new, empty array).
+
+I think not everybody is fully aware that, in a GarbageCollectedLanguage, there are plenty of cases where you should explicitly set references to null, and there are plenty of funny ways to leak your memory. JavaMemoryProfiler and JProbe are curative solutions for that problem, but better prevent than cure.
+
+So, in conclusion, it is as easy to do a memory leak in Java (or in any other GarbageCollectedLanguage) as in C or C++. The nature of the leak and its symptoms are just completely different. The result is always the same: a malfunctioning application.
+
+-- PhilippeDetournay
+
+This is not quite correct. The set of "leaks" in a GC'd language is a subset of the leaks possible in a non GC'd language. You could correctly claim that you can still leak memory, but it is certainly not as easy to leak as a non-gc'd language.
+
+Well yes, but the proportion of the leaks cured by GC may be quite low. Has anybody some statistics at hand?
+
+''I'm not quite sure that the leaks in a GC'd language is a subset of non GC'd languages. For instance, the CyclicBuffer leak mentionned above is not a leak in C or C++ (you can safely keep old pointers to their value without generating any leak). It is not even dangerous nor bad practice. The good old ''free(ptr);ptr=NULL;'' is a safety tip you use as a marker to help debugging, but not doing so won't generate any leak. In Java, it ''could'' generate a leak. The truth is that GC and non-GC are completely different paradigms.''
+
+It *is* a leak. You've freed the underlying memory, but not recovered the pointers. Your app is going to crash sooner or later when it tries to use those pointers.
+
+It is dangerous, and extremely bad practice to leave pointers to free'd memory laying around. IF you are the only programmer to ever touch your code, and IF
+you are the bestest and brightest of programmers, and IF you never code on an off day, and IF you never have to come back to the code after a significant time
+away from it, and IF there are performance justifications, THEN you can unsafely leave pointers to random memory strewn throughout your code.
+
+I'd put money on the table that you violate at least one of the invariants above. Don't do it.
+
+''I indeed always try to nullify pointers after having freed them. But there are tons of situations where you have a pointer you did not malloc, for instance in my CyclicBuffer case. Do you consider not memsetting the whole buffer after a call to the clear method as a bad practice? After all, since your buffer is completely encapsulated, there is no risk to access these dead pointers anymore. Even the stdlib doesn't do that. Take the following code fragment:''
+
+	vector<MyObject*> v;
+	MyObject* o=new MyObject();
+
+	printf("%p\n",o);
+	
+	v.push_back(o);
+	v.pop_back();
+	
+	delete o;
+	o=0;
+
+	printf("%p\n",*v._Mylast);
+
+''I get the following result:''
+    00322B90
+    00322B90
+
+''So after having deleted o, even after having nullified o, there are still some locations in memory that contain a valid pointer to o. In C++, we don't care, in Java, this *IS* a memory leak.''
+
+''-- PhilippeDetournay''
+
+
+----
+I don't have any official statistics, but I can share my personal experience (of course YourMileageMayVary). As a C/C++/Java developer, I find myself hunting memory leaks in Java much more often than in C or C++. On the other side, it is much more frequent for me to hunt crashes in C or C++, but it's quite rare in Java.
+
+Why?
+
+Beside BufferOverflow''''s, two common causes of crashes in C/C++ come from using non-initialized pointers and using freed pointers.
+
+The first one is the Java equivalent of NullPointerException, and you have to live with. The second one is much more subtle. It's quite rare to encounter the situation in simple C/C++ applications, but as the CodeBase grows (especially if you use ObjectOrientation and ModelViewController at the same time), you will start using pointers you've received but knowing neither who allocated it nor who is supposed to free it. And you will start using them even though they have been freed. This is a classical cause of crash, especially after deleting an item from a list (the good old "hoops I've deleted the item while its window view was still open and it made the application crash").
+
+This situation cannot arise in Java, as the GarbageCollector will prevent you from using a freed reference. But the result is that you might still have your item in memory even though it has been "deleted". This is a memory leak.
+
+As time goes, I consider more and more the GarbageCollector as something that turns freed pointer crash into memory leaks. And yes, I'm hunting Java memory leaks more frequently than C/C++ memory leaks, but I'm hunting C/C++ crashes due to freed references much more than NullPointerException''''s in Java.
+
+Quite far from the common "GarbageCollection is the panacea against memory leaks", huh?
+
+-- PhilippeDetournay
+----
+
+Hmm. This use of the term "memory leak" hurts my ears. For 25 years I have always taken the phrase to mean "failure to free memory that is no longer referenceable". Since in GC languages, the concept of freeing memory does not exist ''except'' by eliminating all potential for references to it, the assertion that you cannot have memory leaks in GC languages is of necessity true by this definition.
+
+But the problem you describe certainly has the same effect, so I guess I'll have to widen my definition slightly to "failure to free memory that will no longer be referenced by the running program". It's certainly true that, in the presence of globals or long-lived locals, the explicit act of freeing memory has to be replaced by the explicit act of nulling a reference. -- DanMuller
+
+----
+See: PointerKilling, DisposedList
+
+CategoryGarbageCollection

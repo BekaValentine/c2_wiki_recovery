@@ -1,0 +1,120 @@
+SendReceiveReply is a synchronous InterProcessCommunication mechanism that more OperatingSystem''''''s ought to be based on.
+
+Synchronization and communication between two threads are carried out at the same time like this:
+
+	* Process 1 does a "Send" to Process 2. Process 1 is now "send-blocked".
+	* Process 2 does a "Receive" and gets the message sent by Process 1. Process 1 is now "reply-blocked".
+	* Process 2, still running, processes the message from Process 1. It may do other Receives or Sends to other processes in the meantime. After a while, it is ready to Reply.
+	* Process 2 does a "Reply" to Process 1. Process 1 gets the reply message and is now unblocked.
+
+Or like this:
+
+	* Process 2 does a "Receive", but nobody is sending to Process 2 yet. Process 2 is now "receive-blocked".
+	* Process 1 does a "Send" to Process 2. Process 1 immediately becomes "reply-blocked" and Process 2 is unblocked.
+	* (the rest is the same as above).
+
+Note that it works exactly the same with threads, one could consider that a process is a thread with its own address space, or maybe that a pair of threads is like a pair of processes except that the threads might come from the same address space.
+
+One important thing to notice about the above mechanism is that when a message is actually passed from one process to the other, one of the two threads is always blocked. Therefore, queues and pipes and the like are not necessary. If multiple threads are blocked on the same receiver, the OS just puts their TCBs (ThreadControlBlock''''''s) into an internal linked list. MessageQueue''''''s and pipes can have problems with overflow or underflow. SendReceiveReply never has problems with overflow, since only the number of threads that exist in the system can be blocked waiting for something to happen, and for underflow the sender or receiver just blocks until the other party is ready.
+
+Another important thing to note  is that after '''reply''', neither Process 1 nor Process 2 are blocked. This allows concurrent operations in the cases where Process 2 simply replies with an acknowledgement prior to continuing operations.
+
+The idea that ThreadsAreComputationalTasks is of fundamental importance here: since the thread has ''no other responsibilities'' at the moment besides the one computational task it is carrying out, it is perfectly okay ''and proper'' for the thread to be blocked while it is waiting for the other party to fulfill the next part of the task. In an asynchronous system, threads are typically so expensive that people feel obliged to cram a bunch of other parallel behaviours into the thread, so this sort of blocking would require a big state machine to control the interactions among the tasks.
+
+-----
+
+SendReceiveReply admits to a sort of '''IPC TailCallOptimization'''. In particular, if Process 2 issues a call that looks like: '''reply (send Msg Process 3)''', then it can actually put Process 1's ThreadControlBlock into Process 3's MessageQueue along with the new message.
+
+----
+
+It turns out that you can build events, semaphores, pipes, message queues, etc. out of SendReceiveReply. You can also build SendReceiveReply out of various subsets of those things. WylieGarvin's opinion is that the world's pipes and message queues should have be built with MicroKernel''''''s and SendReceiveReply, but instead the major OSes adopted asynchronous mechanisms and made the multithreaded programmer's life a miserable hell.
+
+''That's just being silly. Even without SendReceiveReply as a single command, programmers have full ability to Send then explicitly wait for a reply. Nothing is stopping them. What makes a multithreaded programmer's life a miserable hell in common languages (like C and C++) are the piss-poor and inconsistent utilities to describe communications constructs, and the general lack of (efficient) support for atomic or transactional operations. What makes a multi-threaded programmer's life a miserable hell is the insane avoidance of languages designed especially for asynchronous operation.''
+
+----
+
+Another reason to like SendReceiveReply:
+
+Think of the failure modes of asynchronous multithreaded systems. The developer forgot to put some synchronization in, or there was some tiny race-condition loophole, or an unexpected condition left the synchronization in an unstable state. The system ''almost, kind of, usually'' works. It limps along and none but the most HeroicDebugging efforts will expose the RaceCondition, because it's usually non-deterministic, non-repeatable, and maybe even a HeisenBug. The message queue overflows: the extra message(s) get dropped on the floor. Oh, that message was a critical part of some coordination between your threads? Ooops! Too bad...
+
+With SendReceiveReply, and synchronous IPC in general the only failure mode is DeadLock. And by analysing the send graphs of your system, you can prove to yourself that it will never deadlock. Having the system perform synchronization for you at the proper places during communication ensures that there will not be any RaceCondition''''''s, loopholes, etc.
+
+''You're being a bit too optimistic about failure modes:''
+* (1) Send graphs of the system may only be analyzed in advance if all computational tasks are known in advance. Tasks that are determined dynamically and that interact with existing tasks cannot be so analyzed. In an OperatingSystem, most tasks will be of the dynamically created sort: i.e. to "analyze the send graphs of your system" you'd need to analyze the entire OperatingSystem, likely including code that isn't written yet.
+* (2) RaceCondition''''''s don't go away; that was just wishful thinking with weak analysis. RaceCondition''''''s occur under conditions in which the order in which messages are received from independent tasks is non-deterministic and future behavior depends on the order in which messages are received. Nothing about SendReceiveReply prevents these conditions, and it is rather easy to create a RaceCondition with SendReceiveReply (in fact, the same 'forces' example motivating TransactionalActorModel will work). To prevent RaceCondition''''''s you'll need to either re-invent semaphores and locks using SendReceiveReply IPC (a solution that is fraught with all the dangers and complications of locks), or you'll need to support a transaction model (such as SoftwareTransactionalMemory or TransactionalActorModel).
+
+----
+
+See for example:
+	* http://www.qenesis.com/support/qnx_messaging.html
+	* http://www.qnx.net/developer/docs/qnx_4.25_docs/qnx4/sysarch/microkernel.html#IPCMESSAGES
+	* the SIMPL project on Sourceforge.net
+
+----
+
+''This fits my personal mental model of how most OSes do implement IPC, except for the distinction between "send-blocked" and "reply-blocked". In what ways is this not true, or what OSes don't support it? And what is useful about the "send-blocked" vs "reply-blocked" distinction?''
+
+Well, if you use Windows (for example), then '''communication''' is accomplished with something like messages, or shared memory. '''Synchronization''' is accomplished using Mutexes, Events, CRITICAL_SECTIONs, and W''''''aitForSingleObject or W''''''aitForMultipleObjects and so on. The system does not force you to coordinate these two activities, even though some coordination is clearly necessary. Message queues (like the IPC mechanism of ErlangLanguage) and pipes support the FireAndForget paradigm, which is great for one-way communication (think of a queue receiving hardware events from a keyboard).
+
+But most communication between threads is two-way. The desired response to the message will be delayed until the other thread gets around to receiving it. If this takes too long (producers out-produce the consumers) the message queue/pipe could overflow, messages could get dropped, etc. There is a lag between when the first thread asks for something and when the second thread does it, and another lag before the first thread has been informed that it has completed. This leads to complicated logic when you have two threads that need to interact, ''unless'' you do the obvious thing - put synchronization around your communication!
+
+The distinction between "send-blocked" and "reply-blocked" is only visible to the OS, which needs to know, internally, what the thread is waiting for. But from the thread's point of view, when it does a Send, it goes to sleep until (a) the message has been received and (b) acted on and (c) a reply has been sent. In real systems there are ways to have the operation time out, etc. (because sometimes threads/processes crash unexpectedly). In SendReceiveReply systems, who does the "sending" and who does the "receiving" is juggled to achieve the desired blocking semantics. For example, suppose you have a FileServer which can write to four different HardDisks in parallel. The FileServer acts as a dispatcher, receiving Sends from client threads that want service, and also receiving Sends from its own four worker threads whose job is to transfer data back and forth between the message to/from the client and the four different HardDisks. These worker threads do a Send to the FileServer to indicate they are ready to do work. The FileServer does a Receive on them but does not Reply yet, so they stay blocked until the FileServer has work for them to do. It then conveys this work in its Reply, unblocking them and allowing them to do other Sends as necessary to get the work done. When they are done, they do a Send to the FileServer again, conveying any needed results in the message.
+
+(Sorry for the digression). Back to your question: Even if some OSes have retrofitted some kind of synchronous IPC mechanism (I can't think of any popular ones that have), I think it is fundamentally better to build your system around a single synchronous primitive like SendReceiveReply and then implement the asynchronous crap you will occasionally need using that mechanism. MicroKernel systems like QNX [QnxOperatingSystem], Neutrino and the L4 microkernel have proven that it's an efficient, lightweight mechanism providing maximum usefulness with minimum fuss. Asynchronous systems need to offer a bunch of different primitives (semaphores, queues, pipes, etc) because each of the mechanisms is clunky in some way! The programmer must manually coordinate these mechanisms along his communication path(s). SendReceiveReply can be thought of as a sort of SwissArmyKnife for synchronization/communication problems. OneSizeFitsAll.
+
+''SendReceiveReply may not be a primitive inside the prominent OS kernels, but it does seem to be the prominent model for high-level IPC. RPC, CORBA, DCOM, Java RMI, etc. are all based upon synchronous blocking calls between clients and servers, even if the underlying communications mechanism is something else. You could even do something like this between threads inside a Windows process using COM's single-threaded apartment model, although it would probably not be nearly as efficient as it would be to use the OS synchronization primitives.''
+
+----
+Problems:
+
+* timeout/retry behaviour. If you don't timeout, your system can deadlock.
+If you do timeout, what do you do then? You could timeout because the reply was dropped or the reply came back after your timeout. If you retry because of a short timeout then if your server is not idempotent you have problems. If you retry the server may not be in the same state as when you made your request and the request could do some serious harm. You could perform the same operation twice in a row which would cause the second op to fail because the first one succeeded and you didn't know.
+
+''This is a real problem, but it has nothing to do with SendReceiveReply. If you have two processes which need to carry out a two-way conversation, you will need synchronization between them. If you adopt the idea that ThreadsAreComputationalTasks, and can be very light weight (which is proven in L4 and other modern microkernels), then the simplest and most sensible way to handle this synchronization is to block whenever you are waiting for the other party to do something. SendReceiveReply does this for you automatically. You must still design your system to support timeouts, or retries for other reasons (temporary problem in network communication, etc.).''
+
+* without queuing you are executing application code in the thread of the IPC mechanism, which is a mistake on several grounds: priority, latency, deadlock.
+
+''Not true. Each party (the sending process/thread and the receiving process/thread) is executing its own application code. The communication is usually accomplished by the microkernel in the context of one of these threads. Since the microkernel must be trusted, it doesn't matter what thread it executes in - in practice, it executes on a kernel stack in (usually) the receiving/replying thread.''
+
+* you will have lower throughput because many operations are naturally queuing and aggregatable. You want disk writes to aggregate so many can be written to the disk at once. You want logging to just queue and go away.
+
+''Of course queues (usually of fixed size) are useful for many things. You can and should build queues on top of SendReceiveReply when you need them. But SendReceiveReply is a good starting primitive to build on. In contrast, building everything else on top of queues, when you need synchronous semantics instead of asynchronous ones, is painful...''
+
+* you will have more threads and/or processes. Since each thread/process is blocked while waiting on a reply it can't service other requests. The only way to ensure responsiveness is to create as many threads/processes as message queue entries in an asynchronous system. For an n-tier system, this requirement propagates through every tier.
+
+''Many more threads and/or processes is not bad. It's only bad in today's OSes which make threads/processes so expensive. Threads can be very light weight - see L4 and L4/Linux, for example.''
+
+''As to responsiveness, let me ask this: if a particular system resource is required to complete a task, and only N threads can use the resource simultaneously (particularly when N=1), what use is it to have more than N threads competing for the resource? About the only reason that is useful is because it allows OS thread priorities to affect who gets the resource. No, a much better way to ensure responsiveness is to have a server service requests quickly, handing them out to worker threads - but not create more worker threads than there are actually resources to do work. Servers can apply whatever policies they like in determining what order to hand out work and to which threads. If some work is more important than others, workers can be created with different priorities (or have their priorities adjusted by the server). Sometimes, a thread will be blocked while it waits for a resource to be available. If ThreadsAreComputationalTasks, this is necessary and proper.''
+
+* How does a user interface thread stop a set of worker threads? We don't want user interface threads to block; an async stop request, and then poll seems more natural here.
+
+''Perhaps. Windows MessageQueue''''''s were designed to meet the needs of a user interface thread in a GUI system. Some messages get special processing (think WM_PAINT) and if the queue gets full, messages are dropped on the floor. Because of this, Windows message queues are useless at worst, and unreliable at best, for doing other things. I think asynchronous behaviour can and should be confined to the edges of systems. Inside, everything should be synchronous and deterministic, and should be as simple and reliable as possible. It is easy to build asynchronous support (e.g. queues) on top of a synchronous primitive like SendReceiveReply. But building everything on top of asynchronous primitives leads to the kind of systems we have today - RaceCondition''''''s, bloated and inefficient context switching, etc.''
+
+Alternative answer: Just like the file server example, you have to juggle your notions of senders and receivers. In the case of a user interface, the interface is actually a server, and you send requests to it ("draw text", "get next mouse press in window", etc.). The user interface will receive the request and reply immediately if it's something like a draw operation, but will let the client reply-block if it's waiting for a mouse press.
+
+----
+This reminds me nasty old System V Unix. It only had synchronous I/Os, forcing you to create two processes for something as simple as a terminal emulator (one to read from a port and write to the screen, the other to read from the keyboard and write to the port). This forced a context switch between each key press, resulting in unresponsive CPU-intensive behavior. Blech. The authors of kermit were forced to use a timer and setjump/longjump to fake polling.
+
+''SendReceiveReply only makes sense if you have lightweight threads and program as if ThreadsAreComputationalTasks.''
+
+----
+
+Am I missing something, or does this make threads completely useless? If the model enforces exactly one unblocked thread at a time, then all the dancing with message queues is pretty pointless, no?
+
+''What you're missing is that "send" blocks the sender, but "reply" does not block the replier. -- SamChapin''
+
+But receive does, and one can only reply after a receive. If only one thread was running, such a dance would be occurring (might be instructive to watch it, though!). What the writer above is missing is that this model does NOT enforce "exactly one unblocked thread at a time". In fact, it is likely that all threads default to unblocked, and they only block -when- they choose to send or receive.
+
+''Clearly "one unblocked thread at a time" could never be one of the basic principles of a concurrency system, but it appears to be what will occur if one misunderstands "reply" as blocking the replier. As it is, the sender is blocked while sending and the receiver is blocked while receiving, but immediately after the receiver replies (the communication now being complete) both threads are unblocked. "Default" here can only mean the state a thread is in when first created.''
+
+It is an easy mistake to make, I imagine, given that 'SendReceiveReply' as a model of interaction expects one party to receive, act upon, and reply to a message (in that order). Since the message has been acted upon already, there should be little more to do except return to a 'receive' state and wait for another message. 
+
+To take advantage of the unblocked state after a 'reply', the operational order would need to become: receive, store, reply, then later act upon the message. In this case, it is unlikely that the 'reply' could be very meaningful (as it can't have much dependence on the message received). If one is to deliver a reply after the message has 'truly' been processed, then one will need a task handle for callback as part of the message. One would effectively be implementing asynchronous MessagePassing atop the SendReceiveReply mechanism, except with the additional cost of forcing tasks to wait on meaningless replies from other tasks.
+
+----
+'''See also:''' RemoteProcedureCall
+
+Do SendReceiveReply processes correspond directly to PetriNet?
+
+----
+CategoryConcurrencyPatterns

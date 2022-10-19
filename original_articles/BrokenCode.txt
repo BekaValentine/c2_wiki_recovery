@@ -1,0 +1,57 @@
+In ExtremeAdaExperiment, WayneCarson reported: ''Sometimes I was led astray trying to make large additions. In general, it seems adding functionality shouldn't break the code for more than 2 days. If it does, the added functionality should probably be broken into smaller chunks.''
+
+'''I apologize for the length of this post: I didn't have time to make it shorter.'''
+
+XP recommends extremely small chunks.  We literally try to break the system for only a couple of minutes at a time.  I'll try to describe below how we might do that.  XP programmers are expected to keep the system integrated at all times.  We release code multiple times a day for all other programmers to use.  And all our unit tests (we have over 20,000 checks at this writing) must '''always''' run at 100%.  
+
+If a programmer doesn't release code every day, it is usually a sign that they are in trouble, and it is '''always''' a sign that they are in for a rough period of integrating with the ten or so releases that have happened since they started.  Since a releasing developer must get all the tests to 100%, not just her own, it is in her best interest to release early and often.
+
+----
+
+Our process is to write a small test that trivially checks the new capability, then add a trivial object to do the capability, then write a harder test, then upgrade the object, and so on.  At the beginning on a new capability, we'll try never to break more than one test at a time. As we get further along, we may break several, but only with one change.  See way down at the bottom for more on the one-change idea.
+
+----
+Here's  an example.  We'll start with a UserStory.  This one is made up from memory, but is based on one we worked on last week.
+
+''Chrysler employees, if laid off, are eligible for SUB: Supplemental Unemployment Benefits.  They have access to a certain number of weeks of SUB, based on seniority and their UnionAffiliation.  They submit a SUB request each week they are on layoff, and if they have not consumed all their benefit, they are paid a percentage of their base pay.  The percentage is also a function of UnionAffiliation.  Upon return to work, members of some Unions begin to earn sub credits back each week; others get all their credits reinstated as soon as they come back.''
+
+Clearly this is a big one.  We will sketch how to implement it without breaking the system for more than a couple of moments.  We'll deal with the processing of a SUB transaction that has already cleared into the system.
+
+OK, we'll process the SUB transaction with a new Station, a SubPaymentStation.    The station will read the Hours Raw Input Bin and put output into HEEntSubHours.  We write a UnitTest based on paying a person.  After the person is paid, the test looks into the sub output bin, HEEntSubHours to see if it finds 40 hours.  We run the test.  It doesn't work, but we aren't surprised, since we haven't built the station or the bin yet.
+
+We define the bin. This adds one statement, about four lines, to the BinDefinition class.  We run the test again, now it finds the bin, but it still doesn't have 40 hours in it.  We're not surprised.
+
+We create the class, give it a trivial method #process:, the standard entry method to all stations. The #process method unconditionally puts 40 hours into the output bin.   We run the test.  Voila, we find 40 hours in the output.  Neat.  ''Note that the system is now unbroken: all the other unit tests will surely work, plus ours.''
+
+But our station isn't processing any input, it just puts 40 hours out unconditionally.  We enhance our unit test to put a part into Hours Raw Input, and add a check that Hours Raw Input is empty.  We run our test.  Oops, the bin isn't empty, we didn't read the part.
+
+We enhance the #process: method to read the part.  While we're at it, we put the same number of hours into the output as we find in the input.  This takes two new methods, about ten lines of code.  We run our unit test, it works again.  ''The system is unbroken''
+
+Similarly, we write a test for a different number of hours, which works right away.  Then we write one that puts the Person over his limit and sees if he gets paid.  He does (since we aren't checking the limit).  We add the limit, check it, and run the test.  It works.  ''The system is unbroken''
+
+Some of this relies on the fact that in Smalltalk we can change a method and run the system in a second, not minutes.  But it's a good characterization of how we do it.  Yesterday I worked with AnnAnderson on SUB and we never had the system broken for more than about 10 minutes at a time.  At the end of the day, she released everything we had done.  Next Monday, all the developers will have it in their systems: by Friday it will be released to the production payroll.
+
+----
+At one point yesterday, we were working on a SpikeSolution.  We needed to handle credits coming back in, in the face of SUB applications that arived after worked periods, but that referred to layoffs prior.  In this case, the application applies to the state of the employee's credits before working, not after.  This turns out to be kind of tricky, so we wrote a little test object to work on the algorithm.
+
+At one point, we decided to enhance our object to pay several weeks of SUB at the same time, for convenience in writing the tests.  This was a fairly simple refactoring that involved writing the new method and changing the rest of the code so that all the ways of paying SUB filtered down through the same code.  (We wouldn't want duplicate code, even in a Spike.)
+
+It was clear that we were going to do the same thing for paying regular pay, for the same reason.  We wanted to say "OK, pay this guy SUB for 36 weeks, then he goes back to work for 8 weeks, then ...".
+
+The changes for the two cases were, of course, quite similar.  Ann made the change to paySub, then started to make the change to payRegular.  I stopped her: Let's test paySub first.
+
+She changed the first test to use the new facility.  She went to change the second, and I stopped her: No, run the tests (we had about 10).  They worked, even the one she changed..  Then she changed the second.  She went to change the third.  I stopped her.  We ran the tests, they all worked.  Then she changed the rest, all at once.  I protested, but not too hard, as I was convinced we were OK.  Then we ran them and two failed in impossible ways.  We ran the first failure, fixed the problem, ran the second, it was OK.
+
+Then we went back and changed the payRegular method, and edited and ran the tests in small chunks.
+
+We took a break and discussed what we had just seen.  We had a trivial Spike object, and only ten tests.  Even changing only one bit of functionality, we wound up breaking something and getting confused.  If we had changed both paySub and payRegular at the same time, our figures would have been all whacked out of shape, all the tests would have failed, and we wouldn't have known where to look.  As it was, every time something failed, we knew exactly where to look, as we had changed only one or two methods.
+
+It's hard to do this when we "know" what we're doing.  But we go faster the smaller the bites we take. --RonJeffries
+----
+I'll just add my experience on the issue in C++.  The project I am currently working on is rather small.  Just me and one other developer.  We have roughly ten users, but the system is only used intermittently.  Recently, one user has been using a specialized area of the system rather extensively, and he needs performance upgrades.  We give them to him piecemeal, testing the performance on each iteration to see if it gets him where he is going.  Our other major area of work is the addition of a new type of device to control.  To keep the first guy working, we have to be able to give him iterations of the app at the drop of a hat.  However, the device work has to stay on schedule.  Sensing this conflict, I could have branched the application in version control, but I didn't.  I made sure that every change that I made kept the code in working order at each step of the way.  I estimate that I was never more than one hour to a working version at any time.  Before working this way, I would have put off the first user mentioning other commitments, but now I feel confident handling the work concurrently and releasing working versions perhaps hourly if need be. 
+
+Observation: the temptation to branch an application to service particular users quickly should be seen as a RedFlag when doing ExtremeProgramming.  It means that you are not really doing it right.  -- MichaelFeathers
+----
+This is fascinating. Has it already been mentioned elsewhere on the Wiki that this looks like the Corporate version of the ideals of OpenSource? --ShaeErisson
+----
+CategoryExtremeProgramming

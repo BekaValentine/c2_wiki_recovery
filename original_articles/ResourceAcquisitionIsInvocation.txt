@@ -1,0 +1,127 @@
+External resources, such as opened files, need to be released in a timely manner. We want to guarantee that for every acquire_resource we have a release_resource. We want this even to be the case when exceptions are thrown
+and caught.
+
+'''Therefore:'''
+
+Rather than having two functions '''acquire_resource''' and '''release_resource''',
+we have one function '''with_resource_do'''. '''with_resource_do''' takes
+as argument a function of one argument, the action. '''with_resource_do''' then does the following:
+	* It acquires the resource
+	* It calls '''action''' with the resource as argument.
+	* It releases the resource.
+
+I.e., '''with_resource_do''' looks like this:
+
+  with_resource_do action =
+        let resource = acquire_resource ()
+        in 
+           action resource;
+           release_resource resource
+
+Well, actually it's slightly more complicated, because we also want to make
+sure that the resource is released when an exception is thrown. So we do:
+
+  with_resource_do action =
+        let resource = acquire_resource ()
+        in 
+           try
+             action resource;
+             release_resource resource
+           with x ->
+             release_resource resource;
+             raise x
+ 
+This makes sure that the resource is released, whatever happens.
+We could then use '''with_resource_do''' in all client code, like this:
+
+  with_resource_do (fun resource -> 
+                      do_something resource;
+                      do_something_more resource)
+
+I.e. no explicit deallocation is required. The resource is acquired just
+before the action is invoked, hence the name of the pattern.
+
+----
+Of course, this is not the easiest technique to use in Java, C#, and C++, primarily because these languages do not treat FunctionsAsFirstClassObjects, but also because it is extremely difficult to get CoRoutine''''''s working in these languages (in most languages, for that matter), and this is a technique that just begs for coroutines.  Thus it is not surprising that this technique works extremely well in the LispLanguage, and moderately well in the PythonLanguage.
+
+Incidentally, I think there is very little theoretical difference between ResourceAcquisitionIsInitialization and ResourceAcquisitionIsInvocation.  I see C++ RAII objects as being limited covariant FunctorObject''''''s.
+
+-- DavidKeithTurner
+
+Hmm, not sure why you think this, but I've been using this pattern in C and in Forth for some time.  I absolutely love it, and I'm shocked that it hasn't been formally recognized as a coding pattern before.  However, using a language that lets you pass function pointers around makes this technique just as valuable, because (a) it requires you to factor your code better, and (b) it typically makes the code easier to read (assuming you name your "lambda" function correctly).  --SamuelFalvo
+
+ScalaLanguage calls it the Loan Pattern.  R.A.I. Invocation sounds better, though.
+----
+The problem in Java is not the absence of FunctionsAsFirstClassObjects, but Resources not sharing a common interface. There are hundreds of resources implementing '''close()''' but there is no '''Closable''' interface.
+
+Given this i would implement:
+
+  public abstract class Resource''''''Invocation 
+  {
+
+    abstract protected void acquire() throws Exception;
+    abstract protected void release() throws Exception;
+    abstract protected Object do() throws Exception;
+
+    private Object invoke() throws Exception
+    {
+       acquire();
+       try {
+         return do();
+       }
+       finally {
+         release();
+         // Shall we catch Exceptions from release here?
+         // Your pseudo code didn't, so i won't.
+       }
+    }
+
+    public static Object do''''''Something''''''''''''With(Resource''''''Invocation ri) throws Exception {
+      return ri.invoke();
+    }
+  }
+  
+  abstract public class File''''''Reader''''''Invocation extends Abstract''''''Resource''''''Invocation() 
+  {
+     protected Line''''''Number''''''Reader lr;
+     protected final String fileName;
+
+     public File''''''Reader''''''Invocation(String aName) 
+     {
+        fileName = aName;
+     }
+
+     protected acquire() throws File''''''Not''''''Found''''''Exception
+     { 
+       lr = new Line''''''Number''''''Reader(new File''''''Reader("myfile")); 
+     }
+
+     protected release() throws I''''''O''''''Exception
+     { 
+       fr.close(); 
+     }
+  }
+                                     
+                                     
+  // now we can use it 
+  ...
+  Object res = 
+    Resource''''''Invocation.do''''''Something''''''With(
+      new File''''''Reader''''''Invocation("myFilename") {
+           protected Object do() throws I''''''O''''''Exception {
+              return lr.readLine(); 
+           }
+         }
+    );
+
+
+The existence of '''File''''''Reader''''''Invocation''' is required only because there is no common '''Resource''' interface,
+so this wrapper is needed.
+
+This would be even easier if the acquire() part would be left out, as there is no gain in adding it.
+Just create the '''Resource''' and pass it to the '''Resource''''''Invocation'''.
+
+----
+See: ResourceAcquisitionIsInitialization, ResourceReleasesResource
+
+CategoryObjectFunctionalPatterns

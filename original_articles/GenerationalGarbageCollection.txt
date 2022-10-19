@@ -1,0 +1,75 @@
+The partition of objects into different ''generations'' (time intervals) based on time of allocation, and giving them different GC policies depending on age.  Based on the heuristic (often true in practice) that ''most'' objects are discarded shortly after being used--hence the GC is tuned to get rid of those first.
+
+In some pure functional languages, there is the additional benefit that pointers from an older generation into a newer one aren't possible.  Even in languages with mutable state; old-to-new pointers are much rarer than new-to-old pointers.
+
+Many generational GC's are not ''comprehensive''--they don't successfully remove ''all'' the garbage (long-lived garbage, in particular, may never get collected).  But it's the fresh garbage that smells the worst. :)
+
+See the GarbageCollectionBook and http://www.memorymanagement.org/ for lots more info
+
+----
+
+Here's a possible implementation that might explain things.
+
+Normally you would have only one heap, but it just takes ''forever'' to mark and sweep and compact everything. So instead you have a small heap and a large heap. The large heap is substantially larger than the small heap. And you follow these rules:
+
+* Every object consists of data and pointers, and the garbage collector knows which parts are the pointers. This is generally the same requirement that any GarbageCollection system must meet.
+* Actually the pointers point into a "table of pointers" whose entries are the real pointers. This allows an object to be moved with only one real pointer being updated.
+** This kind of relocatable pointer is called a ''handle'' in Mac and Windows operating systems.
+*** I thought a "handle" in Win32 was just a MagicCookie; the contents or interpetation of which are none of your (the application programmer's) business.
+**** You are right.  I'm actually thinking of Win16 and Classic Mac OS handles, back in the BadOldDays when tasks weren't preemptive, and the OS had the right to move your data around in physical memory.  I know that on the Mac you were ''supposed'' to use the sanctioned API's to access handles, but you could LiveDangerously and simply dereference the handle to get at the raw data structure itself.
+** A general term for such a structure is a TombStone
+* With two heaps, pointers either go into the small heap or the large heap.
+* All new objects are allocated in the small heap.
+* If the small heap is full, mark-and-sweep is employed to try to free up space in it.
+* Also to free up space in the small heap, objects which have survived a garbage collection or two are moved to the large heap.
+* If there is ''still'' not enough space in the small heap, then an object may be freshly allocated in the large heap after all. But usually that indicates the object is pretty large by itself, and large temporary objects are pretty rare.
+* If the large heap is full then ''both'' heaps must be swept. However, most of the time only the small heap has to be swept, and that takes very little time because the small heap is so small.
+
+This can be sped up even further if objects in the large heap are not allowed to have pointers to objects in the small heap. Objects may be moved from the large heap to the small heap in order to maintain this invariant, although it is easier to maintain it when objects are immutable. This allows the recursive mark routine, when it is trying to sweep only the small heap, to stop recursing as soon as it hits any object in the large heap.
+
+Oftentimes StopAndCopy is used for for the early generations.  StopAndCopy takes time proportional only to the amount of live data; since early generations often have large proportions of garbage, this can be significantly faster than MarkAndSweep, and it also compacts the heap automatically.  Allocation in a StopAndCopy heap can be as fast as stack allocation; it consists of incrementing a pointer.  And since the small heap is small, the system doesn't waste much available memory by leaving half the heap idle at all times.
+
+You '''do''' have thread synchronisation to worry about, so it's not quite as fast as a per-thread stack. Some systems use per-thread nurseries to avoid these synchronization costs altogether (ending up with, essentially, a per-thread stack, albeit one that copies long-lived objects to the shared heap).
+
+----
+* ''Actually the pointers point into a "table of pointers" whose entries are the real pointers. This allows an object to be moved with only one real pointer being updated.''
+
+I don't know what other environments do, but Smalltalk hasn't used a table like this for at least a decade. Instead, a semi-space algorithm is used, and the old pointer is replaced by a "forwarder" to the new object. ''[How, exactly, does a "forwarder" work? The only thing I can come to is a reserved bit that signifies either a real-object or forwarder-object; but wouldn't this require more instructions for object access than an ObjectTable?]'' 
+
+Here's how a semi-space collector works (I thought this is what "generational collection" meant, but I supposed I could be mistaken):
+
+* Managed memory is divided into two equal spaces. One is labeled "from-space", the other "to-space".
+* New objects are always allocated at one end of to-space.
+* An incremental collecter traverses from-space, starting with a "root set" of known-live objects, and copies each object encountered into the other end of to-space. This collector replaces the object in from-space with a "forwarder" to the to-space object.
+* An incremental "scanner" process scans the objects copied into to-space field by field, copying objects referenced by them from from-space to to-space. This scanner leaves behind a forwarder for each object that is copied. The scanner stops when it reaches the end of the objects that were copied into to-space by the incremental collector.
+* Any access to a forwarder is redirected to the to-space object referenced by the forwarded, and the original reference is fixed to reference the to-space object.
+* When a reference to a from-space object is stored into a to-space object, the referenced object is copied to to-space and a forwarder left behind.
+* At any time after the scanner has finished, a "flip" takes place, where the to-space and from-space pointers are reversed, the (new) to-space is cleared, and the root set is copied.
+
+Each time a flip occurs, the live objects have survived into a new "generation". In a generation-counting collector, a generation count is maintained by the collector and incremented each time the object is copied from from-space to to-space.
+
+Object lifetimes in Smalltalk (and probably other object-oriented systems as well) follow a pronounced bathtub curve -- huge numbers of objects have very short lifetimes (often less than one generation), a smaller but still important number of objects have very long lifetimes, and very few objects have lifetimes in the middle.
+
+This is reflected in a "tenured" generation-scavenging collector: a third "tenured" area is defined, and objects whose generation count exceeds a certain threshold (adjusted dynamically) are copied into the tenured area instead of into to-space. This tenured area is collected only very infrequently, if at all. Tenured objects die very rarely, and so garbage accumulates very slowly.
+
+''Henry Baker demonstrated that the lifetimes are code dependent, and that in the worst case, some programs can exhibit lifetimes similar to radioactive half-life, which messes up the assumptions of generational garbage collection. I believe that the worst case is considered rare, though.''
+
+''See http://home.pipeline.com/~hbaker1/YoungGen.html''
+
+This interesting paper suggests that assumptions about changes to the "mark/cons ratio" may not be as safe as generally assumed. I am under the impression that the "bathtub" shape of the Smalltalk object lifetime histogram has been measured and published repeatedly since the "Baker Garbage Collector" that I described here (the algorithm was first published by the same Henry Baker) was published in the GreenBook in 1983. A tenuring collector like I described here is less sensitive to the assumption of high infant mortality than this paper might indicate -- it simply reflects the empirical reality that older objects die very infrequently. Meanwhile, the cited paper doesn't claim that some programs exhibit half-life behavior, it says instead that the mathematical model of radioactive half-life is easier to analyze.
+
+	 :	''An application with these characteristics may not be prototypical of garbage-collected applications, but it does provide an ideal mathematical model which can represent one end of a spectrum.''
+
+Having set up this strawman, Baker then knocks it down, observing that this model doesn't result in high infant mortality and therefore that the mark/cons ratio doesn't improve.
+
+It appears to me that the main thrust of this 12 year old paper is that in 1992, we didn't have a mathematical model of object lifetimes that predicted the infant mortality curves observed in practice. Baker concluded his brief paper with the observation that
+
+	 :	''Our personal belief is that the object lifetimes found in garbage collection measurements cannot be adequately modelled by traditional probability/statistics models which assume that distributions have finite "standard deviations", but will require fractal models [Mandelbrot83], which can have infinite second moments.''
+
+'''That's odd.  Doesn't the Cauchy distribution have an infinite standard deviation?  That's a pretty traditional distribution.''' -- JasonGrossman
+* No. The standard deviation is not defined for the Cauchy distribution. Even the expected value of the Cauchy distribution is inf-inf, but one could argue from symetry that it is 0, but even with this the standard deviation comes also out as inf-inf. 
+* There are distributions that have infinite variance though: The ParetoDistribution for small k. See also EightyTwentyRule.
+
+If work in that domain has been done in the intervening 12 years, it would be interesting to see what the resulting analytical implications have been.
+----
+CategoryGarbageCollection

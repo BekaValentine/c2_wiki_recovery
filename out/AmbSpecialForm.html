@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Amb Special Form
+      </h1>
+      <p>
+        See <a href="StructureAndInterpretationOfComputerPrograms.html">StructureAndInterpretationOfComputerPrograms</a> section 4.3 for the full story: <a href="http://mitpress.mit.edu/sicp/full-text/book/book-Z-H-28.html#%_sec_4.3">http://mitpress.mit.edu/sicp/full-text/book/book-Z-H-28.html#%_sec_4.3</a>
+      </p>
+      <p>
+        But in short, amb is a special form that allows nondeterministic computation (usually implemented in the <a href="SchemeLanguage.html">SchemeLanguage</a>).
+      </p>
+      <p>
+        The form (amb 1 2 3) at first returns 1. When we later encounter a failure form (amb), the program backtracks to the latest pending amb form. If it's this form, it would then return 2 and restart the computation from there.
+      </p>
+      <p>
+        It's also one of the classic applications of <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> that cannot be expressed using just threads, <a href="CoRoutine.html">CoRoutine</a>s, exceptions, etc. Here is a possible implementation:
+      </p>
+      <code>
+        (define (*failure*) (error "Failure"))<br/>
+      </code>
+      <code>
+        (define-syntax amb<br/>
+        (syntax-rules ()<br/>
+        ((amb) (*failure*))<br/>
+        ((amb ?x) ?x)<br/>
+        ((amb ?x ?y)<br/>
+        (let ((old-failure *failure*))<br/>
+        ((call-with-current-continuation<br/>
+        (lambda (cc)<br/>
+        (set! *failure* <br/>
+        (lambda () <br/>
+        (set! *failure* old-failure)<br/>
+        (cc (lambda () ?y))))<br/>
+        (lambda () ?x))))))<br/>
+        ((amb ?x ?rest ...)<br/>
+        (amb ?x (amb ?rest ...)))))<br/>
+      </code>
+      <p>
+        In Unix, amb can also be expressed in the <a href="CeeLanguage.html">CeeLanguage</a> using fork(), wait() and exit():
+      </p>
+      <code>
+        #include <stdio.h><br/>
+        #include <errno.h><br/>
+        #include <unistd.h><br/>
+        #include <sys/types.h><br/>
+        #include <sys/wait.h><br/>
+      </code>
+      <code>
+        #define AMB_FAILED 42<br/>
+      </code>
+      <code>
+        // nondeterministically returns true or false (1 or 0)<br/>
+        int amb(void)<br/>
+        {<br/>
+        pid_t child_pid = fork();<br/>
+        if (child_pid == -1) {<br/>
+        perror("amb"); exit(1);<br/>
+        }<br/>
+        if (child_pid == 0) {<br/>
+        // child process<br/>
+        return 1;<br/>
+        } else {<br/>
+        // parent process<br/>
+        int status; pid_t result;<br/>
+        do {<br/>
+        result = waitpid(child_pid, &status, 0);<br/>
+        } while ((result == -1) && (errno == EINTR));<br/>
+        if (result == -1) {<br/>
+        perror("amb"); exit(1);<br/>
+        }<br/>
+        if (WIFEXITED(status)) {<br/>
+        if (WEXITSTATUS(status) == AMB_FAILED) <br/>
+        return 0;<br/>
+        else <br/>
+        _exit(WEXITSTATUS(status));<br/>
+        }<br/>
+        _exit(1);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        void fail(void)<br/>
+        {<br/>
+        _exit(AMB_FAILED);<br/>
+        }<br/>
+      </code>
+      <code>
+        // example use<br/>
+        int choose_number(int lower, int upper)<br/>
+        {<br/>
+        int i;<br/>
+        for (i = lower; i < upper; i++) {<br/>
+        if (amb()) return i;<br/>
+        }<br/>
+        fail();<br/>
+        }<br/>
+      </code>
+      <code>
+        int main()<br/>
+        {<br/>
+        int n = choose_number(1, 10);<br/>
+        int m = choose_number(1, 10);<br/>
+        if (n*m != 54) fail();<br/>
+        printf("%d*%d=54\n", n, m);<br/>
+        return 0;<br/>
+        }<br/>
+      </code>
+      <p>
+        In <a href="FactorLanguage.html">FactorLanguage</a>, it can be implemented very compactly.
+      </p>
+      <code>
+        USING: kernel continuations sequences namespaces fry ;<br/>
+      </code>
+      <code>
+        IN: backtrack<br/>
+      </code>
+      <code>
+        SYMBOL: failure <br/>
+      </code>
+      <code>
+        : amb ( seq -- elt )<br/>
+        failure get<br/>
+        '[ , _ '[ , '[ failure set , , continue-with ] callcc0 ] each<br/>
+        , continue ] callcc1 ;<br/>
+      </code>
+      <p>
+        <a href="SetlLanguage.html">SetlLanguage</a> has a pair of primitives (ok and fail) which are very similar and can be used to trivially implement amb:
+      </p>
+      <code>
+        procedure amb(choices);<br/>
+        if exists c in choices | ok then<br/>
+        return c;<br/>
+        else<br/>
+        fail;<br/>
+        end;<br/>
+        end amb;<br/>
+      </code>
+      <hr/>
+      <p>
+        It would be terrifically helpful to know what amb is actually <em>good</em> for. 
+      </p>
+      <p>
+        <em>Several applications of amb are discussed in section 4.3 of SICP, which is linked to at the top of this page.</em>
+      </p>
+      <p>
+        The SICP examples are:
+      </p>
+      <ul>
+        <li>
+           finding Pythagorean triples
+        </li>
+        <li>
+           logic puzzels
+        </li>
+        <li>
+           natural language parsing
+        </li>
+      </ul>
+      <p>
+        ...perhaps there are more I missed.
+      </p>
+      <p>
+        I like what <em>Teach Yourself Scheme in Fixnum Days</em> (<a href="http://www.ccs.neu.edu/home/dorai/t-y-scheme/t-y-scheme-Z-H-16.html#node_chap_14)">http://www.ccs.neu.edu/home/dorai/t-y-scheme/t-y-scheme-Z-H-16.html#node_chap_14)</a> has to say:
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd>The result is an elegant backtracking strategy that can be used for searching problem spaces directly in Scheme without recourse to an extended language. The embedding recalls the continuation strategies used to implement Prolog-style logic programming [16, 7], but is sparer because the operator provided is much like a Scheme boolean operator, does not require special contexts for its use, and does not rely on linguistic infrastructure such as logic variables and unification.</dd>
+      </dl>
+      <p>
+        i.e. You can do Prolog type things in Scheme more directly than by implementing a Prolog-ish DSL within Scheme.
+      </p>
+      <p>
+        How might one express pathfinding using amb (or would one even do so?)
+      </p>
+      <p>
+        <em>Not quite sure how to answer this... In some sense amb is just a tool for arbitrarily (but systematically) choosing the next branch of a search tree to follow -- notifying you, of course, when there are no more choices.</em>
+      </p>
+      <p>
+        Can it be used as a <a href="PseudoRandomNumberGenerator.html">PseudoRandomNumberGenerator</a>?
+      </p>
+      <p>
+        <em>No, because it is not random, it only models a nondeterministic choice. Typically the tree of choices is searched in a predictable order.</em>
+      </p>
+      <p>
+        Why is it called 'amb'? I cannot come up with a sensible expansion of this acronym. Or isn't it any?
+      </p>
+      <p>
+        <em>I think it's called 'amb' because it introduces ambiguity into the computation. And what it effectively gives you is backtracking ala </em><a href="PrologLanguage.html">PrologLanguage</a>, so you can use it to write prolog-ish stuff in scheme.<em></em>
+      </p>
+      <hr/>
+      <p>
+        Is there an analogous special form for ForwardChaining?
+      </p>
+      <hr/>
+      <p>
+        This thing seems to imitate the List monad in <a href="HaskellLanguage.html">HaskellLanguage</a>. --SamuelFalvo
+      </p>
+      <p>
+        I'm sure the list monad actually tried to imitate amb, as amb is much older than Haskell, i think it was 1963 when McCarthy published about it.
+      </p>
+      <hr/>
+      <p>
+        See also: <a href="AmbInRuby.html">AmbInRuby</a>, <a href="AmbInPython.html">AmbInPython</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryScheme.html">CategoryScheme</a> <a href="CategoryContinuation.html">CategoryContinuation</a>
+      </p>
+    </div>
+  </body>
+</html>

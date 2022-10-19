@@ -1,0 +1,1063 @@
+Here's a sort of hall of shame for some really BadCode I've encountered. I won't give exact copies and I won't name names, but the hope is that anyone who happens upon here should either commiserate or get a flying clue. Towards the second case, I'm including pointers or briefs on why things are bad.
+
+----
+Faced with a requirement to use named constants instead of numbers in code:
+
+#define ONE 1
+
+#define TWO 2
+
+#define THREE 3
+
+...
+
+#define ONE_HUNDRED 100
+
+*sigh*
+
+''better''
+#define ONE 0x31
+
+----
+
+ foreach (keys %hash) {
+	if ($hash{$_}) {
+	 do_something($_);
+	}
+ }
+
+Uh, why use a hash in the first place? 
+
+This code was from the person who actually uttered "I can *read* *my* code! Why make it different for the team?"
+
+-- JeffBay
+
+''In defense of this code, it is the standard Perl idiom for walking a hash table to access all entries, not such a bad thing to do. One hopes that there was a reason to make this a hash, somewhere else in the program. -- RobertField''
+
+If tell most Perl programmers "I have a hash, and want to invoke do_something() for each hash key that has a non-false value," they would write something pretty close to the fragment above. It's readable, and there's no need to defend it, at least not among Perl programmers. -- DaveSmith
+
+It's a little bit more efficient to use "each":
+ while (($key, $value) = each %hash) {
+	if ($value}) {
+	 do_something($key);
+	}
+ }
+
+-- JonathanRynd
+
+''From the original code example:''
+ if ($hash{$_}) { ... }
+''This is distinct from''
+ if (defined $hash{$_}) { ... }
+''which is probably more useful, because it's perfectly possible for hash elements to ''exist'', yet not be ''defined''. "perlfunc" explains about this. So I'd do:''
+ foreach (keys %hash) {
+	do_something($_) if defined $hash{$_};
+ }
+''-- EarleMartin''
+----
+
+Real life example from a Java servlets site that landed in my lap:
+
+150 classes, each around 12-18 printed pages. Average of three methods per class. No hierarchy. No reuse. Lots of repetition. Indentation alone had special conventions for dealing with lines that would otherwise look blank on a maximized editor. And no comments. Do the math. Someone did not understand ShortMethods. It had me searching for meaning in life, because meaning was too hard to find in the code.
+
+----
+
+Same project:
+
+  Result r = null;
+  if (something) r = [..some query..];
+  try {
+	r.method();
+	...
+	...
+  }
+  catch (Exception e) {
+  }
+
+This horrendously misguided attempt to use exceptions for normal flow control meant that you could never find out why things were broken. They would fail silently, with no indication as to what went wrong while other parts of the system seemed oblivious that things had not completed. And don't think you can solve it by only catching nullPointerException. You can't prove where it came from.
+
+I have done this, and I defend it (in my case). The most commonly called method in our persistence layer is a method to get a column of a table. Because this is so common, I cache the columns by name in a Map. The cache is reconstructed whenever the columns in the table change (not common, but allowed). My method is something like:
+
+  List getColumn(String name) {
+	try {
+	  return (List) cache.get(name);
+	} catch (NullPointerException ex) {
+	  cache = createCache();
+	  return getColumn(name);
+	}
+  }
+
+Now the reason this is better than checking whether cache is null is because this method is invoked hundreds of thousands of times, and I want to avoid that cost. After all, the JVM is specified to do it for me. I also know that exceptions only cost when they are thrown, and I am betting that the 10000 to 1 or so ratio between not-null-caches and null-caches saves me time overall. The WORST part of this code is that it has been observed to not work in some JVMs, in particular one on Linux. --JohnFarrell
+
+''Why are you betting? Have you used a profiler? Anyway, strange that your JIT-compiler cannot eliminate the simple redundancy of checking ''cache'' twice.''
+
+Is it possible the code in the catch statement could be moved into a NullObject?  Then you wouldn't need an if or a TryCatch. -- BrianRobinson
+
+
+> this is better
+Wrong. Wrong. WRONG. It would have been better if you inlined the 2nd getColumn(name) invocation, the one inside the 'catch'. You removed a check, but added a method invocation - which is much, much slower.
+
+Well, you may say, the VM just has to put two arguments on the stack, and then invokevirtual getColumn(String). Not so much, you may think. But invokevirtual means the VM must place an additional method frame on the method stack (==> allocate memory), break the current method execution flow, run the method again, then move the instruction pointer (or whatever else) back to the "original" (1st) method invocation, and remove the 2nd method invocation frame from the stack (==> deallocate memory). Is that really worth eliminating just an 'if' statement?
+(The only alternative I may think is replacing the 2nd "getColumn(name)" with "(List)cache.get(name)", but that means repeating code, which is wrong. Sorry.)
+
+Oh, and the worst thing is, if you write a subclass that overrides getColumn() and invokes super.getColumn(), it will not work. You are likely to get a StackOverflowError in that case.
+
+It just seems to me that this version is simpler to read, has a simple, linear control flow, and is more performant:
+  List getColumn(String name) {
+	if (cache == null)
+	  cache = createCache();
+	
+	
+	return (List) cache.get(name);
+  }
+
+Moreover, a modern JVM is able to take advantage of the result of the 'cache == null' expression which was evaluated at the beginning of the method, so it can optimize the subsequent "cache.getName(...)" invocation. Did you know? What I am trying to say is, it is able to automagically avoid checking for null twice, which is just what you wanted. :) Java is not C++.
+Let me give you a hint - do not optimize unless the profiler really says you have to. Especially in Java.
+
+----
+
+Another, from PHP:
+
+  $q1 = "an SQL query";
+  $q2 = "another SQL query";
+  ...
+  $qn = "the nth SQL query";
+  .
+  .
+  .
+  for ($i = 1; $i < 9; $i++) {
+	$qi = "q$i";
+	$q = $$qi;
+	query($q);
+  }
+
+Apparently this fellow was not familiar with arrays.
+
+----
+
+Another, in SQL:
+
+  select * from _table where _alternate_key_field = 'foo';
+  if result-set-size > 0 then complain_or_perhaps_delete_the_record;
+  insert into _table (null, 'foo', 'bar', baz_from_the_browser);
+  select * from _table where _alternate_key_field = 'foo';
+  // somehow go on to use the autogenerated primary key field in the result. Never mind if it's there.
+  // And by the way the _alternate_key_field has no unique index (uniqueness constraint) declared.
+  // Don't bother checking for errors either.
+
+Yes, I've seen this in real code that landed in my lap. Yes I feel compelled to repair the brain damage. No the client has not yet noticed a clean pattern of failures. The problem is that the whole sequence of steps is repeated for every insert operation everywhere, so the problem is endemic, random, and infrequent.
+
+Now for the redux: Quite simply it contains every possible problem someone could inflict on their SQL code.
+It neatly sidesteps the 30+ years of ComputerScience that went into developing relational databases with atomic operations and reintroduces all the race conditions and potential for lost/inconsistent/corrupted data that such systems work so hard to prevent. Furthermore, it is sensitive to the exact order of the fields in the table, which means that WITHOUT ANY WAY TO FIND IT, it creates a place that will break when (not if) someone adds a field somewhere to support an additional requirement. On top of everything, it trusts that untrustworthy data from the outside world will not only conform to the rules of SQL, but will also be non-malicious.
+
+However, people who write code this way should be summarily fired retroactively to the day you got their resume. Then they should be charged back rent for the cubicle space they occupied while dragging your project down the tubes. If you are a government body so unfortunate as to have hired them, throw in some jail time for falsifying an official document. (the resume where it said they knew databases.)
+
+''Although I don't condone such, there are some flaws in existing RDBMS standards that tend to contribute to such. First is that every vendor and API has a different (and ugly) way of obtraining the primary key of just-added records. Second, the syntax for Insert and Update is unnecessarily different. Third, what is often needed is an atomic command that can update if something already exist, but insert if not there.'' Instead of abstracting the idea of a "series of steps that have to be performed atomically" into the notion of a "transaction" and having you use one of those? (''As for "unnecessarily different", I'd agree in a trivial sense that they're ''unnecessarily'' different but I wouldn't be surprised if somewhere deep in ANSI's committee minutes is recorded the conclusion that it would make one less likely to intend "INSERT" but type "UPDATE" or vice versa.'')
+
+----
+
+Or this acute misapprehension of control flow:
+
+  for (int i = 0; i < 3; i++)
+  {
+	switch (i)
+	{
+	case 0:
+	DoThing1();
+	break;
+	case 1:
+	DoThing2();
+	break;
+	case 2:
+	DoThing3();
+	break;
+	}
+  }
+
+Oh?  You think that's bad?  Try this on for size:
+
+  void Next(state) {
+	switch (state) {
+	case INITIAL:
+	DoThing1();
+	break;
+	case THING1:
+	DoThing2();
+	break;
+	case THING2:
+	DoThing3();
+	break;
+	case THING3:
+	// do nothing -- exit
+	break;
+	}
+  }
+  
+  void DoThing1() {
+	// Do "thing 1"
+	Next(THING1);
+  }
+  
+  void DoThing2() {
+	// Do "thing 2"
+	Next(THING2);
+  }
+  
+  void DoThing3() {
+	// Do "thing 3"
+	Next(THING3);
+  }
+This is in a production system that's out there live today!
+
+	1. It's a funny implementation of a state machine.  It distributes the state transitions out to all the functions, making them hard to see.
+	1. The states are always one-off -- describing what's just been done, rather than what the system is about to do or is doing.
+	1. Aside from error conditions, the actual logic flow was a simple sequential set of two or three subroutine calls -- '''always''' called in sequence.
+''Like...  "Why all the unneeded complexity?"''
+
+'' Are you sure it's not machine generated?
+----
+
+In a Java program where class A defined methods f1(), f2(), etc.  Class B and C extending class A.
+
+  func(A a)
+  {
+	if (a instanceof B)
+	{
+	  B b = (B) a;
+	  b.f1();
+	  b.f2();
+	  // ... only used methods defined in class A
+	}
+	else
+	{
+	  C c = (C) a;
+	  c.f1();
+	  c.f2();
+	  // ... only used methods defined in class A
+	  // Completely identical to above except "c" replaces "b"
+	}
+  }
+
+Looks like he did not understand how polymorphism works in Java.
+
+''Or came from a VB background where this resembles standard interface 'polymorphism'.''
+
+No, it doesn't. Actually, the code above is impossible in VB. The only way to write it in VB is to write it right (well, I simplify a bit...).
+
+''Or from a C++ background that thinks Java's lack of "virtual" keyword means the same as all member functions behave as non-virtual in C++.''
+
+Or was debugging, needed to break out the handling of the B and C types as separate, and then removed the debugging code without merging everything back together.
+----
+
+Seen today:
+
+  String result = ( String ) aMap.get( key );
+  if( result == null )
+  {
+	result = null;
+  }
+  return result;
+
+Sad thing about this one is the pure laziness/thoughtlessness.  I'm guessing it appeared from a cut and paste of a similar method where the if clause puts a supplied default value in the result.
+
+Tomorrow: lend offender MartinFowler Refactoring book.
+
+''Hmm - I do that on purpose. Although I'd be more likely to write it''
+
+  String result = ( String ) aMap.get( key );
+  if( isInvalid( result ) )
+	result = null;
+
+  return result;
+
+''I mean otherwise you'd just end up writing''
+
+  Return aMap.get( key )
+
+''which would tell a later maintainer nothing about how this function was to handle get() returning an invalid result. And then you might as well program in C...''
+
+I'd prefer the following:
+
+  return aMap.get( key ); // NOTE: if it's invalid, just returns null
+
+Author who ''does that on purpose'' raises a good point.  In context, we had a UnitTest for the class, which defined the invalid returns null behaviour.  
+
+See CodeForTheMaintainer.
+
+----
+Along a similar line of the if (result == null) return null, I offer:
+
+	/* instance variable */
+	private boolean debug = false;
+
+... further down, in a method ...
+	Session session = Session.getDefaultInstance(props, null);
+	if (debug)
+	session.setDebug(true);
+
+As a side note, the docs for Session point out that the props object used in constructing the object returned from getDefaultInstance can contain a entry for the property mail.debug.
+
+
+I think the above examples are just special case for the really classic:
+
+ boolean bVar = true;
+ ...
+ if(bVar == true) {
+	bVar = true;
+ } else {
+	bVar = false;
+ }
+
+Note that there's a PeeEmDee rule to catch annoying things like this - see the "SimplifyBooleanReturnsRule" near the bottom of the page here: http://pmd.sourceforge.net/rules/design.html --TomCopeland
+----
+On one of my projects I see:
+
+  if (x > y) {
+	status = true;
+  } else {
+	status = false;
+  }
+
+The author refuses to change this ''because that is the project standard''.
+He's also prone to:
+
+  try {
+	// ...
+  } catch (R''''''emoteException ex) {
+	throw new R''''''emoteException("R''''''emoteException in foo: " + ex.getMessage());
+  }
+
+Similarly, I see on another project
+
+  if (max < x) {
+	max = x;
+  }
+
+and that author refuses to change it to a call to std::max ''because this is a real-time system, and the call would be too slow''.	-- EricJablow
+
+Could someone explain why it is a bad idea to add information about where the exception was thrown to the error message?  I have used this in the past to track down some nasty bugs.  Why is it BadCode?
+
+''Because instead of clarifying where the exception is thrown, the above code is actually '''hiding''' it!  The stack trace when the exception is throw is already automatically stored in the exception object, so the trace can go all the way to the throwing method, even if it is in a 3rd party library.  But in the above code, all such information is lost.  If the //... part has 10 lines, you won't know which line causes the exception!  And no way to trace further even if you have the source of the throwing method.''
+
+Since 1.4, Java has had a new way to address that problem: an exception can have a ''cause,'' which is another exception. So the code could be changed to:
+
+  try {
+	// ...
+  } catch (R''''''emoteException ex) {
+	throw new R''''''emoteException("R''''''emoteException in foo: " + ex.getMessage(), ex);
+  }
+
+This would preserve the entire stack trace.
+----
+
+I can remember some wonderful examples from when I used to work with GenuineEngineers in a UniversityDepartment. Two that stick in my mind are:
+
+The C command line parser for user input that consisted of a 5000 line nested if-then-else statement. It was a good thing that tabs were set to 2 spaces, since some of the lines started in column 70.
+
+Some of the Fortran code - I've still got, in a piece of incredulous email I sent to a friend in 1995, one of the functions that took 192 parameters. I'll post that below when I'm closer to my home email machine.
+
+(later that day)
+
+Ahhh... I misremembered. '''2'''92 parameters:
+
+	SUBROUTINE FEMA(IBT,IDISP,IDO,ILPIN,ILTIN,INP,ISC_GD,ISC_GK,
+	'  ISC_GKK,ISC2_GKK,ISC_GM,ISC_GMM,ISC_GQ,ISR_GD,ISR_GK,ISR_GKK,
+	'  ISR2_GKK,ISR_GM,ISR_GMM,ISR_GQ,ISALIG,
+	'  ISAXES,ISBASE,ISCLOC,ISCONO,ISCONT,ISCROS,ISDANO,ISDAPR,
+	'  ISDATA,ISDATR,ISDIPO,ISDIPA,ISELEC,ISELNO,ISFACE,ISFANO,
+	'  ISFIBR,ISFIEL,ISGAUS,ISGRID,ISGRAD,ISHIST,ISIMAG,ISINCR,
+	'  ISISOC,ISIZE_TBH,ISLEAD,ISLINE,
+	'  ISLINO,ISL2BE,ISL3BE,ISMAP,ISMATE,ISNONO,ISN2BE,ISN3BE,ISOBJE,
+	'  ISPLIN,ISPLOT,ISPMAR,ISPROF,ISREAC,ISRESI,ISRULE,ISSCAL,ISSECT,
+	'  ISSHEE,ISSIGN,ISSTRA,ISSTRE,ISSTRM,ISSURF,ISTEXT,ISTRAC,ISVELO,
+	'  ITHRES,LD,LDR,LIST,LGE,LN,MXI,NAN,NBH,NBJ,NBJ_face,NCO,NDDATA,
+	'  NDDL,NDET,NDLT,NDP,NEELEM,NEL,NELIST,NENP,NEP,NFF,NFLIST,NGAP,
+	'  NGLIST,NHE,NHP,NJE,NJP,NKE,NKF,NKH,NKJ,NLCHOR,NLF,NLL,NLLINE,
+	'  NLLIST,NLNO,NLS_ICON_ELEM,NLS_ICON_X,NLS_ISURF_ELEM,
+	'  NLS_NDATA_CONT,NLS_NDATA_IMAG,NMBIN,NMNO,NNF,NNL,NONL,NONM,NONY,
+	'  NP1OPT,NP2OPT,NP3OPT,NPB,NPF,NPINTER,NP_INTERFACE,NPL,
+	'  NPLIST1,NPLIST2,NPNE,NPNODE,NPNY,NPQ,NQE,NQGE,NQLIST,NRE,
+	'  NRLIST,NTCOVA,NVHE,NVHP,
+	'  NVJE,NVJP,NVQ,NW,NWQ,NXI,NXQ,NYNE,NYNO,NYNP,NYNR,N_OLD_ORDER,
+	'  N_TEMP_ORDER,NP_OLD,NP_TEMP,PAOPTY,IPIVOT,IWK1,IWK2,
+	'  IWK_ITERATIVE,POTNOUT,CE,CG,CIN,CONY,COVA,CP,CQ,CYNO,DET,DF,
+	'  DL,DLL,DRDN,DRDNO,D_RE,D_RI3,D_RP,D_TG,D_ZG,DXDXIQ,DNUDXQ,ED,
+	'  EDD,EIGVAL,EIGVEC,EM,ER,ES,FEXT,GCHQ,GD,GK,GKK,GM,GMM,GQ,GRR,
+	'  GR,GUQ,
+	'  NLS_CON_PSI,NLS_CON_XI,NLS_SURF_XI,NLS_SURF_PSI,PE,PF,PG,
+	'  PROPQ,RAD,RD,RE1,RE2,RG,SE,SQ,T_BH,T_BH_INV,THRES,
+	'  VE,VOL,VOLT,WD,WDL,
+	'  WG,WK1,WK2,WK3,WK4,WK1_INV,WK2_INV,WK3_INV,WK4_INV,
+	'  WK_ITERATIVE,WU,XA,XB,XE,XF,XG,XG1,XGRC,XID,XIDL,XIG,XIP,XN,
+	'  XN_GRAD,XO,XP,XR,XR_GRAD,YD,XQ,YG,YP,YQ,ZA,ZA1,ZC,ZD,ZD2,ZDD,
+	'  ZDL,ZE,ZE1,ZF,ZG,ZG1,ZP,ZP1,ZEC,ZFC,
+	'  FIX,FIXP,FNY,ISEG,CSEG,END,STRING,INTWORK,REALWORK,ERROR,*)
+
+My comment at the time:
+
+  And then there's the exquisite fortran code they write around
+  here. Now I do realise that fortran is a bit light on the more
+  complex language features like "data structures" or "recursion"
+  (I think it has "constants", but they don't seem to use them
+  here) but is that really an excuse for 292 parameters?
+
+I was overly sarcastic in my youth...	-- Edouard
+
+----
+
+How about this:
+
+ public class AClass {
+
+ public static final String A_CONST = "Some''''''Const";
+
+ /**
+  * Accessor for a constant.
+  */
+ public static String getAConst() {
+	return A_CONST;
+ }
+
+ }
+
+Here, a constant also has accessors. The person heard about encapsulation and it being good and wanted to encapsulate a constant.
+
+Or, perhaps wanted to apply UniformAccessPrinciple ??
+
+''Or perhaps the author wished to hide the fact that the variable is constant (though one would wonder why the constant is public). Singletons are often done like this, for example, in case the object becomes non-singleton later. Also, the getter would expose the constant via reflection as a readonly property; useful if you're dropping the object into a tool, for example.''
+
+But guys, as you can read above, the constant is ''public''. This is the point.
+
+----
+
+Another one..
+
+ StringBuffer a = new StringBuffer();
+ a.append(loc + "?" + var1 + "&param1" + var2 + "&param2" + var3 + "&param3" + var4 + "&param4" + var5 + "&param5" + var6 + "&param6");
+ return a.toString();
+
+
+The person learned somehow that StringBuffer''''''s are better for performance. It's the result of that knowledge.
+
+----
+I once saw a C function that was 10,000 lines long. Everybody treated it like some ogre in a cave: You avoided it whenever possible, and when you did deal with it you did so with an attitude of fear and revulsion.
+
+-----
+
+I once saw the code of a relatively green programmer's first attempt at C: a editor for the Unix environment. The code consisted of six functions, five of which were about ten lines long, while the sixth was well over 1500 lines, had 24 (!) levels of indentation, and used every two character long variable name you can make (well, the last point is an exaggeration). Moreover, the coder insisted on indenting with tabs consistently, resulting in the worst case in two empty lines of indentation for every line of code (for a 80-char display). Read that, sucker!
+
+Another one was a simple platform game which used globals for every frigging object there might ever be. The code used magical values such as (x=0,y=0) to mark an object's nonexistence, and the game worked by running a main loop which was full of if clauses like this:
+
+ if (fjix != 0 || fjiy != 0) {
+	/* ... do something with fjis, fjilk, fjit1, fjit2, etc ... */
+ }
+
+ if (fjux != 0 || fjuy != 0) {
+	/* ... do something with fjus, fjulk, fjut1, fjut2, etc ... */
+ }
+
+ /* ditto for x1, x2, y1, y2, xx, yy, whatever. */
+
+The code was not consistent in naming either: It might have had player1x and player2x, but playerSpeed1 and playerSpeed2 (only not as verbose). For a sugar on top, the different objects had little dissimilarities here and there in their working logic. This example alone should be enough to convince you that OOP sometimes has use...
+
+-----
+BruceIde says: Ok. I didn't want to do this but you guys made me. Here's the supporting story: We have one of those 10K line C functions. Ambitiously, we decided to start porting it all to Java with the hopes of making our code more robust and portable. To that end we hired a guy and he went of for six months and came back with some of the most atrocious code I've ever seen. Here's a taste:
+
+ package mrpd.mrr;
+
+ /**
+  * This class creates a data base connection using JDBC driver.
+  * The created connection will be used and re-used subsequently
+  * in different classes of the MRR application.
+  *
+  * The "Singleton pattern" is used to create a static object 
+  * and return a reference upon request
+  *
+  * Creation date: (2/22/2001 10:15:04 AM)
+  * @author: XXXX XXXX
+  */
+  
+ import java.sql.*;
+ import java.util.*;
+
+ public class DBConnection  {
+
+  	private static DBConnection dbCon = new DBConnection();
+  	private static String errCode="0000";
+	private Connection connection;
+
+ private DBConnection() {
+
+	 /**This is the constructor of class of DBConnection.
+	  *The function is to make a database connection.
+	  *
+	  *Define local variables 	
+	  */
+	
+	String sDriver, sPassword, sUserID, sURL;
+	
+	//Specify Driver name, user ID and password 
+	String driver = "COM.ibm.db2.jdbc.app.DB2Driver";
+	String userid = "mrpd1";
+	String password = "XXXXXXX";
+	
+	//specify database URL
+	String url=null;
+	url	= "jdbc:db2:mrpddb";  //MRPDDB on production
+ //	url = "jdbc:db2:DEV"; // local development instance
+ //	url	= "jdbc:db2:dhoneds"; //XXXX's local alias to MRPDDB on dhoneds
+	System.out.println("Using database: " + url);	
+	
+	//Attempt to load the JDBC driver with newInstance
+	try {
+		Class.forName(driver).newInstance();
+	} catch (Exception e) {
+		System.err.println("Failed to load current driver.");
+		errCode = "8301";
+		return;
+	}
+
+	//Attempt to connect to the database
+	try {
+		connection = DriverManager.getConnection(url, userid, password);
+		System.out.println("\n\tConnection to "+url+" successful\n");
+	} catch (SQLException SQLe) {
+		System.err.println("problems connecting to " + url + ":");
+		System.err.println(SQLe.getMessage());
+		System.err.println("SQL State: " + SQLe.getSQLState());
+		if (connection != null) {
+			try {
+				connection.close();
+			} catch (Exception e) {
+			}
+		}
+		errCode = "8302";
+		return;
+	}
+ }
+ public static Connection getConnection() {	
+	return dbCon.connection;
+ }
+ public static String getErrorCode() {	
+	return errCode;
+ }
+ }
+
+''I'd like to know what the specific problems are here. '' -- PhilJones
+
+''The main problem with this code is the complete disregard for parametrization and lack of Object-oriented programming.  The DB connection is hard-coded to a specific JDBC driver, and worst of all, a specific user name, password, and schema URL, instead of being passed as arguments.  The returned error codes are completely ambiguous and placed in static variables.  The exceptions should probably be thrown to allow the calling method to decide what to do instead of failing outright.  Most importantly, the connection itself is singleton (a result of the singleton DBConnection instance), eliminating the possibility of getting more than one connection or connection pooling, and introducing a slew of potential concurrency issues.  Really bad programming here; probably more of a copy-and-paste from an internet example (which should be promptly burned).''
+
+
+
+I used this example recently in an Object-Oriented training workshop I facilitated. I explained that we were going to use a variant of "outside-in testing" to understand the behavior of this class and then refactor and simplify it. The very first unit test we wrote gave me a surprising result. This was the only line in the test method (uses Junit 4.10, which includes hamcrest):
+
+	assertThat(DBConnection.getErrorCode(), is("8301"));
+
+The reasoning was that since we didn't have the ''COM.ibm.db2.jdbc.app.DB2Driver'' class anywhere on our classpath, the catch block covering the line with ''Class.forName'' will be entered, assigning a value of "8301" to errCode, which we assert on.
+
+Except that this test failed. The reason is that as the DBConnection class is loaded, the *first* thing that happens is that the constructor is called, as part of the line ''private static DBConnection dbCon = new DBConnection();'' This *does* momentarily cause the errorCode to become "8301". However, as the classloader continues, the *next* thing that happens is ''private static String errCode="0000";''. This resets the value of errCode to "0000", failing our test.
+
+I was scared that this 80+ line class was too simple to teach the concepts of using tests to refactor legacy code; turned out it was just perfect! --SaleemSiddiqui
+
+
+----
+
+The best example of bad code i've seen in a real running product is:
+
+ if (this == null)
+ {
+	// Logic here
+ }
+
+''Indeed. The code above is the prototype of every instance of SuperstitiousCode.''
+
+----
+
+I've seen worse. In a financial analysis application we were asked to tune, ''every'' method had a try catch block wrapping its code. Even if the method was a simple getter or setter. The worst thing about it was that the development team had started doing this because the internal corporate framework written by "the best programmers we have" did the same thing.
+
+To make it worse, the catch block caught Exception, logged it and then threw a home-built subclass of RuntimeException ensuring that genuine  problems would cause several hundred lines of logging messages to be generated.
+
+----
+
+This is in an allegedly MVC web application.
+
+A typical file (of over three thousand) has 6000 lines with more than a third (2258 lines) taken up by a single method. That method features (again as is typical):
+* Concatenated strings of SQL (with no escaping of user data);
+* Three different ways of connecting to and querying the database;
+* Sometimes direct reference to request parameters, bypassing the framework's mechanisms;
+* Directly modifying request parameters;
+* magic numbers ("if(expiry_type == 2)") and strings ("if(cost_type == 'O')");
+* Booleans are often implemented as variables that contain either the empty string or the integer 1;
+* No attempt at consistent formatting;
+* Three different mechanisms for resolving class references;
+* Every edit since the year dot is helpfully commented with the author's username and the date (and nothing else). Hand-written, of course, so the formatting of the name, the date, and the comment syntax used varies from line to line;
+* The only other comments are of lines of code;
+* This method doesn't have the deepest if/else nesting I've seen in this project - it only goes up to eight - but some of the ''tests'' span four lines;
+* (The deepest is eighteen levels deep, and spans nearly 700 lines)
+* Homebaked date and time functions of varying reliability, and a battery of conversion functions to and from the language's native functionality;
+* Massive chunks of code are executed and their results are discarded - unless there are side-effects buried five or six levels down in the call stack;
+* Hundreds of variables are created, given values, and never used (often because the code that used them was commented out);
+* All the usual "if (something) { foo = true; } else { foo = false;}" idioms (in pretty much any variant you can imagine - including those that involve empty strings and integers as above));
+* Spelling and grammatical mistakes (other parts it ask users for their "brithday", two (of many) lists of days of the week have a "Wedbnesday", and the most-common (hardcoded inline) message to the user when no search results are found is 'Have no record'; another message informs users that the file they uploaded was the wrong type - as long as they're fluent in Vietnamese);
+* Much copy-pasta;
+	
+And I should mention that the particular file I'm using as an example is the ''controller'' for one page (of a series of three in this particular task - there are more than seven hundred pages overall); the corresponding model file has 13,866 lines, including the "getAvaiableAdType()" [sic] method, a mercifully short 63-line method that makes thirteen three-table-join queries returning complete result sets ("SELECT *") which are then searched to see if a certain value (from the primary key of one of those tables) appears, and then the results of those those searches are combined in boolean expressions to return an associative array of four boolean values.
+
+Unused methods are scattered everywhere, unused files are scattered everywhere.
+
+Several cases of plagarised third-party code copied wholesale and "customised".
+
+There are three distinct permissions/ACL mechanisms in use, not counting the ad-hoc "save a session variable here and see what its value is there" approaches.
+
+A test suite was autogenerated in the project's fourth year; that was a year ago and today every method still throws a "NotImplemented" exception.
+
+The application language is PHP, but the fun is by no means restricted to that language. The coders have been equally adept at being utterly incompetent while still producing something that "works" (for those sufficiently familiar with and tolerant of its foibles) in HTML, JavaScript, CSS, and the database schema (289 tables, only 30 of which have any key relationships with each other). The source code for the application is larger (in raw kB) than the source code of the web server and DBMS it's running on combined. The very concept of OO has totally bypassed these people  (what am I saying? the difference between integers and strings is obscure to them): their domain objects are just lists of functions that in most cases have something to do with the contents of the table that persists the domain object's state (if it were ever to be used for such a purpose - but you'll be more likely to find it assembling HTML). More than one IDE has been reduced to a gibbering wreck just trying to list warnings ("unused variable", "uninitialised variable", "incorrect argument order"....).
+
+At least thanks to the comments I have some idea of which offshore contract coders in which company were given such a free rein, and it serves as what can be achieved if a company ''wants'' to lumber its boss with crippling technical debt.
+
+----
+
+I saw the following in production code, written by someone with a few years of experience who bragged about his ability to write efficient code:
+
+ switch (number)
+ {
+ case 0: printf("0"); break;
+ case 1: printf("1"); break;
+ case 2: printf("2"); break;
+ case 3: printf("3"); break;
+ case 4: printf("4"); break;
+ case 5: printf("5"); break;
+ case 6: printf("6"); break;
+ case 7: printf("7"); break;
+ case 8: printf("8"); break;
+ case 9: printf("9"); break;
+ }
+It made me very sad.  -- KrisJohnson
+
+''Well, it is pretty efficient.''
+
+No, it is absolutely not efficient. Here it is the efficient way:
+
+ static char *buf= "0123456789";
+ ...
+ if (0<=number && number<=9) /* 2 tests instead of 5 on average */
+	write(1,buf+number,1);  
+
+''How about this:''
+
+ if (0 <= number && number <= 9)
+	putchar('0' + number);
+
+''The switch has no default case; the test is not necessary as out of range values cause unspecified behaviour.''
+
+In C, when there is no default tag in switch(), the behaviour is not unspecified but the block is skipped for values not in any case:. By the way, some C compilers use binary search or something similar for switch(), so the result might be better than 5 comparisons on average. It's still worse than the concise code, of course.
+
+''Besides.  '''Everyone''' knows that printf("%d", number) would be horrendously expensive...''
+
+* If speed is an issue in that part of the code, then actually yes, it is overly expensive (not that that justifies the above switch() bizarreness).
+
+presuming printf can take an int as an argument, why not forego the entire switch statement and simply printf(number); ? ''Because C's printf can't; its parameter signature is (const char*, ...). printf(number) would be "print the character string starting at address number.''
+
+
+----
+
+What about
+
+ #define DIGIT0 48
+ ...
+ write(1, DIGIT0 + number);
+
+is it really more expensive ?
+
+'''This is a perfect example of BadCode!'''
+
+	* The correct way to enumerate the digit 0 is '0'
+	* Use NamedConstants, preferably standard ones. '''stdout''' is better than '''1'''.
+	* write() takes three parameters.
+	* The second parameter is a '''char const *''', not a '''char'''.
+
+ char c = '0' + number;
+ write( stdout, &c, 1 );	/* ''' WRONG WRONG WRONG WRONG''' */
+
+	* write() is the wrong function anyway. 
+
+ putchar( '0' + number );
+
+-- SunirShah
+
+Gack! You can't pass "stdout" to system calls like write()! That's mixing up stdio FILE* with Unix file descriptors; they are different types with different values.
+
+The correct answer is to use the stdio library functions, not system calls, because (1) they're more portable, (2) typically easier to read (3) easier to modify into something more complex, (4) almost always faster, due to buffering, and (5) they sanely handle many system errors for you, such as EIO.
+
+I could explain how to use stdout with write() in a way that is functionally, except no one should do that. The people who are the exception to the rule will figure it out.
+
+It is an ancient Unix idiom, when using raw system calls, to say "write(1 .....)" and "read(0 .....)", despite the rule about naming constants. I won't defend it, but still, all Unix systems programmers can read this effortlessly, and the meaning of the values of 1 and 0 will not and cannot ever change in Unix; they are meaningful. (Names would still be better, of course.)
+
+''Are there POSIX symbols for the three standard file descriptors?''
+
+STDIN_FILENO, STDOUT_FILENO and STDERR_FILENO in <unistd.h>
+----
+
+Maybe they were trying to not print anything unless the number was between 0 and 9. Just trying to recapture a possible motiviation - no disagreement, it is terrible code.
+
+----
+
+Well, if they were trying to be efficient, they would have used putchar() rather than printf(), as printf() involves a function call, and must scan its argument looking for % formats (as opposed to putchar(), which is typically a macro.
+
+----
+
+''The 'printf' function is notoriously slow.  If efficiency was the goal, '''putchar(number + '0');''' would be the answer.  And I'd also suggest looking at the code that uses this switch statement:  Odds are, his algorithms are inefficient too -- and that one's the killer.  -- JeffGrigg''
+
+----
+----
+
+Actually seen in production code:
+
+ /* This program will only run if the laws of mathematics hold */
+ if(1 == 0) 
+ {
+	fprintf("Oh shit - we are not running in the correct Universe\n");
+	exit(17);
+ }
+
+fprintf accepts a FILE * as its first parameter, and the string as its second.  The program would probably crash before exit is called.  If you're going to handle impossible conditions, handle them correctly, please!  -- StragerNeds
+
+''That programmer trolled us all''
+
+----
+
+A piece of code that became legendary was a Java method of 230 lines that was passed 17 parameters, returned a string and consisted of nested ifs (5 or 6 deep in places). Now, depending on various magical conditions of some of the arguments, the method would either return null, return a string that was built up throughout the method, or write strings to one of the arguments which was an output stream (in which case the returned string was a meaningless fragment of the output). This method had a CyclomaticComplexityMetric of  150. It didn't end there of course, depending on further combinations of the arguments the string itself was either XML, HTML or something else that I've never fully understood.
+
+The xml was also interesting. Its root element was <theXML>. -- ChanningWalton
+
+
+----
+
+There's a current thread in the smalltalk group about the Object class and other classes having nearly a hundred methods. Ironic given all the bashing smalltalkers do. But of course this design is okayed by the community saying why do you care. BadCodeIsInTheEyeOfTheBeholder. Your community will likely be more forgiving than those from other communities. This is the basis for cliques, nationalism, etc.
+
+----
+
+I was recently hired by a client to try to optimize a huge VB6 application. A windows explorer search on all VB source files which can contain code (*.bas;*.cls;*.frm + a couple of more unusual ones) gave me 20MB!
+
+One of the VB projects contains 13 classes. A rather small project would you think? The file sizes are 2k x 5, 4k x 4, 5k, 6k, 40k and (hold your breath) 1,474k!!!
+
+Aivosto has a nice VB project analyzer, the various reports reveals the following of that giant class:
+	* There are 309 dead code related 309 problems, most of them are dead variables or variables only written to (how is it even possible?)
+	* total logical line count is 29,251 - 8,449 of them are comments - 4,252 are white space. You would think well, at least this beast is well documented. Dream on! Most of the comments are out-commented code which should be removed. The rest is empty function headers, wrong function headers, meaningless function headers and uninforming block descriptions.
+	* 20 public and 303 private procedures. Average size is 92 lines, the largest has 501 lines
+	* Half of it has a CyclomaticComplexityMetric from 1 - 5, which isn't bad (I guess), but a third of it ranges from 6 - 15, while the rest lies between 16 to 51+. This is bad.
+	* Max depth of conditional nesting is 16! I am not even attempting to guess what this one does, or should do.
+	* 73% has a structural fan-in of 0 - 1, which indicates almost no reuse. This is an achievment in itself.
+
+-- ThomasEyde
+
+----
+
+My favourite was in code provided by some consultants we hired at a previous employer of mine. After one month with no progress, we asked to see the code they'd written. They showed us a 500 line function of great complexity,
+which in the end, did something really simple (I don't remember exactly what, but I do remember that after removing all the garbage and refactoring things a bit, I was left with one line of fairly simple C code). The code was littered with things like:
+
+ strcpy( dst, src );
+ if( strcmp(dst,src) ) {
+	fprintf(stderr,"strcpy failed\n");
+	exit(1);
+ }
+
+This is kind of like the "only works if the laws of math hold" example earlier, except it was written in all seriousness.
+
+----
+"if the laws of maths hold"?
+* Old joke. Synonymous with "always". Somewhat sarcastic. On the other hand, the "laws of math" that one is accustomed to e.g. in algebra are not always true in programming.
+
+The other day I was debugging a QuakeC "program" and I filled it statements like this:
+
+ tmp = ftos(0);
+ dprint ("a zero is", tmp, "\n");
+
+Guess what, the debug output looked like...
+
+ a zero is 0
+ a zero is 0
+ ...
+ a zero is 1
+ a zero is 0
+
+I was about to go crazy but realized in time that I was writing into a constant in one place and the compiler had the (limited) ability to fold constants.
+
+-- AntonGavrilov
+----
+For posterity's sake, this has to be put up before I obliterate it. Why do people do things like this?
+
+ if (!($islead == 1) && !($iswriter == 1) && !($isleadadmin == 1)) { [...] }
+
+I got a good laugh out of this one too when I came across it.
+
+ if (!($o > 0))
+
+-- JakeKrohn
+
+This one is well known. Because they're used to languages where something analogous is required (the majority of languages invented far from C and Unix).
+
+----
+
+Actually, you do have to be careful about IEEE floating point.
+
+  !(a < b) is not equivalent to (a >= b).
+
+If either a or b is a NaN, both (a < b) and (a >= b) are false, so !(a < b) is true.
+
+How do i know?  I was writing code for an application where mistakes
+in earlier parts of the running code lead to statements like
+
+  x = 0 / 0.
+
+Nothing happened right away, but later in the run I got hammered by NaNs.
+
+----
+
+The company I work at let a co-op student design and write a Web app. What a great opportunity for him to learn PHP and SQL. Apparently, though, he didn't get to learn about loops, if-then statements, or subroutines. We're talking about duplicating an entire 16K PHP file in order to change one SQL parameter. This was a 3rd or 4th year CS student.
+
+----
+
+The programmer of this Perl snippet asked me for help.  I got back at him by rewriting this and the surrounding code as a loop, and then proceeding to rewrite the loop using only closures and HOFs.
+
+ if($INPUT{like1} ne "="){$INPUT{op1}= lc $INPUT{op1};$value="LOWER($INPUT{get1})";$input="'\%$INPUT{op1}%'"}else{$value="$INPUT{get1}";$input="'$INPUT{op1}'"}$qin= "$value $INPUT{like1} $input";if($qin=~s/\*|\%/\%/g){$qin=~s/=/ LIKE /};$query =$qin;
+ if($INPUT{plus1}){if($INPUT{like2} ne "="){$INPUT{op2}= lc $INPUT{op2};$value="LOWER($INPUT{get2})";$input="'\%$INPUT{op2}%'"}else{$value="$INPUT{get2}";$input="'$INPUT{op2}'"}$qin=" $INPUT{plus1} $value $INPUT{like2} $input";if($qin=~s/\*|\%/\%/g){$qin=~s/=/ LIKE /};$query.=$qin}
+ if($INPUT{plus2}){if($INPUT{like3} ne "="){$INPUT{op3}= lc $INPUT{op3};$value="LOWER($INPUT{get3})";$input="'\%$INPUT{op3}%'"}else{$value="$INPUT{get3}";$input="'$INPUT{op3}'"}$qin=" $INPUT{plus2} $value $INPUT{like3} $input";if($qin=~s/\*|\%/\%/g){$qin=~s/=/ LIKE /};$query.=$qin}
+ if($INPUT{plus3}){if($INPUT{like4} ne "="){$INPUT{op4}= lc $INPUT{op4};$value="LOWER($INPUT{get4})";$input="'\%$INPUT{op4}%'"}else{$value="$INPUT{get4}";$input="'$INPUT{op4}'"}$qin=" $INPUT{plus3} $value $INPUT{like4} $input";if($qin=~s/\*|\%/\%/g){$qin=~s/=/ LIKE /};$query.=$qin}
+
+See HandObfuscatedCode
+
+''If only it could be ascribed to maliciousness instead of incompetence...''
+----
+
+I've come across a lot of code like this recently:  UI code tightly bound to specific system exceptions and database exceptions.
+
+This particular one is in a webform's Button_OnClick event, and they actually check the exception's error message for an index violation.
+
+ try
+ {
+	// {Code inserting stuff into a database table}
+ }
+ catch (Exception ex)
+ {
+	if(ex.Message.IndexOf("IX_CreditReceiptProfile") > 0)
+	{
+		lblError.Text = "A record for this receipt has already been entered, please check the data you are entering";
+	}
+	else
+	{
+		lblError.Text = "There has been an error encountered - " + ex.Message;
+	}
+ }
+
+Whew.
+
+''Having done something similar in the past, I have to defend the part about checking the exception text.  It is unfortunate that the JDBC didn't specify a standard way to differentiate between common SQL exceptions, such as "duplicate key", or violation of unique or foreign-key constraints.  As such, checking the exception text is the only way to know if a unique constraint is violated.''
+
+''Although in the example above, it is better to catch only SQLException instead of a catch-all Exception.  In my case, when the magic string for checking constraint violation is found, a custom subclass of SQLException is thrown instead.''
+
+----
+''Found on LeftHanded:''
+
+I knew there would be a link to DesignPatterns somewhere. I worked on a project writing software for a machine which had two 'ports'. These were known as the left and right ports. Sadly, someone (who didn't understand OOD) coded these everywhere as left_... right_... The code for each port had been cut and pasted, with the word LEFT replaced with RIGHT. There were even messages INIT_LEFT_PORT, INIT_RIGHT_PORT ... I was amazed. My protests were ignored. I asked what would happen if another port were added to the hardware. And what is wrong with sending an INIT_PORT message to a port object?
+
+The right, er, I mean, correct thing to do is to have n ports. The ports did not care if they were left or right. These were just labels. The same code should have been used to run both ports. Handedness can really get in the way sometimes. In the end, I left the company. Was I right?
+
+-- AnnoyedLeftHander
+
+No, you '''left'''.
+
+''You were right about the code being badly written to use only 2 named ports, but the link to left/right-handedness is tenuous, as the code could just as well been PORT_A/PORT_B, with the same flaws.''
+
+Rather, a classic case of the ZeroOneInfinityRule.
+
+How about INIT_PORT_PORT and INIT_STARBOARD_PORT? When you add support for object orientation and multiple ports, make sure your code can handle exceptions like cantWriteLeftPort and noRightPortsLeft. -- SteveHowell
+
+''I'd automate making those changes. Of course I'd have to deal with the CannotPortPortPort Exception.''
+----
+
+Ladies and gentlemen, the worst code every discovered in the wild:
+
+http://thedailywtf.com/ShowPost.aspx?PostID=26368
+
+Thought about putting this in FunnyThingsSeenInSourceCodeAndDocumentation, but it's not really FunnyHaHa, more like FunnyExcuseMeWhileISlitMyWrists.
+
+''The WTF for 3 Marh 2005 (http://thedailywtf.com/ShowPost.aspx?PostID=30718) seems specifically written for TopMind; it shows that a lot of programmers 'don't get' RelationalDatabases, either (for that matter, this whole page proves that a lot of coders don't get even PlainVanilla ProceduralProgramming) and that data-driven programming methods are as ripe for abuse as any other. OTOH, one suspects that most of the bad rap RDBMSes get comes from this sort of crappy design. - JayOsako''
+
+---------
+
+'''SQL ...The baddest request ever found on a web site'''
+
+(available on the first page of the web site... arf arf arf)
+ select distinct d.id, da.id, d.titre_fr, da.titre_fr, d.date_modif,
+ (select distinct text_fr 
+ from online_dactu_paragraphe dp2
+ where dp2.id_dactu=da.id and zorder=
+ (select min(zorder) from online_dactu_paragraphe dp2 where dp2.id_dactu=da.id)
+ )
+ as first_para, dc.type_contenu 
+ from online_dactu d, online_dactu_article da, online_dactu_paragraphe dp, online_dactu_contenu dc, media m 
+ where
+ dc.id_dactu=d.id and dc.id_contenu=da.id and dc.type_contenu='ARTICLE' 
+	and d.b_fr=1 and dp.id_dactu=da.id	
+	and 
+ (
+ UPPER(TRANSLATE(da.titre_fr,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%'
+ or UPPER(TRANSLATE(dp.titre_fr,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%' 
+ or UPPER(TRANSLATE(dp.text_fr,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%' 
+ or UPPER(TRANSLATE(dp.plus_text_fr,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%'
+ or UPPER(TRANSLATE(dp.plus_titre_fr,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%' 
+ or (UPPER(TRANSLATE(m.titre_fr,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%' 
+ or UPPER(TRANSLATE(m.legende_fr,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%' 
+ or UPPER(TRANSLATE(m.lire_fr,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%' 
+ or UPPER(TRANSLATE(m.credits,'������������������','eeeeaaauuooiiiuucn')) like '%POLLUTIONS%'
+ )
+ )  (special bracket (the magic one!!)
+	and 
+	(
+ d.id_theme in ( (select id from qactu_theme where parent=0) ) 
+		or d.id_theme in (select qt.id from qactu_theme qt where qt.parent in 
+		( (select id from qactu_theme where parent=0) ))
+  ) 
+	and m.id (+)= dp.img_paragraphe and d.b_sactu=1  order by d.date_modif desc,d.id
+
+-------------- NO COMMENTS!! -------------------
+
+Sometimes BadCode occurs as a result of time constraints, poor planning/thinking etc.  Sometimes code is just pure bad (see above for plenty of examples).  I'm starting to lose it slightly with BadCode and find myself developing CodeRage - watch out!
+
+(gawp) holy cranberries! that's one of the worst i've seen ever, it really is awful! --Tom RM
+
+----
+
+--------------------------------------
+(EvilTeach)
+
+Sadly common in our C production code 
+
+	x[strlen(x)] = 0;
+--------------------------------------
+
+I maintain that there is NO SUCH THING as BAD CODE.  Code either works or it doesn't.  How YOU would have implemented something differently, has more to do with your OWN EGO. -- BarnySwain
+
+''You name has been added because it's clearly a strong personal opinion. If all your code has to do is compile and run, then you're probably right. If your code ever has to be fixed, enhanced, modified or otherwise understood by someone else, then perhaps your criterion is not the only one to use.'' 
+
+Besides, there is clearly such a thing as '''worse''' code.  If you have two pieces of code, one on the left and one on the right, that are equal in all aspects but one, then the one on the right is '''worse''' code if it:  (a) is further decoupled from the statement of the problem (and is thus less maintainable), (b) requires significantly more computatational resources (time, space, money) to accomplish the same task, (c) fails on use cases the other succeeds on, (d) requires more effort to add support for new use cases than does the other code, (e) the code is too specific to particular environment -- will break portability when there is no reason to do so....  etc.  It's possible to list quite a few more.
+
+It's also possible that a code-unit is '''worse''' than should have been written by any competent, professional programmer.  As professional crafters of code, it's our duty to provide solutions that are at least StateOfTheArt.  As engineers of software, our names are and should be attached to our work - we should be capable of being proud of our accomplishments and designs, not shamed by them.
+
+There is such a thing as bad code.  Bad code is worse than state-of-the-art.  Bad code breaks when stressed by changes in environment that shouldn't have affected it.  Bad code breaks when stressed by changes in the problem specification that should have been easy to implement.  Bad code adds unnecessary momentum and headaches.  Bad code costs extra computational resources and development money for no reason other than the fact that it was written by a bad programmer.  Bad design has many similar properties.
+
+These are truths.  You may choose to believe otherwise... but what is your reasoning?  Faith?  For a manager of programmers, I'd certainly agree that one must be able to identify the difference between how you would have implemented something and what is truly bad code.  I understand that it is often difficult for promoted programmers to get a handle on this.
+
+----
+
+Unforunately, the professional programming community relies a lot on faith programming.  I have found that an individual, regardless of experience, believes that the code they have produced will work.  This is arrogance which derives from the ego.
+
+My opinion based on my (years of) experience to date, is that bad code does not exist, because I have never seen anything that can be described as ''''good'''' code.  Plenty of people have said their code is good but that has always been subjective.
+
+Code that needs to be fixed, does not work.  Code that fails tests, does not work.  Code that does not solve the problem statement, does not work.  If the problem statement changes and the code needs to be changed / modified / enhanced; how easily this is done depends on the original problem statement and on style.  Style affects perception, and when one persons coding style differs from another, then the code might be deemed 'bad' (this is wrong as it is arrogance that deems it 'bad' when it is merely 'different').  Making assumptions is bad.  These are truths.
+
+The more negative position to take is that all code can be described as bad, with some worse than other.
+
+-- BarnySwain
+
+"I don't care if you have to bend double to get through my buildings' doors, and the plumbing circles the living room three times! That doesn't make them bad, just different!"
+
+''If your coding style''
+*''makes your code easily modifiable and maintainable whenever the program statement changes''
+*''makes the control flow, the logic, etc., of your code immediately understandable to other people''
+''then it's good code. Otherwise it's bad code.''
+----
+
+Java to pad a string:
+
+	if (str.length() == 29) {
+	str = "0" + str;
+	} else if (str.length() == 28 {
+	str = "00" + str;
+	}
+	...
+
+----
+
+I am an engineers who is now fixing up at work some of the worst C code I have seen in 25 years of programming in C. I fired the last guy for his incompetency. The product had a history of 5 incompetent goofs who call themselves engineers write the code. I am now rewriting the entire project. 
+
+In the following examples, the comments are mine. The comments in the original code were sparse and what existed was barely comprehensible.
+
+Example 1:
+
+the_error_code = error_Code;		// Confusion created by a first class moron.
+
+Example 2:
+
+swich_state = state_OfSwichContact	 // Extreme inconsistency, no attention to coding standards and atrocious spelling
+
+Example 3:
+
+while (!PORTE.3)
+{
+  Donothing();				// "Donothing" is meant to do nothing. "Donnothing" is an assembly macro with a nop in it.
+} 
+
+The imbecile could have replaced this block of stupidity with... 
+
+while (!PORTE.3);
+
+Or better still define the PORTE.3 with something intelligent...
+
+while (!INTERLOCK);	// Morons don't seem to understand the importance of "ease of use" and communications. 
+
+It appears there are a lot of selfish programmers out there who only think of themselves. Hence no comments. And they don't give a toss.
+Worse still is an educations system (here in Australia) that allows dick heads to get a degree but they should never have been allowed to even graduate from high school.
+
+----
+
+I was working on my Master's thesis in CS, and unfortunately I had to work on some Java code written by some guy before me.
+I found lots of horrible stuff (tons of public and/or static variables, I guess he didn't feel like writing all the getters and setters). But this bit was the worst:
+
+	public void someMethod(List<Model> list) {
+		Object[] m = list.toArray();
+		for(int i = 0; i < m.length; i++) {
+			Model mm = (Model) m[i];
+			...
+		}
+		...
+	}
+
+Not to mention stuff like this (I guess he never heard of a GarbageCollector):
+
+	public static void openStreaming() {
+		Open''''''Streaming op = new O''''''penStreaming();
+	}
+
+I'd like to remind you that this was his Master's thesis in CS...
+
+----
+
+  String phoneNo() 
+  {
+    Boolean go = false;
+    String num = '';
+
+    if (contact != null)
+    {
+        go = true;
+    }
+    if (go)
+    {
+         return contact.Phone;
+    } else {
+        num = 'None';
+    }
+    return num;
+  }
+
+This construct was repeated through a dozen accessors.
+
+----
+
+Good site for BadCode: http://thedailywtf.com
+
+See also: BadVariableNames, EvilCode, JavaScriptAbuse, MicrosoftSampleCode
+----
+CategoryCoding

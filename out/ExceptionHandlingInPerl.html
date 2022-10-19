@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Exception Handling In Perl
+      </h1>
+      <p>
+        In <a href="WhyHatePerl.html">WhyHatePerl</a>, exceptions were mentioned: "Surely the comparison of 'die' to real exception handling is a joke?". Well, here's an example that demonstrates just how well they match up:
+      </p>
+      <code>
+        # aliases to make the code more readable for non-perl programmers<br/>
+        sub try(&) { eval {$_[0]->()} }<br/>
+        sub throw($) { die $_[0] }<br/>
+        sub catch(&) { $_[0]->($@) if $@ }<br/>
+      </code>
+      <code>
+        # The main program<br/>
+        try {<br/>
+        throw Exception->new("A real exception");<br/>
+        };<br/>
+        catch {<br/>
+        print $@->what;<br/>
+        };<br/>
+      </code>
+      <code>
+        # The exception class<br/>
+        package Exception;<br/>
+      </code>
+      <code>
+        sub new<br/>
+        {<br/>
+        my $class = shift;<br/>
+        bless { msg=>"@_" }, $class;<br/>
+        }<br/>
+      </code>
+      <code>
+        sub what<br/>
+        {<br/>
+        my ($self) = @_;<br/>
+        return sprintf "Exception: %s\n", $self->{msg};<br/>
+        }<br/>
+      </code>
+      <p>
+        Most perl programmers shouldn't bother to create the alias functions -- its a bit like "#define BEGIN {" in C. But I think its valid to show that the concepts are equivalent. Without the aliases, you'd see:
+      </p>
+      <code>
+        # The main program<br/>
+        eval {<br/>
+        die Exception->new("A real exception")<br/>
+        };<br/>
+        if ($@) {<br/>
+        print $@->what;<br/>
+        }<br/>
+      </code>
+      <p>
+        --<a href="DaveWhipp.html">DaveWhipp</a>
+      </p>
+      <hr/>
+      <p>
+        Setok: I guess this could be acceptable, although looks like a fair bit of magic is involved. What about various exception classes? Can you have separate catch statements for each? What about the finally construct?
+      </p>
+      <p>
+        I don't see any hairy magic: just the standard idiom of using 'eval' to catch 'die'. For different exception classes, you'll have to use the language's conditional mechanisms: when you think about it, multiple catch blocks are nothing more that a chain of if/elsif tests on an exception's type.
+      </p>
+      <p>
+        Perl doesn't need a "finally" construct for the same reason that C++ doesn't: it has deterministic object destruction. So you can use the infamous <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a> paradigm. --<a href="DaveWhipp.html">DaveWhipp</a>
+      </p>
+      <p>
+        <em>That is assuming you've structured your entire program or at least all your resources as objects and given them proper DESTROY methods and so forth.  Besides, finalizers can also run code not related to resource release, such as postconditions (important to verify that cleanup in your current scope happened).  Not every exception is thrown from a constructor, and not every exception causes destruction.  Yes, it's all just syntax sugar that could be handled with RAII somehow, but hey, all flow control is just syntax sugar for CSP.</em>
+      </p>
+      <p>
+        The hairy magic comment was referring to the use of magic variables, which I can't make head or tails of, but I assume it works (I'm not too knowledgeable of Perl). I'm not quite convinced you don't need a finally construct. I see it as quite useful if f.ex. opening a file, doing something, and sticking the close in a finally construct. That way it's closed whatever the situation -- whether an error occurs or not. Surely this is even more important with deterministic object destruction? You want to be sure certain objects are destroyed, no matter what happens: just stick a destruction all inside a finally construct.  --Setok
+      </p>
+      <code>
+        Opened files are closed when the file handle goes out of scope. --JohanLindstrom<br/>
+      </code>
+      <p>
+        There's only one magic variable involved: $@ -- this tells you what the last exception was (if any). If you want to minimise its use, then we could write:
+      </p>
+      <code>
+        eval {<br/>
+        die Exception->new("A real exception")<br/>
+        };<br/>
+        my $exception = $@;<br/>
+      </code>
+      <code>
+        if ($exception) {<br/>
+        print $exception->what;<br/>
+        }<br/>
+      </code>
+      <p>
+        The deterministic destruction will ensure that all objects are destroyed when they go out of scope. In the file example, the dtor of a FileHandle object will close the file. So when you throw the exception, the file handle goes out of scope, so its dtor is called, so the file gets closed. You simply don't need to worry about it. However, if you really want a finally block, then we can create one:
+      </p>
+      <code>
+        sub finally (&) { Finally->new(@_) }<br/>
+      </code>
+      <code>
+        eval {<br/>
+        my $final = finally {<br/>
+        print "goodbye\n"<br/>
+        };<br/>
+        print "hello\n";<br/>
+        die "I'm dead\n";<br/>
+        };<br/>
+      </code>
+      <code>
+        print $@;<br/>
+      </code>
+      <code>
+        package Finally;<br/>
+        sub new {<br/>
+        my ($class, $code) = @_;<br/>
+        bless {code => $code}, $class;<br/>
+        }<br/>
+        sub DESTROY { my ($self) = @_; $self->{code}->() }<br/>
+      </code>
+      <p>
+        This will behave just like a finally block. You have to assign the block to a variable to tell perl when you want to run it. Hopefully this demonstrates that you don't need a finally block, except as syntactic sugar. --<a href="DaveWhipp.html">DaveWhipp</a>.
+      </p>
+      <hr/>
+      <p>
+        How would you do something like the trivial <a href="PythonLanguage.html">PythonLanguage</a> function below without having to use two try blocks?:
+      </p>
+      <code>
+        def get_val_from_file(myfile):<br/>
+        try:<br/>
+        return int(myfile.readline()) # The first line of myfile converted to an integer<br/>
+        except IOError:<br/>
+        return -2<br/>
+        except ValueError:<br/>
+        return -1<br/>
+      </code>
+      <p>
+        <em>This works, but returning -2 or -1 isn't very Perlish.-- </em>EarleMartin<em> It's not Pythonic either; this is an example, not useful code.</em>
+      </p>
+      <code>
+        use Scalar::Util qw(looks_like_number);<br/>
+      </code>
+      <code>
+        my $file = 'file';<br/>
+      </code>
+      <code>
+        sub get_val_from_file {<br/>
+        return -2 unless -f $file && -r $file;  # Exists and readable?<br/>
+      </code>
+      <code>
+        open FILE, $file;<br/>
+      </code>
+      <code>
+        # Equivalent to myfile.readline() above.<br/>
+        my $val = <FILE>; chomp $val;<br/>
+      </code>
+      <code>
+        # If the first line's a number, return it.<br/>
+        return $val if looks_like_number($val);<br/>
+      </code>
+      <code>
+        # If it's not numeric fall back to returning -1.<br/>
+        -1;<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>Thanks for that, but I was really wondering how it was to be done using the exception code (possibly modified) provided above by Dave Whipp  (for that matter, the return values really aren't very Pythonic either, but was done for simplicity) - One can, of course recode the Python version without exceptions (at least mostly - I can't think how to check for file-readability without them), but one's code is longer without them.</em>
+      </p>
+      <p>
+        The exception structure assumed in the above code doesn't exist in Perl (there is no IO exception); so I'll assume that a function "to_int_or_throw" will throw an exception object whereas an IO error will die with an error message (from Perl). I could now write:
+      </p>
+      <code>
+        sub get_val_from_file<br/>
+        {<br/>
+        my ($myfile) = @_;<br/>
+      </code>
+      <code>
+        eval { return to_int_or_throw $myfile->getline };<br/>
+      </code>
+      <code>
+        if (!ref $@) # IO Error<br/>
+        {<br/>
+        return -2;<br/>
+        }<br/>
+        elsif ($@->isa("ValueError"))<br/>
+        {<br/>
+        return -1;<br/>
+        }<br/>
+      </code>
+      <code>
+        die $@; # rethrow other exceptions<br/>
+        }<br/>
+      </code>
+      <p>
+        This is one of those things that I wouldn't write this way (it looks messy, and the design is questionable). Your comments above suggest that you recognise this, but just wanted a simple example. --<a href="DaveWhipp.html">DaveWhipp</a>.
+      </p>
+      <hr/>
+      <p>
+        Is there enough reflection in perl to create an exception system with semantics like Smalltalk, where the block containing the exception can be restarted with different parameters, continued with a value after the method/procedure that raised the exception, aborted, and so on? I'd like to be able to do something more graceful in response to an exception than just <a href="ReportAndDie.html">ReportAndDie</a>.
+      </p>
+      <p>
+        I think that the short answer is no. However, with a bit of cooperation from the code that throws the error, we can insert a sort-of continuation into the exception object. As a simple example, here's some code where the exception object <em>is</em> the continuation:
+      </p>
+      <code>
+        eval<br/>
+        {<br/>
+        print "about to die\n";<br/>
+        die sub { goto RESUME };<br/>
+        print "shouldn't be here\n";<br/>
+        RESUME:<br/>
+        print "resumed\n";<br/>
+        };<br/>
+      </code>
+      <code>
+        print "exited the eval\n";<br/>
+      </code>
+      <code>
+        if (ref $@ eq "CODE")<br/>
+        {<br/>
+        print "resuming\n";<br/>
+        $@->();<br/>
+        }<br/>
+        elsif ($@)<br/>
+        {<br/>
+        die $@;<br/>
+        }<br/>
+      </code>
+      <code>
+        print "end\n";<br/>
+      </code>
+      <p>
+        The output of this code is:
+      </p>
+      <code>
+        about to die<br/>
+        exited the eval<br/>
+        resuming<br/>
+        resumed<br/>
+        exited the eval<br/>
+        end<br/>
+      </code>
+      <p>
+        --<a href="DaveWhipp.html">DaveWhipp</a>
+      </p>
+      <p>
+        <em>Umm, I don't think this is what I meant by "resume". The idea would be to do something in the exception handler that fixed whatever problem caused the exception to be raised, then resume execution as if the exception condition had never occurred. In your example above, it would resume at line that prints "shouldn't be here\n". I'm probably misunderstanding you, though. Maybe you could do surgery on the following:</em>
+      </p>
+      <code>
+        eval<br/>
+        {<br/>
+        print "doing some marvelous code\n";<br/>
+        if ($bar) {<br/>
+        print "Bad value for bar!\n";<br/>
+        die #what goes here?<br/>
+        }<br/>
+        print "Everything's ok now!\n";<br/>
+        $result = $foo/$bar;<br/>
+        print "doing more marvelous code\n";<br/>
+        };<br/>
+      </code>
+      <p>
+        <em>We want the output of the finished code to be:</em>
+      </p>
+      <code>
+        doing some marvelous code<br/>
+        Bad value for bar!<br/>
+        Repairing bar<br/>
+        Resuming<br/>
+        Everything's ok now!<br/>
+        doing more marvelous code<br/>
+      </code>
+      <p>
+        <em>Does this help?</em>
+      </p>
+      <p>
+        OK, Here's an attempt (still not the cleanest code I've ever written):
+      </p>
+      <code>
+        my $foo = 10;<br/>
+        my $bar = 0;<br/>
+      </code>
+      <code>
+        eval<br/>
+        {<br/>
+        print "about to divide by bar\n";<br/>
+        unless ($bar)<br/>
+        {<br/>
+        print "bad value for bar ($bar)\n";<br/>
+        die sub { goto RESUME };<br/>
+        RESUME:<br/>
+        }<br/>
+        print "value of bar is ok\n";<br/>
+        printf "$foo / $bar = %g\n", $foo/$bar;<br/>
+        };<br/>
+      </code>
+      <code>
+        print "exited the eval\n";<br/>
+      </code>
+      <code>
+        if (ref $@ eq "CODE")<br/>
+        {<br/>
+        print "caught exception; resuming with bar=5\n";<br/>
+        $bar = 5;<br/>
+        $@->();<br/>
+        }<br/>
+        elsif ($@)<br/>
+        {<br/>
+        die $@;<br/>
+        }<br/>
+      </code>
+      <p>
+        This results in:
+      </p>
+      <code>
+        about to divide by bar<br/>
+        bad value for bar (0)<br/>
+        exited the eval<br/>
+        caught exception; resuming with bar=5<br/>
+        value of bar is ok<br/>
+      </code>
+      <ol>
+        <li>
+           / 5 = 2
+        </li>
+      </ol>
+      <code>
+        exited the eval<br/>
+      </code>
+      <p>
+        This approach does seem to be stressing the limits of Perl though. Lacking real continuations, perl5 is not able to resume in the same stack frame as it died from -- the stacks are actually cleared, so all the variables that we use have to be scoped so that they are visible across all the code. But if you don't use local variables, then it seems to work. If you need locals, then you need to save them explicitly:
+      </p>
+      <code>
+        eval {<br/>
+        my $foo = 10;<br/>
+        my $bar = 0;<br/>
+      </code>
+      <code>
+        print "about to divide by bar\n";<br/>
+        unless ($bar)<br/>
+        {<br/>
+        print "bad value for bar ($bar)\n";<br/>
+        die {<br/>
+        foo => $foo,<br/>
+        bar => $bar,<br/>
+        resume => sub {<br/>
+        $_=$_[0];<br/>
+        goto RESUME<br/>
+        },<br/>
+        };<br/>
+        RESUME:<br/>
+        $foo = $_->{foo};<br/>
+        $bar = $_->{bar};<br/>
+        }<br/>
+        print "value of bar is ok: foo=$foo, bar=$bar\n";<br/>
+        printf "$foo / $bar = %g\n", $foo/$bar;<br/>
+        };<br/>
+      </code>
+      <code>
+        print "exited the eval\n";<br/>
+      </code>
+      <code>
+        if (ref $@ eq "HASH")<br/>
+        {<br/>
+        print "caught exception; resuming with bar=5\n";<br/>
+        $@->{bar} = 5;<br/>
+        $@->{resume}->($@);<br/>
+        }<br/>
+        elsif ($@)<br/>
+        {<br/>
+        die $@;<br/>
+        }<br/>
+      </code>
+      <code>
+        print "end\n";<br/>
+      </code>
+      <p>
+        --<a href="DaveWhipp.html">DaveWhipp</a>.
+      </p>
+      <hr/>
+      <p>
+        OK, thanks! That looks like as close as we're gonna get.
+      </p>
+      <hr/>
+      <p>
+        According to the documentation for the exception mechanism in Error.pm (<a href="http://www.perl.com/pub/a/2002/11/14/exception.html?page=2),">http://www.perl.com/pub/a/2002/11/14/exception.html?page=2),</a> that module allows the catch block to restart the try block as if there had been no exception (emphasis mine): 
+      </p>
+      <code>
+        : The BLOCK receives two parameters. The first is the exception being thrown and the second is a scalar reference. <strong>If this scalar reference is set on return from the catch block, then the try block continues as if there was no exception</strong>.<br/>
+      </code>
+      <code>
+        : If the scalar referenced by the second parameter is not set, and no exceptions are thrown (within the catch block), then the current try block will return with the result from the catch block.<br/>
+      </code>
+      <p>
+        In spite of this claim, I haven't been able to make it work. Can someone help me out?
+      </p>
+      <p>
+        Here's the code I've tried:
+      </p>
+      <code>
+        use Error qw/:try/;<br/>
+      </code>
+      <code>
+        try {<br/>
+        print ("Before\n");<br/>
+        Error::Simple->throw(-text => "A Resumeable Failure");<br/>
+        print ("After");<br/>
+        }<br/>
+        catch Error::Simple with {<br/>
+        my $argCount = @_;<br/>
+        my $anError = shift;<br/>
+        my $aScalar = shift;<br/>
+        my $aScalarCopy = $aScalar;<br/>
+        print ("argCount: $argCount\n");<br/>
+        print ("\$anError: \"$anError\", \$aScalar: $aScalarCopy\n");<br/>
+        #$$aScalar = 42;<br/>
+        #$aScalar = 42;<br/>
+      </code>
+      <code>
+        #return $aScalar;<br/>
+        return;<br/>
+        };<br/>
+      </code>
+      <p>
+        Unfortunately, when called, I get the following:
+      </p>
+      <code>
+        Before<br/>
+        argCount: 2<br/>
+        $anError: "-text at C:\tpm\cgi-bin\TestBlock.pm line 116.<br/>
+        ", $aScalar: SCALAR(0x1dbdd08)<br/>
+      </code>
+      <p>
+        Various permutations of the commented-out handler code have not made it work. Am I misunderstanding the doc, or is something else going on?
+      </p>
+      <hr/>
+      <p>
+        A Newbie's apologies to good style...
+        Replace:
+      </p>
+      <code>
+        my $aScalarCopy = $aScalar;<br/>
+      </code>
+      <p>
+        With:
+      </p>
+      <code>
+        $$aScalar = 1;<br/>
+      </code>
+      <p>
+        (it is a scalar reference that needs to be assigned)
+      </p>
+      <p>
+        That will result in:
+      </p>
+      <code>
+        the program dying<br/>
+      </code>
+      <p>
+        (the current??? manual entry being: "BLOCK will be passed two arguments. The first will be the error being thrown. The second is a reference to a scalar variable. If this variable is set by the catch block then, on return from the catch block, try will continue processing as if the catch block was never found" - which is die)
+      </p>
+      <p>
+        <em>I like that, though I'm not sure that's exactly what the manual meant.</em>
+      </p>
+      <hr/>
+      <p>
+        I had the same problem with Error.pm module: poor documentation, no example, and very annoying to debug because the execution flow is not the same as the logical flow (try, catch, finally).
+      </p>
+      <hr/>
+      <p>
+        How about this:
+      </p>
+      <code>
+        sub try(@) {<br/>
+        die "Odd number of arguments" if scalar(@_) % 2;<br/>
+      </code>
+      <code>
+        # Extract even numbered elements.<br/>
+        my $i = 1;<br/>
+        my @keys = grep {$i++ % 2} @_;<br/>
+      </code>
+      <code>
+        my %clauses = @_;<br/>
+        die "Duplicate elements" if scalar(keys %clauses) != scalar(@keys);<br/>
+      </code>
+      <code>
+        my $code = $clauses{code};<br/>
+        die "No code to run" unless defined($code);<br/>
+        eval { $code->() };<br/>
+      </code>
+      <code>
+        my $error = $@;<br/>
+        my $caught = 0;<br/>
+      </code>
+      <code>
+        foreach my $name (@keys) {<br/>
+        next if $name eq 'code';<br/>
+      </code>
+      <code>
+        my $run = 0;<br/>
+        if ($name eq 'finally') {<br/>
+        $run = 1;<br/>
+        } elsif (!$caught && UNIVERSAL::isa($error, $name)) {<br/>
+        $run = $caught = 1;<br/>
+        }<br/>
+      </code>
+      <code>
+        $clauses{$name}->($error) if $run;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        try(code => sub {<br/>
+        die IOError->new if $ARGV[0] eq 'io';<br/>
+        die ValueError->new if $ARGV[0] eq 'value';<br/>
+        print "No error.\n";<br/>
+        }, IOError => sub {<br/>
+        print "IO error!\n";<br/>
+        }, ValueError => sub {<br/>
+        print "Value error!\n";<br/>
+        }, finally => sub {<br/>
+        print "Finally!\n";<br/>
+        });<br/>
+      </code>
+      <p>
+        Where IOError and ValueError descend from the exception class of your choice, with the code of your choice, etc.
+      </p>
+      <hr/>
+      <p>
+        See Try::Tiny  on <a href="TheCpan.html">TheCpan</a> at <a href="http://search.cpan.org/perldoc?Try::Tiny">http://search.cpan.org/perldoc?Try::Tiny</a> for an excellent discussion of exception handling issues in Perl.  It also happens to be a great module that removes much of the pain in Perl exceptions using sane, non-magical Perl code.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryPerl.html">CategoryPerl</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Snapshot Isolation
+      </h1>
+      <p>
+        Snapshot isolation occurs in databases with <a href="MultiversionConcurrencyControl.html">MultiversionConcurrencyControl</a>, such as <a href="OracleDatabase.html">OracleDatabase</a>, InnoDb, <a href="GemStone.html">GemStone</a>, <a href="PostgreSql.html">PostgreSql</a>, <a href="FireBird.html">FireBird</a>, <a href="AxionDatabase.html">AxionDatabase</a>,  <a href="McKoi.html">McKoi</a>, and  <a href="SqlServer.html">SqlServer</a> 2005.
+      </p>
+      <p>
+        <a href="MultiversionConcurrencyControl.html">MultiversionConcurrencyControl</a> ensures none of the 4 <a href="ConcurrentUpdatePhenomena.html">ConcurrentUpdatePhenomena</a> occur without using granular locks - the historical data values are used to preserve isolation.  There are two consequences of this:  it enables much more concurrency than would otherwise be possible, in part because readers are never blocked by writers.  Secondly, the isolation level isn't truly "serializable", in that a serial history can be reconstructed from concurrent transactions, and a few rare anomalies do exist.  
+      </p>
+      <p>
+        <a href="SnapshotIsolation.html">SnapshotIsolation</a> is thus a "new" isolation level - it's been around for a long time, but wasn't being recognized.  The ANSI SQL standard isolation levels in particular are ambiguous, and were critiqued along with a theoretical explanation of <a href="SnapshotIsolation.html">SnapshotIsolation</a> here: <a href="http://citeseer.ist.psu.edu/berenson95critique.html">http://citeseer.ist.psu.edu/berenson95critique.html</a>
+      </p>
+      <hr/>
+      <p>
+        One disadvantage of <a href="SnapshotIsolation.html">SnapshotIsolation</a> is that multiple concurrent writers to the same table can result in failed transactions that have to be retried by your application. Actually, this has little to do with actual concurrency, it's a question of how write transactions are interleaved. 
+      </p>
+      <p>
+        Consider this sequence: 
+      </p>
+      <code>
+        Open transaction A.<br/>
+        Open transaction B. <br/>
+        Have A modify row R, creating R'. <br/>
+        Have B modify that same row R, creating R<em>.</em><br/>
+        Have A (alternatively B) commit.<br/>
+        Then when B (alternatively A) commits, he'll see a conflict.<br/>
+      </code>
+      <p>
+        Indeed he MUST see a conflict because a <a href="SnapshotIsolation.html">SnapshotIsolation</a> approach cannot make that sequence of events into a straight sequence, both A and B modified the original version of the row, their transactions can't be lined up sequentially. I.e., if the transactions lined up sequentially, either A must have been working with R<em>, or B must have be working with R'. Since both transactions thought they were working with R, we have a conflict. In this case, transaction B must be repeated.</em>
+      </p>
+      <p>
+        <em>Note that Oracle's behavior is slightly different, since it uses row level locks for write/write conflicts.  Oracle would block B from modifying row R until A commits or rolls back.   If A commits, the conflict is immediately reported to B as an ORA-08177 error.</em>
+      </p>
+      <p>
+        See <a href="http://mckoi.com/database/maillist/msg03818.html">http://mckoi.com/database/maillist/msg03818.html</a> and <a href="http://axion.tigris.org/servlets/ReadMsg?list=dev&msgId=308451">http://axion.tigris.org/servlets/ReadMsg?list=dev&msgId=308451</a> discussion of issues with <a href="SnapshotIsolation.html">SnapshotIsolation</a> in two databases that support them.
+      </p>
+      <hr/>
+      <p>
+        <em>Whether locks are used is an implementation issue. If the implementation doesn't use locks, or something equivalent to locks that allows transactions to block, then you end up with the problems discussed in the above two links. However, it is possible to avoid these problems, and also to hide the complexity of having to explicitly repeat transactions, without losing performance. Transactions would normally be optimistic, but in the case of a conflict the transaction would automatically be retried in a blocking mode. This should have almost exactly the same performance as optimistic locking when conflicts are rare, but it would also limit excess work due to retries to a factor of 2 in the worst case.</em>
+      </p>
+      <p>
+        <em>I don't know whether there are any implemented databases that use this approach, though. -- </em><a href="DavidSarahHopwood.html">DavidSarahHopwood</a><em></em>
+      </p>
+      <p>
+        It isn't entirely clear to me that the proposed approach is valid (nor am I 100% sure that it is not).  Continuing the "Transaction A" and "Transaction B" example from above, when Tb attempts to commit and finds a conflict, it may not be valid for the database to simply re-open and re-apply Tb--the state of the database after Ta is different than it was when Tb was first attempted.
+      </p>
+      <p>
+        <em>By definition, it is valid for a transaction to be automatically retried. In the example, the effect is the same as if transaction A had completed more quickly, before transaction B started. -- </em><a href="DavidSarahHopwood.html">DavidSarahHopwood</a><em></em>
+      </p>
+      <ul>
+        <li>
+           Yes, that would be the theoretical model. Like always the model diverges ever so slightly but essentially from the realities of actual software. The reality is that a transaction encompasses client/server communications, and even if a database server would know to replay a transaction, no client environment that I know of would know how to cooperate. To give a practical example suppose transaction B computed a value inside the client environment, based on the state read from the database as first statement of the transaction. Then sends that value as an insert statement as the second statement and issues a commit. For the server to correctly replay the transaction, it would require the client to restart, read data again,  send a different insert statement. The theoretical model works well if one considers the client within the same scope of DBMS, which is almost never the case in practice. --<a href="CostinCozianu.html">CostinCozianu</a>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        In some <a href="SnapshotIsolation.html">SnapshotIsolation</a> implementations, notably Oracle, this isolation level has the side-effect of allowing some "truly" concurrent operations to take place, meaning that some concurrent transactional schedules can't be serially ordered. This means snapshot isolation doesn't fit the exact mathematical meaning of "serializable" isolation, and sometimes requires more explicit locking (SELECT FOR UPDATE) in order to meet such a guarantee.
+      </p>
+      <p>
+        Example in oracle:
+      </p>
+      <p>
+        Session 1:
+      </p>
+      <code>
+        create table foo (a_value int);<br/>
+        create table bar (a_value int);<br/>
+        alter session set isolation_level = serializable;<br/>
+        insert into bar select count(*) from foo;<br/>
+      </code>
+      <p>
+        Session 2:
+      </p>
+      <code>
+        alter session set isolation_level = serializable;<br/>
+        insert into foo select count(*) from bar;<br/>
+        commit;<br/>
+      </code>
+      <p>
+        Session 1:
+      </p>
+      <code>
+        commit;<br/>
+        select a_value, b_value from foo, bar;<br/>
+      </code>
+      <code>
+        A_VALUE    B_VALUE<br/>
+        ---------- ----------<br/>
+      </code>
+      <ol>
+        <li>
+                    0
+        </li>
+      </ol>
+      <p>
+        In a truly serializable model, one of these transactions had to occur before the other, so Session 2 would block until Session 1 committed. Note this anomaly is only present in Oracle for <em>aggregate operations</em> such as count(*).  Other databases (at least <a href="AxionDatabase.html">AxionDatabase</a>) may consider this a conflict, since Session 1 read from FOO while writing to BAR, and Session 2 read from BAR while writing to FOO.
+      </p>
+      <p>
+        Unfortunately <a href="SnapshotIsolation.html">SnapshotIsolation</a> can destroy the performance of some applications, specifically the ones with a relatively large number of concurrent transactions on "hot rows" that take a long time to repeat.  In such cases, a SELECT FOR UPDATE (or equivalent) would be needed to obtain truly serializable isolation.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryConcurrency.html">CategoryConcurrency</a>
+      </p>
+    </div>
+  </body>
+</html>

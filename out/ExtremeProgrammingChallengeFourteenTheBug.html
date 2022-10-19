@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Extreme Programming Challenge Fourteen The Bug
+      </h1>
+      <p>
+        This page describes the concurrency bug in the challenge
+        code in <a href="ExtremeProgrammingChallengeFourteen.html">ExtremeProgrammingChallengeFourteen</a>. The concrete challenge
+        is to write a <a href="UnitTest.html">UnitTest</a> that exposes the fault.
+      </p>
+      <p>
+        Let's assume that we have the constructor and have created
+        a <a href="BoundedBuffer.html">BoundedBuffer</a> with unit capacity.
+        Then consider the following sequence of events:
+      </p>
+      <ol>
+        <li>
+          	The buffer is initially empty, occupied==0.
+        </li>
+        <li>
+          	A consumer thread, C1, arrives and waits.
+        </li>
+        <li>
+          	A second consumer, C2, arrives and waits.
+        </li>
+        <li>
+          	A producer, P1, arrives.
+        </li>
+        <li>
+          	P1 fills the buffer, setting occupied=1.
+        </li>
+        <li>
+          	P1's notify() notifies C1, say.
+        </li>
+        <li>
+          	<strong>Before C1 reacquires the lock</strong>, a second producer, P2, arrives.
+        </li>
+        <li>
+          	P2 acquires the lock <strong>ahead of C1</strong>, and waits.
+        </li>
+        <li>
+          	Now, C2 and P2 are waiting, and C1 is trying to reacquire the lock.
+        </li>
+        <li>
+          	C1 reacquires the lock.
+        </li>
+        <li>
+          	C1 empties the buffer, setting occupied=0.
+        </li>
+        <li>
+            <strong>C1's notify notifies C2 !</strong>
+        </li>
+        <li>
+            C2 reacquires the lock.
+        </li>
+        <li>
+            C2 waits again.
+        </li>
+        <li>
+            Now, P2 is waiting, even though the buffer is not full!
+        </li>
+      </ol>
+      <p>
+        Exercise: Adapt this to the case where buffer.length==4.
+      </p>
+      <hr/>
+      <p>
+        Fascinating. Even having read the concurrency writeup, I didn't grok that the wait() didn't cause the scheduler to look for someone to run. It should have been obvious that it couldn't, but I keep expecting Java to work like an operating system. A decent O/S would have just kept running guys until one of them didn't immediately wait. Now let me see if I can make time to try to figure out a test. Probably I have to simulate the scheduler, however, which seems extreme but not Extreme. --<a href="RonJeffries.html">RonJeffries</a>
+      </p>
+      <p>
+        As a mater of fact, wait() does cause the scheduler to look for someone to run. However, it will not run any thread in a wait state. A thread that has called wait(), is in a Not Runnable state. The scheduler will look for a thread that is in a Runnable state. --Kevin Mukhar
+      </p>
+      <p>
+        I remain fascinated. From a fix viewpoint, does it make sense [and does it help] to modify the methods to notify() and then wait(), i.e. to put an additional notify() inside the while loop? And if so, could one avoid lots of problems by always doing notifyAndWait()?  --R
+      </p>
+      <hr/>
+      <p>
+        It does not matter where the notify() is done. The notified thread cannot
+        return from its wait() call until it reacquires the lock, and it cannot
+        reacquire the lock until the holder releases it by leaving the synchronized
+        block.
+      </p>
+      <p>
+        The simplest fix is that these methods could use notifyAll() rather than
+        notify(). However, fixing the code is not the issue; the issue is to
+        find a test that demonstrates the error.  <em>Your issue is to find the test, yes. Mine is to GET it. That, at least, might be possible. ;-></em>
+      </p>
+      <p>
+        --<a href="TomCargill.html">TomCargill</a>
+      </p>
+      <p>
+        An even better fix is to not use notify and wait at all. They are extremely
+        dangerous to use for anybody but the most careful, and nobody is that
+        careful.
+        --AnonymousIdiot
+      </p>
+      <hr/>
+      <p>
+        See <a href="ConcurrencyUnitTestWaynesAttempt.html">ConcurrencyUnitTestWaynesAttempt</a> for a stab at a JUnit unit test for this problem.
+      </p>
+      <hr/>
+      <p>
+        Wow. I skimmed the <a href="ExtremeProgrammingChallengeFourteen.html">ExtremeProgrammingChallengeFourteen</a> page a couple months back when I joined Wiki; it went way over my head then, but - <a href="QuickChangesJunkie.html">QuickChangesJunkie</a> that I am - I chanced upon it again tonight and found the whole discussion immensely enlightening. Kudos to all contributors; this would make a <strong>great</strong> article. I haven't had a chance in a while to be exposed to concurrent programming issues; I used to have a lot of trouble with those back when I wrote chat servers. It looks as if I might shortly need to improve my skills in this area, so - undaunted as usual by my imperfect understanding of the theories involved - I took on the challenge for a couple hours.
+      </p>
+      <p>
+        I think I have a fully deterministic test case that exposes the defect. It involves modifying the code to be tested, but Tom said in the original problem statement that was okay. I have tested the code; executing it without modifications will print out "Liveness problem detected" (and hang around waiting for Ctrl-C since a non-daemon Thread is alive). Changing notify() to notifyAll() will cause the program to terminate at the end of main(). (The tests were run under JDK 1.3, Windows 98, just in case this is a factor.)
+      </p>
+      <p>
+        I think it's a fairly simple solution. Naturally, knowing what the defect is, and having the exact sequence of steps that expose it detailed at the top of this page helped a lot in constructing the test; it. But it seems to me that it could be generalized into a testing pattern easily enough.
+      </p>
+      <p>
+        Unfortunately, this page doesn't leave a large enough margin to contain the code before it becomes <a href="TooBigToEdit.html">TooBigToEdit</a>. Shame really.
+      </p>
+      <p>
+        -- <a href="LaurentBossavit.html">LaurentBossavit</a>
+      </p>
+      <p>
+        I'd love to see it, please.  Make another page!  Or shove my stuff onto another page (I don't think my solution is that swift, anyhow).  Or send it to me in email.  Or post it to the xp mailing list.  -- <a href="WayneConrad.html">WayneConrad</a>
+      </p>
+      <p>
+        Just kidding, Wayne. Couldn't resist casting myself as Pierre de Fermat. ;)
+      </p>
+      <p>
+        Here it is - please let me know if I've missed something completely obvious and I just <strong>think</strong> it exposes the defect.
+      </p>
+      <p>
+        My reasoning was as follows - concurrency issues are hard because code is <strong>fast</strong>. The section of code during which interesting things might happen (such as, in this instance, producer P2 cutting in and acquiring the lock before C1 has a chance to) are executed in a matter of microseconds; so your P2 has to "get lucky" in the normal scheme of things, things have to get timesliced and scheduled just so.
+      </p>
+      <p>
+        Writing your own scheduler is an interesting option, but not a practical one. I thought a simpler option would be to make my code <strong>slow</strong>. How slow ? Just as slow as it needed to be; selectively slow, in fact, so I would know for sure that P2 would acquire the BB's monitor ahead of C1. I hunted around for a way to do that, and it turns out that Java has a handy method - Thread.sleep() - which causes a thread to stop for a while but not to release any monitors.
+      </p>
+      <p>
+        I've put the resulting code at <a href="ConcurrencyUnitTestFirstAttempt.html">ConcurrencyUnitTestFirstAttempt</a>.
+      </p>
+      <hr/>
+      <p>
+        Spiffy!  I'll post my mods to it later, unless someone beats me to it.  In short, I'll reduce the tight coupling between the class and its test, so that the class can deploy without the test.  I'll also change the test to produce no output when successful (all successful unit tests should have the same minimal shape).  -- <a href="WayneConrad.html">WayneConrad</a>
+      </p>
+      <p>
+        It occurs to me that I've been pretty optimistic in my estimates of how slow the code needs to be made. 250ms might be short enough to be vulnerable to perturbations due e.g. to the JIT; I'd expect <a href="HotSpot.html">HotSpot</a> to kick in on the second call to take(), which might be enough to mess things up. I'll try to see if I ever get a false pass, if not try with shorter intervals, if yes with longer ones.
+      </p>
+      <p>
+        (Later) Oy ! Egg on face : there are a few stupid bugs in my code, and the test only failed because I got lucky.
+      </p>
+      <hr/>
+      <p>
+        (Later still) Hmm, this gets strange. I debugged my first attempt. One bug was in the constructor for TestBB - it needs to say "threads.put(this,..." rather than "threads.put(current,...", of course; the constructor is called by the main thread. Another bug (an embarrassing one) was in doSleep : out of sheer laziness I'm using an array instead of an object, and of course I had an off-by-one bug.
+      </p>
+      <p>
+        I ran the test again, and got a pass. Hmm. I was still thinking my slowdown factor might be too low, so I refactored it to a static member, and extracted the actual test to a different method so I could do multiple runs.
+      </p>
+      <p>
+        The test still passed. I instrumented the code to see what was going on, giving names to the threads so I could write stuff like
+      </p>
+      <code>
+        println(currentThread.getName()+" sleeps/got lock/whatever")<br/>
+      </code>
+      <p>
+        and used "synchronized(this)" instead of the original so I could insert things in between the start of the method and attempting to get the lock; and, after tweaking the slowdown periods, got things to behave predictably.
+      </p>
+      <p>
+        I <em>think</em> (by now I'm getting tired and can't think straight any more) I have the code where I want it : P2 attempting to acquire the lock before P1 releases it, as a result of P1 sleeping for a while. If I understand this thing at all, I should have the situation Tom describes above : P2 and C1 in contention for the lock.
+      </p>
+      <p>
+        However, the damn thing still passes the test - every time; apparently C1 always "reacquires the lock" before P2. (Or maybe I have exposed an actual defect, this time in my understanding of what "reacquires the lock" means). I <em>can</em> get the sequence of events described above to occur, but only by explicitly making C1 release the lock after returning from wait() and sleeping for a while.
+      </p>
+      <hr/>
+      <p>
+        (Later <em>still</em>) Damn, I can't give up. Went and reread <a href="DougLea.html">DougLea</a>'s exposition of the concurrency rules and mechanisms. Saw where the problem was - P2 could only acquire the lock ahead of C1 <strong>if C1 was still in wait()</strong>. I needed to insert a "sleep state" before C1's call to notify(). I simplified the code a bit, reintroduced the synchronized keyword at the method level (turns out the sleep state before acquiring the lock isn't needed in this instance).
+      </p>
+      <p>
+        Next I ran some "reality checks" (a lot of them - I'm <strong>really</strong> tired by now); with "slow" values as low as 10ms, the test always fails with notify(), always passes with notifyAll(); with "slow" at 0ms, I get about 10% "false pass" rate with notify(), and still 100% pass with notifyAll(); increasing "slow" to 200ms yields the same results as with 10ms.
+      </p>
+      <p>
+        I have tested everything I could think of to prove myself wrong, and it still "works" (that is, correctly fails). It occurs to me that I could modify the code to do these checks for me; I would then have a <a href="UnitTest.html">UnitTest</a> of a <a href="UnitTest.html">UnitTest</a>... Eeeek !
+      </p>
+      <p>
+        Let's assume the ConcurrencyUnitTest really is correct (the way I'm currently aching all over and seeing spots suggests it might not). Designing, implementing and debugging it has taken me a total of about 5 hours (10 PM to 3AM). The test is 100 lines of code, for about 30 lines of tested code; this is in excess by a factor of 6 of the "normal" ratio of test code to production code as reportedly advocated by <a href="KentBeck.html">KentBeck</a>, but diligent refactoring should help. Tom avers that it took him 3 hours to prove the original code wrong, so the <a href="UnitTest.html">UnitTest</a> takes longer by a factor of 2 - but keep in mind that <strong>I</strong> don't review <a href="DougLea.html">DougLea</a>'s code.
+      </p>
+      <p>
+        If correct, I leave it as an exercise to the reader to formulate the ConcurrencyUnitTest pattern; <a href="ConcurrencyUnitTestFinalVersion.html">ConcurrencyUnitTestFinalVersion</a> has the final version of the code. Off to sleep with you, CowboyTester !
+      </p>
+      <hr/>
+      <p>
+        This is an example of using the wrong idiom. I know this wasn't the challenge but the code could be corrected by either using a Rendevous object or using a CSP channel. Personally, I wouldn't write this kind of code using only waits and notify's.
+      </p>
+      <p>
+        <em>Now you tell us. ;)</em>
+      </p>
+      <p>
+        Yup. Bad code. Producers and consumers should have separate monitors. See <a href="BetterQueue.html">BetterQueue</a>.
+      </p>
+      <hr/>
+      <p>
+        <a href="BetterQueue.html">BetterQueue</a> proposes the two monitor approach.
+        I have two comments.
+      </p>
+      <p>
+        First, I think that the single monitor is simpler.
+        XP seeks simplicity, and the context is XP.
+        (And, of course, it works with proper notification.)
+      </p>
+      <p>
+        Second, and more important, a concrete implementation with
+        two monitors is equally susceptible to coding faults that
+        are just as hard to detect by testing. Two monitors is no
+        help against the underlying nature of the challenge.
+      </p>
+      <p>
+        In TDD By Example, p. xii, Kent says:
+      </p>
+      <code>
+        <em>There certainly are programming tasks that can't be driven solely by tests (or at least not yet). ... concurrency, for example, ...</em><br/>
+      </code>
+      <p>
+        When the 'not yet' changes, please let me know.
+      </p>
+      <p>
+        --<a href="TomCargill.html">TomCargill</a>
+      </p>
+    </div>
+  </body>
+</html>

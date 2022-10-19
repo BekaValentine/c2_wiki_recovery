@@ -1,0 +1,105 @@
+The encapsulation of subshell processes makes it difficult for them to communicate through ShellVariables with the rest of the system.
+Consider the following Shell code:
+
+ abortf=0
+ $CGIDIR/post-undecode | (
+	security=""
+	while read x; do
+	case $x in
+	#
+	# wpasskey is for attempts
+	# to write pre-existing pages
+	#
+	"wpasskey") passkey=`line`;
+	 if [ "$passkey" ]; then
+		security="Write''''''Protected=$passkey";
+	 fi;;
+	"writesecure") writesecure=`line`;;
+	. . .
+	"Abort_save") line >/dev/null;
+			abortf=1;;
+	"text")	break;;
+	esac
+	done
+	if [ "$abortf" = "1" ]; then
+	echo '<html><head>'
+	echo'<title>'$term
+	echo 'Save Canceled</title></head>'
+	. . .
+	exit
+	fi
+ )
+ if [ "$abortf" = "1" ]; then
+	... take error action
+ fi
+
+The last ''if'' test can fail, because the changes made to abortf inside the subshell (delimited by parenthesis) are lost when the subshell exits.  Some Shells, like Korn shell (ksh), handle this well, but one can't depend on the ubiquitousness
+of ksh (pity).  One could communicate such conditions through StandardOutput, but we'd rather use StandardOutput for stream data, passing more voluminous data.
+We could also use Auxillary Files, but those have problems with efficiency, reentrancy, cleanup, etc.
+
+'''Therefore''': Communicate error conditions from subshells to their parents using return error codes:
+
+ $CGIDIR/post-undecode | (
+	abortf=0  # right scope
+	security=""
+	while read x; do
+	case $x in
+	#
+	# wpasskey is for attempts to write
+	# pre-existing pages
+	#
+	"wpasskey")	passkey=`line`;
+	 if [ "$passkey" ]; then
+		security="Write''''''Protected=$passkey";
+	 fi;;
+	"writesecure") writesecure=`line`;;
+	. . .
+	"Abort_save")	line >/dev/null; abortf=1;;
+	"text")	break;;
+	esac
+	done
+	if [ "$abortf" = "1" ]; then
+	echo '<html><head>'
+	echo '<title>'$term 'Save Canceled</title></head>'
+	. . .
+	exit 65
+	fi
+ )
+ if [ "$?" = "65" ]; then
+	... take error action
+ fi
+----
+Nice stuff. This can be extended to include the explicit export of shell variable in the following way:
+ eval `if [ -f myfile ] ; then echo 'fileFlag=yes' ; else echo 'fileFlag=no" ; fi`
+or:
+ heftySubShell | while read var ; do
+	eval `$var` # which expands to var=value
+ done
+''No, that won't work. The "while" loop is in its own subshell, since it's getting its input from the pipe. You'd have to use something like''
+ heftySubShell | (
+	while read var; do
+	eval `$var`
+	done
+	U''''''seTheVars
+ )
+
+''-- BillTrost''
+
+This assumes that the input follows the correct format. The following improves on this slightly:
+ heftySubShell | while read var ; do
+ 	case "$var" in
+ 	*=*) eval `$var` ;;
+ 	# add as many other cases as necessary....
+ 	*)
+ 	 ;;
+ 	esac
+ done
+
+This technique does not require temporary files, and the output of 'heftySubShell' can be viewed textually for correctness.
+
+'''Note:''' I really ought to write down my ideas about iterative development of shell scripts. Lots of incremental-step techniques get you to where you want to be so that you can then optimize later. I'll put them over in IncrementalUnixShellDevelopment or something. I think they are idioms more or less.
+
+-- DavidCymbala
+
+----
+CategoryUnixShellPattern

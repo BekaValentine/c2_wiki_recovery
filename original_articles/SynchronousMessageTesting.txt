@@ -1,0 +1,48 @@
+Oftentimes, testing messaging can become difficult because of the asynchronous nature of most of it. When creating UnitTest''''''s, speed and simplicity are paramount, so an asynchronous solution is not realistic. Sure, you can create timeouts and monitoring threads, but this can quickly become ugly. The easiest solution is to create a completely synchronous testing environment. This makes testing quick, easy, and predictable.
+
+-- MikeRettig
+
+Has anyone got any experience with trying to do this? How is it possible to exercise asynchronous messaging code using synchronous method calls? Did you run into any problems as a consequence of your testing strategy? Can you do TestDrivenDesign this way or does it warp your architecture too much?
+
+----
+
+I've written what I term a DeterministicTestSuite (whose name may not be technically correct, but anyway...), which accepts a test suite.
+
+Basically, we create a thread which will launch setup(), test[Name](), and teardown().  The original thread then starts that thread, and executes a join with an [x] second timeout on the created thread.  The created thread does its thing, and catches any exceptions thrown (including T''''''estFailure) passing them to the original thread, and terminates.
+
+We then have one of three cases to handle when we leave the join(x) statement on the original thread:
+
+	1 The created thread is still running:
+** test case has timed out, so we throw a T''''''estCaseTimedOutFailure.  
+	1 The created thread is not running, and there is an exception to be thrown:
+** test case failed, so we rethrow the exception, doing a little magic to create a useful stack trace.
+	1 The created thread is not running, and there is no exception to be thrown:
+** test case passed, we're done.
+
+Now we have a situation where we can ensure that test cases don't deadlock, which is the problem I've run into quite frequently testing asynchronous interfaces.  We also hide the complexity of explicitely managing the threading code in our testcases:  the test writer can use locks obtained from the tested code, without concern that they may hang the test framework.
+
+One performance issue, if a series of tests are broken in that they timeout, and the timeout is a long time, the tests can take a long time to complete.  I get around this by using a concurrent test suite that runs a set of deterministic suites in parallel, again in parallel to a set of simple synchronous test cases which run in serial.  This way we can continue processing test cases while a couple of them are stuck in deadlocks waiting to timeout.
+
+If there's interest, I'll post the code... it's a couple Java classes worth, designed for the JavaUnit framework, but should be adaptable for any timeout situation.
+
+-- WilliamUnderwood
+
+----
+
+An alternate approach:
+I introduce artificial delays, while testing, to force the code into "worst case" scenarios.
+
+* The code I'm working on at this time does 'UPDATE', then 'SELECT' then 'COMMIT.'
+* For testing, I may force a 'wait' after the UPDATE.
+* Then, with another thread, I'll verify that it blocks (due to the UPDATE lock).
+* Then I'll 'signal' the first thread, allowing it to complete.
+* When it COMMITs, the second thread will also be released, and complete.
+
+I can also force deadlocks with this technique.
+
+Testing is generally '''very''' fast, but you have to plan for and carefully force each sequence you want to test. Of course, that helps to make your code more modular.  ;-)
+
+-- JeffGrigg
+
+----
+CategoryTesting

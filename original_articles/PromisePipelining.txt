@@ -1,0 +1,127 @@
+A technique used in some languages with MessagePassingConcurrency (JouleLanguage and EeLanguage), which has the effect of greatly reducing latency in distributed messaging. It can also simplify the programming of event-driven systems such as GUIs [EventDrivenProgramming].
+
+From <http://www.erights.org/elib/distrib/pipeline.html>:
+
+ Conventional RPC                 "Dataflow" with Promises
+
+ t3 := (x.a()).c(y.b())           t3 := (x <- a()) <- c(y <- b())
+
+ Expands to...                    Expands to...
+
+ t1 := x.a()                      t1 := x <- a()
+ t2 := y.b()                      t2 := y <- b()
+ t3 := t1.c(t2)                   t3 := t1 <- c(t2)
+
+In a conventional RPC system, each of the three calls on the left requires its own separate round trip. Typically these would be chained, causing the sequence as a whole to require three sequential round trips. Even when making maximal use of available parallelism, the "c(...)" message could not be sent until both "a()" and "b()" had returned, resulting in a minimum delay of two sequential round trips.
+
+By contrast, the right hand side can stream out all three calls directly, without waiting for any round trips. To see why, lets visualize these messages using our standard Granovetter notation:
+
+http://www.erights.org/elib/concurrency/images/pipe-example2.gif
+
+The key is that later messages can be sent specifying promises for the results of earlier messages as recipients or arguments, despite the fact that these promises are unresolved at the time these messages are sent. This allows VatL to stream out all three messages at the same time, possibly in the same packet. 
+
+----
+
+PromisePipelining was invented in the context of the XanaduProject by MarkMiller, DeanTribble and RobJellinghaus; see <http://web.archive.org/web/20071023111712/http://www.sunless-sea.net/Transcripts/promise.html>. The early CeePlusPlus implementation described in the transcript worked by generating wrappers for C++ class libraries, but pipelining in Joule or E is a transparent language feature.
+
+Note the use of "excuses" (similar to ChainedExceptions) to keep track of the chain of errors that caused a promise to be broken:
+
+''"So broken promises are never really represented by objects at all on the server, it's the comm layer that either one side of the wire or the other depending on how much information exists locally or not, can tell that this request involves a broken promise -- and therefore the promise that results from the broken request is indirectly broken and the broken promise that caused this guy to be indirectly broken is this guy's excuse. 'Why did you break your promise to me?' 'Oh don't blame me, it's his fault!' And then you can track down the excuse chain to find the directly broken promise's problem. You can have a chain of indirectly broken promises and that chain always has to end in a directly broken promise that has a problem."''
+
+Use of promises for UserInterface programming:
+
+''"I gave you the rationale for why we created the promise system, and it turns out that the major benefit of the promise system was not with respect to network latency, it was with respect to interactive performance in the context of server latency. No matter how blindingly fast our server is, it is a server that a bunch of users are going to be beating on simultaneously and sometimes the server itself is going to be slow. In a DirectManipulation user interface you want the part of the user interface that is the direct manipulation part to always be speedy. When you click on something, when you do various operations, you like to feel like the part that is immediate, the part that is driven by the mouse action always happens immediately. And to a first approximation [...], the way we achieve this is that all of the direct manipulation parts of our front-end simply result in requests being streamed out and local manipulation happens, i.e. the direct manipulation part never waits for a round trip. [...]''
+
+''[...] What happens is while you are interacting, user interface events (mouse motion and keyboard typing) take priority over processing results back from the back-end, so while you are doing things the front-end is responding to you directly and sending requests out to the back-end, and then when you are not doing things, processing the result stream that in turn triggers ready hooks that have been posted -- and now asynchronously you get things filling in on the screen and other things happening that needed the data. The things that didn't need the data are the direct manipulation things, and the things that did need the data can wait until the user is idle."''
+
+Promises in Xanadu/Joule and FutureValue''''''s in MultiLisp seem to have been independent inventions (in the case of MultiLisp the advantages for latency in distributed systems weren't recognized). The connection between Joule and previous ActorLanguages was made later. I invented promises independently as well, much later (calling them "not ready yet" variables). -- DavidSarahHopwood
+
+----
+
+Just to stir still waters, but the Xanadu 'promises' are not the same as the MPI above. Specifically, the Xanadu discussion has all of the results returning to the client. As such it is a way of adapting synchronous events to being asynchronous. 
+
+The bit up here is sending the third message to the server where the variables are accessed directly, thus saving the return trips of the initial calculations, and allowing the third message to be sent immediately.
+
+To break it down:
+ Synchronous :
+ 1. client: "Do x.a() and return the result as t1"
+ 2. server:  "Here's t1"
+ 3. client: "Do y.b() and return the result as t2"
+ 4. server:  "Here's t2"
+ 5. client:  "Do t1.c(t2) and return the result as t3"
+ 6. server: "Here's t3"
+
+Rescheduled  (like Xanadu) :
+ 1,3,2,4,5,6 .
+
+Note, no change in semantic. Still simply function calls on types with all message content available. Blocking will occur at the point of dependency (5) since need results for later message.
+
+Augmented semantic:
+ 1,3,5,6.
+
+Note new semantic of calls without returns, and t1,t2 references need to be understood to be server-side variables. Promises not needed.
+
+I don't think this is the same. You don't need promises to push calculation onto the server, equally you don't need a shared semantic specification of server-side calculations to use promises.
+
+Or I'm just wrong :).
+
+''I think Xanadu and Joule/E are the same here: both will eventually return the values of t1 and t2 to the client (messages 2 and 4), but these messages do not need to have been received by the client before the server starts executing t1.c(t2). The semantic model even allows t3 to be returned before t1 or t2, although I suspect that the implementations would not do that. But I'm no expert on what Xanadu did -- ask on the e-lang list if you want a definitive answer. -- DavidSarahHopwood''
+
+---------
+
+Beware of PromisePipelining unless you can prove (e.g. based on protocol or within a subsystem) that there are no causality loops... 
+
+Example:
+ Handler in A:
+  pBA = B <- Mab // promise B from sending Mab to A
+  pCA = C <- M(pBA) // pipeline promise from B->A to C  
+  force(pBA)
+ Handler in B: processing Mab
+  pCB = C <- Mbc
+  reply f(pCB)
+ Handler in C: (non-deterministic) processing M(pBA) or Mbc
+  assume C receives M(pBA) first, stores pBA
+  C recieves Mbc second, replies to B with g(pBA)
+ Back in B:
+  reply f(g(pBA))
+ Back in A:
+  pBA = f(g(pBA)) - resolved as cycle!
+  force(pBA)
+
+The only way for A to resolve such a cycle and break out of deadlock is to break the promise pBA... well, actually the 'pBA' term might be eliminated during evaluation of f(g(pBA)), but in the general case the above resolves to a cycle and would deadlock. EeLanguage ''partially'' resolves this dilemma by ensuring all promise resolution occurs asynchronously with the object message handlers. But EeLanguage also must break promises that happen to resolve as cycles. Programmers in E don't need to worry about deadlock, but their programs may cry a R''''''iverOfBrokenPromises.
+
+The obvious approach to avoid the issue is to avoid pipelining promises (that is, avoid passing promises ''as parameters'' to other processes/threads/etc.)
+
+* ''That would be a quite unnecessary loss of expressiveness. See below for why this isn't the problem that you imply it is. --DavidSarahHopwood''
+* It is not a significant loss of expressiveness. That is, the design-space requiring that communicated promises be received in an unrealized state is not a large one.
+
+Other approaches include avoid storing promises, but that is far from foolproof... even forcing a promise before storing it could lead to the same problems described here, or deadlock.
+
+The dangers of PromisePipelining do not diminish the value of promises, which still usefully reduce latency and allow the caller to perform other activities when delays are anticipated.
+
+------
+
+'''Transparent PromisePipelining'''
+
+Promise pipelining is safe when it cannot result in a promise dependency cycle, which (as noted above) are very easy to create by accident.
+
+Rather than avoiding PromisePipelining due to its inherent dangers, another approach is to push PromisePipelining decisions to a coordination language (DataflowProgramming) transparently to the actor primitives. This allows the decision on PromisePipelining to be made with the necessary information to prove it safe, at least within a subsystem, and thus eliminate unnecessary communications that turn out to be unnecessary when delivering messages. Supporting this promise pipelining requires that the actor primitives be able to 'send' promises, then allowing the coordination system decide whether to resolve those promises asynchronously or to pipeline them through the receiver (so the receiver cannot explicitly receive promises). 
+
+Promises pipelined in this manner should be ''tamed'', by which I mean ''wrapped in exception handlers to carry alternate values and never throw'', such that they do not deliver unexpected exceptions in the middle of an operation being performed by another actor that was not expecting those exceptions. 
+
+Promises would only be pipelined through part of the system (and almost never across network connections), but even that level of pipelining makes for considerable optimizations when removing communications that were ''query'' focused. One can end up avoiding much unnecessary work.
+
+''I don't agree that dependency cycles are easy to create by accident. Such cycles are called "data-lock" in E terminology. They don't appear to happen very often in practical E programs. Where they do happen, they occur deterministically for a given set of message sends -- unlike deadlocks which are highly nondeterministic and notoriously difficult to reproduce. --DavidSarahHopwood''
+
+''From <http://www.erights.org/talks/promises/>:'' "Although the E model trades one form of lost-progress bug for another, it is still more reliable. As above, datalock bugs primarily represent circular dependencies in the computation, which manifest reproducibly like normal program bugs. This avoids the significant non-determinism, non-reproducibility, and resulting debugging difficulty of deadlock bugs. Anecdotally, in many years of programming in E and E-like languages and a body of experience spread over perhaps 60 programmers and two substantial distributed systems, we know of only two datalock bugs. Perhaps others went undetected, but these projects did not spend the agonizing time chasing deadlock bugs that projects of their nature normally must spend. Further analysis is needed to understand why datalock bugs seem to be so rare."
+
+EeLanguage avoids datalock bugs in practice by a combination of features unrelated to the concept of PromisePipelining - Vats being single-threaded, for example, and outgoing messages to far-refs being strongly ordered (e.g. E's data-pluribus runs atop TCP). And, of course, there is a decent helping of SelfDiscipline. Deadlocks within vats would also be largely deterministic in EeLanguage were they possible. Anyhow, you should not assume in a discussion of PromisePipelining that EeLanguage, with its peculiar concurrency properties, is the platform of choice. The above comment about how ''"datalock bugs primarily represent circular dependencies in the computation"'' is misleading; a datalock is, of course, a circular dependency... but the production of said 'circle' itself can be the outcome of a race. In an environment supporting larger degrees of parallelism, datalock races will evolve non-deterministically, and it takes no gross negligence on part of the developer.
+
+''This is of interest to me. I am working on solving some very large matrix problems using standard libraries for the matrix solution, e.g. ScaLapack. What I have found is that at very large sizes the problem goes into a fault state. Although the top level code is FortranLanguage something lower down starts to eat up the available memory. If the task is not stopped this can crash a whole system of computers. The person who maintains it says that all the tests ran and it must be a mistake in our program.'' -- JohnFletcher (Not from my usual location)
+
+Can you explain the relationship between the matrix problems you mention and PromisePipelining?
+
+----
+It has been known for some time that the Xlib client interface to the XwindowProtocol suffers from lots of unnecessary server round-trips.  XCB is an experimental replacement for Xlib, which uses PromisePipelining to avoid the latency.  See http://xcb.freedesktop.org/.
+----
+CategoryLanguageFeature CategoryConcurrency CategoryDistributed

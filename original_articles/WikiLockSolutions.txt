@@ -1,0 +1,90 @@
+''From CantOpenWikiDbForUpdate...''
+
+-----
+
+A data point:
+
+8/30/2001 at 8:15 AM central time (in U.S.A.):
+I received the dreaded "Can't open /home/httpd/cgi-bin/wiki.db for update" error message 2-5 times on the last 4 pages I edited.  This is what RecentChanges looked like after my edits:
+	* RandomPages . . . . . . 209.162.215.78
+	* ChangesInAugust . . . . . . JeffGrigg
+	* RecentChanges . . . . . . JeffGrigg
+	* WhyDoesTheUniverseExist (new) . . . . . . 208.237.33.97
+	* ChangesInSeptember . . . . . . JeffGrigg
+	* MyFirstPage (deleted) . . . . . . JeffGrigg
+	* CantOpenWikiDbForUpdate . . . . . . JeffGrigg
+	* ConversationalChaff . . . . . . JeffGrigg
+I can see how "WhyDoesTheUniverseExist" could have conflicted with ChangesInSeptember, but I don't see a good reason why I got the message on RecentChanges or MyFirstPage.
+
+Therefore, I think there's something more going on than just extra work to update links.
+''(But this isn't conclusive evidence -- only suggestive.)''
+-- JeffGrigg
+
+The db binding used by this version of wiki locks the whole db, not an individual record. Reads block writes (most common) but writes can also block reads. Both frequencies have been slowly climbing. This problem has my attention since I edit through the same interface. -- WardCunningham
+
+''I'm sure there are Perl-ites who can help. A simple solution is to split the database into three, copy the write-image to the temporary image, finally do a fast swap (file rename is pretty quick). The old read-image becomes the target of the next copy. Disk is cheap :).''
+
+Probably far simpler to code would just be to loop over the write attempt, with a sub-second delay after each failure and an alarm() set to break you out if you can't get a write lock within a reasonable timeout. That'd be an automation the AltLeftEnterRepeat process, but it'd reduce server load, since looping over an attempt to get a file lock is far cheaper than spawning new CGI processes for each request. -- CharlesMiller
+
+Note: I haven't hacked Perl for quite a while, so this is based on reading a few manpages in my lunch-hour.
+
+  $LockFailed = 0;
+  $SIG{ALARM} = sub {
+	$LockFailed = 1;
+  }
+  alarm(5);
+  while true {
+	break if getWriteLockOnDb();
+	select(undef, undef, undef, 0.25); # sleep 250ms
+  }
+  alarm(0);
+  printErrorAndDie() if $LockFailed;
+  ... and now you have the lock ...
+----
+
+Solution: Use sql to lock individual records.
+
+----
+
+It seems to me the simples thing would be to implement a simple write queue.  Reject anything with diffs (i.e. two edits in the queue, the second comes back) just like now.  I don't see why this seems to be such a problem.  Probably I am just missing something.
+
+----
+
+What about having one file per WikiPage?  Easy to do page-based locking, then.
+
+----
+
+I've noticed that once it begins, it seems to continue for a reasonably long time (minutes), longer than a simple db update takes on the wiki's that I've ported. Could we be seeing a timeout here? For example, is there a "lock-reaper" daemon running around looking for orphaned locks that we have to wait for? Just a thought...
+
+People with high connection costs often try to "spider" wiki with software that will request five to ten pages a second. Of course they never succeed in getting all of wiki because it is far to large to retrieve this way. Still they continue to launch these programs against wiki every day. I've offered WikiMirrors as a sensible alternative but haven't gotten any takers from eastern europe where these attacks most often originate. -- WardCunningham
+
+How about blocking IPs? Not nice - but a possible solution.
+
+Someone told me of a Linux firewall that will add a delay to repeated access requests, so the first 5 accesses in a minute might be instantaneous, the next 5 have a 10 second delay and so on - the delay being reset after no access from that IP address for a minute. I will try to find details.
+
+----
+
+How about using a better database?  These all seem like hacks to me.
+
+''Discussion moved to MicrosoftVsOpenSourceDatabases''
+
+----
+Why write-lock the entire database? Wouldn't it be faster and easier just to have a write-lock on the record? And what sort of database takes that long? -- WillSargent
+
+----
+
+Create a simple lock server. The locks are centralized in one server that's up all the time. Have a lock per name. Every submit sends a UDP request to the lock server to get a lock for that topic. It is really very fast.
+-- AnonymousDonor
+
+----
+
+Is the database still locked while the spell-checker is doing its work? If so, omit the spell checking step when a page is saved as a minor edit. -- CarstenKlapp
+
+[''Or, if so, do the spell-check before or after when the lock is held.'']
+
+Good idea!
+Spell check never prevents a page from being saved; it's only feedback to the user after a page has been saved.
+So, it would make a lot of sense to do the spell check AFTER closing the database.
+
+----
+CategoryWiki

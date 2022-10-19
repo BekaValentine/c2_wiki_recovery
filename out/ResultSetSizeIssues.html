@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Result Set Size Issues
+      </h1>
+      <p>
+        Moved from <a href="ChallengeSixVersusFpDiscussion.html">ChallengeSixVersusFpDiscussion</a>.
+      </p>
+      <p>
+        The point is there is not enough regularity in many loops to take much advantage of the savings. Unless abstractions or wrappings provide significant savings, they often get in the way and create too much "creativity" (inconsistency) to be of much help. Further, if simplifying query loops is our goal, there are some <strong>non-FP ways to shorten stuff</strong> if a compactly-designed wrapper(s) is designed around the DB API's. Although it may vary per language, something like this is not out of the question:
+      </p>
+      <p>
+        <a href="PageAnchor.html">PageAnchor</a>: short_procedural
+      </p>
+      <code>
+        rs = query("select * from foo...", optionX=bar);<br/>
+        while (getNextRow(rs)) {<br/>
+        stuff(rs, ...);<br/>
+        }<br/>
+      </code>
+      <p>
+        Contrast with yours:
+      </p>
+      <code>
+        withEachRow("Select * from foo...", <br/>
+        function(rs), optionX=bar) {<br/>
+        stuff(rs, ...);<br/>
+        }<br/>
+      </code>
+      <p>
+        Your approach is <strong>only two tokens smaller</strong>. (Plus, you may have to put the named-parameter options at the end, which is awkward.) The "getNextRow()" function can automatically close the connection upon detection of DB "EOF", depending on the settings. In fact, if we follow <a href="SeparateIoFromCalculation.html">SeparateIoFromCalculation</a>, then "rs" is only a local variable (record set structure copy) and the "query" function can close the connection, if so desired. MS has some "cursor tricks" possible with its DB API's, and IIRC that is sometimes why the connection is left open during looping. But they are not of much use for most web apps. 
+      </p>
+      <ul>
+        <li>
+           <em>You made up that FP syntax, why didn't you put the option next to SQL like the non-FP version? You are being bias here.</em>
+        </li>
+        <li>
+           In most languages I am familiar with, named parameters must come after the fixed-position parameters. Thus, it may even have to be at the end. You are welcome to present your version of how the FP should look if you find mine unsatisfactory.
+        </li>
+      </ul>
+      <p>
+        In practice, I generally don't strive for super-compact non-FP wrappers because it confuses other developers or they think saving a line here and there is not worth more parts that can break or hinder changes. Higher abstractions (both FP and non-FP versions) can result in <a href="DiscontinuitySpike.html">DiscontinuitySpike</a> change rework when they can't handle a situation they were not designed for. Thus, I tend to only spend such on bigger savings.
+      </p>
+      <p>
+        <em>No, having "getNextRow() that automatically close the connection at EOF" wouldn't help here. What would happen in Non FP version if an exception is thrown inside the block, supposed that getNextRow hadn't reach EOF yet? Your automatically-closed-at-EOF getNextRow will still leave the connection open, won't it? FP version won't. See, while reducing only two token, we have also add more robustness to the system. As i have said before, doing both reducing source code and increasing robustness at the same time is considered significant improvement.</em>
+      </p>
+      <p>
+        What connection? <strong>We don't need the connection <em>inside</em> the loop</strong>. The result set is copied to an internal data structure/table. We are done talking to the DB directly at that point (although MS has the option of direct talk, and that is why their API's are a little bloated). If there is an exception, it needn't have anything to do with the DB. True, in the few times that we may need live cursors it may be more code, but that is only going to make a minor total difference because it is a relatively rare occurrence. The original premise is "significant". -- top
+      </p>
+      <hr/>
+      <p>
+        <a href="PageAnchor.html">PageAnchor</a>: memory_management
+      </p>
+      <p>
+        <em>How do you guarantee that the result set will fit in available virtual memory? How do you guarantee that your solution works in bounded memory?</em>
+      </p>
+      <p>
+        A good language can cache that kind of stuff to disk if need be. Generally, result recordsets shouldn't be more than about 200 records at a time. If you need more than that, perhaps the approach needs to be rethought. If by chance you actually need cursors instead of record sets, then that is certainly an option that I didn't rule out. I am only saying it is not that common a need, so won't be a big source of code reduction. -- top
+      </p>
+      <p>
+        <em>A "good language" would need a connection to feed the cache. And you can't tell me that entire result sets should be less than 200 records, or that working with result sets that won't fit in virtual memory isn't a "common need". My applications deal with result sets containing hundreds of thousands to millions of records at a time. (And some of those records contain images.) We use functors to guarantee that all connections, result sets and prepared statements are closed as soon as possible because resource leakage in 24/7 mission critical business applications is not acceptable.</em>
+      </p>
+      <p>
+        I cannot comment without more domain-specific details. There may be a way to reorg it such that the calculations can be done in the DB server, such as an SQL "SET" instead of via loops. It hints of a yellow-alert design but I don't have the details. The few times I've seen actual needs to chomp strait thru that many records, it was written as a stored procedures using native cursors in PL/SQL or Transact-SQL. These languages tend to be the "big batch" languages of choice.
+      </p>
+      <p>
+        <em>We aren't talking about situations where calculations can be performed in the RDBMS. We're talking about situations where you need to traverse result sets in the client. Transact-SQL can't write X9.37 files. Those can easily span hundreds of thousands or millions of rows.</em>
+      </p>
+      <p>
+        I would need to know more about your specific app requirements to comment. It is curious why you need so much stuff on the client. If there is a lot of sharing of such info between clients, then a more server-centric approach would seem more appropriate. If there is not a lot of sharing, then the client and the server are essentially the same thing.
+      </p>
+      <p>
+        <em>I gave you the specific app requirements. Write 1 million rows as an X9.37 file. The client needs every row because it writes the file. The RDBMS doesn't provide the tools for writing X9.37 files. This is a "server-centric" approach. The RDBMS's client is an application or batch server. I don't know what you mean by "sharing". The client and the RDBMS are not the same thing.</em>
+      </p>
+      <p>
+        <a href="PageAnchor.html">PageAnchor</a>: cursor_emulation
+      </p>
+      <p>
+        I still question the "why" of this; I am looking for good domain reasons for needing such. Otherwise, it is merely an acedemic excercise or "problem" that may not reflect the real world.  But, I will go with it for now. As already mentioned, it is possible to emulate cursors with record sets. It sounds like the bottleneck of processing here is the image file generation, not the database. Cursors can be emulated using something like this:
+      </p>
+      <code>
+        row = queryOne("select top 1 * from foo order by xid");  // get first<br/>
+        if (!row) {raisError(...);}<br/>
+        process(row);<br/>
+        while (row=queryOne("select top 1 * from foo order by xid <br/>
+        where xid > " . row['xid']) {<br/>
+        process(row);<br/>
+        }<br/>
+        // note that "top 1" syntax varies per vendor<br/>
+      </code>
+      <p>
+        This way, only one record will be delivered to the client at a time. "queryOne" is a routine that delivers only the first row of the result set. (We only get one row anyhow in this case due to our SQL.) It avoids the need to have an intermediate "rs" variable.
+      </p>
+      <p>
+        <em>But now you're issuing several hundred thousand queries for each file instead of one. Performance needs won't allow that.</em>
+      </p>
+      <ul>
+        <li>
+           "For each file"? Please explain
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>For each X9.37 file in the example. Each one contains data from hundreds of thousands of rows. If you keep the connection open and spool the result set you only issue one query per file. If you close the connection and query for each row you issue hundreds of thousands per file.</em>
+        </li>
+        <li>
+           I don't think I can comment further without knowing more specifics about your app. Is it protected by non-disclosure agreements? If it is really a case where my suggested techniques can't work no matter what, then keep doing what you are doing. Remember, to get the code savings you are suggesting, you have to not only need active cursors, but also have many active cursor loops such that FP wrapping pays off. Both of these conditions happening at the same time is another <a href="PerfectStorm.html">PerfectStorm</a> situation from my point of view. In my experience, the need for live cursors is rare, and the need for many of them (multiple coded loops) is even rarer. Just like the weather example from <a href="ArrayDeletionExample.html">ArrayDeletionExample</a>, I only see these FP <a href="PerfectStorm.html">PerfectStorm</a>s in hidden/anecdote examples, not presented app code or detailed specs that I can inspect with my own eyes. I am fairly confident I can find better non-FP solutions to such examples if only given fuller details. -- top
+        </li>
+        <li>
+           <em>I'm not talking about "code savings", I'm talking about keeping connections open while processing result sets. This isn't a "perfect storm". This is normal operating procedure for business applications. What other specifics do you need? The app writes X9.37 files from rows in the database. It needs hundreds of thousands of those rows for each X9.37 file it writes.</em>
+        </li>
+        <li>
+           But why do you need many of these kinds of loops? It is a matter of code savings because it was suggested that my approach would require about 2 lines of code more if I used live cursors (and thus not being able to <a href="SeparateIoFromCalculation.html">SeparateIoFromCalculation</a>). Two lines out of thousands does not bump you into "significant". You would need lots of such cursor-requiring loops, not just one or few, and I am suspicious of such a large need. Remember that I suggested avoiding leaving connections open, but did not forbid it. If you really need to leave a connection open for live cursors for a loop or two, I have no qualms. I will still use separation for the vast majority of the rest of the loops (and use the less-code version such as at page-anchor "short_procedural"). It is only an issue here when the volume of live loops is high, but you have not identified a reason for such.
+        </li>
+        <li>
+           <em>If I can perform a calculation in the RDBMS, I do so. If not, I have to send data to the client for processing. It is rare that I can predict with 100% certainty that the size of that data will always be within the bounds of available memory. Therefore every client side loop I write must spool the result set from the RDBMS in manageable chunks, and it must keep a connection open while it does so. It isn't that I need "many" of these kinds of loops. These are the only kind of loops I need.</em>
+        </li>
+        <li>
+           Continued below under anchor "most_loops".
+        </li>
+      </ul>
+      <ul>
+        <li>
+           I suspect what the problem is is that you have a big bunch of data on the server, but the image processing tools can only run on the client. Under <strong>normal client-server partitioning</strong> this would not be the case. But technical issues bind us to an abnormal partitioning here. What about using a RDBMS stored procedure to generate a giant text file with the needed info, FTP it to the client, or give the client file access. Then read in the data as text records and process/generate the images on the client. This process can be characterized as a "batch job" correct? -- top
+        </li>
+        <li>
+           <em>Why would we introduce a "giant text file"? How would that benefit us? We can already read the result set and write each row as we process it. And how would you get a language like Transact-SQL to write this "giant text file"? I've never seen it done, nor can I find documentation on the language features required to do it.</em>
+        </li>
+        <li>
+           <em>There's nothing abnormal about this client-server partitioning. The RDBMS client is an app server, as I said before. This is a standard n-tier architecture. Did you think I meant it was a GUI client or something?</em>
+        </li>
+        <li>
+           IIRC, SQL-Server had a data dump command. A text file may relieve the need to keep DB and network IO going for hours. And, it may reduce the chance of having to start over if the network burps.
+        </li>
+        <li>
+           <em>How would a data dump relieve the need to keep DB and network I/O going? The RDBMS would have to write the data to a file. My client would then have to read the file and produce the X9.37 file. Why would that be better than spooling the data to my client once and writing it out as it spools? The time it takes my app to write the file is less than the time it would take to dump the data, read the data from disk and write the file. Why would your idea reduce the chance of having to start over?</em>
+        </li>
+        <li>
+           As far as processing time, is the bottleneck getting info from the DB or processing?
+        </li>
+        <li>
+           <em>The bottleneck is network and file system I/O. What does that have to do with my last question?</em>
+        </li>
+      </ul>
+      <p>
+        Another approach is to first download <em>just</em> the list of available ID's (primary keys). Getting a full list of keys is usually a much smaller job than than getting every data record. The list is temporarily stored on the client, and is used to grab and process each record in a loop.
+      </p>
+      <code>
+        myList = queryToList("select xid from foo order by xid");<br/>
+        for (each ix in Mylist) {  // traverse list<br/>
+        row = queryOne("select * from foo where xid = " . ix);<br/>
+        process(row);<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>Again we see several hundred thousand queries plus the need for client memory to store the list of IDs.</em>
+      </p>
+      <p>
+        A third technique is to process them in chunks. For example, you might grab groups of 100 at a time using a technique similar to the first example. It is more complicated, but may reduce network traffic. 
+      </p>
+      <p>
+        <em>Why would it reduce network traffic?  The result set mechanism spools chunks to the client already, and it does so with only one query.</em>
+      </p>
+      <p>
+        I am not sure what you mean. This sounds like the built-in cursoring that some API's already provide.
+      </p>
+      <p>
+        <em>Only if you keep the connection open.</em>
+      </p>
+      <p>
+        <em>Or you could leave the connection open and let the result set handle the caching.</em>
+      </p>
+      <p>
+        . . . .
+      </p>
+      <p>
+        I still don't feel I have enough info to make a fuller judgement. Maybe it is one of the cases where my techniques don't work well. Nothing is 100% right for 100% of all situations. It is possible to emulate cursors with result sets, I would note. But do you need cursors for hundreds of loops or just one? The alleged code savings won't mount to much unless it can be applied to many loops. I don't dispute that your suggestions may save a bit of code for a small percent of the loops. But the premise is a <a href="GoldenHammer.html">GoldenHammer</a>, not a brass hammer. -- top
+      </p>
+      <p>
+        <em>You lost me. All I'm saying is that you need to maintain a connection to the RDBMS while traversing any non-trivial result set. That's a fact of life. It doesn't make sense to copy the entire thing across the network up front and it may not fit into available RAM. Take it as a given that most real world use of databases will have this requirement.</em>
+      </p>
+      <p>
+        The vast majority of interaction I encounter with the DB can be done via result sets that are a small subset of the entire table (unless the table is small). And, those that don't are usually done via stored procedures such that cursors can be effectively used. What I don't understand about your anecdote is why the entire result set has to be processed on the client side and why it has to be re-processed often. In other words, why do you have to repeatedly loop thru the same large entire data set?
+      </p>
+      <p>
+        <em>Most of my interactions with the DB involve hundreds of thousands of rows. If they don't it usually isn't worth the additional overhead of database hosting, licensing and administration. As I said above, Transact-SQL doesn't provide the tools for generating X9.37 files. Hence the need to send hundreds of thousands of rows to the client. I don't repeatedly loop through the same data set. I repeatedly loop through new result sets composed of rows that haven't yet been exported.</em>
+      </p>
+      <p>
+        Usually there is a pattern such that the result set <em>can</em> be narrowed down much further or the RDBMS can do much of the processing if the info is normalized.
+      </p>
+      <p>
+        <em>Again, we aren't talking about that. We're talking about processing that must be done on the client over potentially large result sets. The example is simple. There are millions of rows in a table. The application must create records in an X9.37 file (a cash letter file used for exchanging check images and data with banks and the Federal Reserve) for several hundred thousand of those records. No pattern will further narrow the result set. Several hundred thousand checks have to be exported to a bank. The RDBMS can't create X9.37 files. If it could we wouldn't be writing this software.</em>
+      </p>
+      <p>
+        Without digging in the actual details of your project, I cannot make any recommendations here. Again, it is a matter of probability. The 2 approaches cover the vast majority of stuff I actually encounter such that "living loops" are not necessary most of the time, and thus FP won't provide much simplification most of the time. I chose challenge 6 to provide a coded example to compare to move beyond hard-to-pin-down anecdote examples, and as far as I can tell, none of its loop need "live" cursors.
+      </p>
+      <p>
+        <em>This anecdote is easy to pin down.</em>
+      </p>
+      <p>
+        I beg to differ.
+      </p>
+      <p>
+        <em>What's so hard to pin down about it? The requirements are simple:</em>
+      </p>
+      <code>
+        <em>1. Write a program that creates X9.37 files containing check images and data from a database.</em><br/>
+        <em>2. The table containing non-image data has a state column. Only write the checks with state=READY_FOR_EXPORT.</em><br/>
+        <em>3. Don't stop other processes from adding records to the tables or modifying records that aren't being written.</em><br/>
+      </code>
+      <p>
+        <em>By the way, what "good language can cache that kind of stuff to disk if need be"?</em>
+      </p>
+      <p>
+        I haven't tested every language I used, but for a known example, <a href="FoxPro.html">FoxPro</a> and dBASE V could easily cache SQL query results to local tables (DBF), which were automatically cached to disk. RAM-to-disk caching is built into modern OS's anyhow isn't it? Generally you want to avoid too much caching, but if cache it needed, it just slows thing down rather than outright crashes apps with "out of memory" errors. Caching allows more graceful degradation than a mere crash. Hopefully one reworks the app or buys more RAM if cache monitoring shows cache being used too heavily. I haven't seen an out-of-mem error for several years now. Sometimes I wish it would because run-away processes sometimes take forever to self-clean from disk cache when finally stopped. But usually such is from mistakes rather than regular production runs. Some notes about large queries can also be found in <a href="QueryByExample.html">QueryByExample</a>. -- top 
+      </p>
+      <p>
+        <em>If </em><a href="FoxPro.html">FoxPro</a> and dBASE V cache large result sets to disk I wouldn't call them "good". The result set is already cached on disk (or RAM) in the RDBMS. If those languages maintained a connection they could scroll through them in chunks instead of writing them to disk and reading them back out. I suspect that's what they do and neither of us knows it.<em></em>
+      </p>
+      <p>
+        I was thinking in terms of querying a RDBMS other than <a href="FoxPro.html">FoxPro</a>. <a href="FoxPro.html">FoxPro</a> and other <a href="ExBase.html">ExBase</a> dialects adjusted from LAN-based DB's to client/server DB setups by using tables more as temporary recordsets instead of "master" tables. But <a href="ExBase.html">ExBase</a> and club was initially a cursor-centric tool, which is one of the reasons it is not "true" relational. But the technique still worked well for temporary result recordsets. -- top
+      </p>
+      <p>
+        <em>What technique? Copying the entire result set to a local drive?</em>
+      </p>
+      <p>
+        I didn't mean to imply the result set was the same size as the master table. 
+      </p>
+      <p>
+        <em>I didn't think you did. It sounds like you're saying that </em><a href="FoxPro.html">FoxPro</a> and dBASE V will copy the entire result set to a local drive. I seriously doubt that they do this, and if they do I think that's foolish.<em></em>
+      </p>
+      <p>
+        <a href="PageAnchor.html">PageAnchor</a> local_tables
+      </p>
+      <p>
+        It is rare one needs a local copy of the entire master table (which is on the RDBMS). One can usually get by with a subset of rows and/or columns for a particular task. Even the somewhat rare times where one needs every row, it is rare to need every column such that the client-side copy takes up only about 5 to 10 percent of the space of the master. For the few times the full thing is needed, a stored procedure can be put on the RDBMS server to avoid having to ship all the info to the client.  I would break it down roughly like this:
+      </p>
+      <ul>
+        <li>
+           Need subset of both rows and columns: 94% of the time
+        </li>
+        <li>
+           Need subset of columns (but all rows): 5% of the time
+        </li>
+        <li>
+           Need full copy: 1%
+        </li>
+        <li>
+           (Needing all columns but subset of rows is not common enough to mention IMO.)
+        </li>
+      </ul>
+      <p>
+        I agree that currently-favored tools don't support local auto-disk-buffered tables, and to me this is a crying shame.  Vendors thought RAM-OOP would magically solve those kind of issues and thus abandoned client-side tables, taking us back to the dark-ages of data handling. <a href="TableOrientedProgramming.html">TableOrientedProgramming</a> worked! --top
+      </p>
+      <hr/>
+      <p>
+        <a href="PageAnchor.html">PageAnchor</a>: most_loops
+      </p>
+      <p>
+        Re: <em>"If I can perform a calculation in the RDBMS, I do so. If not, I have to send data to the client for processing. It is rare that I can predict with 100% certainty that the size of that data will always be within the bounds of available memory. Therefore every client side loop I write must spool the result set from the RDBMS in manageable chunks, and it must keep a connection open while it does so. It isn't that I need "many" of these kinds of loops. These are the only kind of loops I need."</em>
+      </p>
+      <p>
+        So you are saying this situation applies to more than just the X9.37 example? This would suggest that it is not just cases where you need to process an entire table in one chunk, but any result-set chunk is a risk because you cannot predict the upper bound with certainty? 
+      </p>
+      <p>
+        If so, this was addressed above under "memory management". Most systems cache RAM to disk when it gets large. Thus, the biggest likely impact is that some chunks may process slowly, not an outright crash. For interactive apps, if the user does something that grabs too many records, put a quota on it and tell the user they have exceeded the quota. See <a href="QueryByExample.html">QueryByExample</a> for more tips. 
+      </p>
+      <p>
+        <em>No, that wasn't addressed. As I said above, exhausting virtual memory is not a valid strategy.</em>
+      </p>
+      <p>
+        Live cursors may have other risks which vary depending on how they are implemented. For example, a record may be deleted just before you are about to process it. The "snapshot" nature of a pure record-set avoids many of these kinds of now-you-see-them-now-you-don't problems. And, it is generally better for network traffic to use full result sets rather than live cursors because they require fewer total network packet headers.
+      </p>
+      <p>
+        -- top
+      </p>
+      <p>
+        <em>That's why we have transactions and row locks. Nothing can delete the records in the result set being spooled to the client.</em>
+      </p>
+      <p>
+        <em>(Tangent moved to </em><a href="AcidAndRowLocks.html">AcidAndRowLocks</a>)<em></em>
+      </p>
+      <hr/>
+      <p>
+        I haven't been following this conversation much, but I just noticed the cursor emulation technique in the middle of the page. You guys realize that that approach, although workable when supported, really sucks, right? With cursors you'd just have a linear traversal, but this emulation makes a single traversal quadratic! With a huge number of rows, quadratic time means you can't do it that way; over a ten million rows, it'd never finish. -- Doug
+      </p>
+      <p>
+        <em>One of us realizes that approach really sucks. The other will probably say that he never has to traverse ten million rows, and that if we followed his teachings neither would we.</em>
+      </p>
+      <p>
+        What about the approach that breaks it into chunks? Besides, keeping a cursor open may also require lots of RAM usage on either the server or the client, depending on technique.
+      </p>
+      <p>
+        <em>Why would keeping a cursor open require lots of RAM?</em>
+      </p>
+      <p>
+        When you ask for the "next" row, it must get that info from somewhere. Either it does something similar to the emulated cursors above, or it creates a list of pointers/keys up front.
+      </p>
+      <p>
+        <em>The RDBMS keeps track of which rows and columns constitute the result set, but that doesn't require a lot of RAM. It can do that in RAM or on disk. It can then read and spool chunks of the result set to the client as it traverses the set. Commercial RDBMSs do a good job of optimizing all of that so the client always has the next record available when it needs it. The important part of this is that the chunks have a finite, predictable and often tunable size. RDBMS writers use bounded memory algorithms and so should you.</em>
+      </p>
+      <p>
+        No! And I am going to run with scissors and drink milk past the expiration date. So there!
+      </p>
+      <p>
+        [You're a very silly person, and I appreciate that. Back to cursors, though, the question perhaps is what you can reasonably expect an RDBMS to do. If you simulate cursors using repeated queries, there is every reason for the RDBMS to think that you have completed your query once, well, once you have completed the query, and no reason to expect it to hang onto the position of your last result from your last query, and still less reason to expect it to continue your *next*, apparently unrelated (from its point of view) query from *that* position.]
+      </p>
+      <p>
+        [That's basically asking for magic. Instead, you should expect that it is reasonable for all RDBMS'es to treat each new query over all rows as statistically independent, because there is no reason for it to expect that your next query will just pick up where the last one left off. This is typically *not* how queries behave, other than when simulating cursors, after all. Therefore, it is reasonable for the server to optimize the order of row traversals based on criteria <strong>other</strong> than where your last query had its last match. And as we all know, they have a zillion ways to attempt more reasonable optimizations.]
+      </p>
+      <p>
+        [In short, like I said before, simulating cursors leads to O(N^2) behavior, and you can't expect the server to optimize that away. Cursors have drawbacks, but this isn't one of them; this is where they are strongest, and where there are the fewest alternatives.]
+      </p>
+      <p>
+        [Some of the above discussion puzzles me, though. The cost of a cursor, to the RDBMS, is as close to zero as it gets. It's just a row index within whatever traversal ordering the server wishes to use, that must remain valid even if the server changes row orderings...no big deal; most of the time the row ordering doesn't change anyway, so mostly it's just, conceptually, a simple index, and the exceptions aren't important. Supporting cursors is really cheap. The downside is merely the usual issue with prolonged transactions, which cursors encourage, but still are not unique to cursors.-- Doug]
+      </p>
+      <p>
+        A cursor solution for this case is not something I will complain loudly about. I would still look for a non-cursor solution but probably wouldn't change an existing cursor solution to such if I encountered it as long as there were not reported problems. A file dump or groups of say 100 are still not out of the question, though. But it is still an exceptional situation for the reasons stated above. It is a batch job that just happens to need client-only tools.
+      </p>
+      <p>
+        <em>A file dump buys you nothing and increases total I/Os. Fetching groups of 100 buys you nothing, introduces the potential for skipped and duplicated rows and forces the RDBMS to do more work than it needs to. Why would you complain about a cursor solution at all?</em>
+      </p>
+      <ul>
+        <li>
+           [to elaborate on the groups of 100: although that's faster than groups of 1, it doesn't change the O(N^2) to O(N), it just changes the multiplicative constant, which is a NO-OP in complexity analysis (because it gives a constant speedup, yet the slowdown is quadratic). It doesn't change the fact that you still can't do 10 million rows, even in groups of 100. -- Doug]
+        </li>
+        <li>
+           <em>Doesn't the comparison depend on the implementation of the cursors?</em>
+          <ul>
+            <li>
+               No, because a cursor is roughly a row id whose whole purpose is to prevent re-traversal. It either does or does not prevent re-traversal.
+            </li>
+          </ul>
+        </li>
+        <li>
+           Perhaps it should be pointed out that <em>in practice</em> one is usually going to know the practical range of possible results. It is rare to go from 10,000 products in inventory in January to one billion by December. Thus, infinite flexibility across all ranges of "O size" is mostly an acedemic issue. If you truly don't know the range, then you probably have far worse issues than this.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [And to get closer to the heart of it: many people, from Celko to Date, prefer the solution to stay within the relational algebra, which excludes cursors. <strong>However</strong>, those very same people detest emulated cursors even more than cursors; it <strong>still</strong> goes outside the relational model for a solution, <strong>and</strong> it severely abuses the poor server at the same time. :-) The smart way to avoid cursors is to find a sneaky way to do the whole thing in a single query. Otherwise, if that's impossible (or perhaps is unacceptably slow) why the hell not use cursors? ]
+        </li>
+        <li>
+           Some algorithms are tough to do with relational algebra alone. Maybe there are ways, but one cannot always think of it, or the literature only has cursor versions of the algs to copy. Also, one may be stuck with bad schemas, which may complicate a non-cursor algorithm. -- top
+          <ul>
+            <li>
+               [Yes, but I addressed that head-on, right there in the last sentence of the paragraph you're responding to! "Otherwise, if that's impossible (or perhaps is unacceptably slow) why the hell not use cursors?"]
+            </li>
+            <li>
+               I have yet to see a good real <a href="UseCase.html">UseCase</a>. You say it must do X and must do Y. Well, frankly, I am a bit skeptical that those are really "musts". Maybe you just have not found a different way.
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p>
+        [[You guys should be careful to distinguish the use cases that you're talking about. The devil's in the details, as usual. For UI presentation of long lists, fetching a page at a time can be a reasonable solution, because you get a page of self-consistent results cached locally for screen updates. If you have multiple UI elements (e.g. a context list and drop-down lists), you might have to worry about consistency of snapshots across the elements. For batch processes, transaction-and-cursor methods are fine. If you're going to traverse the entire query (likely), Top has a point that fetching the entire result set will, in toto, usually have less network overhead than getting a record at a time. The tradeoff is in client-side storage needs. Recent solutions in the product I work on have used client-side snapshots, and performance has been acceptable. But in our case, this is motivated mainly by a lack of reasonable ACID support in the 'RDBMS' for cursors. When performance becomes an issue due to snapshot size, we try to break a batch process down into smaller atomic units and smaller query result sets. As with most optimizations, direct measurement of your particular case is essential. -- <a href="DanMuller.html">DanMuller</a>]]
+      </p>
+      <ul>
+        <li>
+           [Client-side snapshots have grown increasingly popular for intensive data mining, since they needn't be up-to-the-second, and don't need to update the DB, so it makes sense to take the work away from the server. As to the rest, I guess I've missed some of what the overall argument was about. Fetching the entire result set, versus getting a record at a time, is not what I thought I was commenting on. -- Doug ]
+        </li>
+      </ul>
+      <p>
+        [[Could be that I misunderstood, too. Perhaps Top or his anonymous debater will clarify for us. In any case, as you allude to, the degree of currency required of the data will vary by task, and this also affects implementation choices. -- DanM]]
+      </p>
+      <ul>
+        <li>
+           His debater is unsigned, but I would not say "anonymous". He's top's perennial favorite debater. :-)
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        Regarding batched cursor emulation (groups of 100), why would it result in dup or lost records anymore than live cursors would? Live cursors will probably do one of:
+      </p>
+      <ul>
+        <li>
+           Make a snapshot of matching record keys
+        </li>
+        <li>
+           Traverse the indexes
+        </li>
+        <li>
+           Re-search the next record each time
+        </li>
+      </ul>
+      <p>
+        In the second two, the conditions can change, just like groups. We could also do the same thing: get all the keys up front, and then bring those records in via chunks (100's).
+      </p>
+      <p>
+        -- top
+      </p>
+      <p>
+        The terminology can be confusing here, because it tends to be vendor-specific. (I may have used the term 'client-side cursor' incorrectly earlier, too.) If by 'live' cursor, you mean one that does not guarantee consistency, then you're correct. Many DBMS offer such as a performance optimization, but I've personally never had use for one. However, you can also have a server-side cursor that traverses a query result set without any of the problems mentioned above, and without placing a large burden on the server. See <a href="AcidAndRowLocks.html">AcidAndRowLocks</a> for mention of the 'generational' or 'versioning' technique that a DBMS can use to implement this efficiently. -- DanM
+      </p>
+      <p>
+        <em>Given 1,000,000 rows in a result set it would take 10,000 queries to traverse the set in chunks of 100 rows each. If you put all 10,000 queries inside the same transaction and lock all tables involved then you won't have lost or duplicated rows, but you will issue 10,000 queries in a single transaction that keeps all its tables locked. If you put each query in its own transaction then you can easily have lost and duplicated rows because other clients can change the data that formed the original result set. Cursors don't work the way you describe. There's no need to "re-search" during a single transaction. The result set is unchanged from start to finish.</em>
+      </p>
+      <p>
+        If the result set is "unchanged from start to finish", then something might change in the actual tables in-between. Are you suggesting that your cursor takes a snapshot up front, and then slowly feeds that snapshot to the client?
+      </p>
+      <p>
+        <em>No, I'm saying we rowlock the result set so it can't change during the transaction.</em>
+      </p>
+      <p>
+        If so, that is not much different than a file dump-and-xfer. 
+      </p>
+      <p>
+        <em>Except that there is no file and no additional file I/O.</em>
+      </p>
+      <p>
+        As far as record locks, I thought this was a read-only operation, by the way.
+      </p>
+      <p>
+        <em>It could be, or you may have to mark the exported rows as exported. It doesn't matter. The locks are there to keep other processes from changing this data.</em>
+      </p>
+      <p>
+        [[See <a href="http://ldp.rtin.bz/LDP/LG/issue68/mitchell.html">http://ldp.rtin.bz/LDP/LG/issue68/mitchell.html</a> for a discussion of how this can be done without locks. I don't know if this is a good presentation of the technique, but it's one of the first reasonable-looking ones that I could find. -- DanM]]
+      </p>
+      <p>
+        <em>How does that strategy handle changes to concurrent versions? What if one transaction is updating all rows marked "READY_FOR_EXPORT" with "EXPORTED" as it exports them, while another transaction is deleting all rows marked "READY_FOR_EXPORT"? How do we know we won't export a row that ends up deleted? Isn't it a matter of chance which version's transaction commits first?</em>
+      </p>
+      <p>
+        [I covered this already. See above, search for "generation" -- Doug]
+      </p>
+      <p>
+        [[Err... actually, somebody moved it to another page already, like I predicted. :) See <a href="AcidAndRowLocks.html">AcidAndRowLocks</a>. -- DanM]]
+      </p>
+      <p>
+        <em>Doug's description makes it sound like the first commit always wins (because the 2nd commit's version can't be reconciled with the 1st's version.) That's probably OK for some kinds of DB interactions, but it puts slower transactions at a disadvantage. I can easily see scenarios where slower transactions never complete successfully because faster transactions always corrupt their working set.</em>
+      </p>
+      <ul>
+        <li>
+           Note that my extreme example of a 5 year transaction means that sometimes that's just the way it goes, no way around it. But for more reasonable transactions, you are right that there could be such a problem - note that in that case, however, no-one said that locks were <strong>forbidden</strong> in the presence of a generational scheme. If someone gets upset because their nonlocking transaction keeps failing, they can retry using a lock, which is then guaranteed to succeed once they do lock. Hopefully this occurs rarely. If it happens frequently, there may be a deeper issue (schema problems, slow client problems, need for hardware upgrade - almost anything). -- Doug
+        </li>
+        <li>
+           <em>The need for locking could be part of the design. If the export client has to write all of the rows with a given state at a given instant and mark them as exported and there are other clients changing state and deleting rows then I don't see any way a generational scheme could work. The export can't just retry using a lock because the data it was supposed to export may be deleted now.</em>
+        </li>
+        <li>
+           [[Very explicitly this time: The technique is not mutually exclusive with locking. It has been used for years in databases that scale up to very large applications. -- DanM]]
+        </li>
+        <li>
+           [To tackle his last sentence directly: "The export can't just retry using a lock because the data it was supposed to export may be deleted now". <strong>IF</strong> that is an issue, <strong>THEN</strong> any such application should lock immediately, rather than only on retry. Generational schemes cannot cure all ills all by themselves, but they are vastly better than lock-only schemes in the <strong>very common</strong> case that a lock is not explicitly required. Your scenario is not the most common case, not by a long shot; but it can be accommodated effortlessly. Lock when you need to lock, and otherwise let the generational scheme handle things. -- Doug]
+        </li>
+        <li>
+           [P.S. since this topic wasn't already clear to you, you probably aren't aware of what the big deal is. The big deal is that locks are a necessary evil, not a wonderful thing. Famous big name databases from the top-selling vendors completely deadlock all too frequently due to locks, and need to be restarted. Even more commonly, small light frequent transactions suffer very poor performance because big slow stupidly-written clients lock too much for too long. And even in the best case, locking sharply limits concurrency, reducing overall throughput. So anything that safely allows locks to be avoided is a very, very good thing indeed. -- Doug]
+        </li>
+        <li>
+           <em>I understand this isn't the most common case. I thought Dan was saying this (meaning the example we've been discussing) could be done without locks when he posted the link about </em>PostgreSQL's scheme. I'm not arguing against generational schemes (I agree they are a <a href="GoodThing.html">GoodThing</a> and wish they were more widely available), I just don't understand why they are being brought up in this discussion.<em></em>
+        </li>
+        <li>
+           [I believe it began with top's comment above, <em>"Live cursors may have other risks which vary depending on how they are implemented. For example, a record may be deleted just before you are about to process it. The "snapshot" nature of a pure record-set avoids many of these kinds of now-you-see-them-now-you-don't problems."</em> That logically leads directly into a discussion of which version of the database is visible, which certainly relates to locks and generations. -- Doug]
+        </li>
+      </ul>
+      <p>
+        [[Well, this could get rather involved, and the details can vary a lot between implementations. But as a hint of what this technique is about, note that reading data is far more common than writing in most applications. Versioning allows readers to get consistent snapshots without disturbing or being disturbed by writers. For writers, various locking techniques still apply. A row update, for instance, might still lock that record to prevent further updates, causing conflicting writers to fail their transaction early. One sometimes also distinguishes between regular reads and read-with-intent-to-update, again to encourage early failure of conflicting transactions. -- DanM]]
+      </p>
+      <hr/>
+      <p>
+        Some have expressed concern that "record sets" leave too much room for something to go wrong. Non-result-set algorithms supposedly have more predictable bounds. While this may be true, the utility of record-sets still outweighs discarding them in most cases in my opinion. Further, the risk of any given query can generally be determined up-front.
+      </p>
+      <p>
+        Here is a general approach I use to keeping record-sets from producing the kind of surprises they are accused of causing.
+      </p>
+      <p>
+        For any given query, we need the following information:
+      </p>
+      <ul>
+        <li>
+           Estimated result set size distribution
+        </li>
+        <li>
+           Where it an interactive or batch process
+        </li>
+        <li>
+           The cost of failure, such as a full disk or RAM or a cache-thrash-bottleneck
+        </li>
+        <li>
+           Client-side versus server-side
+        </li>
+      </ul>
+      <p>
+        Here is an example of a fairly typical log-scale distribution:
+      </p>
+      <ol>
+        <li>
+           to 000001 ****** 
+        </li>
+        <li>
+           to 000010 ******* 
+        </li>
+        <li>
+           to 000100 ******
+        </li>
+        <li>
+           to 001000 ***
+        </li>
+        <li>
+           to 010000 **
+        </li>
+        <li>
+           to 100000 *
+        </li>
+      </ol>
+      <p>
+        We almost certainly don't want 10,000+ item queries. Thus we need to decide what to do if such happens or is about to happen. 
+      </p>
+      <p>
+        Most RDBMS allow one to put upper limits on the result set (specifically, number of records returned) for a given query. In <a href="MySql.html">MySql</a>, it looks like:
+      </p>
+      <code>
+        SELECT * FROM bar WHERE blah=goop LIMIT 1000<br/>
+      </code>
+      <p>
+        Here, the maximum returned will only be 1,000 records. If we actually received 1000 records, then we know that we probably reached the quota. (A more definite answer might be nice instead of inference, but I find it does not matter much, set the limit to 1,001 if the official limit is 1,000).
+      </p>
+      <p>
+        In interactive apps, we can tell the user that they reached the quota and suggest they re-query with more specific filters. (See <a href="QueryByExample.html">QueryByExample</a>) A large result set generally means that the query is not what the user intended. 
+      </p>
+      <p>
+        However, in some cases the user may still want a large result, such as dumping data to disk for later use by a spreadsheet. If such activity is permitted, then the software can prompt:
+      </p>
+      <code>
+        Do you really want to download a gazillion records? (Y,N): <br/>
+      </code>
+      <p>
+        This will not guarantee that system utilization may go through the roof, but does greatly reduce it. Most large queries will be <strong>only those intended to be large</strong>. Unless there is a purposeful <a href="DenialOfService.html">DenialOfService</a>-like attack, or some other special circumstance, it will rarely be an issue. (More on such probabilities later.)
+      </p>
+      <p>
+        We still may want to put an upper limit on such queries. We may allow downloading 10,000 records, but maybe not one million. If the user really need that many, they should probably contact the DBA anyhow for special arrangements. It might be better to break the information into smaller chunks anyhow. The user just may not know or care about such an option. Thus, a quota limit check can still be in place for higher amounts. We now have two design questions to ask:
+      </p>
+      <ul>
+        <li>
+           What is the prompting limit?
+        </li>
+        <li>
+           What is the absolute max limit? 
+        </li>
+      </ul>
+      <p>
+        Things are a bit different for batch (non-interactive) processes. We need to decide whether to put a quota on result sets and decide what to do about if it does reach the quota. It is probably a good idea to put a "blue sky" quota on every non-trivial batch query just in case. If you don't expect a million records no matter what, then a quota at a million will serve as kind of a SanityCheck. If it does reach a million, then something is probably drastically wrong and we want our software to stop processing as soon as possible.
+      </p>
+      <p>
+        For smaller, but still large values, you still need to decide whether to live with them or not. If an occasional spike will not cause significant harm, then it may make sense to let it go. For example, if only one in 500 queries in a multi-user system creates a query that is between 100,000 and a million records, and your system can handle that frequency distribution, then you also may be able to live with it. 
+      </p>
+      <p>
+        But, perhaps a coincidental or situational <a href="PerfectStorm.html">PerfectStorm</a> may result in many doing the same big queries at the same time. For example, what if a surprise auditing lawsuit results in many departments doing large data dumps or queries on the same day? One result is that the system might start running real slow as it has to deal with more disk thrashing from the cache. If you distribution analysis suggest that this happens only once every 5 years, for example, then you have a financial decision to make: spend money to prevent that once-per-5-year event, or live with it. (In the auditing case, maybe the DBA can create CD's to give to the various departments.)
+      </p>
+      <p>
+        If you truly don't know what the distribution pattern is, or cannot live with occasional <a href="PerfectStorm.html">PerfectStorm</a>s bringing the system to a near crawl, then maybe one should not use result sets, using cursor-oriented techniques instead. Cursors have their place, but it's best to reduce dependence on them in my opinion. These are tradeoffs that have to be considered. Result sets are a convenient sub-paradigm. Not using them will complicate development.
+      </p>
+      <p>
+        Cursors also have their own performance issues. They can consume more network traffic in many cases because the same information has to come over the network in smaller, but more frequent network packets. Packets contain "headers" that describe what the content is, where it came from, where it is going, and other internal "administrative" information. The ratio of administrative information to actual data tends to goes up under cursors. Generally, result sets are more network-friendly than cursors. And, there is the <a href="AcId.html">AcId</a> issue that cursors make tougher.
+      </p>
+      <p>
+        It seems that the tradeoffs are similar to those found in <a href="AreRdbmsSlow.html">AreRdbmsSlow</a>. Yes, results sets may be sacrificing a bit of predictability to have allegedly higher-level or simpler software from a coder and maintainer's viewpoint. But, the extra risk is usually a manageable risk. If your distribution estimate is reasonably close, then <strong>you know the risks up front</strong>. 
+      </p>
+      <p>
+        Further, cursors may have their own <a href="PerfectStorm.html">PerfectStorm</a>s and risk. I just personally have not given that side as much thought. 
+      </p>
+      <p>
+        -- top
+      </p>
+      <p>
+        <em>I don't understand. You speak as if result sets were transmitted to the client in one bulk transfer and not traversed in chunks.</em>
+      </p>
+      <p>
+        From the app developer's perspective, they usually are.
+      </p>
+      <p>
+        <em>No.  All of the result set mechanisms I've used (me, an app developer) spool result sets in chunks.</em>
+      </p>
+      <p>
+        {And your app program has to deal with them as chunks? Do you have some example code?}
+      </p>
+      <p>
+        <em>No, the chunks are spooled by the driver.  The app code iterates across the result set one row at a time.  Have you never used result sets?</em>
+      </p>
+      <p>
+        If they are so big that they have to be micro-managed, then perhaps it is time to rearrange stuff. As a rule of thumb, more than about 1,000 records from a "wide" table or more than 10,000 from a "narrow" table is a yellow alert.
+      </p>
+      <p>
+        <em>Utter nonsense.  If you have to transmit 100,000 credit card transactions, you're going to have to traverse at least 100,000 records.</em>
+      </p>
+      <p>
+        {Do you mean like bulk transfer between servers? I would have to look at specific scenarios. Bulk data transfers are often considered something outside of app work. And starting sentences with "Utter nonsense" is not very diplomatic. I suggest you resist typical techie urges to exclude diplomacy.}
+      </p>
+      <p>
+        <em>You also imagine a fairly static database that doesn't change between separate queries. And you seem to think that cursors cause problems for ACID transactions.</em>
+      </p>
+      <p>
+        A quote taken from my website:
+      </p>
+      <p>
+        : Another thing to consider is consistency. Relational results tend to be "snapshots in time". If we only use references, some pieces that may exist at the time of query may not be available or out-of-sync when they are used later, creating a host of conundrums. For example, suppose the user enters a bunch of search or filtering criteria for a report (such as a query-by-example screen). Between the time the report is queried and the time it is displayed some of the data may change if we rely heavily on references [cursors]. In my experience this results in phone-calls from angry or confused users.
+      </p>
+      <p>
+        : They may ask for all products allocated to Texas, for example; but some may be reallocated to Hong Kong by another user between that time-gap. Thus, the report user may see Hong Kong items in their report even though they only asked for Texas items. (Some kind of "refresh" button would be helpful if they want to see updated info.) The snap-shot approach is thus not a flaw, but a tool used to provide an internally consistent view. 
+      </p>
+      <p>
+        <em>How is that relevant?</em>
+      </p>
+      <p>
+        It is an example of where using cursors can cause undesired results.
+      </p>
+      <p>
+        <em>Right, but how is that relevant to my statements?</em>
+      </p>
+      <p>
+        If a language supports auto-disk-buffered local tables, then I rarely see a need to have to deal with chunks in the app code itself. Maybe it chunk-ifies at the transfer level, but that should be hidden from the app code most of the time (other than maybe a progress call-back). See <a href="PageAnchor.html">PageAnchor</a> "local_tables" above.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryConcurrency.html">CategoryConcurrency</a>, <a href="CategoryOptimization.html">CategoryOptimization</a>
+      </p>
+    </div>
+  </body>
+</html>

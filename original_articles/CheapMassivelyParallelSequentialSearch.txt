@@ -1,0 +1,65 @@
+Queries that resemble QueryByExample are often slow over large data sets if there are lots of factors involved. It is unrealistic to index every column, and "contains" (LIKE) operations often cannot use indexes well anyhow. Thus, a different approach may be to optimize sequential searches rather than go index crazy. 
+
+I've drafted a way to construct a cheap and relatively simple way to throw hardware at the problem, perhaps using banks of old PC's. '''Potentially thousands of PC's can be used.''' It splits the sequential scanning to each designated PC on the network.
+
+It is sort of a combination of MultiParadigmDatabase, FilePollingConcurrency, MinimalTable, and RollYourOwnDatabase.
+
+Basically it is a giant text-file list of maps distributed on the various PC's and each PC runs a sequential search of its own data file, a small part of the total data. Some key column needs to be selected as the hashing key that is used to distribute data among servers. The key does not have to be unique, only fairly well distributed (although a unique record key may be useful for cleaning purposes). A typical hash may be the last 2 digits of the selected key. This provides a more even distribution than using the first 2 on typical numerical keys.
+
+Dynamic MultiParadigmDatabase assumptions are used to avoid having to formally propagate schema info to the zillion nodes, and to keep the engine simple. 
+
+There would be a central server to manage the queries. It would have a table with the following information:
+
+ Table: keyRanges
+ ------------
+ nodeID
+ keyHashStart  // key wild-card or hash result
+ keyHashEnd   // if not using wild-cards
+ networkPath
+ doneFlag
+
+One can use a simple database, such as MS-Access for this table. It is simply a server node inventory, not the production data repository. Typical data in it may resemble:
+  nodeID  hashKeyStart hashKeyEnd networkPath 
+  --------------------------------------------
+  1       00           04         //server00to04/msg
+  2       05           08         //server05to08/msg
+  3       09           12         //server09to12/msg
+  etc...
+
+When a query is received, a polling message file (see FilePollingConcurrency) is created with the query criteria and sent to each node. Each node (PC) then processes the request and creates a polling result message when done.
+
+Since each server has a data file roughly the same size (if a good key hash is selected), no one server should be a significant bottleneck: they all should take roughly the same amount of time to sift (unless we ask it to return only first find). The data file is just simply one record per text line (see RollYourOwnDatabase for possible row representations). The algorithm is roughly:
+
+ For each line
+   If currentLine matches criteriaMap then
+       Store currentLine to resultFile
+   End if
+ End for
+ Send resultFile
+
+See QueryByExample, MinimalTable, RollYourOwnDatabase, and WhereAndAnd for a range of simple-to-fancy criteria mapping suggestions.
+  
+The server loops through the keyRanges table and checks for message files that have not been received yet. The "doneFlag" column is used to mark those already received. When all the flags are set (all message files received), then we know the query is done. The result is a basic text file append of all received files. (Some may have zero records.)
+
+--top
+
+---------
+
+'''Limitations and Enhancements'''
+
+* This does not address joins and aggregate (grouping and summing) operations that may also be needed. Those operations would still be done using a regular database or the like using the returned results. This approach would best be used where there is a huge volume of a single kind of entity to search. For example, an FBI world-wide "people" database.
+
+* This description only describes single-user mode. Other users would have to wait in a queue. Modifications could be made to do multiple different searches at more or less the same time, but this description does not go into that.
+
+----
+Congratulations, it seems that you propose exactly what Cassandra (or a comparable system) does: http://cassandra.apache.org/ 
+
+''No, Cassandra is a far more complex product with more features. This has a higher power-to-complexity ratio if you don't need those other features or use file-system-based tools to achieve similar. It may be easier to clean up if there is a disk crash etc. because it relies very little on "pointers". It's also modular in that each step is relatively independent and you can "get at" the parts without dissecting tons of code.''
+
+
+Hm, for me Cassandra is a fairly lightweight tool. Not 'tons of code'. And the code is failry wellfactored. 
+It is easy to distribute. Runs on files. It has full crash recovery. And the interface is very elementary, exactly the queries you propose. Did you read anything about it? 
+
+''Enough to know it has far more features than what I propose here, which has both a good side and bad side to it.''
+--------
+CategoryLowEnd, CategoryDatabase

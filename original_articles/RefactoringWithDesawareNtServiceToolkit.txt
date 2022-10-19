@@ -1,0 +1,114 @@
+
+'''IsThisPageOk? I do not think so and no response to rest of this section to May2004'''
+
+This VbClassic tool building page last edited Nov 2001. Would information described be of use to people working on Windows2000 (WindowsNT nolonger supported) in Feb2004. 
+
+Personally I think it may have value if I can be alerted to a few scenarios where I would benefit from writing my own WindowsService routine in VisualBasic. But then is Desaware still marketing this tool of theirs, given most new developments go to MicrosoftDotNet.
+
+On the other hand, it may just be a candidate for DeletedUnlessDefended situation?
+PleaseComment. --dl
+
+----
+
+[From RefactoringWithaFrameworkExperiences, a topic which starts at RefactoringFrameworkBasedApplications.]
+-----
+
+'''Framework:'''
+Desaware "NT Service Toolkit"
+(http://www.desaware.com/NTToolkitL2.htm)
+
+'''Framework Enables:'''
+"Create Windows Services in Visual Basic"
+
+'''Type of Framework/Library:'''
+'''''"Framework,"''''' by JeffGrigg's definition:  It runs the show.  It calls you when it feels the time is right.  Your application must conform to their rules; you implement their interfaces.
+'''''"White Box"''''' by MartinLippert's definition:  The interfaces you must implement and are allowed to call are well documented -- in a style similar to JavaDoc.
+
+'''What it does:'''
+They provide a tool that customizes a "Windows Services" EXE that they wrote in C++ to call your DLL, implemented in Visual Basic.
+They handle all the threading issues.
+Their C++ code is the real "NT Service."  But all application functionality is provided by your VB DLL.
+So, in essence, you're implementing an NT service in a DLL.
+
+-----
+
+'''Technical Details:'''
+
+''In addition to a configuration interface (which is pretty boring; I won't detail it here)...''
+
+'''Your VisualBasic "Windows NT Service DLL" must implement a class called "Service", and it must implement the 'IdwEasyService' Interface:'''
+
+Main "Windows Service" entry points:
+  Function OnStart(ByVal ControlObject As EASYSERVLib.IdwServiceCtl) As Long
+  Function OnStop(ByVal ControlObject As EASYSERVLib.IdwServiceCtl) As Long
+  Function OnPause(ByVal ControlObject As EASYSERVLib.IdwServiceCtl) As Long
+  Function OnContinue(ByVal ControlObject As EASYSERVLib.IdwServiceCtl) As Long
+  Function OnShutdown(ByVal ControlObject As EASYSERVLib.IdwServiceCtl, StopPending As Boolean) As Long
+
+Environment Changes:
+  Function OnHardwareProfileChange(ByVal ControlObject As EASYSERVLib.IdwServiceCtl, ByVal ChangeType As Long, ByVal ChangeData As Long) As Boolean
+  Sub OnParamChange(ByVal ControlObject As EASYSERVLib.IdwServiceCtl)
+  Function OnDeviceEvent(ByVal ControlObject As EASYSERVLib.IdwServiceCtl, ByVal EventType As Long, ByVal EventData As Long) As Boolean
+  Function OnPowerRequest(ByVal ControlObject As EASYSERVLib.IdwServiceCtl, ByVal APMMessage As Long, ByVal Flags As Long) As Boolean
+  Sub OnUserControlCode(ByVal ControlObject As EASYSERVLib.IdwServiceCtl, ByVal ControlCode As Integer)
+
+Desaware-specific support functions:
+  Sub OnTimer(ByVal ControlObject As EASYSERVLib.IdwServiceCtl)
+  Sub WaitComplete(ByVal ControlObject As EASYSERVLib.IdwServiceCtl, ByVal ThreadID As Long, ByVal CompletionType As Long, ByVal ObjectIndex As Long)
+
+''(These are the three categories Desaware's documentation uses to describe the methods of this interface.)''
+
+-----
+
+''[Text refactored from RefactoringWithaFramework.]''
+
+I'm currently (2001) working with the Desaware framework for writing Windows services in VisualBasic.
+The main "service interface" they require me to implement includes at least two kinds of functionality that I consider independent:
+(1) controlling the service, with commands like start, stop, pause and resume;
+(2) scheduling events, by setting a timer and receiving callbacks.
+So I'm inspired to (1) delegate the main work of my system to another class, to separate it from the details of Desaware's big interface, and (2) implement a "scheduler" class to abstract out the details of how things get scheduled for the future.
+
+Why a whole "scheduler" class?
+
+To schedule things to occur in the future, you can set the timer, which controls how long it will be until the next event fires.
+When the event fires, I get a callback, and can set the timer for the next event.
+But I like to deal with things at a higher level, like "I want this to run every 10 minutes", "I want this to run at 4:00 AM every day" and "wait 3 seconds and then run this."
+If I have several of these going at once, it can be tricky to figure out how long it should be 'til I want another timer event.
+So I build a "scheduler" class, and hand it objects along with information about when or how often I want them to be called, and the scheduler encapsulates all the annoying details.
+-- JeffGrigg
+
+-----
+
+Just looking at this interface makes me think we've got two or three classes hiding in here.
+Three classes because Desaware, in their own documentation categorize the methods into three different groups.
+
+The main things I want to deal with are OnStart and OnStop, so I delegate them to an external object that doesn't have such a complicated and arbitrary interface.
+''("So far so good.")''
+
+I have a need to pause, from time to time -- to delay work for some period of time, like a timeout.
+Say I receive file 1, which must be followed in a reasonable period of time by file 2.
+When I see file 1, I wish to schedule a timer for 30 seconds in the future.
+If file 2 isn't there by that time, then I'll take error recovery action, due to the timeout.
+Meanwhile, I may have other overlapping timeouts with other files, and possibly regularly scheduled events, like a batch process to run every hour, or every day at 5:00 AM.
+
+To control the timer, I need only keep track of the "ControlObject" it very persistently gives me ''(as you can see above)'', and call "Set Timer" on it, with milliseconds until I want to be notified.
+When the timer expires ''(more or less)'', it will call the "OnTimer" method shown above.
+
+Great:  How am I supposed to schedule overlapping 30 second timeouts and 5:00 AM jobs with an interface like that?
+Well, I'll need a collection of scheduled tasks, each with the time (in miliseconds) when it needs to execute.
+To set the timer, I just need to find the smallest one, subtract the current time, and set the timer to go off in that many milliseconds.
+To schedule something new for 30 seconds in the future, I need only add 30 seconds to the current time, add it to the collection, and set the timer if it's the smallest.
+Not to mention the fact that things can get "behind schedule" to the extent that several tasks may be "scheduled to run in the past," so we'll just have to run them immediately, because that's the best we can do.
+
+All this stuff, with the collection and special case logic, is a bit much to put in a function, so I'll have to make a class to handle it.
+I think I'll call it a '''"Scheduler."'''
+It'll schedule '''"Tasks"''', which will need to have a common interface with a "Run()" method.
+
+There, that refactors the relevant parts of the interface into two subsets, with the addition of an abstraction to cover scheduling.
+I can live with that.
+
+''(Confession:  I haven't done the scheduler yet.  It's on my list of "things to do next," once we get over the fire fighting.  ;-)''
+
+''(On second thought, I'll just delete all the timer/scheduling logic and use a better protocol!  ;-)''
+
+

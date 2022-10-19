@@ -1,0 +1,473 @@
+Moved from PythonVsRuby:
+
+(See also PythonRubyAttrComparison, PythonRubyInitializer)
+
+----
+
+In RubyLanguage, every object has a method called "method_missing", which is called every time an undefined method is invoked. You can override method_missing, for super-reflective ease in creating things such as facades. Does PythonLanguage have this feature?
+
+''In Python you would override the method __getattr__(self, name).  From this method you can either delegate to another method or throw an exception.''
+* I think you should even override __setattr__(self,name), and maybe __getattribute__
+
+"""The code below is not a good implementation of method_missing, because it does not trap the arguments to the method"""
+
+Do you really need to do that to replicate method_missing?
+
+ class Facade(object):
+    def __getattr__(self, what):
+        try:
+            return super(Facade, self).__getattribute__(what)
+        except AttributeError:
+            super(Facade, self).__getattribute__("method_missing")(what)
+
+    def method_missing(self, what):
+        print "No %s here!"%what
+
+
+ class foo(Facade):
+    def __init__(self):
+        self.x = 1
+        
+    def new_method_missing(self, what):
+        print "Definitely no %s here!"%what
+        
+    def test(self):
+        print "1", self.x
+        del self.x
+        print "2", self.x
+        self.method_missing = self.new_method_missing
+        print "3", self.x
+        del self.method_missing
+        print "4", self.x
+
+ x = foo()
+ x.test()
+
+
+
+----
+I'm writing some code in Python and I have come across a situation where, in Ruby, I would factor out a new control structure. Can anyone tell me how I would refactor this code in Python to meet OnceAndOnlyOnce.
+
+I am using an FTP object to download and upload data. Sometimes there is a long time between downloading and uploading, and the FTP connection times out. So, the FTP object is used by a higher-level object that provides application-specific methods. These methods catch IOError exceptions thrown by the FTP connection, reconnect to the FTP server, do the FTP operation again. They also retry the operation a number of times, delay after multiple failures, etc. etc. So, each method looks something like this:
+
+	def upload( self, data, filename ):
+		tmp_filename = self.temp_filename_for( filename )
+		attempts = self.attempts
+		while 1:
+			try:
+				self.ftp.storbinary( "STOR " + tmp_filename, StringIO(data) )
+				return
+			except IOError, ex:
+				if attempts == 0:
+					raise IOError, ex
+				else:
+					self._reconnect()
+					if attempts == self.attempts:
+						delay( self.retry_delay )
+					attempts = attempts - 1
+
+Each method that uses the FTP connection has similar logic, which is repeated in each method. In Ruby, I would apply an ExtractMethod refactoring to extract the common control logic into a new control structure:
+
+	def reconnect_on_timeout
+		@attempts.times do
+			begin
+				return yield
+			rescue IOError
+				reconnect
+				sleep(self.retry_delay)
+			end
+		end
+		yield
+	end
+	
+	def upload( data, filename )
+	    reconnect_on_timeout do
+		@ftp.storbinary( "STOR " + tmp_filename, StringIO.new(data) )
+	    end
+	end
+	
+	def download( filename )
+	    reconnect_on_timeout do
+		blocks = []
+		@ftp.retrbinary( "RETR " + filename ) { |data| blocks << data }
+		blocks.join("")
+	    end
+	end
+	
+How would I translate this Ruby code to Python?
+
+How about this (''warning: untested code''):
+
+	def reconnect_on_timeout(self, operation, parameters): 
+		attempts = self.attempts 
+		while 1: 
+			try: 
+				return apply(operation, parameters)
+			except IOError, ex: 
+				if attempts == 0: 
+					raise IOError, ex 
+				else: 
+					self._reconnect() 
+					delay( self.retry_delay ) 
+					attempts = attempts - 1					 
+
+	def upload(self, data, filename):
+		self.reconnect_on_timeout(self.uploader, (data, filename))
+
+	def uploader(self, data, filename):
+		tmp_filename = self.temp_filename_for(filename) 
+		self.ftp.storbinary("STOR " + tmp_filename, StringIO(data)) 
+
+	def download(filename):
+		return self.reconnect_on_timeout(self.downloader, (filename,))
+
+	def downloader(self, filename):
+		blocks = []
+		self.ftp.retrbinary("RETR " + filename, blocks.append)
+		return "".join(blocks)
+
+----
+Another approach might use currying.
+http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/52549
+----
+
+First, why does the code above use apply instead of just sending in a function? Even currying is overkill. In part it may because these examples were written on older versions of Python. Today, the Python equivalent is near identical to the Ruby one (and probably could have been much closer even as long ago as five years!).
+
+Second, I'm not 100% clear on why the Original Poster's Python code seems to have extra logic that the Ruby one doesn't. For instance why can the Ruby one use the Ruby equivalent of a for-loop but the Python one uses a while loop, a counter and a "raise" statement (''I would guess it is because the original writer wasn't totally comfortable in Python''). And the Python one has a guard around the delay that the Ruby one doesn't. I think that the original Python example does more than the shorter, simpler Ruby one. I believe that a transliteration of the Ruby code to Python (with no extra features) would look more like this.
+
+ def reconnect_on_timeout(self, func): 
+    attempts = self.attempts 
+    for i in attempts: 
+        try: 
+            return func()
+        except IOError, ex: 
+            self._reconnect() 
+            delay(self.retry_delay) 
+
+ def upload(self, data, filename):
+    # note the closure of data and filename
+    def uploader():
+        tmp_filename = self.temp_filename_for(filename) 
+        self.ftp.storbinary("STOR " + tmp_filename, StringIO(data)) 
+        self.reconnect_on_timeout(uploader)
+
+ def download(self, filename):
+    # note the closure of filename
+    def downloader(filename):
+        blocks = []
+        self.ftp.retrbinary("RETR " + filename, blocks.append)
+        return "".join(blocks)
+    return self.reconnect_on_timeout(downloader)
+----
+You could also turn the reconnect_on_timeout function into a decorator, and define your functions like this (warning - untested code):
+
+        def reconnect_on_timeout(operation): 
+            def function(self, *parameters):
+                attempts = self.attempts 
+                while 1: 
+                        try: 
+                                return operation(*parameters)
+                        except IOError, ex: 
+                                if attempts == 0: 
+                                        raise IOError, ex 
+                                else: 
+                                        self._reconnect() 
+                                        delay( self.retry_delay ) 
+                                        attempts = attempts - 1
+            return function
+
+
+        @reconnect_on_timout
+	def upload(self, data, filename):
+		tmp_filename = self.temp_filename_for(filename) 
+		self.ftp.storbinary("STOR " + tmp_filename, StringIO(data)) 
+
+        @reconnect_on_timout
+	def download(self, filename):
+		blocks = []
+		self.ftp.retrbinary("RETR " + filename, blocks.append)
+		return "".join(blocks)
+
+Then you can call upload & download directly and they will do the right thing.
+
+----
+
+(untested!) In my opinion, using a higher order function is clearer than inventing a new control structure using "yield".
+
+''But yield is the Ruby method for calling block arguments in the current context. In other words, it is a higher order function paradigm. It's just syntactically more conveniant. Ruby, like Python, makes you use special notation to define a function which can be handled anonymously. So I'm not sure where you're taking issue.''
+----
+How would you write this killer line of Ruby in Python?
+ [1,2,3,4,5].sort_by { rand }
+
+Which obviously sorts the array by random values ~ that is shuffles the array!  -- Brian
+
+''It would be easier to do in Ruby with [1, 2, 3].shuffle.''
+
+----
+Like this:  random.shuffle([1,2,3,4,5]). I think that's quite clean, although it's inplace, and that might confuse some people.
+
+Oh, you want it without using a builtin function?
+sorted([5,4,3,2,1], lambda x,y: random.randrange(-1, 1))
+
+Not quite as short, since our random function lives in a namespace and takes different parameters.
+
+''or:''
+import random
+def rand(a, b):
+   return random.randint(-1,1)
+
+sorted([5,4,3,2,1], rand)
+''... though as random.shuffle is the RightThing, neither should be used... ;-)''
+
+----
+Be careful with this pattern. Using a random.shuffle library function is the RightThing doing [1,2,3,4,5].sort_by { rand } or it's Python equivalents is usually not the right thing.
+
+random.shuffle is the RightThing for at least three reasons. First, this idiom works because of a subtlety of the (SchwartzianTransform) implementation of Ruby's sort_by.  The Python code using the user defined comparison function rand, given above, also depends upon subtle implementation details of the library's sort implementation.  Comparisons that aren't transitive, don't give the same answers, or that don't ensure that a == a could under some circumstances cause a sort implementation to run an index off the end of an array or fail in other strange ways. To see this, consider a correctness argument for a sorting algorithm and how the argument depends upon these properties of the comparison operation (e.g. http://www.cs.drexel.edu/~krandick/teaching/SE320/formal_methods/quicksort.pdf)
+
+Second, using sort to do a random shuffle is at least a O(N log N) operation, taking time that grows faster than linearly with the size of the list being shuffled.  A proper implementation of random shuffle is only O(N) time. 
+
+Third and most interestingly, without care, it is easy to generate shuffles of lists that aren't truly random. This is the case for the Python code fragments. The Ruby idiom does produce a truly random permutation of the list, but only because rand is unlikely to produce two identical values and because Ruby's sort_by uses the Schwartzian Transform internally.  See http://en.wikipedia.org/wiki/Shuffling_playing_cards for more information on this subject. 
+
+''sorted([1, 2, 3, 4, 5], key=lambda x: random.random()) can give list as random as the ruby one.''
+
+----
+'''Ruby Equivalents for Python ListComprehension''''''s'''
+
+What is the Ruby equivalent of"
+
+ >>> [(x, x*x) for x in [1,2,3,4] if x != 3]
+ [(1,1), (2,4), (4,16)]
+
+''This accomplishes the same thing, but makes an intermediate list.''
+ [1,2,3,4].select {|x| x != 3} . map! {|x| [x, x*x]}
+
+''Or, without the intermediate array in two passes, which I find more readable:''
+ [1,2,3,4].map! { |x| [x,x*x] if x != 3 }.compact!
+''Or the more classic Smalltalk-ish solution in one pass:''
+ [1,2,3,4].inject( [] ) { |a,x| ( a << [x, x*x] if x != 3 ) || a }
+''Or perhaps this?''
+ [1,2,3,4].inject([]) {|a,x| x == 3 ? a : a << [x, x*x]}
+
+''I'm not sure I like Python's behavior there though. If you were to rely on your if-statement that way in Ruby, your array would have a nil. I'm pretty sure this makes more sense. Python seems to silently decide that its false value isn't something you keep in that statement. But code like this probably shouldn't see the light of day in a production environment. That goes for the Python example too.''
+
+The whole point of a ListComprehension is to select only elements that meet the selection criteria (ie: to build a filtered list).  The Ruby selection generates nils, which is not appropriate behavior for a comprehension.  
+
+''But you're not just filtering. You're both filtering and culling the list. I've seen people proprose methods to do exactly what you're saying on the Array class of Ruby, but usually they are shot down by people who prefer that both verbs show up in such a statement. If all you want is to select off of a list, #reject and #accept handle it.''
+
+''I find it strange that Python discards those false values.'' 
+
+Python doesn't discard the false values, you're getting confused with LispLanguage. List comprehensions are (more or less) SyntacticSugar for
+
+mylist = []
+for val in somecollection:
+   if someboolean:
+       mylist.append(val)
+
+A filter IS something that culls a list:
+ >>> filter(lambda x: x%3, range(20))
+ [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 19]
+
+If you want the false values to show up in the list that's trivial with a ListComprehension:
+ [(None, n)[bool(n%3)] for n in range(20)]
+
+Or if you want something a little more permanent:
+ def null_if_false(n, criterion):
+    if criterion(n):
+        return n
+    return None
+
+ >>> [null_if_false(n, lambda x: x%3) for n in x]
+ [None, 1, 2, None, 4, 5, None, 7, 8, None, 10, 11, None, 13, 14, None, 16, 17, None, 19]    
+
+That said, I've _never_ever_ needed to use this, and I use ListComprehension''''''s all the time.  Note that Python's ListComprehension''''''s build a new list and don't perform in-place modification.  The behaviour of Python's filter() and listcomps is hardly original to Python - they're standard constructs of functional languages [though Python's filter() is deprecated in favour of listcomps and gencomps].
+
+AnswerMe: I've used a lot of Python, and this is the first time I've ever seen the idiom:
+ (None, n)[bool(criterion(n))]
+What the hell is that?  Oh, and an aside - apparently, Guido is finally folding on the whole "Python needs Ruby blocks" issue and is working on an implementation of a block in Python that takes an object as it's parameter, and that object is used to determine what to do with the nested code. -- MartinZarate
+
+''It's a fairly evil way to emulate the C/Perl/Java idiom "criterion(n) ? n : None"'' Only "Fairly evil"? ;-)
+
+Actually, it's a bug in the typing system. :) You could use (None,n)[abs(cmp(criterion(n),0))] instead for extra points. :) -- IvanTkatchev
+Yes, True is 1 and False is 0 when converting to integer in Python.
+
+Python 2.5 has (test ? value_if_true : value_if_false) operator : it is (value_if_true if test else value_if_false). It allows to rewrite this code in a better way :
+ >>> [(n if n%3 else None) for n in range(20)]
+
+----
+
+''Sorry about using "filtering and culling", that's what my shop calls it, and I was posting from there. Wrong mindset. As I was saying, in Ruby there are two discrete steps to your operation. One is to select which elements you want to use, and the other is to provide a transform to them. Please note how every example you've given so far reduces the length of the list.''
+
+''It seems to me like this is a rather trivial difference though. The example below shows one implementation of similar behavior. I'll offer one too, after that one.''
+
+----
+I use this idiom in ruby to emulate list comp:
+ module Enumerable
+   def map_filter(obj=nil)
+     acc=[]
+     each do |x|
+       res= yield x
+       if res==obj
+         next
+       else
+         acc << res
+       end
+     end
+     acc
+  end
+  alias lc map_filter
+ end
+ z=  [1,2,3].lc { |x| x*2  if x%2==0 }
+
+
+I like the way It can optionally handle useful nil return values, and the creative usage of the if statement modifier :)  
+----
+In the spirit of the example above, here's one that is a little more modern:
+
+ module Enumerable
+   def compact_map( comp=nil )
+     inject( [] ) do |ary,item|
+       t = yield item
+       ( ary << t unless t == comp ) || ary
+     end
+   end
+ end
+----
+PythonVsRuby has a harder example:
+
+ [(x,y) for x in xrange(3) for y in xrange(3) if x != y] -> [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)]
+
+I think the Ruby example from PythonVsRuby fits well in contrasting the appraoches the two languages take:
+
+ a=[]
+ 3.times {|x| 3.times {|y| a << [x,y] if x != y } }
+
+Perhaps:
+
+ a=[];for x in xrange(3); for y in xrange(3); a<< [x,y] if x != y end end; a 
+  
+ class XRange
+   def initialize(n) @n=n end
+   def each() 0.upto(@n-1){|i|yield i} end
+ end
+ def xrange(n) XRange.new(n) end
+
+This too is lazy, and performance seems about the same (say within a factor of two, slower or faster).
+It is a bit uglier.
+
+''and here is another option (perhaps more Rubyish?):''
+
+ xrange(3).inject([]) {|a,x| a + xrange(3).lc {|y| (x == y) ? nil : [x,y] } }
+
+'' we can define a function to make it cleaner (and use XRange and Enumerable#lc from above):''
+
+ module Enumerable
+  def collect_flattened(start=[])
+     acc=start
+     each do |x|
+       acc += yield(x)
+     end
+     acc
+  end
+  alias cf collect_flattened
+ end
+
+ class XRange
+   include Enumerable
+ end
+
+ xrange(3).cf {|x| xrange(3).lc {|y| (x == y) ? nil : [x,y] } }
+
+''which seems about as clear from a Ruby standpoint as the list comprehension is from a Python.''
+ 
+One nice feature of the Python version is that it's not cluttered by explicit nesting. The same can be done in Ruby if we abstract out the implicit (lazy) Cartesian product of Enumerables:
+
+ class Product
+   include Enumerable
+   def initialize *seqs
+     @seqs = seqs
+   end
+   def each &block
+     if @seqs.size == 1
+       @seqs.first.each &block
+     else
+       first, *rest = @seqs
+       first.each do |x|
+         Product.new(*rest).each do |xs|
+           block.call(x, *xs)
+         end
+       end
+     end
+   end
+ end
+
+ Product.new(0...3, 0...3).find_all{|x,y| x != y}
+
+This is much cleaner, especially for deeply-nested list comprehensions.  If you want Python's combined map/filter semantics, you can use previous posters' compact_map or lc with the product Enumerable.
+
+Or maybe
+(0..2).to_a.product((0..2).to_a).reject{|a,b| a==b}
+
+----
+
+Here is a different take on a Ruby equivalent:
+
+  class Array
+ 
+ 	def comprehend args = [], result=[], &block
+          if empty? then 
+	        r = yield *args
+		result << r if r
+	  else 
+               (self[0]||[]).each { |e| self[1..-1].comprehend( args + [e], result, &block) }
+          end
+          result
+        end
+
+  end
+
+This should go into Enumerable, but I put it into Array to make the example more clear:
+ 
+  [0..2,0..2].comprehend { |x,y| [x,y] if x != y } 
+
+answers the array of pairs where the elements aren't equal:
+
+  [[0, 1], [0, 2], [1, 0], [1, 2], [2, 0], [2, 1]]
+
+
+The expression
+
+  [0..2,0..2,0..2].comprehend { |x,y,z| [x,y,z] if x != y && y != z } 
+
+answers triples where neither the first two nor the second two pairs are the same:
+
+  [[0, 1, 0],
+  [0, 1, 2],
+  [0, 2, 0],
+  [0, 2, 1],
+  [1, 0, 1],
+  [1, 0, 2],
+  [1, 2, 0],
+  [1, 2, 1],
+  [2, 0, 1],
+  [2, 0, 2],
+  [2, 1, 0],
+  [2, 1, 2]] 
+
+
+Anything that responds to "each" can be placed into the array.  One can also work with arbitrary arity in the block... the following determines the comprehension for all the combinations where no item is repeated:
+
+  [0..2,0..2,0..2].comprehend { | *x | x if x.uniq.count == x.count  }
+
+answers
+
+  [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]
+
+Have fun!
+
+-rk
+
+----
+(See also PythonVsRuby, PythonRubyAttrComparison, PythonRubyInitializer)
+
+----
+CategoryProgrammingLanguageComparisons CategoryPython CategoryRuby 

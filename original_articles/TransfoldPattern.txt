@@ -1,0 +1,149 @@
+	 :	Process the elements of one or more aggregate objects without exposing their representation and without writing explicit loops -- ThomasKuehne
+
+See FunctionalPatternSystemForObjectOrientedDesign ObjectFunctionalImplementation
+
+ExternalIteration is very flexible but error prone. InternalIteration is easy to use but has severe limitations especially when it comes to iterating over more than one collection simultaneously.
+
+'''Therefore:'''
+
+Use InternalIteration in the client code for containers but make ExternalIteration available for use in the implementation of specialized InternalIteration mechanisms (InternalizeExternalIterators).
+
+The vast majority of (all?) iteration needs can be met through InternalIteration by using the following three operations in this order: TransposeFunction to change column ordered data into row ordered data during multiple simultaneous iterations, MapFunction create a new collection based on the rows created by the TransposeFunction, and FoldFunction to translate the collection returned by the MapFunction into a single, final result. The resulting algorithms can be made to be very efficient if each of the intermediate collections is a LazyObject (see StreamObject).
+
+The TransposeFunction takes a collection of columns and returns a collection of rows. The first row consists of the first element from each column. Successive rows are constructed similarly. 
+
+The MapFunction takes a collection and a function (a FunctorObject in non-functional languages). It returns a new collection constructed by applying the function to each element of the collection in turn and adding the results to the new collection. In the TransfoldPattern it takes a collection of rows and a function that does some sort of transformation on each row, possibly reducing each one to a single value.
+
+The FoldFunction takes a collection, a function, and a value (a FunctorObject in non-functional languages). The value parameter is used as a seed for a running total that will be returned by the FoldFunction. The FoldFunction iterates through all the elements in the collection calling its function parameter and passing both the element and the running total as parameters. The return value of the function is stored as the new running total at the end of every iteration. In the TransfoldPattern the FoldFunction takes the result of the MapFunction (which could be a simple collection or a collection of collections) as its collection parameter. 
+
+The collections returned by each of these functions should iterate through their elements using LazyEvaluation in order to avoid the overhead of creating, maintaining, and destroying stateful container objects. The result of the final FoldFunction should be a FunctorObject that implements calls the FoldFunction through LazyEvaluation in order to facilitate further composition. This is often the nature of Functional techniques: functions are continually combined and often optimized away but they never seem to get evaluated. When Functional techniques are used in an OO environment evaluation is often deferred until concrete values are actually put to use.
+
+'''Resulting Context:'''
+
+The TransposeFunction along with the HigherOrderFunction''''''s MapFunction and FoldFunction can be used to compose reusable FunctorObject''''''s and collections into algorithms that are both powerful and efficient. LazyEvaluation is a key element of this pattern. It allows the collection of collections returned from the TransposeFunction to iterate over all the elements in all the base collections in a single loop. It also allows all the intermediate collections in the algorithm (those consumed by the MapFunction and the FoldFunction) to have little or no memory foot print because each element is fully consumed by each step in the process before the next element is retrieved.
+
+'''Known Uses:'''
+
+ExpressionTemplate''''''s in CeePlusPlus use this pattern without the fold step and without creating an intermediate collection in the transposition step. The collection elements that would normally have been stored during transposition are instead fed directly into the expression. Since the goal of ExpressionTemplate''''''s is to translate a set of collections into a single collection there is no need to fold the results into a single, final, value. Instead the results of the mapped expression are stored in another collection.
+
+Also, Google's MapReduce and its open source equivalent, HaDoop, implement everything except the initial transpose.
+
+----
+The use of CeePlusPlus templates to implement this pattern makes me wonder if templates, and generic programming in general, couldn't be both simplified and enhanced by taking features from FunctionalProgrammingLanguage''''''s. Someone once explained FunctionalProgrammingLanguage''''''s to me by saying that they really wanted to be program generators: the result of a run of a functional program is a program that, if run, would yield the desired result. This may have been meant as a metaphorical description but I think that it's close enough to reality that FunctionalProgrammingLanguage''''''s ought to be viewed as a means by which to implement template facilities for more traditional languages. -- PhilGoodwin
+
+See FunctoidsInCpp for an example of this.
+
+In general, C++ templates are a TuringComplete functional language. The lesson to learn from C++ templates is that when novel language features are introduced, it may be worth sacrificing backward compatibility in favour of a cleaner syntax.
+----
+It's possible that I'm very dim, but I find this hard to follow without
+a concrete example. So here is one (followed by a few remarks).
+
+Suppose ''a'' and ''b'' are vectors of numbers, and we want to calculate
+their inner product: that is, ''a''0*''b''0 + ... + ''a''{''n''-1}''b''{''n''-1}.
+If all we've got is internal iterators for ''a'' and ''b'', then we can't
+do that. With external iterators it can be done, but that exposes all
+the machinery.
+
+So, instead:
+* Make a vector ''c'' = [''a'',''b''].
+* Transpose it, giving [[''a''0,''b''0], ...].
+* Map the "take a 2-element vector and multiply its elements" function over that, giving [''a''0''b''0, ...].
+* Apply "fold" (also called "reduce" in some languages) to this vector, the two-operand "add" function and the initial value 0.
+* Done.
+
+You can do this without having to construct all those vectors explicitly by using LazyEvaluation everywhere. This remark applies also if what we've got isn't really two vectors, but two arbitrary collections that can spit out their elements in order. We don't have to "serialize" them into actual vectors.
+
+Unfortunately, LazyEvaluation usually carries a performance penalty.
+It's possible to get around this in some languages by compile-time
+transformations that turn all the mapping and transposing and such
+into loops; I suppose that's another way of internalizing external
+iteration. (Or do I mean externalizing internal iteration?) Actually,
+the only language I know of in which you can do this is CommonLisp,
+whose "Series" facility does exactly this sort of thing. (The Series
+facility isn't a standard part of CommonLisp, but it's quite widely
+known and has a portable and free implementation.) -- news.generics.co.uk (server name inserted as signature so we can remember whose posts to keep my eye out for and make sure that we read them)
+
+In PythonLanguage:
+
+ a = [ ... ] # your vector here
+ b = [ ... ] # your other vector here
+ c = zip(a, b) # transpose, ie make a sequence of corresponding pairs
+ d = map((lambda p: p[0] * p[1]), c) # work out the products
+ e = reduce((lambda x, y: x + y), d, 0) # sum them up
+ # and Bob's your uncle!
+AFAIK, Python does this eagerly, and makes temporary lists. Note also that in Python, map can take multiple arguments, which does a sort of implicit zip on them, passing several arguments to the function. There is a gotcha: the real zip truncates if the arguments are different lengths; map's implicit zip extends the shorter list with None (ie null). Anyway, we could write:
+
+ a = [ ... ] # your vector here
+ b = [ ... ] # your other vector here
+ d = map((lambda p, q: p * q), a, b) # work out the products
+ e = reduce((lambda x, y: x + y), d, 0) # sum them up
+ # and Bob's your uncle!
+Sadly, reduce can't take multiple sequences; let's make one that can ...
+
+ def superreduce(f, init, *seq): # note that initializer now comes before sequences
+	acc = init
+	for t in zip(*seq):
+	 acc = f(acc, *t)
+	return acc
+Now:
+
+ a = [ ... ] # your vector here
+ b = [ ... ] # your other vector here
+ e = superreduce((lambda a, x, y: a + (x * y)), 0, a, b) # sum them up
+ # and Bob's your uncle!
+I love Python. -- TomAnderson
+
+Python can do ''much'' better:
+
+ sum(x * y for x, y in izip(a, b))
+
+----
+ sum = a.zip(b).inject(0) { |s, (x, y)| s + x * y }
+Yeah, and that's why I prefer RubyLanguage.
+
+----
+ innerProd = (sum .) . zipWith (*)
+Or HaskellLanguage ;)
+
+----
+ +/(a*b)
+Or JayLanguage. >:)
+
+----
+"If all we've got is internal iterators for ''a'' and ''b'', then we can't do that."
+''Except that we can. This will calculate the inner product in Ruby, using only the internal iterator "each":''
+ a = [...]
+ b = [...]
+ c = []
+ innerProduct = 1
+ (0 ... a.length).each {|i| c[i] = a[i]*b[i]}
+ #0 ... a.length is (0, 1, ... a.length - 2, a.length - 1)
+ c.each {|x| innerProduct *= x}
+	 :	My ruby is pretty rusty, so I'm probably misreading this, but it looks like you're cheating. You're not using an internal iterator on the collections; you're creating a list of indices, and using the internal iterator of that to index the two collections. This is external iteration: you're using knowledge of the structures of the two collections to iterate over them, rather than allowing their internal iterators to take care of it for you.
+
+''What I like about python is the generators--external iterators written EXACTLY the same as internal ones.''
+----
+This is effectively equivalent to joining relations in a RelationalLanguage or joining tables in SqlLanguage. Different, but equivalent.
+----
+In RubyLanguage, you can use the "LazyList" library to achieve similar things. I've used it in EnumeratingRegularLanguages to literally translate a Haskell program that did just that to Ruby. It would be quite cool to have a "LazyMatrix" or something like that in Ruby. (AurelianoCalvo)
+----
+
+This is related to the various zipWiths. The first two stages (omitting the final fold) could be considered a function thus:
+
+transmap :: [∃a.[a]] -> ([∃a.a] -> b) -> [b]
+
+If you're a Lisper or a Perlist you already consider function arguments to come as a (heterogeneous) list anyway, so you'll think this is like
+
+ replicate :: Nat -> a -> [a]
+       map :: (b -> a) -> [b] -> [a]
+   zipWith :: (b -> c -> a) -> [b] -> [c] -> [a]
+  zipWith3 :: (b -> c -> d -> a) -> [b] -> [c] -> [d] -> [a]
+...
+''(edited for legibility --SamuelFalvo)''
+
+This is perhaps another example of how something is done in a dynamic language vs in a typed language.
+
+----
+See also FoldFunction, PatternsInFunctionalProgramming
+----
+CategoryObjectFunctionalPatterns CategoryFunctionalProgramming

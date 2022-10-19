@@ -1,0 +1,195 @@
+Having systems that accept all or part of SQL commands and clauses are sometimes a security risk because one can supply malicious substrings. An extreme example are RDBMS or APIs that allow multiple SQL commands per API call.
+
+  x = '1=1; delete from foo';
+  doQuery(x);
+  ....
+  function doQuery(x) {
+    return query('select * from foo where ' . x);
+  }
+Ideally, some kind of validation of such strings should be done to make sure any part fed to SQL is what we think it is (scalar, Boolean expression, etc.). Example:
+
+  function doQuery(x) {
+    if (! isSqlBooleanExpression(x)) {
+      abort('Security problem!');
+    }
+    return query('select * from foo where ' . x);
+  }
+Some think that part of the problem is SQL's "COBOL nature", and that some other RelationalLanguage would be better for programmer use.
+
+''Or you just use parameterized queries and avoid all these problems altogether.''
+
+But these often complicate the code. You have to make a function/method for every possible combination of parameters and operators.
+
+''No it doesn't, it requires a simple generic api with something like aStatement.Add''''''Param(aName,aValue), you still get to build your sql string as simply as before, and execute them simply, but you don't need to concat the params on...''
+
+  Statement aStatement = new Statement("Select * from users where name = ?");
+  aStatement.Add''''''Param("name","Joe Smith");
+  return aStatement.Execute();
+''Nothing difficult about that, it's quite generic and removes all the burden of bad strings in the params, and handles any encoding like doubling quotes, far simpler than just executing raw sql that you clean by hand.''
+
+But that does not scale to more complex expressions.
+
+''Sure it does.''
+
+By the way, a shorter alternative:
+
+  executeSql("Select * from users where name = %1", sqlString(theName))
+''Don't want functions... want objects, easier to extend and cache, or pass around than raw strings. If you like the one-liners, here you go.''
+
+  new Statement("Select * from users where name = %1").Add''''''Param("name",theName).Execute();
+I hardly see that as better. If you have specific scenarios where it's easier to "extend and cache", I would be happy to see it, but suspect it is for another topic.
+
+By the way, how do you handle multiple parameters? Many OOP languages would choke on something like:
+
+  new Statement("Select * from users where name = %1 and foo = %2 or bar = %3").Add''''''Param("name",theName).Add''''''Param("foofld",foostuff).Add''''''Param("barsdfs",sdfsfdd).Execute();
+''{Uggh! You're mixing positional parameters with named parameters? Consider:}''
+  new Statement("Select * from users where name = $(name) and foo = $(foofld) and bar = $(barsdfs)").
+      S''''''etParam("name",theName).S''''''etParam("foofld",foostuff).S''''''etParam("barsdfs",sdfsfdd).Execute();
+''{or}''
+  new Statement("Select * from users where name = %1 and foo = %2 and bar = %3").
+      S''''''etParam(1,theName).S''''''etParam(2,foostuff).S''''''etParam(3,sdfsfdd).Execute();
+''Not that it matters much, but I don't know any OO language that would choke on that, it's a simple argument collector and can be done in any OO language, and that's exactly how it'd work.''
+
+Perhaps we can find another topic to put all this so people can compare and get ideas, regardless of which paradigm they favor. I though I saw one once, but forgot the name.
+
+''A decent framework will reduce the typing you have to do. Like, say:''
+
+ object_store.getUsers( 'name', theName )
+''Or the second example:''
+
+ object_store.getUsers { |user| Query::And( user.name.equals( theName ), user.foo.equals( foostuff ), user.bar.equals( sdfsfdd ) ) }
+''Of course, some languages support these sort of frameworks with more ease than others. -- francis''
+
+----
+
+'''Another important note: You can suffer from the same security problem if you fail to quote or parameterize string VALUES!''' - not just SQL boolean expressions.
+  function doQuery(String key) {
+    return query("select * from foo where key = '" + key + "'");
+  }
+can be cracked if a cracker enters the string...
+  nokey'; delete from foo --
+The single quote in the string terminates the string literal.
+The dashes at the end comment out your one remaining single quote from the query, and anything that may occur after it in the program's query.
+
+''This is a service that the "sqlString()" function mentioned above would perform. Generally, one could have:''
+
+* sqlString - Prepare a string for SQL but escaping any internal quotes and putting quotes around it. 
+* sqlNumber - Make sure the value is a legitimate number. An invalid number raises an error and stops processing. Note that these should not be used for primary data validation, but as a final stopgap. For example, JavaScript might be used on the form for primary validation, but in case JavaScript is disabled, cracked, or crashes, one needs a server-side check as a last resort. Thus, the error handling for these functions does not have to be pretty.
+* sqlInteger - Make sure the value is a legitimate integer.
+* sqlDate
+
+''(In a similar vein, be sure to quote values for HTML output too - or be vulnerable to cross-site scripting, typically to steal cookies and hijack sessions from your customers.) -- JeffGrigg''
+----
+
+Lots of code is not a free lunch. More code is associated with more maintenance cost, more errors, ''et cetera''. Generally, it depends on the nature and audience of the application. For small intranets, parameterized queries are often overkill.
+
+''First, it's not lots of code; second, parameterized queries are never overkill, they're the simplest thing that works; concatenated sql doesn't work, it leaves you open to attack.''
+
+''If you work hard not to ScatterSqlEverywhere, the problem on this page mostly disappears. -- francis''
+
+Remainder of this discussion moved to DatabaseAbstractionLayer.
+
+--------
+
+One trick is to put all read-only queries under a separate login from writable ones. This way no matter how tweaked the string is, the database won't do anything to change information.
+
+For writable queries, just have wrappers that check the validity and perhaps perform any quoting/escaping/validating that is needed. Example:
+
+  $sql = "update x set foo=".sqlText($foo)." where xID=".sqlNumber($xID);
+(This repeats some stuff already above. I will factor it later. Thanks)
+
+----
+
+I've always hated the fact that I need to compose SQL as text in order to work with a database. Maybe I need to look into OODBMSs, but I'd really like a functional (or OO, or whatever, anything but passing arbitrary strings) interface to a database that didn't involve the composition of strings. I suppose it's PrematureOptimization, but using string formatting to compose code to convert data from the binary representation stored in the DB to the binary representation I need in my app has always seemed enormously clumsy. Especially with SQLs annoying inconsistencies, which make generating SQL for an update as opposed to an insert so obnoxiously different. -- ChrisMellon
+
+Those are issues addressed in more detail under ExpressionApiComplaints and PerniciousIngrownSql, which are more about developer productivity than security.
+
+--------
+
+(Moved from DynamicStringsVsFunctional)
+
+http://imgs.xkcd.com/comics/exploits_of_a_mom.png
+
+''This seems like it belongs in a topic about SQL security issues, not here.'' [context messed up because this was moved.]
+
+It provides a fine example. There would be no security issue here if the SQL string wasn't constructed dynamically. Ultimately, code-injection is a security problem all 'dynamic string' systems must handle if they are to accept outside inputs from potentially malicious sources... and the problem becomes far less trivial when accepting real code, not just stuff that should be escaped to strings.
+
+(Let's not add too many distractions; the picture above is intended to stand alone... a little bit humor, a little bit HaHaOnlySerious.)
+
+''Most SQL injection could be solved by not allowing multiple statements by default (no semi-colons), and adding an "edit list" to ODBC interfaces. It would resemble:''
+
+  table    access 
+  ---------------
+  empl        r
+  dept        rwd
+  store       w
+
+Access Symbols:
+
+* r = read
+* w = write (shortcut for insert or update)
+* i = insert
+* u = update
+* d = delete
+* a = all (non-schema, same as "rwd")
+* s =schema/directory-info.
+
+''Example using JavaScript-like code:''
+ 
+ q = new query;
+ q.tableAccess("employees", "r");
+ q.tableAccess("dept", "rwd");
+ q.tableAccess("store", "w"); 
+ q.sql = "SELECT * FROM dept, .....";
+ result = q.run();
+
+Variation: 
+
+ q = new query;
+ q.tableAccess("employees", read:=true);
+ q.tableAccess("dept", read:=true, write:=true, delete:=true);
+ q.tableAccess("store", write:=true); 
+ q.sql = "SELECT * FROM dept, .....";
+ result = q.run();
+
+''Additions to the API could do something similar to columns for finer control. (Perhaps call the above method "entityAccess" instead of "tableAccess" to also cover views and derived tables.)''
+
+''Or even designating read-only queries versus writing ones would go a long way. Plus, SQL injection is not a signif problem for intranet and reporting apps.''
+
+''Here is kind of a compromise between the two:''
+
+  r = query(conn, 3, "rd", "select * from ...");
+''The 2nd param tells it how many tables are specified and the 3rd tells it the access allowed (read and delete in this case) for the SQL. Another option to consider is maximum number of rows. If we expect the query to only return 1 row, we don't want an injection that grabs 5,000 rows, such as embedding " or 1=1" into the WHERE clause. --top'' 
+
+Yes, trust helps, backups help, and a proper security and operation control scheme would go a long way. You could even specify read/write/delete/update permissions per-query and per-table. (this query reads:empl,writes:store). Plus you can have orthogonal certificate-based CapabilitySecurity to control access rights all the way down to the per-row level. (That might be a good idea in any database with high-value confidential information, though it still leaves you with the ConfusedSheriffProblem). But, as I recall, none of this is SQL - you're actually extending the language to provide it.
+
+Things become less trivial to secure when you're actually intent on allowing a certain degree of code injection... as is the problem you'll encounter when handling dynamic strings or allowing users to construct their own SQL statements... or where, for example, part of the expression comes from some database and another part comes from a user.
+
+As a note on trust and "intranet and reporting apps": be aware that many attacks are performed or abetted by disgruntled employees or foolish ones (the latter possibly subjects of social hacking). You can trust away when the database is a low-risk investment, but if it has high-value or confidential data any dependency on trust should be minimized.
+
+''I find that if an internal IT employee really wanted to cause havoc, there are so many opportunities that SQL string diddling is just a drop in the sea of potential exploits. To "clean" all that up, you'd need a much larger staff. Is it worth $500,000 to prevent potential $400,000 worth of damage? GoodSecurityIsExpensive.''
+
+It's worth $500,000,000 or more to make it so state-of-the-art COTS software and operating systems are secure enough that SQL string diddling ''isn't'' just a drop in the sea. The cost can be spread across consumers.
+
+''Agreed. A COTS system spreads the risk to users all over the world, so they must be more careful than say an in-house summary reporting system.''
+
+----
+
+SQL Strings are known as "dynamic SQL" and this was and still is a very dominant security leak in almost every PHP 3/4 source snippet running on the internet. A lot of PHP sites (fully professional ones, big corporations, big forums) are hacked because of http GET variables (url variables, html form variables) that are not protected from injection.
+
+This is not a drop in the ocean. At least hundreds of sites are hacked each week due to SQL injection, and at least hundreds of sites are hacked each month due to html injection.
+
+Those who use Escape() functions with dynamic SQL thinking they've saved the day, don't realize that Escape() is not foolproof either. It has security issues that don't meet the eye. Plus, the Escape functions bloat up the code as much as the extra effort it takes to use parameterized queries anyway. Parameterized queries are not available in old MySQL databases, so use newer versions if you can. In other words, I recommend parameterized queries.
+
+One solution for this injection problem is to design something better than parameterized queries.. such as strongly-typed procedures and functions that say only accept integers when you are modifying an integer field in the database, and will not except semicolons or anything ... i.e. a procedure-based or function-based language that is strong/static. The problem is that this is not flexible like the SQL language is... and anything that is sent over a TCP/IP connection is just a string in the end... a string of data. But, hiding this string of data from people and forcing them to use a secure layer that talks to this stream/string of data.. is the only way to make it more secure.
+
+Parameterized queries are one way which some of the security is implemented on the server side (sometimes also client side protect partially, depending on what language is used). Securing the string sent over TCP/IP ''both'' on the client ''and'' the server side ultimately is needed for really strong security. (The client being the program that is sending the data even if it is running on a server, and the server being the database server accepting the string and compiling/executing it).
+
+Parameterized queries also have the advantage that you can precompile them first for performance, if you are going to be reusing them... whereas dynamic SQL is regenerated. i.e. preparing your statements ahead of time.
+
+''Parameterized queries are difficult to use with optional clauses, such as used in QueryByExample. Conditional clauses are very common in apps I work on.''
+
+----
+See more at SecurityExploits, SqlPreparedStatements, SqlInjection
+
+CategorySqlProgramming, CategorySecurity, CategoryDatabase

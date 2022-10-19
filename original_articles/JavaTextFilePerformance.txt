@@ -1,0 +1,175 @@
+Please tell me what I've done wrong, because I think I've measured Java as being 7.2 times slower than Smalltalk on the same platform reading the same file.
+
+Here's the scenario.
+
+The file is an ascii text file containing 347,847 lines and totalling 8,101,370 bytes.
+
+The task of each program (Java and Smalltalk) is to read the file a line at a time and answer an array of 347,847 strings, each containing one record from the file.
+
+The Java is VisualAgeJava, the Smalltalk is VisualAgeSmalltalk. The platform is a 256MB NT machine with reasonable performance.
+
+Here's the java (add the necessary declarations yourself):
+
+    String[]          answer = null;
+    String            aString = null;
+    BufferedReader    aReader = null;
+    Vector            aVector = null;
+
+    try {
+        aVector = new Vector();
+        aReader = new BufferedReader(new FileReader("g:/gecko/input/stub.CEL"));
+        while ((aString = aReader.readLine()) != null)
+            {
+            aVector.add(aString);
+            }
+        aReader.close();
+
+        answer = (String[])aVector.toArray(new String[0]);
+        }
+    catch (IOException e) {
+        e.printStackTrace();
+        }
+    return answer;
+
+Here's the analogous Smalltalk:
+
+    | aFileStream aLine outStream answer |
+
+    aFileStream := CfsReadFileStream open: 'g:/gecko/input/stub.CEL'.
+    outStream := ReadWriteStream on: Array new.
+
+    [aFileStream atEnd not] whileTrue: [
+        aLine := aFileStream nextLine.
+        outStream nextPut: aLine.
+        ].
+    aFileStream close.
+    answer := outStream contents.
+
+The measured time, in Java, is 132.580 seconds ... about 2 minutes, 12 seconds.
+
+The measured time, in Smalltalk, is 18.3 seconds.
+
+It looks to me like the Smalltalk is more than 7 times faster.
+
+Should I read the file a different way in Java? Am I doing something blindingly stupid (besides contemplating Java for this task)?
+
+''I just re-ran the java, skipping the part that added each string to the vector, and got 12.5 seconds. Wow!''
+
+-----
+Is VisualAgeJava really meant to be used to run code in production? I got the impression that you were supposed to deploy your application in another JVM? If this is true you might get better performance still.
+
+Also, try another collection than java.util.Vector. It needlessly synchronizes every operation on it.
+----
+This is a factor SEVEN we're talking about. I would be astonished if there was a difference of even a factor of two from the choice of VM's or collection classes.
+
+I did some further investigation.
+
+I tried using Array''''''List to store the strings read from the file, and I also tried simply writing them into a pre-allocated array. The choice of collection classes appeared to produce no significant difference in performance. It would seem that the bottleneck is the string allocation time; when saved, each pass through the loop requires additional string storage.
+
+For simply reading the file (and discarding the output), here were the results:
+ VisualAgeSmalltalk:  1.7 Seconds
+ VisualAgeJava:      12.5 Seconds
+
+Again, about a factor of 7.
+
+So there are now TWO data points: (1) simply reading the text file and (2) reading the text file into an array of strings. For each, VisualAgeJava was SEVEN times slower than VisualAgeSmalltalk.
+
+Finally, for what its worth, a co-worker did a similar exercise in Perl and measured 80 seconds.
+
+So ... it would appear that Java is the SLOWEST, by far, Perl was next, and Smalltalk was fastest.
+
+''12.5 seconds is slower than 80 seconds? In what parallel dimension would this be the case?!''
+
+Comments?
+
+----
+
+Try using an Array''''''List instead of a Vector. In certain tests we did, Array''''''Lists performed consistently better (i.e. faster) for inserts than ''any'' other Collection.
+
+----
+
+A suggestion - run OptimizeIt on the test program. See what it identifies as the bottlenecks. Optionally, report back with your results. ;)
+
+----
+
+Storing the Strings is taking you about 120 seconds, or about 3 stores per millisecond.  This seemed awful to me, so I wrote this code to try it for myself:
+
+ import java.util.*;
+ import java.io.*;
+
+ public class TimeVector
+ {
+   public static void main(String args[])
+   {
+     String[]          answer = null;
+     Vector            aVector = null;
+ 
+     try {
+         long timer = System.currentTimeMillis();
+         int i = 347847; //347847;
+         aVector = new Vector();
+         while (i-- > 0)
+             {
+             aVector.add(""+i);
+             }
+ 
+         answer = (String[])aVector.toArray(new String[0]);
+         System.out.println(System.currentTimeMillis() - timer);
+         }
+     catch (Exception e) {
+         e.printStackTrace();
+         }
+   }
+ }
+
+I ran it under JDK 1.3 on my brother's machine (I was trying to get as close to your setup as possible):
+	* Compaq Presario 7470
+	* 60 MB
+	* AMD K-6 processor
+	* Windows98
+
+Unfortunately for comparisons, all of these are probably different than what you've got.  At any rate, I got the following numbers:
+6650, 6590, 6590, 7470 -- for an average of 6.825 seconds, or about 17 times as fast as the roughly equivalent code in your setup.
+
+Under adverse memory conditions, it takes more like 20 seconds (6x).
+
+I know this doesn't speak to the original I/O question, but
+it does seem like times tend to vary a great deal.  Does VisualAge
+use the 1.3 HotSpot VM?  That could be a lot of it.  It would also
+be somewhat informative if you could run the above code on your
+setup and report back with the results.
+
+Another possibility is that you're falling off a MemoryCliff: Java Strings take up about twice the space as ASCII strings.  What kind of numbers do you get with a half-size version of the original problem?  --GeorgePaci
+----
+Check the vm options.  Make sure the jit is turned on.  My seat-of-the-pants tests with the IBM JDK 1.3 Classic VM (build 1.3.0, J2RE 1.3.0 IBM build cx130-20001124 (JIT enabled: jitc)) and Sun's 1.3 Java HotSpot(TM) Client VM (build 1.3.0_02, mixed mode) showed that turning off the jit made the code seven and three times slower, respectively, on a Debian Linux 2.4.2 kernel/libc 2.1.3 running on an AMD 1.1Ghz Athlon w/512MB.  Times with the IBM jvm were around .8 seconds with a 10,989,663 byte, 6,6054 line file and about 1.5 secoonds with the Sun jvm with the jit on.  Changing Vector to Array''''''List didn't make much of a difference.  I could get it down to around .66 seconds by increasing the heap size.
+
+Here's a slightly more closely matching test:
+
+ C:\tmp>c:\jdk1.3.0_02\bin\java -classic Text''''''File''''''Test
+ Vector time (secs): 27.299
+ Array''''''List time (secs): 25.257
+
+ C:\tmp>c:\IBMJDK13\bin\java -Xmx256m -Xms256m Text''''''File''''''Test
+ Vector time (secs): 0.761
+ Array''''''List time (secs): 0.711
+
+Wow! A difference of a factor of ''38''.  File here was 11,953,623 bytes, 109323 lines.  Machine Pentium III 733Mhz, 256MB, Windows NT4 workstation.
+
+-- StevenNewton
+----
+Yeah, we did some comparisons here. My VisualAgeJava runs Java1.2 -- 148 seconds, give or take. We ran the same code on the Sun SDK 1.3 VM, and measured 7 seconds. With some switch finagling, we got 2.3 seconds for the same code.
+
+When we ran under the old SDK version 1.2.2, we pulled an out-of-memory exception. So it seems that something in the 1.2 environment does, in fact, create a MemoryCliff, that VisualAgeJava manages to recover from (at great cost in performance), that the 1.2.2 VM simply crashes and burns on, and that the 1.3 VM avoids altogether.
+
+"Wow" is right!
+----
+The ComputerLanguageBenchmarksGame seems to suggest a similar result.
+----
+
+I fiddled some more with my (non-text-file) code, and discovered something predictable, then something surprising.
+
+First, I upped the size of each String I added to the Vector.  This made me hit a MemoryCliff: it went from taking around 7 seconds to around 140 seconds, with only about a 10% change in problem size.  Upping the initial heap size for the JVM (to 12 MB) took care of this cliff.
+
+But when I upped the initial heap size some more (to 20 MB), my performance worsened -- back to around 140 seconds again.  The best explanation I can think of is that 20 MB of heap, plus whatever the JVM uses itself, plus the OS, plus whatever other apps I had running (Xemacs, the browser), is greater than 60 MB, and therefore my nice big heap is getting paged in and out of memory.  In fact, I could hear the disk whirring away.
+
+What kind of puzzles me is that I could hear the disk whirring away when I had set the initial heap size to be too ''small'', as well.  Am I missing something in the gradually accreted complexity of a JVM on top of an OS with VM on top of MS-DOS? --GeorgePaci

@@ -1,0 +1,192 @@
+This example is taken from work that I did for a web portal company. At first people tried to do this all in SQL but when I got there I found it really gnarly and impossible to maintain so then I ended up doing it in Java with object-relational mapping. If there were methods I could've used to make this work manageable in SQL I'd be interested in hearing about it.
+
+This site was partnering with consumer products companies to funnel their users towards surveys and then reporting the results to the companies. My job was to query an Oracle database and generate these reports.
+
+First, the schema looked something like this:
+
+ CLIENTS
+    |
+    |
+ PRODUCTS
+    |
+    |
+ SURVEYS -------- USER_SURVEYS ------- USERS -------- AGE
+    |                                    | |
+    |                                    | |
+ QUESTIONS                               | +--------- OCCUPATION
+    |                                    |
+    |                                    |
+ ANSWERS -------- USER_ANSWERS ----------+
+ 
+Clients (like L'Oreal) could have multiple products (L'Oreal Hair Coloring Treatment) and each product had one or more survey. Each survey had multiple questions, and each question had multiple answers.
+
+USER_SURVEYS and USER_ANSWERS are mapping tables to figure out which users filled out which surveys, and when they did fill out a survey, which answers they chose. The tables like AGE and OCCUPATION were small tables that just had a key and a string value: 1: 16-21, 2: 22-25, etc.
+
+The clients were very interested in getting survey responses keyed up to demographic information. So you'd get user stories that went something like: For each one of a client's products, generate individual pages for each survey response, with answers keyed up to demo information. Pages might look like:
+
+ Q1. How many times in the last year have you colored your hair?
+ 
+                   AGE                                       OCCUPATION
+ ANSWER            16-21  22-25  26-35  36-55  56 or older   Student  ...
+ Never             1  1%  0  0%  1  1%  4  4%  3  3%
+ 1 time            4  4%  3  3%  2  2%  6  5%  1  1%
+ 2 - 4 times       7  6%  9  8%  2  2%  1  1%  7  6%
+ 5 - 8 times       5  5%  4  4%  8  7%  5  5%  3  3%
+ 10 or more times  1  1%  3  3%  2  2%  3  3%  2  2%
+ No answer         0  0%  0  0%  2  2%  1  1%  0  0%
+ 
+                   Total      90                             Total      ...
+                   Mean       3.6                            Mean       ...
+                   Std. dev.  2.4                            Std. dev.  ...
+
+Note the individual percentages are compared to the entire number of responses (90), not the number of responses for all respondents in that demographic category or the number of responses for all respondents who chose that answer. Also note that "No answer" isn't an answer in the ANSWERS table; it's represented by the fact that the user completed the survey (they have a record in the USER_SURVEYS table) but they have no USER_ANSWERS record for any answer related to this question.
+
+Like I said, I moved the code from being one SQL statement to being lots of OO code. How would a database-centric person do it? -- francis
+
+-------
+
+First, let me make sure we have a decent schema to work with:
+
+  table: surveys
+  ----------------
+  surveyID
+  surveyTitle
+  productRef
+
+  table: questions
+  ----------------
+  questionID
+  surveyRef   (foreign key to survey table)
+  questionText
+
+  table: answers
+  --------------
+  ansID
+  questionRef   
+  ansText
+  centralValue   (used to represent mean if range given)
+
+  table: responses
+  ----------------
+  responseID
+  userRef
+  questionRef   (this is perhaps redundant)
+  ansRef
+
+  tables: users
+  -------------
+  userID
+  userAge
+  userOccupation
+
+I am still working on a relational solution because I just got a new machine and have not moved all my software over yet, but I would note that you can get the answer by having multi-nested procedural loops with one loop per entity. You may need to make 2 passes for one of the inner loops to collect the summary statistics to use in the second pass. Thus, if SQL got too messy or two confusing, then why not procedural loops instead? You make it sound like that OO is the only alternative to relational.
+
+''Personally, I'd be more interested in a DB-centric solution than a procedural-centric solution, simply because I know enough about procedural programming to be fairly certain that I almost always prefer OO. That is, if you try to sell me procedural over OO you've got a pretty tough sell. I'm not too hot on a DB-centric solution but I can imagine that perhaps there are some advanced DB features that I'm not familiar with that might change my mind on the subject. But that's just me; perhaps if you post a solution that's a blend of SQL & procedural then others will find it instructive. -- francis''
+
+But I am curious right now as to why you think an OO solution would be better than a mostly procedural loop based solution. For the parts of projects that I cannot find a decent relational solution for, I then turn to procedural (I am not saying this is such a case yet). First I want to understand your output requirements. Here is the reporting nesting as I understand it:
+    
+     for each product
+       for each question
+         for each occupation (including all, and summary at)
+           for each age-group
+
+Note that I generally avoid making the internal data structures "shaped" like the output in any way because output requirements often expand and change in these situations. Some say this is anti-YagNi, but I don't always agree with pure YagNi. I would probably have a routine/module with a name like ReportX which would contain all this looping (if procedural route used). I suspect an OO solution would "delegate" various parts of this reporting process to each of the entities involved. I see no net benefits in such.
+
+''The resulting files should be output as a tab-delimited text file so the customer can import them into Excel. ''
+
+But it is not a perfect "grid" shape. It has the count and percentage under the same age group, for example.
+
+''Are you talking about the Total, Mean, and Std. Dev. cells at the bottom? ''
+
+No. In the example above, the "36-55" group takes up two cells because below it are the quantity and percentage.
+
+''"36-55" should have two tabs after it to signify that it takes up two cells. The marketing intern will do a Merge-And-Center in MicrosoftExcel by hand. (Not a good job, that marketing internship.)''
+
+''The idea was that there would be some marketing intern who would spend a few minutes importing each file into Excel and then doing a little futzing -- merging cells, changing fonts, etc. -- to make it look presentable for the client. The code simply needs to insert the right number of tabs.''
+
+''Also, it looks from your pseudo-code above that I might not have been clear enough on my requirements: Occupation and Age group shouldn't be nested inside of one another. They're largely independent on this report, but the customer wants them in the same file.''
+
+I think I need to see a bit more of the output to get a feel for this.
+
+''I mean that you have the Age breakdown section, which will include the answers and ages of all 90 people who responded to the question. Then you'll have the Occupation breakdown which will include the answers and occupations of all 90 people who responded to the question. The two are side-by-side on the same file, but their data isn't dependent on one another. The customer doesn't care, for example, about finding homemakers from the ages of 22-25.''
+
+So every question will have an "age grid" and an "occupation grid" for each product? Is there any relationship between "product" and "survey"?
+
+''Yes, there's an age grid and an occupation for each product. And, yes, there's a relationship between product and survey: Each survey is aimed at finding information pertinent to one product. They're product-specific surveys, as opposed to a more generalized lifestyle poll.''
+
+How about you show 3 example output sections or enough to show the pattern. They don't have to be pretty. The saying that a picture is worth a thousand words is generally true.
+
+-----
+
+I have found that if the output "shape" does not match the table shape in the database, than an intermediate structure, preferrably a "work table", can be used to provide the indirection needed for output formatting. This intermediate table would look something like this:
+
+  table: tempData
+  ---------------
+  factorA
+  factorB
+  factorC
+  ....
+  theValue
+
+The secret is one value per row. In this case, the factors would be things like questionID, personID, productID, etc. Then have loops such as:
+
+  for each a in factorA_list
+    print("<tr>")
+    for each b in factorB_list
+      sql = stringValues("select theValue from tempdata 
+             where factorA = %1 and factorB = %2", a, b)
+      useValue = queryForValue(sql)  // get only first result cell
+      print(stringValues("<td>%1</td>", useValue))
+    end-for // b
+    print("</tr>")
+  end-for // a
+
+This shows a 2-factor output. If you don't have temporary tables in your language or the implementation is too slow, then associative arrays (hash maps) can be used with some fiddling. Instead of using nested loops, sometimes you can just use the Order By clause.
+
+-----
+
+''I didn't do it this way back then, but if I did it today I might use a templating-style language like Ruby .rhtml files in order to manage a lot of the outputting details, since, as you say, output requirements can change quickly. So I might have a Ruby .rhtml template file that looks like:''
+
+ <%
+ question = objectStore.getQuestion questionId
+ report = SurveyReport.new (question)
+ %>
+ Q<%= question.order %>. <%= question.questionText %>
+ 
+ \t<%
+ demographicCategories.each { |demoCat|
+   print demoCat.categoryName
+   print ("\t" * demoCat.options.size)
+  }
+ %>
+ ANSWER\t<%
+ demographicCategories.each { |demoCat|
+   demoCat.options.each { |demoOption|
+     print demoOption.optionName + "\t"
+   }
+ }
+ %>
+ <%
+ answers.each { |answer|
+   print answer.answerName, "\t"
+   demographicCategories.each { |demoCat|
+     demoCat.options.each { |demoOption|
+       cell = report.cell (answer, demoOption)
+       print cell.count + "  " + cell.percentage + "%"
+       print "\t"
+     }
+   }
+ }
+ %>
+
+''Hm. Maybe that's getting side-tracked on templating styles and formatting. (I view this sort of task as being similar to HTML generation; you use a templating language to try to separate out the logic from the presentation, though sometimes that's harder than it sounds.)''
+
+''Anyhow, one possibly useful feature of a setup like this is that if I delegate the data collecting and calculations to a S''''''urveyReport class then it's possible for me to run unit-tests on the S''''''urveyReport. I find it's easier to test OO code than procedural or SQL. -- francis''
+
+Everybody will probably say that they find it easier in their favorite paradigm. 
+
+''True. And if you're interested in having a discussion at all you might even ask me my reasons why. -- francis''
+
+That is implied.
+--------
+CategoryExample

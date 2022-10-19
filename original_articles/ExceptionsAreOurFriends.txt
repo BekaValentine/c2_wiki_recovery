@@ -1,0 +1,366 @@
+Sure, don't use exceptions to manage normal non-exceptional conditions,
+like iterating off the end of a container.  On the other hand, exceptions
+(in the larger sense) '''do''' happen: network connections fail, disks
+get full, databases contain bogus data (yes, this is largely in the
+context of dealing with entities outside the system; if your system is
+self-contained, congratulations!)...  The question is
+how to program so as to handle those cases.  Alternative constructs
+such as error returns, state flags, and the like are vastly more intrusive for
+the same degree of rigor as exceptions.
+
+The normal case for most code in a system, even in the face of possible
+exceptional conditions as described above, is neither to care that such 
+can happen nor to be capable of meaningfully responding to such conditions.
+Using throw/catch exceptions, such code is for the most part 
+''written as if no exceptions could occur''.  The small areas of code which
+originally detect and/or deal with exceptional conditions are essentially
+the same as in other schemes.
+
+Code which is erroneous in the case of exceptions thrown past it (e.g.
+leaving objects in inconsistent states) is equally erroneous in other
+schemes (e.g. ignoring an error status), and possibly more so.
+
+(In C++, at least, object lifecycles can be leveraged through
+ResourceAcquisitionIsInitialization such that explicit try/catch code
+is rarely necessary for simple cleanup).
+
+Some (pseudo) code which ignores exceptions:
+
+ ''open the input sample file''
+ ''open the output result file''
+ ''for each input sample,''
+    ''for each requested value,''
+        ''compute the value relative to this sample''
+        ''output it''
+
+Each pseudocode line here could generate at least one logical exception:
+the input file may not exist, the output file may be locked,
+the input file may be malformed such that extracting the ''n''th sample
+fails, and so on.
+
+Depending on the environment, the default behavior might be for the program
+to terminate rapidly, crash the machine, or whatever.
+If the environment is already exception-oriented, and many are, you may get
+an environmentally-reported unhandled-exception message, much as if you
+surrounded the above with:
+
+  try
+    ''do all the above''
+  catch Exception e
+    ''print e's message'' -- assume some sensible msg.
+    ''terminate.''
+
+This is probably adequate for this program.  If you wanted to change it to ignore samples which produce exceptions during the ''compute'' phase, you
+could localize the catch to there.
+
+On the other hand, consider recoding this same code to provide a similarly
+minimal error message with status returns: ''each line'' would have to be
+extended to at least have something equivalent to:
+
+  ''open the input sample file''
+  ''if inputfile's status = bad then return my status := bad''
+
+which is far more intrusive. --JimPerry
+----
+Having read quite a few wise words from RonJeffries, I was surprised
+to read all his negative comments about exception mechanisms.  Having
+used exceptions extensively in Lisp, C++, and Java, I have come to
+like them very much.  I agree with the remarks above by JimPerry, but
+I'd like to go further.
+
+Consider a method whose purpose is to open a file and return, say, a
+File object on which all kinds of nice file operations can be
+performed.  There are many qualitatively different outcomes of
+attempting to open a file.  Maybe the pathname is syntactically
+disallowed and cannot possibly refer to any file.  Maybe no file of
+that name exists.  Maybe one of the directories in the pathname of the
+file doesn't exist.  Maybe there is such a file, but you don't have
+permission to read it.  Maybe you don't even have permission to know
+whether such a file exists or not.  Maybe the medium (singular of
+media) holding the file is currently offline (anyone else remember
+disk drives with removable disk packs?).  Maybe the pathname is a link
+whose target doesn't exist.  Maybe the pathname specifies a file on a
+remote file server, but we cannot open a network connection, which
+might mean that the network is down or that the server is down at this
+moment, but it might come back up later.  Maybe the operating system
+has a limit on the number of open files in the system, and so many
+other processes have so many files open that the system-wide limit has
+been reached.
+
+Now, a method whose purpose is to open a file has to do ''something''
+in all these cases.  One possibility is to halt the CPU, or, in a more
+civilized operating system, to terminate the process, perhaps after
+printing or logging a message somewhere or other.  But this clearly
+isn't adequate in all cases.  Suppose the program is a mail-handling
+daemon, which looked in a database to find the pathname of where a
+given user's mail should be stored, and it attempts to open that file.
+Surely the mailer should not die; whatever happens to this mail
+delivery, it should live to deliver other mail.
+
+Now, the simplest approach would be to treat any failure to open the
+file as it it were a bug in the program.  Control would flow
+non-locally to some kind of bug handler, which might log diagnostic
+information in an error log file, and then cause the mailer to
+continue with what it was doing.  That's better than having the mailer
+die, but it's still pretty lame.
+
+It's lame because a good mailer should ''handle different problems
+differently''.  For example, if the problem is that a network
+connection could not be formed, the mailer might want to re-queue this
+mail and try again later, and only give up if many attempts have
+failed over a long enough period. But if the problem is that the
+pathname is syntactically disallowed, there's not much point in trying
+again later.  If the system-wide limit on the number of open files has
+been exceeded, maybe the mailer should stop trying to deliver mail
+altogether for a while, and try again later.
+
+It's also lame because the mailer should not treat these circumstances
+as if they were bugs in the mailer.  ''They're not bugs at all.''  The
+mailer should ''anticipate'' that these things might happen, and do
+something smarter than treat it as a bug.  For example, it might send
+mail back to the original sender explaining that the mail could not be
+delivered, and better yet, explain why not.  It could notify the
+recipient, explaining the problem (provided it has some way to talk to
+the recipient other than sending mail to the file!).
+
+So the method that tries to open files should have some way to report
+back to its caller that it did not succeed, and it should furthermore
+be able to tell which of the circumstances listed above occurred.
+
+One way to do this is to return an "error code".  I first saw
+extensive use of this technique in the source code of applications
+written for the Multics system.  Multics system programs were written
+in a language that supported call-by-reference (it was PL/I), and by
+convention every procedure call's last parameter was named "code" and
+was set by the procedure to an error code saying which thing went
+wrong, or a value (let's say it was zero) meaning success.  The caller
+was required to ''explicitly check'' the error code after every
+procedure call.  Your typical simple application, unlike the mailer,
+didn't have any idea what to do with most special circumstances, and
+would just "blow up": the application would print a message and stop
+executing (a non-local goto to the command processor).  So most
+procedure calls looked like this (I don't remember the precise PL/I
+syntax but you get the idea):
+
+ call file_manager_$open_file(pathname, code);
+ if (code != 0)
+ then do;
+    call error_message_printer(code);
+    return;
+ end;
+
+That's six lines of code, usually preceeded and followed by blank
+lines.  The first line carries all the interesting information and the
+other five are boring boilerplate.  In my opinion, it was really ugly.
+
+When I started using Unix (around 1979, AT&T Unix Version 6 on a DEC
+PDP-11; Berkeley Unix was still being built), I was appalled to find
+that things were even worse: callers often did not check error codes,
+causing all kinds of peculiar misbehavior, and if they did check the
+error code, they'd often print an error message with little useful
+content (of the "Could not open file" variety).
+
+In my opinion, it's much better if the ''default'' behavior, i.e.  the
+behavior of a caller that does not bother to consider the exceptional
+conditions, ought to be to treat the condition as a bug.  If the
+program has no bug handler, the program should terminate and a useful
+diagnostic shown to the user.  If the program has a bug handler, flow
+of control should be transferred to it, along with enough information
+to provide a useful diagnostic, which might be logged or whatever.
+
+Again, this is what should happen by ''default'', if the caller
+doesn't say anything.  That means you don't need the boring
+boilerplate after every procedure call!  So, no more error code
+parameter.  What you have instead, for the benefit of callers that
+''do'' want to deal with these conditions, is an exception mechanism.
+
+Exception handlers (in Java, these are try/catch statements) therefore
+have ''two distinct purposes''.  They can be used to explicitly handle
+exceptional conditions that are ''anticipated'' by the programmer (the
+mailer knows to requeue if the network is down), and they can be used
+to handle ''unanticipated'' occurrences, which are bugs (the mailer
+logs the error and goes to process the next thing).
+
+Now, let's turn to the points made by RonJeffries.
+
+RonJeffries provided this example in CodeWithoutExceptions and
+AvoidExceptionsWheneverPossible:
+
+	 :	In Smalltalk, if you look in a Dictionary for a key and it isn't present, you'll get an exception if you code it thus:
+
+          someDictionary at: someKey
+
+	 :	If you can't recover the program if the key is missing, let your outside exception handler report the error and eject. However, if you think that the key might legitimately be missing, in Smalltalk you can code:
+
+          someDictionary
+                 at: someKey
+                 ifAbsent: [^self noKeyAction]
+
+Ron evidently has no problem using exceptions as a way of handling
+bugs, but he does not like using exceptions for anticipated
+conditions, if I understand him properly.
+
+First, look at this example in light of the ''caller'' of the
+method containing this code.
+
+Think about the larger context in which this code fragment appears.
+What method does this code appear in, and what is that method's
+contract (i.e. what behavior does the caller expect of it)?
+
+Suppose it's a method whose job is to send a given message to
+a given named entity, and to get the reply message from that
+entity.  So the method takes two arguments, the message to
+send and the name of the target entity, and returns one value,
+the message in reply.
+
+The method, in order to implement its contract, looks up the name
+of the entity in a Dictionary, where it expects to find a Connection
+(or something) to which the message should be sent and from which
+the reply will be gotten.  Now, what happens if the caller passes
+in a gibberish name, which is not found in the dictionary?
+
+In the default case, the program has no idea how to handle this
+circumstance.  The method cannot fulfill its contract.  This means
+that an unanticipated condition has arisen, just the same as if the
+program had evaluated some kind of internal consistency check and the
+check came out false.  It means that there is a bug in the program.
+Every system should provide some way for programs to control what
+happens if a bug is encountered.  RonJeffries seems to agree up to
+this point: he implies that using exception systems as a way to let a
+program handle unforseen problems (bugs).
+
+Instead, let's consider the alternative: define the contract of the
+method so that the contract explicitly says something about what to do
+if it determines that the name passed in by the caller is gibberish.
+OK, we agree that the contract ought to say something about that case.
+But what should it say?
+
+Ron provided code, but did not provide the contract, so I'll have to
+guess, but it sure looks like his contract is that the method returns
+some kind of special value, computed by "self ''''''noKeyAction''''''",
+should the name turn out to be gibberish.  To my mind, this is a lot
+like returning an error code.
+
+''At this late date (and hour) I may not go back and clarify that, but I use error codes even less frequently than exceptions. What I don't like about exceptions is that they glom up the way the code looks, and the error code technique builds essentially the same (to me)undesirable code structure. I have in mind something more like returning a default value that will in fact work benignly. Where that's impossible, my next preference is for ThrowDontCatch.''
+
+''I don't understand how this would work.  For example, could you show an
+example of a program that attempt to open a file, and deals with several
+of the circumstances I listed above?  If there's a way to do it that's
+better than exceptions and better than error codes, I'm all ears. -- DanWeinreb''
+
+Now consider the callers.  I claim that we want it to be the
+''default'' that if a caller does not ''explicitly'' take into account
+the possibility that the name is gibberish, then the ''default''
+behavior should '''not''' be for the calling method to proceed to
+execute the next statement (or proceed to compute the expression that
+it's in the middle of, or whatever).  That is, it should not proceed
+with normal execution as if nothing unusual had occurred.  Something
+else should happen.  And anything else besides proceeding normally, by
+definition, is for the flow of control to proceed non-locally.
+
+Ron's example does not have this property.  His method reports the
+fact that the name was gibberish by returning some kind of special
+value that acts as an error code.  If the caller neglects to
+specifically check for that special value, flow of control continues
+normally.  The program thinks that the method succeeded, and proceeds
+to do whatever it would normally do upon success, such as write a log
+record saying that it sent the message, increment the count of how
+many messages were sent, or whatever.
+
+This has all the disadvantages I discussed above.  Simple programs
+either need to have the boring boilerplate a la Multics, or they can
+just do the wrong thing, a la early Unix.  Whereas if the method
+reported its problem by throwing an exception, sophisticated callers
+could deal with the circumstance, while simple applications would
+print out a message and terminate instead of proceeding to wreak
+further havoc.
+
+OK, that was looking at the method's caller's perspective.  Now let's
+look at the method itself and how it uses Dictionary.
+
+Ron's solution to Dictionary lookup has the properties that I like.
+An unsophisticated program will use the "at:" method, and if the key
+is not found, it's treated like a bug, as described above.
+Sophisticated callers will use "at:ifAbsent:", and can do what they
+like.
+
+But what about opening files?  Above, I listed nine unusual
+circumstances that might arise, each of which might need to be handled
+differently.  Surely we don't want a second "open" method that takes
+nine blocks of code as arguments.  Worse, a given caller might want to
+handle only some of them, and leave the rest to be treated as
+unexpected, so we might really want to have two-to-the-ninth different
+methods, which is obviously absurd.
+
+Again, the exception mechanism allows the sophisticated program to
+anticipate and handle whichever of the conditions it can anticipate.
+If one occurs that it did not anticipate, that's a bug, and would be
+handled by an "omnibus" handler, probably in some stack frame close to
+the base of the stack.
+
+-- DanWeinreb
+
+------
+
+There were various discussions about whether exceptions should be used
+for things like terminating a recursive search.  In my opinion, the
+confusion here results from the fact that some languages, such as
+Java, have no interprocedural non-local flow control primitive, and
+the only way to get interprocedural non-local flow control at all is
+by using exceptions.  (Java does have intraprocedural non-local
+flow control, e.g. return, continue, break, labelled statements.)
+
+In CommonLisp, there are explicit primitives for non-local flow
+control: throw, return-from, and go.  See chapter 5.2 of the CommonLispHyperSpec (http://www.lispworks.com/reference/HyperSpec/Body/05_b.htm)
+for the official language spec.  The exception (Lisp calls them
+"conditions") system is a more sophisticated and heavier-weight
+facility, built on top of the non-local flow control primitives.  See
+chapter 9 (http://www.lispworks.com/reference/HyperSpec/Body/09_a.htm)
+for the spec.  So in Lisp, it's fine to terminate a recursive search
+with a throw or a return-from.  It consumes a lot less processor time
+than an exception, and no memory resources (there's no exception object).
+
+I don't know why Java conflated these two things.  I'd guess that they
+wanted to keep the language that much smaller, but I'm just speculating.
+
+-- DanWeinreb
+------
+
+Several people argued that programs should ''test in advance'' to
+detect unusual situations, rather than handling exceptions.  That
+works pretty well if the test is very cheap, e.g. testing for zero
+before dividing.  But in the case RonJeffries considered, the cost to
+detect an absent key in a Dictionary is about the same as the cost of
+retrieving the value associated with the key.  Every method that
+anticipated that a key might not exist would have to pay the cost of
+table lookup twice.
+
+In the case I described, opening files, the cost of checking for all
+those conditions would be prohibitive.  Also, suppose you check
+whether the network is up, and then you try to open the file, but in
+the interval between your check and your attempt to open, the network
+goes down?
+
+-- DanWeinreb
+
+''Another reason for not testing in advance can be security. Now that everything is networked in some way, something as simple as a method call may involve interaction between separate systems behind the scenes. In such a situation advance testing, e.g. of access permissions, is just not possible because it would imply the client and thus the potential attacker would decide whether something is permitted or not. Consider for instance WebApplications. One may execute code on both sides, on the server and in the client, i.e., the Web browser. But when it comes to authentication, session management, etc., one has to make all relevant decisions on the server side. There is just no point in implementing a solely browser-based password check.I think one will encounter similar situations in just about any distributed system. -- SvenTuerpe''
+
+----
+
+I have more to say on the topic of the automatic propagation of exceptions, which I'll try to get to in the future.
+
+It's important to have a way to clean things up when non-local flow of
+control unwinds past a given level.  CommonLisp has unwind-protect, and
+Java has try/finally, which are fine.  C++ awkwardly forces you to do
+such cleanups in an object destructor method, which means you sometimes
+have to make a class for the sole purpose of cleaning something up.
+
+See also my comments to ConvertExceptions and ExceptionsMaskRealProblems.
+
+An issue on which I am still undecided is the question of checked versus
+unchecked exceptions in Java.
+
+-- DanWeinreb
+
+----
+(For the antithesis, see AvoidExceptionsWheneverPossible)

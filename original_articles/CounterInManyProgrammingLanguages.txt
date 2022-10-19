@@ -1,0 +1,949 @@
+The Problem (Originally from PythonVsRuby):
+* A counter may be initialised with a value or defaults to an initial value of 1.  When called, it:
+** returns its current value; and
+** increments its current value
+* The exact internal implementation is less important than the output behaviour - feel free to set current value to 1 less than the value given if you feel that pre-incrementing gives a cleaner implementation in your language.
+* The counter should be such that any number of individual counters can be instantiated.
+* If the counter is unable to handle integers of arbitrary size, this should be stated.
+
+Of particular interest, of course, is the counter's behavior when an overflow condition exists.  Some languages mentioned below do not provide fixed-precision numeric types; thus overflow doesn't happen (until you run out of memory--shortly after the universe collapses in on itself).  Others provide only fixed-precision types (and thus risk overflow); though in many cases the amount of precision provided ShouldBe more than adequate for most applications.  (But if it isn't...)  None seems to handle an overflow condition gracefully, except LispLanguage, PythonLanguage, and RubyLanguage, whose integers will be automatically (UnderTheHood) upgraded to bignums when fixnum range is exceeded.  The SmlLanguage (Basis Library) supports fixed width integers with overflow causing an exception (e.g. the Int32 module), fixed width unsigned integers with modular arithmetic (e.g. the Word32 module), and arbitrary precision integers (the IntInf module).   (See TypeMigration)
+
+See also: AccumulatorGenerator
+
+----
+Intel 80X86/Pentium '''AssemblyLanguage''':
+
+ ;;; counter.asm
+
+ %assign SYS_EXIT	1
+
+	;; -------------------------
+	;; data segment
+	;; -------------------------
+
+	section	.data
+ counter      dw  1
+ countstring  dd  0
+        
+	;; -------------------------
+	;; code area
+	;; -------------------------
+
+	section	.text
+	global	_start
+
+ _start: call  incCounter
+        
+	;; exit()
+
+	mov	eax,SYS_EXIT
+	mov	ebx,0
+	int	0x80		; final system call
+
+ ;-----------------------------------
+ ;incCounter: prints current value
+ ;and increments counter
+ ;Registers modified:EAX,EBX,ECX,EDX
+ ;-----------------------------------
+
+
+ incCounter:
+
+ ;;calculate ascii string to print
+        mov             edx,0                 ; keep track of number of digits
+        mov             ax,[counter]          ; get the current value of the counter
+        lea             ecx,[countstring + 3] ; load location to store string in, starting at last byte
+        mov             dl,10                 ; print a base ten number 
+                                              ; of no more than four digits by finding
+ nextdig: div             dl                    ; the ascii code of the LSD, storing it
+        add             ah,48
+        mov             [ecx],ah
+        inc             edx
+        cmp             al,0
+        je              icprint               ; if this is the last digit, print it
+        cmp             edx,4
+        je              icprint               ; if this is the fourth digit, print it
+        dec             ecx
+        xor             ah,ah
+        jmp             nextdig
+
+ icprint: 
+        mov             eax,SYs_WRITE
+        mov             ebx,STDOUT
+        int             0x80
+
+ ;; increment the counter
+        add             word [counter],1
+
+        ret
+
+----
+'''CeeLanguage''' (C9x):
+
+Overflows when the type long long overflows; as long long int is guaranteed to be at least 64 bits, this won't be for a while.
+
+Pseudo-OO; to the extent that you can do OO in C.  
+
+Doesn't do any error checking.
+
+ struct Counter {
+     long long int value_;
+ };
+
+ void counterInit (struct Counter *ctr) {
+     ctr->value_ = 1;
+ }
+
+ void counterInitToValue (struct Counter *ctr, long long int value) {
+     ctr->value_ = value;
+ }
+
+ long long int counterNext (struct Counter *ctr) {
+     return ctr->value_++;
+ }
+
+ int main (void) 
+ {
+     struct Counter *ctr1 = malloc(sizeof (struct Counter));
+     struct Counter *ctr2 = malloc(sizeof (struct Counter));
+
+     counterInit (ctr1);
+     counterInitToValue (ctr2,5000);
+     printf ("Ctr 1: %d\n", counterNext(ctr1));
+     printf ("Ctr 1: %d\n", counterNext(ctr1));
+     printf ("Ctr 2: %d\n", counterNext(ctr2));
+     printf ("Ctr 1: %d\n", counterNext(ctr1));
+     printf ("Ctr 2: %d\n", counterNext(ctr2));
+     printf ("Ctr 2: %d\n", counterNext(ctr2));
+
+     return 0;
+ }
+
+ >>> Ctr 1: 1
+ >>> Ctr 1: 2
+ >>> Ctr 2: 5000
+ >>> Ctr 1: 3
+ >>> Ctr 2: 5001
+ >>> Ctr 2: 5002
+
+Not very interesting; but does kinda show why OO is cool, and exposes lots of the dirty work that the programmer needs to do in a low-level language like C.
+
+''How does this show how OO is cool? This does not smell like an idiomatic C example. -- AnonymousDonor
+
+I think he's trying to say that this would be a lot more impressive if it ''was'' OO, but it just looks hackish in C.
+
+----
+'''CeePlusPlus''':
+
+just plain C++; not an example of TemplatesGoneMad.  We'll use just plain old ints:
+
+ // Each counter will be an instantiation of the Counter class
+ class Counter 
+ {
+   private:
+     int val_;
+   public:
+     Counter (int val = 1) : val_(val) {}
+     int next () {
+        return val_++;
+     } 
+  };
+
+Or, if you prefer the type of the counter to be a parameter,
+
+ // Each counter will be an instantiation of the Counter template class,
+ // specialized on a numeric type (typically int or some bignum class)
+ template <class T>
+ class Counter 
+ {
+   private:
+     T val_;
+   public:
+     Counter (T val = 1) : val_(val) {}
+     T next () {
+        return val_++;
+     } 
+  };
+
+CeePlusPlusEleven version using lambdas:
+
+ #include <functional>
+ 
+ template <class T>
+ auto Counter(T val = 1) -> std::function<T()> {
+   return [=]() mutable { return val++; };
+ }
+
+
+----
+'''CommonLisp''':
+
+one simple possibility: 
+
+ ;; Each counter is a lambda closure
+ (setf counter1 (let ((n 2)) (lambda () (incf n))))
+ (setf counter2 (let ((n 0)) (lambda () (incf n))))
+ CL-USER> (funcall counter1)
+ 3
+ CL-USER> (funcall counter2)
+ 1
+ CL-USER> (funcall counter1)
+ 4
+ CL-USER> (funcall counter2)
+ 2
+
+This may look a little odd to people used to thinking about 'factories' or objects to abstract this sort of thing.  Due to first-class functions and the properties of closure, a simple form produces a function object which behaves like the above counters.
+
+Another possibility (there are others as well, of course).  Wrapped up as a counter-factory function:
+
+ ;; Counters are created by a wrapper around a lambda closure
+ (defun make-counter (&optional (n 1))
+   (lambda ()
+     (prog1 n (incf n))))
+
+ (setf counter (make-counter 3))
+ (setf counter2 (make-counter))
+
+ CL-USER> (funcall counter)
+ 3
+ CL-USER> (funcall counter2)
+ 1
+ CL-USER> (funcall counter)
+ 4
+ CL-USER> (funcall counter2)
+ 2
+
+There is a trade-off here.  The second approach abstracts the 'counter' idea behind a 'factory' function to use the analogy of this page.  However, you may need to look at the definition of make-counter to remember what the semantics are (this is true of all the factory approaches on this page).  The simple lambda form is more verbose, but still concise and has the advantage that you know exactly what is happening by looking at a single line of code.  The choice of what is better depends on the context in which it is used.
+
+----
+'''CsharpLanguage''' 
+
+ using System;
+
+ class Test
+ {
+     static Func<int> F()
+     {
+         int x = 0;
+         return delegate { return ++x; };
+     }
+
+     static void Main()
+     {
+        var d = F();
+        Console.Write''''''Line(d());
+        Console.Write''''''Line(d());
+        Console.Write''''''Line(d());
+     }
+ }
+
+----
+Dodo http://dodo.sourceforge.net
+
+ yield int counter(int n)
+ {
+   loop:
+      return n
+      ++.n.
+ }
+ def c() = counter(5)
+Or equivalently
+ def c() = for (n in 5...).value
+Io-style
+ def c = new struct()
+ {
+    int counter = 1
+    method Next: Next()
+    {
+       .value = counter
+       ++.counter
+    } -> value int.
+ }
+ c.Next()    # 1
+ c.Next()    # 2
+ def k = new c(counter: 400)
+
+----
+'''ForthLanguage''':
+
+ ( This is similar in the underlying implementation to the C++ example.
+   The defining word init-counter is like a constructor, where the create
+   part sets up an object's data and the does> part defines a class method.
+   The individual counters are like objects; multiple data, single method. )
+
+ : init-counter ( n "name" -- )   create ,
+   does> ( -- n++ )   dup >r  @  dup 1+  r> ! ;
+ \ or: does>  dup @  dup 1+ rot ! ;
+ \ or: does>  dup @  1 rot +! ;
+ \ or: does>  1 over +!  @ 1- ;  \ omit '1-' for ( ++n )
+
+ : counter ( "name" -- )   1 init-counter ;
+
+ counter counter1
+ counter counter2
+ 10 init-counter counter3
+ counter1 .
+ >>> 1
+ counter1 .
+ >>> 2
+ counter1 .
+ >>> 3
+ counter2 .  counter2 .  counter2 .
+ >>> 1 2 3
+ counter3 .  counter3 .  counter3 .
+ >>> 10 11 12
+
+Note that ForthLanguage doesn't support default argument values, so this implementation provides two words: ''init-counter'' which accepts an argument and ''counter'' which calls ''init-counter'' with an argument of 1.  Also, this suffers overflow problems similar to C++ and Java.
+
+----
+'''HaskellLanguage''':
+
+ import Data.IORef -- Haskell Hierarchical Libraries (GHC 5.04 and later & new versions of Hugs)
+ -- "import IOExts" under the ancient hslibs
+
+ makeCounter  :: (Num n) => n -> IO (n -> IO n)
+ makeCounter  n = do r <- newIORef n
+                     return (counter r)
+     where counter r i = do modifyIORef r (+i)
+                            readIORef r
+
+
+ Main> counter <- makeCounter 10
+ Main> counter 33
+ 43
+ Main> counter 10
+ 53
+
+----
+HQ9++
+
+ +
+
+''This fails the definition of the test, since HQ9++ has only one counter, like its predecessor. (The object instantiated by ++ also should not be confused with the concurrent increment operations.)''
+----
+'''IconLanguage''':
+
+   # Each counter is a co-expression (coroutine-expression
+   local counter1, counter2
+   counter1 := create (1 to 1000)   # create co-expressions
+   counter2 := create (1 to 1000)
+
+   # Each activation with "@" returns old value and steps to next value
+   write(@counter1)
+   write(@counter1)
+   write(@counter1)
+   write(@counter2)
+produces
+   1
+   2
+   3
+   1
+
+Icon is particularly good at coroutines (and what it calls "co-expressions", as here). It's hard to see getting any simpler and more direct than this.
+
+Note that if you want it to start at something other than 1, you just say so, since this doesn't need to be wrapped in a function:
+
+   counter1 := create (n to 1000)
+Wrapping it in a function definition would make it '''more''' complicated rather than less. 
+
+However, it should still be encapsulated in real code that used it more than once:
+   procedure makecounter(n)
+      /n := 1                      # supply default value if missing
+      return create (n to 1000)
+   end
+   procedure main()
+      local counter1, counter2
+      counter1 := makecounter()
+      counter2 := makecounter(1)
+      write(@counter1)
+      write(@counter1)
+      write(@counter1)
+      write(@counter2)
+   end
+
+''How would an Icon version look with no upper bound (or do I misunderstand the role of 1000 in above)? I mean a counter that does not overflow (i.e. will increment until memory is exhausted, if needed.)  Do you have to give an upper bound in Icon?  Do you have arbitrary precision types?  If not, what happens when you overflow?  I'm not bashing Icon here, I don't know anything about it --- so I am curious.''
+
+Icon supports bignums, but not seamlessly the way that Scheme and some Lisps do, and the "n to m" mechanism unfortunately in particular does not seem to allow bignums to be used. I don't know why, since that seems stupid and easy to rectify in the design. There may be an alternate sequence mechanisms for bignums, I'm not sure.
+
+You do not have to specify an upper bound, e.g. there is a "seq()" call that means "1,2,3..." without limit. I don't believe that it allows you to use the "to" mechanism without an upper bound; e.g. it would be sensible to allow "(1 to)" and assume the close paren meant "no upper bound", but that's not what it does, so you need to switch to "seq()". (Which itself optionally allows a lower and upper bound.)
+
+The language is built around "success" and "failure" events in places where most languages use boolean values, so e.g. loops continue until something inside the loop conditional '''or''' body '''fails''', and then the loop stops. This supports goal-directed evaluation (backtracking) fairly seamlessly.
+
+I mention this because that is what I would expect to happen instead of overflow: the sequence generator should '''fail''', and so would any enclosing conditional or loop or whatever; it would not be a silent failure as happens in e.g. C.
+
+''Interesting.  One of these days I will have to look at Icon properly.  Do you have a feel for how these 'events' relate to the common lisp condition system?''
+
+It's a bit similar in feel, but the important difference is that Icon '''fail''' is a normal failure, not an error failure. For instance, one would loop searching for a character in a string, doing something with each match, and when the '''find''' finally failed, the search would terminate, and so would the loop. No error involved.
+
+Icon doesn't have a boolean type at all; this kind of normal failure is used everywhere in the language that you'd ordinarily expect to see boolean #f/NIL/false, resulting in a powerful approach to pattern matching.
+
+----
+'''JavaLanguage''':
+
+ // Each counter is an object instantiation of a class wrapping an int
+ public class Counter 
+ {
+   private int value;
+   public Counter () { 
+     this(1);
+   }
+   public Counter (int initialValue)  {
+     value = initialValue;
+   }
+   public int next () {
+     return value++;
+   } 
+ }
+
+Both the C++ and Java variants have a potential FixedQuantityOverflowBug. The counter below, however, is only limited by the available memory.
+
+
+ import java.math.Big''''''Integer;
+
+ public class Big''''''Counter 
+ {
+   private Big''''''Integer value;
+   public Big''''''Counter () { 
+     this(Big''''''Integer.ONE);
+   }
+   public Big''''''Counter (Big''''''Integer initialValue)  {
+     value = initialValue;
+   }
+   public Big''''''Integer next () {
+     Big''''''Integer returnValue = value;
+     value = value.add(Big''''''Integer.ONE);
+     return returnValue;
+   } 
+ }
+
+What do you guys think of MikeCowlishaw's BigDecimal proposal (JSR 13) - http://www.jcp.org/en/jsr/detail?id=13 ? We used an early implementation of this on a project, and it seemed to work very well. --PaulMorrison 
+
+----
+'''JavaScript''':
+
+ function counter(x) {
+   var c = x==undefined ? 1 : x;
+   return function () { return c++ }
+ }
+
+''Note: you can't use ''c = x || 1'' because it won't let you initialize a counter starting at zero.''
+
+The count overflows when it exceeds the precision of a double-precision floating point mantissa.
+
+----
+LispOnePointFive:
+
+  define ((
+    (make-counter (lambda (x) (function (lambda () (setq x (+ x 1)) x))))
+  ))
+
+The initial value of the counter must be specified.  The integers could not get arbitrarily large.  The 7090 was a 36 bit machine, so I'm guessing this would break when the counter got past 2^35-1.  I don't know what would happen in this case.
+
+----
+'''m4''':
+
+ define(`defcounter',
+ `define(`@counter_$1',ifelse(`$2',,0,`$2'))'dnl
+ `define(`$1',
+  `define(`@counter_$1',incr(defn(`@counter_$1')))defn(`@counter_$1')')')
+
+usage:
+
+ defcounter(c1)dnl
+ defcounter(c2, 5000)dnl
+ c1 c1 c2 c1 c2 c2     dnl Output: 1 2 5001 3 5002 5003
+
+----
+'''NemerleLanguage''':
+
+ using System.Console;
+ 
+ module Counter {
+     makeCounter(from: long): void -> long {
+         mutable n = from -1l;
+         fun() {++n; n}
+     }
+ 
+     // parameterless overload to provide default behaviour
+     makeCounter(): void -> long {
+         makeCounter(1l)
+     }
+ 
+     Main(): void {
+         def counter = makeCounter();
+         def counter5 = makeCounter(5l);
+ 
+         Write''''''Line(counter());
+         Write''''''Line(counter5());
+         Write''''''Line(counter());
+         Write''''''Line(counter5());
+         Write''''''Line(counter());
+         Write''''''Line(counter5());
+     }
+ }
+
+output:
+ $ ./counter.exe
+ 1
+ 5
+ 2
+ 6
+ 3
+ 7
+
+the long type is a 64bit integer, so it will overflow, but it'll at least take a while to do so...
+
+or, i've just discovered that mono provides a BigInteger class, in the Mono.Math namespace (which is inexplicably contained in the Mono.Security assembly), which lets you write a counter that won't overflow, with the usual memory/cpu usage tradeoffs that bignums involve. --MikeRoome
+
+You can also use an approach similar to the first lisp version, and just create it directly with a lambda:
+ using System.Console;
+ module M {
+     Main(): void {
+         def counter1 = {mutable n = 2; fun() {++n; n}}
+         def counter2 = {mutable n = 0; fun() {++n; n}}
+         Write''''''Line(counter1());
+         Write''''''Line(counter2());
+         Write''''''Line(counter1());
+         Write''''''Line(counter2());
+         Write''''''Line(counter1());
+         Write''''''Line(counter2())
+     }
+ }
+
+output:
+ $ ./ncounter.exe
+ 3
+ 1
+ 4
+ 2
+ 5
+ 3
+
+----
+'''OcamlLanguage''':
+
+ (* OCaml's partial application semantics prevent purely optional
+    arguments from appearing at the end, so we have to put an extra
+    "unit" argument at the end. *)
+ let counter ?(n = 1) () =
+   let r = ref (n-1) in
+   fun () -> begin
+     incr r; !r
+   end
+
+Then:
+
+ # let x = counter ();;
+ val x : unit -> int = <fun>
+ # let y = counter ();;
+ val y : unit -> int = <fun>
+ # let z = counter ~n:5 ();;
+ val z : unit -> int = <fun>
+ # x ();;
+ - : int = 1
+ # x ();;
+ - : int = 2
+ # y ();;
+ - : int = 1
+ # z ();;
+ - : int = 5
+ # x ();;
+ - : int = 3
+ # y ();;
+ - : int = 2
+ # z ();;
+ - : int = 6
+
+This overflows at the same time OCaml's integers do.  If you want arbitrary-precision arithmetic, you can use the Num module:
+
+ let counter ?(n = num_of_int 1) () =
+   let r = ref (pred_num n) in
+   fun () -> begin
+     incr_num r; !r
+   end
+
+----
+'''PerlLanguage''':
+
+There is more than one way to do it (of course), this one uses closures.
+
+ sub Counter { my $n = @_ ? shift() : 1; sub { $n++ } }
+ $counter = Counter;
+ $counter5 = Counter 5;
+
+ print $counter->();   # prints 1
+ print $counter->();   # prints 2
+ print $counter5->();  # prints 5
+ print $counter5->();  # prints 6
+ print $counter->();   # prints 3
+
+''But wait! If you call now, we'll throw in the following absolutely free! ...''
+
+ $leadingzeros = Counter '000000000100';  #generates 000000000100, 000000000101, ...
+
+ $letters = Counter 'a';  # generates a, b, ... z, aa, ab, ...
+
+ $reallylongnumber = Counter '1'; # will generate count to as many digits as needed (till long after the sun burns out...)
+
+You can even start with a really long number:
+
+ $anotherlongnumber = Counter '1000000000000000000000000000000';
+
+Or you can generate something like serial numbers.
+
+ $serialnumber = Counter 'ITEM000100';  # will produce ITEM000100, ITEM000101, ...
+
+(The magic auto-increment is documented in perlop.)
+
+Also, in the best traditions of modularity and bloat, here is the subclassable OO version.
+
+ sub Counter::new { my ($c, $n) = @_; bless(\$n, $c) }
+ sub Counter::inc { my $self = shift; $$self++ }
+
+ $c = Counter->new("ITEM000");
+ print $c->inc, "\n";
+ print $c->inc, "\n";
+
+----
+'''PythonLanguage''': 
+
+ # Each counter is a coroutine counting with an int or long
+ def Counter(n=1):
+     while 1:
+         yield n
+	 n += 1
+
+ counter1 = Counter(3).next
+ counter2 = Counter().next
+ print counter1()
+ >>> 3
+ print counter2()
+ >>> 1
+ print counter1()
+ >>> 4
+ print counter2()
+ >>> 2
+ >>> clong1 = Counter(sys.maxint).next
+ >>> clong1()
+ 2147483647
+ >>> clong1()
+ 2147483648L
+ >>> clong2 = Counter(sys.maxint**8).next
+ >>> clong2()
+ 452312846898269724422641179697543667450922081019251166843171382875033436161L
+The value of ''n'' automatically becomes an arbitrarily ''long'' integer beyond ''sys.maxint''.  
+
+An older solution:
+ class Counter:
+     def __init__(self, n=0):
+         self.n = n
+     def __call__(self):
+         self.n += 1
+         return self.n
+ 
+ >>> clong = Counter(sys.maxint-1)
+ >>> print clong() # 2147483647
+ >>> print clong() # 2147483648
+ >>> print clong() # 2147483649
+
+The short solution (requires a recent Python):
+ >>> import itertools
+ >>> counter = itertools.count(1).next
+ >>> counter()
+ 1
+ >>> counter()
+ 2
+Alas the count wraps-around at sys.maxint.
+
+----
+'''RubyLanguage''':
+
+ def Counter(n=1)
+     proc do
+	 result = n
+	 n = n + 1
+	 result
+     end
+ end
+
+ counter = Counter(3)
+ counter2 = Counter()
+ print counter.call()
+ >>> 3
+ print counter2.call()
+ >>> 1
+ print counter.call()
+ >>> 4
+ print counter2.call()
+ >>> 2
+
+Or if you don't mind incrementing the counter before rather than after (like that Lisp version up above):
+
+ def counter(n=0)  lambda {n += 1};  end
+
+----
+'''RubyLanguage''', more traditional OO style:
+
+  class Counter
+      def initialize(n = 1) @value = n-1 end
+      def incr!() @value += 1; @value end
+      def value() @value+1 end
+  end
+
+This also lets you get the current value of the counter without incrementing it.
+
+----
+'''SchemeLanguage''':
+
+ (define (make-counter . x)
+   ; validate argument
+   (let ((count (if (and
+                     (not (null? x))
+                     (integer? (car x)))
+                    (car x)
+                    1)))
+   ; return counter closure  
+     (lambda ()
+       (let ((current-count count))
+         (set! count (+ 1 count))
+         current-count))))
+
+Usage:
+ > (define counter (make-counter))
+ > (counter)
+ 1
+ > (counter)
+ 2
+ > (counter)
+ 3
+ > (define counter2 (make-counter 10))
+ > (counter2)
+ 10
+ > (counter2)
+ 11
+ > (counter2)
+ 12
+ > (define counter3 (make-counter 10.1))
+ > (counter3)
+ 1
+ > (counter3)
+ 2
+ > (counter3)
+ 3
+
+----
+'''SmlLanguage''':
+
+Below is an interactive session with the SML/NJ compiler.  The
+lines starting with a dash contain the code.  The other lines
+have been printed by the compiler.
+
+  Standard ML of New Jersey v110.57 [built: Fri Feb 10 21:37:49 2006]
+  - val newCounter = (fn c => fn () => !c before c := !c + (1:IntInf.int)) o ref ;
+  [autoloading]
+  [library $SMLNJ-LIB/Util/smlnj-lib.cm is stable]
+  [library $basis.cm(=$SMLNJ-BASIS)/basis.cm is stable]
+  [autoloading done]
+  val newCounter = fn : IntInf.int -> unit -> IntInf.int
+  - val counterA = newCounter 1 ;
+  val counterA = fn : unit -> IntInf.int
+  - val counterB = newCounter 10000000000000000000 ;
+  val counterB = fn : unit -> IntInf.int
+  - counterA () ;
+  val it = 1 : IntInf.int
+  - counterB () ;
+  val it = 10000000000000000000 : IntInf.int
+  - counterA () ;
+  val it = 2 : IntInf.int
+  - counterB () ;
+  val it = 10000000000000000001 : IntInf.int
+  - counterB () ;
+  val it = 10000000000000000002 : IntInf.int
+  - counterA () ;
+  val it = 3 : IntInf.int
+
+----
+'''VerilogHdl''':
+
+ // 7 bit up counter synchronous active high reset and initial value
+ // overflow output
+ // positive edge triggered clock
+ module Counter(clk,reset,load,init_value,count,overflow);
+ parameter WIDTH=7; // number of bits
+
+ input clk, reset, load;
+ input [WIDTH-1:0] init_value;
+ output [WIDTH-1:0] count;
+ output overflow;
+
+ reg [WIDTH-1:0] count;
+ reg overflow;
+
+ always @(posedge clk) begin
+   if (reset) begin
+     count <= 1;
+     overflow <= 0;
+   end else if (load) begin
+     count <= init_value;
+     overflow <= 0;
+   end else begin     
+     if (&(count))
+       overflow <= 1;
+     count <= count + 1;
+   end
+
+ endmodule
+
+ Counter       count1(...); // 7-bit counter (default)
+ Counter #(23) count2(...); // 23-bit counter
+ Counter #(531) count3(...); // 531-bit counter (might cause timing problems ...)
+
+----
+'''VhdlLanguage''':
+
+    -- 7-bit synchronous up-counter with asynchronous active-high reset
+    library ieee;
+    use ieee.std_logic_1164.all;
+    use ieee.std_logic_arith.all;
+    use ieee.std_logic_unsigned.all;
+
+    -- the interface of the counter
+    entity counter is
+    	port(
+    		CLK		: in std_logic;
+    		RST		: in std_logic;
+
+    		O		: out std_logic_vector(6 downto 0));
+    end entity;
+
+    -- the rtl architecture of the entity. One entity can have multiple
+    -- architectures, the appropriate architecture being selected at
+    -- instantation.
+    architecture rtl of counter is
+    	signal value		: std_logic_vector(6 downto 0);
+    begin
+    	-- sequential process
+    	process (CLK,RST)
+    	begin
+    		-- reset logic
+    		if (RST = '1') then
+    			value <= (others => '0');
+
+    		-- increment counter on the rising edge of the clock
+    		elsif (rising_edge(CLK)) then
+    			value <= value + 1;
+    		end if;
+    	end process;
+
+    	-- concurrent statement to output the counter value
+    	O <= value;
+    end rtl;
+
+----
+'''ExtendedObjectTcl'''
+
+Someone else can provide an interesting version for the pure ToolCommandLanguage.
+
+ Class Counter -parameter {count 1}
+
+ Counter instproc next {} {
+    my instvar count
+
+    set result $count
+    incr count
+    return $result
+ }
+
+How to use it:
+
+ Counter basicCounter
+ puts [basicCounter next]
+
+ ==> 1
+
+ Counter basicCounter -count 5
+ puts [basicCounter next]
+
+ ==> 5 
+----
+MyFutureLanguage
+
+ counter :=
+ 	| n | \ n...Infinity
+
+ #counter is defined as
+ #      if given one argument (pattern-matching ''a l�'' MlLanguage, also RubyLanguage syntax lookalike ;))
+ #         , the function (\ = lambda)
+ #            which returns the value that n...Infinity generates
+ #             (where x...y is a generator ''a l�'' IconLanguage)
+ #(Usage is:
+ # myVar := counter(1)
+ # print myVar
+ # print myVar
+----
+IoLanguage:
+
+ counter := Object clone do(
+   count := 1
+   withValue := method(n, count := n)
+   count := method(
+     count = count + 1
+     count - 1
+   )
+ )
+
+ c1 := counter clone
+ c1 count print
+ c1 count print
+
+ c2 := counter clone withValue(100)
+ c2 count print
+ c2 count print
+
+----
+'''PhpLanguage''' 5.3+
+
+ function Counter($val = 1) {
+   return function() use (&$val) { return $val++; };
+ }
+
+PhpLanguage pre-5.3 version ;)
+
+ function Counter($val = 1) {
+   return create_function('', 'static $val = '.$val.'; return $val++;');
+ }
+
+----
+'''ObjectiveCee'''
+using Blocks on MacOSX 10.6+
+
+ typedef int (^IntGenerator)();
+ IntGenerator Counter(int val) {
+   __block int _val = val;
+   return [[^() { return _val++; } copy] autorelease];
+ }
+
+----
+GoLanguage
+
+ func Counter(val int) func() int {
+   return func() int {
+     val++
+     return val
+   }
+ }
+
+----
+SwiftLanguage
+
+func Counter(var val: Int) -> () -> Int {
+  return {
+    val++
+    return val
+  }
+}
+
+----
+See ArraySumInManyProgrammingLanguages, DotProductInManyProgrammingLanguages, WardNumberInManyProgrammingLanguages, HelloWorldInManyProgrammingLanguages
+----
+CategoryInManyProgrammingLanguages

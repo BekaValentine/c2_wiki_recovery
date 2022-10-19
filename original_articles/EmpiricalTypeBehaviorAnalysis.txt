@@ -1,0 +1,139 @@
+This is a conceptual model to understand and/or verify if or how type tags can effect the behavior of common interpreted languages. It may or may not reflect actual implementation, but can be used as a model to predict and "understand" behaviors, such as for debugging and bug prevention.
+
+Consider this conceptual code:
+
+ // pseudo-code
+ func operation(op, a, b) {  // binary operation with 2 operands
+   value_a = a.getValue();
+   value_b = b.getValue();
+   if (lang_supports_tags()) {  // are explicit types detectable?
+     // get type tags
+     tag_a = a.getTag();
+     tag_b = b.getTag();
+     result = exec_tagged(op, value_a, tag_a, value_b, tag_b);
+   } else {  // non-tagged language
+     result = exec_non_tagged(op, value_a, value_b);   
+   }
+   return(result);
+ }
+ func exec_tagged(op, va, ta, vb, tb) {
+   if (op==OPER01 && ta==TYPE01 && tb==TYPE01) {
+     result = lang_lib_010101(va, vb);
+   } else if (op==OPER01 && ta==TYPE01 && tb==TYPE02) {
+     result = lang_lib_010102(va, vb);
+   ... every combination of the 3 dimensions ...
+   } else if (op==TYPE99 && ta==TYPE99 && tb==OPER99) {
+     result = lang_lib_999999(va, vb);
+   }
+   return(result);  // note that result may also have a tag
+ }
+
+Variables are assumed to potentially have two internal components: a value and a type tag. Thus:
+ 
+  a = 3.0;
+
+may internally result in something like the following:
+
+  a:["3.0", "float"]
+Non-tagged languages would use this representation:
+
+  a:["3.0"]
+We'll represent this with a two-part object that has a "value" attribute (or accessors) and a "tag" attribute.
+
+In most of the common languages, one operation is evaluated at a time. Complex expressions are broken down into a series of binary operations via parsing or evaluation order rules. (See AbstractSyntaxTree for an example.) We generally don't need to model at that level because nested evaluation is either fairly standardized, and the deviants are too language-specific to generalize here.
+
+The issue of type tags is thus addressed at the binary operation level here. The most important thing to notice about the pseudo-code model is that the type tag, if it exists, can effect the result. In practice the app programmer does not have access to this layer of execution, and thus can only surmise what is going on under the hood with regard to types via documentation and/or experimenting. This model provides a template which allows one to fill-in-the-blanks with a mental surrogate process.
+
+Although every combination of type (both operands) and operation is assumed in this representation, in practice the implementation may consolidate some combinations. The actual implementation of each combination of "lang_lib_xxyyzz" depends on the language. (A max of 99 is used to simplify the example.)
+
+Now let's switch to a "stragety table" viewpoint using TableOrientedProgramming so that we can explore patterns:
+
+  table: binary_ops
+  ---------
+  operator
+  type_a
+  type_b
+  implementation  // programming code or reference
+
+This table can represent every combination of operator and operand type. As we experiment with the language, we can fill in the implementation slots with a mental or actual implementation.
+
+If it turns out that all the implementations are the same for all operators, we can speculate that the language either does not have type tags or does not use type tags (if they exist). We can thus assume that the language is a tag-free language. A query such as the following can be used to varify this:
+
+  // Type-Specific Implementation Detection
+  SELECT op, implementation, count(*) AS cnt
+  FROM binary_ops
+  GROUP BY op, implementation
+  HAVING count(*) > 1
+
+This does assume that implementations that produce the same result are actually coded the same, and that every combination has an entry in the table, which may be an "invalid type combo" error handler in some cases. 
+
+If we want a more objective way to compare without having to analyzing algorithms, we can track the saved results of tests instead of operations.
+
+  table: binary_op_tests
+  ---------
+  test_id
+  variable_a   
+  variable_b
+  test_output  
+
+The difference detection query would be similar to the original.
+
+A complicating factor is that many languages use parsing to determine or guess type (at least initial type). The syntax can thus be a stand-in for an explicit type declaration or tag, and implementations can potentially use this information. One has to study the pattern of differences in eventual behavior to determine what is going on. For example, one can see if there is a difference between using these two:
+
+  x = 2.5;  // non-quoted
+  // versus
+  x = "2.5"  // quoted
+
+Experiments are needed to see if these two act different. That is, experiments are needed to determine if the quotes somehow affect how the variable behaves after the assignment. Using our model, if the quotes have an effect, it would mean that we'd discover more differences, and thus our detection mechanism above would find more non-unique instances. If it's possible to detect or "guess" types based on the value alone, and if differences are only detected in situations where values alone carry such clues, it may indicate value-analysis is being used for "type" detection instead of tags. 
+
+{See Comment 23 below}
+
+Our testing code may thus resemble:
+
+  a = 2.5;
+  b = "2.5";
+  c = date(12/31/2008)   // syntax may vary per language;  
+  d = "12/31/2008";
+  e = 0009;
+  f = "0009";
+  save_test("addition", "a", "a", (a + a));
+  save_test("addition", "a", "b", (a + b));
+  save_test("addition", "a", "c", (a + c));
+  ...etc..
+  save_test("addition", "f", "d", (f + d));
+  save_test("addition", "f", "e", (f + e));
+  save_test("addition", "f", "f", (f + f));
+  save_test("subtraction", "a", "a", (a - a));
+  save_test("subtraction", "a", "b", (a - b));
+  save_test("subtraction", "a", "c", (a - c));
+  ...etc...
+
+Ideally, one may want to use code generation and/or dynamic execution to create or run such code.
+
+'''Notes'''
+
+* Being or acting tag-free at the scalar variable level may not apply to "complex" or "compound" variables, such as arrays or multi-attribute objects. To keep this introduction simple, it will only consider scalar variables. But, it can be extended as needed for complex types.)
+
+* Even if one disagrees with using "tags" to model or study type-related behavior, the techniques and concepts described here are still useful for understanding the behavior and tendencies of a given language.
+
+--top
+
+Not bad, top. Provides examples, uses known terminology, avoids bold statements that redefine types, doesn't contain any obvious errors from a quick scan... unlikely to raise significant objections. The subject is elementary for me and might be over the heads of practioners that haven't thought about the subjects, though. -- AD
+
+[I rather like it.  I'll point a class of SoftwareEngineering students at it next term to see what they make of its pedagogical value.]
+
+''It would be great if there were Schema-Free databases.. a database with no schema (no tags). Just a long string, or blob.''
+
+See DynamicRelational.
+-------
+Comment 23:
+
+''In all dynamic languages, value analysis is happening. Consider PHP where variable $x is a string. You then assign the number 1 to $x and that number 1 value was detected by the parser.  The idea that value analysis replaces "tags" is ludicrous. Strong typing also does value analysis to ensure a value is not put into a bucket that it shouldn't go into.   You're idea is that value analysis can replace tags, whereas value analysis is used pretty much in all languages... values are analyzed at some point or another.''
+
+I adjusted the wording to make it more accurate. "Replacing" was indeed misleading upon further inspection. A second pair of eyes can be a good thing. And note that it's one of many things to test. If it affects the results, then further tests may be needed to see the nature and scope of the effects. -t
+
+Also note that one can think of a value expression (such as 123.4) as a dummy variable. This dummy variable will normally resemble a real variable in behavior (except it's read-only), such that if actual variables behave as if they have tags, then so will the dummy variables generated from value expressions. (Of course a given language can make up odd and inconsistent rules.) -t
+----------
+See also: ApplyingTheSideTagTypingModel, DefinitionOfTypeTag (more examples), TypeTagDifferenceDiscussion
+---------
+CategoryLanguageTyping

@@ -1,0 +1,187 @@
+I've decided to put thoughts on adapting the RDF-like Pointrel System (currently on SourceForge) to the wiki way somehow.
+
+Let me place in mind Ward's comment that "A wiki is the simplest online database that can possibly work".
+
+Let me now ask, "What is the simplest peer-to-peer triple-based semantic network online database that can possibly work"?
+
+Aspects of this are discussed at DecentralizedWiki, PrinciplesForTheNextWiki, and CrazyThingsThatMightSaveWiki.
+
+Some more history on the Pointrel System is at my user page PaulFernhout.
+
+Please consider my comments on the PointrelWiki page as under the CC-BY-SA license (assuming that does not violate C2's guidelines somehow), and I'd appreciate it if I could consider other people's contributions to this page as also under CC-BY-SA so I might republish them elsewhere at some point, like any resulting system's documentation
+
+-- PaulFernhout
+----
+
+I'm trying to distill this idea into the simplest approach. This is in reverse order of comments, so the items below are older, and are a bit repetitive. Eventually they will be deleted to leave the distilled version. I just saw some more news abotu FreedomBox so I'm also thinking in those terms -- what would I explain on their mailing list about a distributed semantic desktop that could support a wiki and other applications.
+
+As a summary, the system deals in named resources. Some of these resources are called transactions. Transactions are sets of triples of unicode strings. The triples can be about anything, including references to resource files and triples. The resources are grouped into a redundant distributed archives where every user of the archive has a complete set of all the resources added to that archive.
+
+The named resources can be thought of as files with a name (even though they could be in a database). They are (in theory) immutable once created. Each resource consists of a sequence of bytes in some format. The name consists of several sections:
+  PRF_HASH_LENGTH_USER.EXTENSION 
+The PRF is a standard prefix. The HASH is a SHA256 hash of the contents, the length, and the rest of the name (USER.EXTENSION). The USER part can be anything the user creating the resource wants in there. The Extension is like a file extension to give a hint about the contents. I've already implemented this in a version of the Pointrel System, Pointrel20090212.
+http://pointrel.svn.sourceforge.net/viewvc/pointrel/trunk/Pointrel20090201/source/org/pointrel/pointrel20090201/core/ArchiveAbstract.java?revision=436&view=markup
+http://pointrel.svn.sourceforge.net/viewvc/pointrel/trunk/Pointrel20090201/source/org/pointrel/pointrel20090201/core/ResourceFileSupport.java?revision=413&view=markup
+
+Transactions consists of sets of triples, each with a timestamp used to order them as statements form old to new. The triples are in some agreed on level of complexity (maybe including a context/space or each field might have additional type/namespace information). The Pointrel system has had a variety of approaches, but RDF is obviously the mainstream approach for doing triples now. The key idea is that transactions layer over top of each other to describe an object space with virtual objects defiend by triples that reference an object, and attribute, and a value. (RDF calls this Subject, Predicate, Object, which I find confusing coming from Smalltalk.) If you want to modify a virtual object, you define new tripels about it in a resource file in an agreed on format with a standard extention. The Pointrel system uses ".pointrel" at the moment, but it could be any agreed on standard, like ".rfdt" making one up for an rdf transaction. Then you put this resource file into one of these distributed workspaces where you or others can reference it. To get the current state of an object, you need to iterate over all transactions; however, one can use hash tables or database indexes to optimize this. For example, here is a file for a "SearchableTransactionCacheWithMemoryIndex".
+http://pointrel.svn.sourceforge.net/viewvc/pointrel/trunk/Pointrel20090201/source/org/pointrel/pointrel20090201/core/SearchableTransactionCacheWithMemoryIndex.java?revision=420&view=markup
+
+Any sort of application could be written on this base. Here is how a distributed wiki might work, as a sort of user case. 
+
+User A picks a UUID (UUID1) for a wiki and puts if on a website web page or emails it to a mailing list. The Wiki pages need to go somewhere, so user A also has to pick a UUID for an existing distributed archive or announce new one (UUID2). 
+
+Some sort of server location also need to be announced where other users can go to get the contents of the archive UUID2. Alternatively, there needs to be a well known location where users can go to find out what severs might be hosting the archive UUID2. Pointrel20090212 supports several different ways of sharing data such as a simple cgi script putting files in a local directory, through a shared directory like through WebDAV or FTP, or potentially (with manual intervention) through git, hg, or other DVCS. In theory, this approach oculd also map easily onto any existing distributed file system like Gnutella. The current model Pointrel20090212 encourages and leans toward (given a preference for small workgroups) is making local changes in a local directory, and then reconciling those changes with a remote directory or CGI server that multiple users have access to. 
+
+User A has to also tell everyone that they need to be running some software that can process the data for the wiki. This could be a Java desktop application (ideally, sandboxed). It could also be a JavaScript-containing web page pulling data from the distributed archive. The programs to do this could be included in the distributed archive under well known names or UUIDs.
+
+User A the proceeds to create resource files that go into the wiki and submits them to the server somehow. Some of these resource files are images. Some are style sheets. Some are transaction files that have triple like "wikipage:UUID3 contents lots-of-good-stuff". There could be another triple like "wikipage:UUID3 name SandBox" to define the name. There might another triple "wiki:UUID1 has-page* wikipage:UUID3". The "*" might be a convention to tell you that attribute has multiple values as a set. Alternatively, there could be a triple asserted with a list of all the current pages by UUID in the wiki. 
+
+Let's say User B want to go to the SandBox page of Wiki UUID1. After processing all the transactions in archive UUID2 (a potentially lengthy local activity), User B's wiki displaying software fetches all the matching triples for "??? name SandBox" and for each of those, finds which ones (probably only one) match "wiki:UUID1 has-page* {PREVIOUS_RESULT}". Onve we have that UUID3 for the page, we can then fetch "wikipage:UUID3 contents ???" to give us what to display to the user. 
+
+Now, User B makes an edit to this page. The edit is represented by one or more triples in some agreed to way. It might be as simple as a new triple "wikipage:UUID3 contents other-stuff". Or, it might be that in addition to new objects that represent an edit with logging information. 
+
+That transaction (or at least the triple with the page contents) is ideally digitally signed by User B with a publicly verifiable key. They key is associated with User B's identity somehow in a generally acceptable way (like a web location storing a public key, or an email address where a  public key can be requested). The signature either included in the transaction file, or potentially it could be included in yet another transaction file that references the first in a triple (that second transaction file would not necessarily have to be signed itself for the included signature to still be useful, and it might be easier to sign the whole file than embed a signature into a transaction file about everything but the signature -- it depends how it is implemented). Potentially, all users of the wiki might want to reject unsigned transactions or unsigned pages at their discretion, or even reject transactions by signers they wanted to ignore.
+
+Now that User B has created one or more new transactions, they need to get to all the listeners of the distributed archive. This depends a lot on configuration. There are multiple possible solutions. If all the users have access to the public server (password protected or not), the changes could just be placed on a WebDAV drive or sent through a CGI script. Other users would then need to poll periodically to pick up those changes. Another approach is that the shared data is in a DVCS like git, in which case users would need to do whatever they want to do to reconcile that, perhaps through a service like GitHub and some coordinating communication (email). Another approach is that the user puts the changes somewhere publicly accessible and a search enginer picks them up. People poll the search engine for changes to that distributed archive, and then they can go fetch the new content from UserB's server. Alternatively, User B might send information to some coordinating server that User A set up or suggested when announcing the wiki. The information could either just be about User B hosting a copy of the distributed repository with local changes, or also potentially it might include a message every time User B had made a change that others should fetch.
+
+Obviously, this is more complex than what c2.com's wiki does now. Is it worth the extra complexity? What's the benefit? Well, the main benefit is that everyone interested in the wiki would have a complete copy of it. Arbitrary content could be added to the workgroup besides just plain text for the wiki (whether this is a bug or a feature is up to the community, like if users started posting malware or copyright violating media files). Other applications could run alongside the wiki or the wiki could support more features (database like ones). Conceptually what is elegant about it is that there is no one central server and the changes clients make to content are the same as everyone else sees (as opposed to being transformed through a server).
+
+Now, junky files might pile up in this system. There are a few ways to handle that. One is to add a transactions with triples that say specific objects or resource files should be ignored and considered deleted, like "wikipage:UUID3 deleted true", where the applications need to interpret that flag as appropriate. (Junk still imposes a storage and processing cost though.) For data that actually should be deleted, transactions could be created that suggest that, although clients would have to process that and then honor that request, and some care would have to be taken so that clients don't just keep uploading the files to the main server during some reconciliation or synchronizing process (Pointrel20090212 does not support this). Also, a vandal could suggest lots of files should be deleted, so there might need to be issues about who is signing such request or files might be moved to a "deleted" subdirectory for a time, or something like that.
+
+In general, this outline points out some values of the central server which has a well defined location, a responsible owner, a single place to delete junk, an inability to easily upload problematical media files, and, in general, a single point for filtering out crud or vandals. One the other hand, a central server is a single point of failure, is not flexible for any person in the community adding new features to the system, and requires a beefier host machine that may incur some significant cost to a specific person supporting a community.
+
+Well, this does not seem to be a "distillation" of the below, as it covers more ground. So, more work is needed here. After seeing everything involved in this approach (assuming everything is covered, which is might not be), one can wonder if this is worth doing. Somehow, if feels like the future, not so much because it is a better way to have a wiki (it probably is not given the complexity), but because it is a better way to take the WikiWay ideals and potentially bring them to all other user applications besides wikis.
+ 
+----
+
+Yet another attempt at distillation of the below...
+
+The system supports the use of distributed databases of triples (A B C) generally used to define objects (Object Attribute Value).
+
+Triples are used to represent abstract OO-like objects with a state at a particular moment in time. Generally they can be used like this:
+  "object-343 type wiki-page"
+or:
+  "object-343 contents lots-of-good-stuff".
+
+Each triple has three unicode strings and an associated timestamp. It may have additional information like authoring information.
+
+Each distributed database of triples has a unique ID (UUID).
+
+Each database represents a shared discussion area linked through the UUID reference. Discussions take place by creating and modifying existing objects through adding triples. A triple can be also be added that says an existing object should be ignored and considered deleted, subject to that deletion flagging being honored by the applications processing the data.
+
+A discussion area can involve anything from one wiki page, to a whole wiki, to a huge discussion system with a million participants using a variety of tools and related data abstractions including wikis, whiteboards, video conferencing, virtual reality games, and so on. Generally, the bigger the database the more problems it will have with technical issues of coordinating changes, so chances are there will be mostly small databases that reflect one to one thousand users (related to human social psychology). Nonetheless, this design is intended to be scaleable.
+
+One or more individuals can participate in defining the current state of each database by publishing triples associated with that database on their own servers. In order to have the complete database, users need to collect triples from all participating servers publishing triples associated with that UUID of the database, or they need to use some service that does that for them.
+
+Ideally, there is some service to minimize the need for polling, like an RSS feed service that users can notify when they have published new triples. That feed can serve as one point to poll or which could even push that information to participants who want to be notified of changes. One can probably assume any big enough database with a lot of users is continually changing, so an RSS feed checked at convenient intervals would essentially let a participant know which other participants servers to ask for new content (perhaps as new transactions). One might expect that there would be servers that keep a copy of all triples (or sets of triples as transactions) added to the distributed database by all participants who identify themselves as publishing triples for that database.
+
+For each participant, a cgi script could be installed on a server to add a triple to a local subset of the distributed database.
+
+The triple (or, more accurately, a statement defining a triple) could be stored in a transaction file with its own UUID. This file could be in a directory that could be named with the UUID of the database. Or the triple could be stored in a SQL database or a triplestore. In practice, storing them in a SQL database may be easiest for most hosting providers.
+
+A cgi script exists to query these triples in a local subset.
+
+One or more lists are kept of sites that have said they have triples for this distributed database. These directories are kept at individual websites, or by some central service providers, or indirectly through search engines. Search engines may also be able to supply related triples directly for any particular distributed space where they have crawled the sites participating in that space.
+
+For data integrity, triples may be grouped into transactions. These transactions may in theory include triples for more than one databases, because the transactions represent operations on the entire system of databases, not just one database. However, in practice a simpler version of this might assume transactions only apply to one database Maybe there are special metatransactions that would include multiple transactions, each for a different specific distributed database?
+
+----
+Another attempt at distilling the below to the bare minimum...
+
+You have a UUID you make up representing a distributed database, similar to how twitter has #tags. This database is essentially a discussion area, the bounds, contents, and organization of which are decided by the active users of it as a sort of adhoc community.
+
+Next, we need a way to share object-related information with each other. So, we can use triples. The simplest is just three unicode strings, call them A B C. Generally they can be used like this:
+  "object-343 type wiki-page"
+or:
+  "object-343 contents lots-of-good-stuff".
+Anyone can create a file (or database or whatever) of triples on a site somewhere which are their contributions to the distributed database. Every triple needs to have a timestamp somehow, either unique to it, or related to some transaction it is in with other triples, or by some other means like the timestamp of the file it is in.
+
+Note that later, as a layering effect, someone could add another triple:
+  "object-343 contents other-good-stuff".
+One could then get both "lots-of-good-stuff" and "other-good-stuff" as the return for a query about "object-343 contents". Which one you decided to use in displaying a wiki page is up to the end user, and presumably is related to a timestamp connected to the triples, so you would use the later value. Although, you might also want to filter changes based on author or digital signature or an associated IP address or domain (assuming such was tracked somehow by whoever might be collecting the transactions).
+
+Now, we need to have a way that someone interested can see what the entire database looks like, to generate content from it like a wiki page. There are two ways to do this. 
+
+One is to have a search engine (see DistributedWiki) that knows about all the participants in creating distributed databases. When you (somehow) find a distributed database you are interested in (the UUID is on a web page or mentioned in other databases or sent via email?) you ask the search engine for all the triples (or transactional sets of triples?) in that distributed database. If you want to make changes, you just put them on your site, and the search engine picks up the changes eventually, and then when other people go to display the content, they ask the search engine and get everything including your changes.
+
+The other is to have the equivalent of RSS feeds or linkbacks. This would require one or more URL locations on the internet related to the database. These might be specified through triples in the database itself or associated with the database UUID if it includes a domain? If the main way you first find a database is finding a wiki or wiki page that is generated from it, then presumably those web pages have an indication of the UUID of the database as well as a URL where linkbacks or RSS items can be added.
+
+In practice, probably both search engines and RSS-like feeds of linkbacks would exist.
+
+If you don't want everyone to be accessing your triples, then you would not want to expose them to search engines, using either obscurity of a UUID that no one can guess which you don't release publicly (only give the UUID of the database to trusted associates and don't supply it to search engines that visit a site where you may also have public triples), or through some sort of password or public key protection approach.
+
+Now, does this include everything essential from below?
+
+----
+
+So, what is the simplest system, based on previous Pointrel System ideas related to layered sets of triples?
+
+So, let's say we want to represent objects that we are going to work together on collectively in a wiki way, like a distributed object database, and using triples (three items, like A B C). Typically A is some reference to a UUID that is an object, B is an attribute name, and C is a value. The triple may also be in a context or space (S). Each A B C or S could just be a single unicode string, or item might also have both a type or a value which were both unicode strings (like "Integer" and "10").
+
+These objects are not the same as pages. We might want to generate pages from these objects, but they are not the same thing. Those pages might be dynamic, like on the C2 wiki, or they could also be static, like if you have a local database of the objects and you then generate static pages and copy them with scp to a website. Those static pages might even have cgi scrips they link to which then update the object database as well as perhaps the static pages. One object might be used to generate a page, but you might generate other pages, like index pages, that reference a lot of objects in various ways (or even have links to static pages that are generated from the objects). I know I tend to state the obvious sometimes, but that is part of how I think about this, trying to be more and more clear about what should (eventually) be obvious. :-)
+
+At the core of the interaction with this system has to be adding and querying ABC triples (or expanded variants of them). A key other component is that everyone makes their comments on their own sites. One assumes a Google-like system will spider all this content and make it generally searchable. But, until the content is searchable, one also has the equivalent of an RSS feed (or Twitter feed) for each interesting object (or emergent metaobject).
+
+Here is the simplest thing that could work that I'm thinking about as a web application. One could do this without the web (like desktop clients that talk to each other), but let me start with the web.
+
+You get an account somewhere that runs shell scripts like in Python and has a SQL database, so that you can store triples. (I've done a versions of this that write files directly, but that creates some security issues on many hosts.) You need one script that lets you (the script owner) add arbitrary triples, like "object-36 type wiki-page" and "object-36 content lots-of-marked-up-text". These are stored in the database with the field types as close to arbitrary length strings as is practical. In practice, the A and B fields can probably be limited to short strings. The C field potentially could be any length from empty to a wiki page to a huge video (or segments of a huge video). We probably need some kind of form for convenience to add triples using this script.
+
+How do we get a distributed database for our distributed wiki? At a minimum, we need some sort of UUID to represent a distributed database or discussion area. This is analogous to #tags in twitter. So, let's pick one, like "F1F0381-9692-4505-BA62-463E9BBE74F3". If we want instead, it could be "c2.com/wiki2" or anything else.
+
+Next, we need a way to share object-related information with each other. So, we can use triples. The simplest is just three unicode strings, call them A B C. Generally they can be used like this: 
+  "object-343 type wiki-page" 
+or:
+  "object-343 contents lots-of-good-stuff".
+But, in order to reify (be able to refer to) these triples at a meta level, they each should have a unique ID as well.
+
+Then, ideally, we want transactions, where people collect one or more statements about adding triples (and possibly deleting triples or doing other stuff). These transactions should also have unique IDs. They also need timestamps. They might also ideally have digital signatures, hash values, author information, and licensing information affirming their free use. 
+
+So, we have perhaps something like this, where the last three lines with Authors, Licenses, and Signatures might be optional. (Yes, it would be simpler to have just one Author, License, and Signature). Note also that transactions could have metadata about themselves in other transactions, so author, license, and signature information could be added in other future transactions. The idea of making the transaction UUID a hash of the contents and the length is useful for the integrity of the system, but is not strictly needed.
+
+Transaction #1234428494=HashOfContentsAndLength
+  Timestamp: 2011-02-12Z012:26:42.98245
+  Triple #4566 object-343 type wiki-page
+  Triple #4567 object-343 contents lots-of-good-stuff
+  Authors: pdfernhout@kurtz-fernhout.com
+  Licences: CC-BY-SA_3.0, LGPL
+  Signatures: 9528759f532097543907509342759
+The timestamp is in UTC Z-time (GMT). It is not clear if statements about triples should have UUIDs as opposed to the triples themselves having UUIDs, a subtle difference, and any statement itself can be seen as one or more triples, like tagging something for deletion.
+
+Earlier versions of the Pointrel system have transactions with support for these things (except digital signatures, which could in theory be used with the system at a meta level about transactions but has not been used).
+
+Now, let's boil this down a bit more though, to the simplest thing that might work somewhat (ignoring where "work" means have data integrity from hashes and legal integrity from license statements and signatures):
+
+Transaction #1234428494 2011-02-12Z012:26:42.98245
+  Triple #4566 object-343 type wiki-page
+  Triple #4567 object-343 contents lots-of-good-stuff
+That is the simplest thing that can possibly work, short of dispensing with transactions altogether and just having triples. That would be simpler as far as parsing transactions, but it might introduce complexity in other aspects of the system. So, let's leave it at this level right now.
+
+Now, we still don't have anything to render that in a way web browsers can see, but that's a different conceptual problem. A key idea to the Pointrel system is that once you can add triples, you can define any pattern of any kind of complexity you want as emergent constructs. For example, if you want to delete a page, you can just add "object-36 deleted true" or something like that. What you see is going to emerge out of the code that is used to view the triples and how that code interprets a set of triples.
+
+So, we want to write something like wiki.cgi that renders wiki pages from these triples (or creates static pages sometimes when some triples are added, for performance). Our cgi script is going to have to be able to look up triples. In fact, if we want other applications to be able to use our triples in a way we did not plan for, we can have a script that supports looking up triples. The most common case is going to be having an A and a B and finding a C (or all Cs as a history). Next, when you have an A, you may want to know all the Bs. So, one can write a script to support that lookup. That's probably the minimum we need.
+
+So, we can write a cgi script now to look up objects and their field values using that functionality, and generate wiki pages.
+
+But, there might not be much point to doing that, since c2.com and a thousand other wikis all do something like that in their own way (probably less generally though).
+
+Here is where things start to diverge in a peer-to-peer way. Given the Pointrel System allows this sort of layering of new triples over each other, why should all the triples be on the same host? It's certainly convenient to find all the ones you are interested in right now at the same host, true. And it might not be obvious where else to look for them. But, between search engines and an RSS feed, an abstract object (or a web page related to it) can still be modified in a usable way by content you add to some other arbitrary website somewhere else on the web. This is the core of this idea (I guess, patent disclosure if no one else has done it before?).
+
+So, let's use a wiki example. Let's say I've made this page about pointrel-wiki (I'm using dashes to avoid this wiki turning it into a page) and you want to comment on it. Maybe you want to say all kinds of things, maybe even posting in audio you found on the web somewhere that might be a violation of someone's copyright. If I let you modify my website, then I have a bunch of hassles if your content is infringing or illegal or just awful in some way. So, all I accept, at most, from you is a link to your changes. I'm not sure the best sort of link, whether it would be a link to an object reference, a link to a triple, a link to a transaction, a link to a page, a link to your bigger site, or whatever. But in any case, my site accepts a link. Now, presumably, that link can be made available to anyone interested in the original object some way, either as a retrievable triple ("page-43 has-comment-link yourlink") or as a change to the rendered wiki page.
+
+Let's say that the web page is rendered locally on the desktop by some client application. You surf on over to the wikipage somehow (or maybe just put in the object id), and your local system takes the triples I added to my site, and finds the link or links, and finds triples at this commenter's site, and then merges them together in your client to render the page.
+
+I would of course have no control over what the commenter did to the wikipage. However, if I looked it it myself, and it bothered me, or I wanted to build on the changes, I could just post some new triples. So, I can layer on top of the changes this other person had made. If I really disliked the comments, I might somehow delete (or hide) the link the commenter submitted to the RSS-like feed for that page. But, that would not totally do the job of hiding the change, because eventually some big search engine is going to spider that other person's site, and anyone using that search engine to find triples is going to still find that triple that relates to what I wrote. Now, whether one considers this a bug or a feature depends on how much confidence you have in the WikiWay as a philosophy about people and society.
+
+You may want to make local copies of entire triples or objects that relate to links provided to you. Say you have a page that is intended as a blog-like essay and comments on it by others. You could copy all the submitted comments which were put on others sites onto your site, so you could render them. Or, you might not copy the comments, but could retrieve them whenever you render the page, or when you generated static versions. Of course, this gets you back into the issue of hosting other people's content, and the issues it entails with liability or bandwidth.
+
+But, JavaScript does not like taking content from multiple sites due to cross-site scripting issues. So, you would need a gateway on your site to retrieve remote content. Or, one could create FireFox addons to render content from multiple sites with a plugin without that restriction. Or, one could have a desktop application (Java?) to do all that merging. Either of those local applications could keep its own cache of triples.
+
+As I think on this some more, I'm coming around to thinking this version should have spaces (or contexts) to go with the triples (like previous versions). Here is why. When you create a Wiki page or any other things, it might be best not to see it as a single object, but rather as a set of related objects (or triples). If you go to someone else's website to see what triples they added to modify a Wiki page (or other objects), it would be nice to have an easy way to request all the information on that site that the user intended to pertain to the Wiki page (or other thing) of interest, rather than have to guess at it, or follow links within objects. If we have our triples as S A B D, then when we get a link, we can just make note of the site that is saying it has something to say about our initial content. Then we can just go to that site and ask for everything they have that goes with that space. We don't even need a link to have a UUID to a specific new object. So, a Wiki page (or pages? or even a whole Wiki?) would say it is in this specific space -- "c2.com/wiki" for example. Then we just start publishing triples about the space "c2.com/wiki" on our site that a search engine would eventually find, and to speed that up, we tell c2.com that we have triples that we have created in that space. When someone comes to c2.com and somehow gets to content added to the c2.com/wiki space, the browser used can just ask c2.com, do you know of anyone else publishing triples in this space? Then, you can go there and get all the transactions that define triples in that space.
+
+There is an issue here that transactions could potentially define triples in more than one space... So, do you want to just get the triples or do you want the actual transactions?
+
+These spaces can have any IDs or UUIDs, meaningful or meaningless. Essentially, these become like twitter #tags, in the same way the submitted links are a bit like blog linkbacks crossed with RSS-feeds.
+
+Pointrel has used this approach before. It is not strictly needed, as instead objects can be more complex. It's a judgement call on whether it is a good idea or not. I think it might make querying more general. The choice is between one of two paradigms. On the one hand, one can have lots of unique objects and go to extra trouble to trace through related links. On the other hand, one can have an extra field (the space or context) which every application has to reference, and which creates a firewall between data that is harder to breach conceptually, but you are then talking about distributed object databases in a very clear way - knowing what is intended to be in or out of a specific database. Both may have strengths and weaknesses, and I'm not saying I fully understand them (would take some use in practice). But, I think I may want to lean back to having the spaces, because it seems like it should make tools easier to write. Basically, you just have a list of places that might have related links, you query them all and collect all the links, and then you iterate through them to generate the displayed content based on all the triples.
+----
+CategoryWikiImplementation

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Green Vs Native Threads
+      </h1>
+      <p>
+        This page discusses the advantages and disadvantages of "green threads" (a term that AFAIK comes from <a href="JavaLanguage.html">JavaLanguage</a>)--threads simulated by a language runtime, vs "native threads"--threads provided by the operating system.
+      </p>
+      <p>
+        Green threads:
+      </p>
+      <ul>
+        <li>
+           Are <a href="CooperativeThreading.html">CooperativeThreading</a> (though in many cases, this is not visible to the programmer--even on green-thread Java implementations, user code doesn't have to yield.)  On a <a href="VirtualMachine.html">VirtualMachine</a>, this is not an issue--the VM can cause a scheduling event no matter what crazy things the app is doing--but for programs compiled to machine code it can be a problem if one thread gets stuck in an infinite loop and never yields the processor.
+        </li>
+        <li>
+           Cannot support multi-processor machines.  (Green thread apps can <em>run</em> on a multi-CPU machine; they just can't take advantage of the additional CPU(s).  HyperThreadedCpus count as multiple processors for this purpose).
+        </li>
+        <li>
+           Will function on systems that don't support OS level threads.
+        </li>
+        <li>
+           The language runtime can provide whatever scheduling policy it wants (within reason).
+        </li>
+        <li>
+           Synchronization is much easier--many uses of mutexes or monitors can be eliminated by simply not rescheduling during a critical section.
+        </li>
+        <li>
+           Are generally a bit more "lightweight" than native threads (separate kernel objects need not be created, and scheduling events need not involve the operating system)
+        </li>
+        <li>
+           If one thread in a process blocks on I/O, <strong>they all block.</strong>  However, if the underlying OS supports AsynchronousIo or select, it is possible to get around this limitation.
+        </li>
+        <li>
+           Are somewhat friendlier to <a href="GarbageCollector.html">GarbageCollector</a>s--no need to actively suspend the other threads in the application when the GC runs, and the GC has access to the saved continuations (Green threads are hidden <a href="CoRoutine.html">CoRoutine</a>s, basically) of the other threads when it tries to determine the RootSet.
+        </li>
+        <li>
+           Scales to large numbers of threads--see comments on <a href="ErlangLanguage.html">ErlangLanguage</a> implementation below.
+        </li>
+      </ul>
+      <p>
+        NativeThreads:
+      </p>
+      <ul>
+        <li>
+           Are scheduled according to the policies of the OS; on modern OS's they are pre-emptively scheduled.
+        </li>
+        <li>
+           Are capable of supporting multiple CPUs--if a system has <em>n</em> CPUs, then up to <em>n</em> threads belonging to a particular application can run simultaneously.
+        </li>
+        <li>
+           Require such support from the OS
+        </li>
+        <li>
+           Are generally limited to the scheduling policies provided by the OS.  (One big issue with portability of Java applications is the behavior of multi-threaded applications on different platforms).
+        </li>
+        <li>
+           Pre-emption can, in general, occur at any time.  
+        </li>
+        <li>
+           Even small critical sections require kernel-level synchronization.  Most multi-user <a href="OperatingSystem.html">OperatingSystem</a>s do not allow user code to disable the scheduler.
+        </li>
+        <li>
+           Are heavy-weight.  Threads, semaphores, etc. are all kernel objects; scheduling and synchronization events (in general) require traps to the operating system.
+        </li>
+        <li>
+           If one thread blocks in the kernel, other threads in the process can continue to execute.
+        </li>
+        <li>
+           Garbage collection requires that all other threads be <em>suspended</em> when the GC runs.  Discovery of the state of the other threads (to determine the root set) also required pestering the kernel.  Another source of inefficiency.
+          <ul>
+            <li>
+               Not always. Concurrent garbage collection algorithms exist, and I believe Sun's JVM uses one.
+            </li>
+          </ul>
+        </li>
+        <li>
+           Many OS's impose limits (either practial or "hard") on the number of threads that can be created within a process (or within the system as a whole).  Few OS's can handle thousands of threads at a time.
+        </li>
+      </ul>
+      <p>
+        Notice that both types of threads are subject to the bugaboos one encounters when dealing with <a href="SharedStateConcurrency.html">SharedStateConcurrency</a>--deadlock, race conditions, etc.  It's very common to write an application on a GreenThreads platform and find that it fails when run on a NativeThreads implementation (or vice versa).  GreenThread schedulers are generally more deterministic than NativeThread schedulers, and there are many race conditions that only occur on native thread implementations.  OTOH, the deterministic nature of GreenThreads can also cause problems with apps expecting native threading semantics.
+      </p>
+      <p>
+        Careful implementations of GreenThreads can be <em>very</em> lightweight. A good example is <a href="OzLanguage.html">OzLanguage</a>'s built-in thread support, which effortlessly tracks thousands of threads to support an interesting style of constraint-solving programming. (Most of these threads are usually blocked, but the efficiency with which these numbers are managed is still impressive.)
+      </p>
+      <hr/>
+      <p>
+        How about PooledGreenThreads?  A (proposed) arrangement where the runtime keeps a small pool of kernel threads (typically equal to the number of CPUs, or a small multiple thereof), and assigns logical user threads to the physical threads as it sees fit (if the # of threads in the pool is 1, then this degenerates to green threads).  Sufficient concurrency to take advantage of multiple CPUs.  Coupled with asynchronous or multiplexed IO to handle the blocking issue, and this architecture could have many of the advantages of both green and native threads, without the drawbacks.  Two remaining issues:
+      </p>
+      <ul>
+        <li>
+           Need mutual exclusion even over small critical sections; in many cases at kernel level.
+        </li>
+        <li>
+           If one thread runs away and refuses to reschedule, you still could have the program come to a screeching halt.
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        See also: <a href="CooperativeThreading.html">CooperativeThreading</a> <a href="CooperativeThreadingOperatingEnvironment.html">CooperativeThreadingOperatingEnvironment</a> <a href="MessagingAsAlternativeToMultiThreading.html">MessagingAsAlternativeToMultiThreading</a> <a href="GreenJavaThreads.html">GreenJavaThreads</a> <a href="NativeJavaThreads.html">NativeJavaThreads</a> ThreadingConsideredHarmful
+      </p>
+    </div>
+  </body>
+</html>

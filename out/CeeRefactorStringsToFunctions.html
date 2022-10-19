@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Cee Refactor Strings To Functions
+      </h1>
+      <p>
+        Here's a C/C++ specific refactoring.
+      </p>
+      <p>
+        I was just editing a large C program (CVS actually).
+      </p>
+      <p>
+        It containing many instances of C strings - "C strings". Fortunately, at least it used #define as a level of indirection:
+      </p>
+      <code>
+        #define CVSADM "CVS"<br/>
+      </code>
+      <p>
+        I wanted to allow this string (and its relatives) to be changed by the user. Accomplished by refactoring the string to a function:
+      </p>
+      <code>
+        #define CVSADM get_CVSADM()<br/>
+        extern char* get_CVSADM();<br/>
+        ...<br/>
+        char* get_CVSADM() { return "CVS"; }<br/>
+      </code>
+      <p>
+        <em>Pardon my ignorant nature, but what was wrong with the original define? And if you *must* change it, why not make it a static const char[]?</em>
+      </p>
+      <p>
+        This *almost* worked. It failed where the original code contained
+      </p>
+      <code>
+        sizeof CVSADM<br/>
+      </code>
+      <p>
+        Unfortunately, it compiled, but failed to execute correctly. Fortunately, CVS had tests - not unit tests, but tests nevertheless.
+      </p>
+      <p>
+        Globally changing all of these sizeofs to
+      </p>
+      <code>
+        sizeof_CVSADM<br/>
+      </code>
+      <p>
+        with
+      </p>
+      <code>
+        #define sizeof_CVSADM  (strlen(get_CVSADM()+1)<br/>
+      </code>
+      <p>
+        completes the refactoring. (At least, all of the tests pass.)
+      </p>
+      <hr/>
+      <p>
+        Moral: sizeof impedes syntactically transparent refactorings.
+      </p>
+      <hr/>
+      <p>
+        Careful:
+        While this works, it's very close to a very common error.
+        See number 10 of
+      </p>
+      <p>
+        The Top 10 Ways to get screwed by the "C" programming language by Dave Dyer
+        <a href="http://www.andromeda.com/people/ddyer/topten.html">http://www.andromeda.com/people/ddyer/topten.html</a>
+      </p>
+      <hr/>
+      <p>
+        Another related gotcha, refactoring C static strings to dynamic strings returned
+        by a function or method: *static* *string* *concatenation*.
+      </p>
+      <p>
+        The ANSI C standard requires two adjacent string literals to be combined:
+      </p>
+      <code>
+        "string1" "string2"<br/>
+      </code>
+      <p>
+        becomes
+      </p>
+      <code>
+        "string1string2"<br/>
+      </code>
+      <p>
+        When the static string literal is replaced by a function, this breaks. It must be replaced by something that can concatenate dynamic strings. Unfortunately, in ordinary C, there is no standard such function, because of memory management issues. In C++, one can refactor to
+      </p>
+      <code>
+        string(get_string1())+"string2"<br/>
+      </code>
+      <p>
+        i.e. using C++ strings rather than C "srings" (char*). (Converting back to C strings by adding .c_str() to the above works in some circumstances.)
+      </p>
+      <p>
+        Many folks have added kluge-like support for this sort of thing to C, e.g. 
+      </p>
+      <code>
+        char* thisstrcat(char* s1, char* s2) {<br/>
+        static buf[1024];<br/>
+        strcpy(buf,s1);<br/>
+        strcat(buf,s2);<br/>
+        return buf;<br/>
+        }<br/>
+      </code>
+      <p>
+        but such kluges do not work in all circumstances - e.g. you cannot call the version of thisstrcat above twice in an expression.
+      </p>
+      <hr/>
+      <p>
+        Problems with the above code snippet:
+      </p>
+      <ol>
+        <li>
+           It may introduce a buffer overflow, because buf is fixed-size but
+        </li>
+      </ol>
+      <p>
+        the size of the concatenation of s1 and s2 is not checked to be less
+        than or equal to the size of buf.
+      </p>
+      <ol>
+        <li>
+           It violates the <a href="ZeroOneInfinity.html">ZeroOneInfinity</a> rule by using a fixed-size buffer,
+        </li>
+      </ol>
+      <p>
+        which means strings of arbitrary size cannot be concatenated.  A
+        general-purpose concatenation function should allow for arbitrary size
+        by dynamically allocating the right amout of memory using malloc.
+      </p>
+      <ol>
+        <li>
+           Mixing strcpy and strcat in repetitive statements may lead to bugs
+        </li>
+      </ol>
+      <p>
+        if the order of the statements is changed but you forget to change the
+        strcpy and strcat parts.  Eg, before:
+      </p>
+      <code>
+        char buf[100];<br/>
+        strlcpy(buf, "my program - ", sizeof(buf));<br/>
+        strlcat(buf, filename, sizeof(buf));<br/>
+      </code>
+      <p>
+        after:
+      </p>
+      <code>
+        char buf[100];<br/>
+        strlcat(buf, filename, sizeof(buf));  /* WRONG! */<br/>
+        strlcpy(buf, "- my program", sizeof(buf));  /* also wrong */<br/>
+      </code>
+      <p>
+        a better way to say the same thing, avoiding the problem:
+      </p>
+      <code>
+        char buf[100];<br/>
+        strlcpy(buf, "", sizeof(buf));<br/>
+        strlcat(buf, "my program - ", sizeof(buf));<br/>
+        strlcat(buf, filename, sizeof(buf));<br/>
+      </code>
+      <p>
+        Note how in the last example the strlcat() statements are trivially
+        interchangeable.  There is a general pattern here: first the resource
+        is initialized (strlcpy the empty string into the buffer), then it is
+        modified (strlcat arbitrary strings into the buffer).  Combined
+        initialize-and-modify functions (strlcpy an arbitrary string into a
+        buffer) are harmful, as they waste mental effort and may lead to bugs
+        when changing the order of the modification statements.
+      </p>
+      <ol>
+        <li>
+           The function returns a pointer to a statically allocated buffer
+        </li>
+      </ol>
+      <p>
+        that will be overwritten by subsequent calls, which (a) is not
+        thread-safe, and (b) messes up statements such as
+      </p>
+      <code>
+        printf("%s %s", thisstrcat("foo", "bar"), thisstrcat("baz", "qux"));<br/>
+      </code>
+      <p>
+        strlcpy and strlcat are from the OpenBSD C library, but can be
+        implemented in portable C.  Note that the standard C strncpy and
+        strncat functions are very easy to get wrong, because they are not
+        guaranteed to null-terminate a non-zero-length buffer.  This is almost
+        certainly a design mistake.  Never use strcpy, strcat, strncpy, or
+        strncat.  Always use strlcpy and strlcat instead.
+      </p>
+      <p>
+        A better routine, doing the same thing as thisstrcat above, follows.
+      </p>
+      <p>
+        Noteworthy properties of the code below.
+      </p>
+      <ol>
+        <li>
+           Define an stdarg function handling an arbitrary number of args, but
+        </li>
+      </ol>
+      <p>
+        export wrappers specifying a fixed number of args as the public
+        interface.  Reaps the benefits of stdarg flexibility and fixed arg
+        safety (unlike with stdarg, the compiler can verify the arg count and
+        arg types in calls to the function).
+      </p>
+      <ol>
+        <li>
+           Use the preprocessor to redefine the names of bug-prone functions
+        </li>
+      </ol>
+      <p>
+        into do_not_use to make sure we don't accidentally call them out of
+        habit later in code where they are no longer needed.
+      </p>
+      <ol>
+        <li>
+           Use of the unsigned size_t type to store counts and sizes.
+        </li>
+      </ol>
+      <ol>
+        <li>
+           Test for integer overflow when adding together buffer sizes.
+        </li>
+      </ol>
+      <ol>
+        <li>
+           We waste a little memory and CPU time by counting the null
+        </li>
+      </ol>
+      <p>
+        terminator of each individual string into bufsize, and by using things
+        like strlcpy(buf, "", bufsize);.  I aim at ease of auditing and
+        monotonicity (use only one idiom for one action, such as strlcpy to
+        initialize a string buffer, even if it's not the fastest one in a
+        particular case).  I sacrifice (negligible) machine resources to
+        attain these goals.
+      </p>
+      <ol>
+        <li>
+           In main(), I assume that printf() handles null args gracefully by
+        </li>
+      </ol>
+      <p>
+        printing "(null)".  I don't know whether this is portable.  main()
+        leaks memory by not freeing the dynamically allocated strings.  In a
+        long-running program you'd probably want to free() the strings, but
+        contrary to popular insistence it is pointless to free every resource
+        when the resources reclaimed by freeing them cannot be put into new
+        uses.  For example, in a short-running program the memory from free()
+        will probably not be given back to the operating system by the malloc
+        implementation, and the operating system will reclaim the memory soon
+        anyway when the program dies.
+      </p>
+      <code>
+        #include <limits.h><br/>
+        #include <stdarg.h><br/>
+        #include <stdlib.h><br/>
+        #include <string.h><br/>
+      </code>
+      <code>
+        #define strcpy do_not_use<br/>
+        #define strcat do_not_use<br/>
+        #define strncpy do_not_use<br/>
+        #define strncat do_not_use<br/>
+      </code>
+      <code>
+        static char *strdupv(size_t count, ...)<br/>
+        {<br/>
+        char *buf;<br/>
+        const char *str;<br/>
+        size_t bufsize;<br/>
+        size_t strsize;<br/>
+        size_t i;<br/>
+        va_list ap;<br/>
+      </code>
+      <code>
+        bufsize = 0;<br/>
+        va_start(ap, count);<br/>
+        for(i = 0; i < count; ++i) {<br/>
+        str = va_arg(ap, const char *);<br/>
+        strsize = strlen(str) + 1;<br/>
+        if(strsize > (SIZE_MAX - bufsize)) return(0);<br/>
+        bufsize += strsize;<br/>
+        }<br/>
+        va_end(ap);<br/>
+        buf = malloc(bufsize);<br/>
+        if(!buf) return(0);<br/>
+        strlcpy(buf, "", bufsize);<br/>
+        va_start(ap, count);<br/>
+        for(i = 0; i < count; ++i) {<br/>
+        str = va_arg(ap, const char *);<br/>
+        strlcat(buf, str, bufsize);<br/>
+        }<br/>
+        va_end(ap);<br/>
+        return(buf);<br/>
+        }<br/>
+      </code>
+      <code>
+        char *strdup2(const char *s1, const char *s0)<br/>
+        {<br/>
+        return(strdupv(2, s1, s0));<br/>
+        }<br/>
+      </code>
+      <code>
+        char *strdup3(const char *s2, const char *s1, const char *s0)<br/>
+        {<br/>
+        return(strdupv(3, s2, s1, s0));<br/>
+        }<br/>
+      </code>
+      <code>
+        // and so on<br/>
+      </code>
+      <code>
+        #define strdupv do_not_use<br/>
+      </code>
+      <code>
+        // library code ends, user code goes below this point<br/>
+      </code>
+      <code>
+        #include <stdio.h><br/>
+      </code>
+      <code>
+        int main()<br/>
+        {<br/>
+        printf("%s\n", strdup2("", ""));<br/>
+        printf("%s\n", strdup2("abc", ""));<br/>
+        printf("%s\n", strdup2("", "def"));<br/>
+        printf("%s\n", strdup3("hello", " ", "world"));<br/>
+        printf("%s %s\n", strdup2("foo", "bar"), strdup2("baz", "qux"));<br/>
+        return(0);<br/>
+        }<br/>
+      </code>
+      <code>
+        // $ gcc -std=c99 -pedantic -Wall -g -o strdupv strdupv.c<br/>
+        // $ ./strdupv<br/>
+        //<br/>
+        // abc<br/>
+        // def<br/>
+        // hello world<br/>
+        // foobar bazqux<br/>
+        // $<br/>
+      </code>
+      <hr/>
+      <p>
+        Moral: C++ strings are easier to refactor than C strings.
+      </p>
+      <p>
+        Moral: the distinction between compile time and run time operations interferes with refactorings that convert between static and dynamic values.
+      </p>
+      <p>
+        Moral: If you change the meaning of a #define, you must inspect <em>every</em> use of that #define before checking in. Which is why #define's are kind of smelly, right there. --<a href="MichaelGates.html">MichaelGates</a>
+      </p>
+      <p>
+        Sizeof and adjacent string concatenation are compile time operators. Strlen and strcat (with memory allocation) are run time operators that almost, but not exactly, correspond.
+      </p>
+      <p>
+        Refactoring is easier if (a) compile time and run time use the same language, operators, etc. Or, at least (b) if they have equivalent operators.
+      </p>
+      <hr/>
+      <p>
+        See <a href="RefactoringBetweenCompileTimeAndRunTimeOperations.html">RefactoringBetweenCompileTimeAndRunTimeOperations</a>,
+        <a href="SyntacticallyTransparentRefactorings.html">SyntacticallyTransparentRefactorings</a>,
+        <a href="CeePreprocessorStatements.html">CeePreprocessorStatements</a>
+      </p>
+    </div>
+  </body>
+</html>

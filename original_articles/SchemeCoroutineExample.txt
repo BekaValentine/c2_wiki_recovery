@@ -1,0 +1,167 @@
+[From CallWithCurrentContinuation]
+
+Today's programs typically are objects; they have a member function which the OperatingSystem calls when a key is pressed. Old programs used to be able to call a "get key" function to get a key from the OS.
+
+You can write a "get key" function using co-routines. Co-routines can be set up with multiple threads (see WindowThreadControlThread), with some kind of virtual machine (see RunAndReturnSuccessor), or with CallWithCurrentContinuation.
+
+Here's an example of how you would do it in the SchemeLanguage.
+
+First, you have the analogous function to "get-key." Here I will allow it to call Scheme's (read) function and get an entire value.
+
+ (define get-value 
+   (lambda (prompt)
+     (display prompt) (newline) (read)))
+
+Then you can create windows that take their "get-value" function as a parameter. Here's a way to create such windows:
+
+ (define create-window-for-function
+   (lambda (function name)
+     (lambda (get-value)
+       (let ((first (get-value (string-append "Type first number for " name)))
+             (second (get-value (string-append "Type second number for " name))))
+         (function first second)))))
+
+Now you can have conversations with the interpreter like this (where OK is the "unspecified" value):
+
+ > ''(define win (create-window-for-function + "plus"))''
+ OK
+ > ''(win get-value)''
+ Type first number for plus
+ ''4''
+ Type second number for plus
+ ''8''
+ 12
+ >
+
+So far this has nothing to do with continuation passing: it's just ordinary FunctionalProgramming.
+
+Now, wouldn't it be neat if you could "invert" one of these windows? If you could make it so that, instead of being a function that stops and calls get-value to get an answer from you, it waits like an object for you to provide a value to it, and provides a member function you can use to provide that value? You can. Watch this:
+
+ (define invert-window
+   (lambda (window)
+     (call-with-current-continuation
+      (lambda (first-return)
+        (let* ((return first-return)
+               (windowval (window
+                           (lambda (prompt)
+                             (call-with-current-continuation
+                              (lambda (send)
+                                (return (list prompt
+                                              (lambda (value)
+                                                (call-with-current-continuation
+                                                 (lambda (new-return)
+                                                   (set! return new-return)
+                                                   (send value))))))))))))
+          (return windowval))))))
+
+Now you can have a conversation like this:
+
+ > ''(define iwin (invert-window win))''
+ OK
+ > ''(define give (lambda (iwin value) ((cadr iwin) value)))''
+ OK
+ > ''iwin''
+ ("Type first number for plus" #<procedure #x21525F>)
+ > ''(set! iwin (give iwin 12))''
+ OK
+ > ''iwin''
+ ("Type second number for plus" #<procedure #x2153C3>)
+ > ''(set! iwin (give iwin 24))''
+ OK
+ > ''iwin''
+ 36
+
+As you can see, the window basically presented itself as an object. Its latest prompt was part of its state, and it provided a function by which I could send in an answer. I have turned it into a co-routine!
+
+The same kind of thing can be done under program control. This can solve all kinds of HollywoodProblem''''''s.
+
+The important thing is that, rather than having to design a state machine for an object, you can write an ordinary routine which has a call to "get" for every state and which moves from one "get" to another using the ordinary conditional and looping constructions of the language.
+
+-- EdwardKiser
+
+Instead of rewriting that unreadable mess of CALL-WITH-CURRENT-CONTINUATIONs and LAMBDAs every time we want a coroutine, we can create a general function COROUTINE that creates a coroutine out of its argument.
+
+''Huh? I created a general function called '''''invert-window''''', once you have it you can convert any routine into a coroutine. There is no need to rewrite anything. Isn't '''''invert-window''''' essentially the same as what you are proposing?''
+
+Anyway here's the COROUTINE function:
+
+ (define (coroutine routine)
+   (let ((current routine)
+         (status 'suspended))
+     (lambda args
+       (cond ((null? args) 
+              (if (eq? status 'dead)
+                  (error 'dead-coroutine)
+                  (let ((continuation-and-value
+                         (call/cc (lambda (return)
+                                    (let ((returner
+                                           (lambda (value)
+                                             (call/cc (lambda (next)
+                                                        (return (cons next value)))))))
+                                      (current returner)
+                                      (set! status 'dead))))))
+                    (if (pair? continuation-and-value)
+                        (begin (set! current (car continuation-and-value))
+                               (cdr continuation-and-value))
+                        continuation-and-value))))
+             ((eq? (car args) 'status?) status)
+             ((eq? (car args) 'dead?) (eq? status 'dead))
+             ((eq? (car args) 'alive?) (not (eq? status 'dead)))
+             ((eq? (car args) 'kill!) (set! status 'dead))
+             (true nil)))))
+
+I also took the liberty of adding some useful functionality that I'll show in this demonstration:
+
+ > (define test-coroutine-1
+     (coroutine (lambda (yield)
+                  (print "HELLO!")
+                  (yield 1)
+                  (print "WORLD!")
+                  (yield 2)
+                  (print "SORRY, I'M OUT"))))
+ > (test-coroutine-1 'status?)
+ suspended
+ > (test-coroutine-1 'dead?)
+ #f
+ > (test-coroutine-1 'alive?)
+ #t
+ > (test-coroutine-1)
+ "HELLO!"
+ 1
+ > (test-coroutine-1)
+ "WORLD!"
+ 2
+ > (test-coroutine-1)
+ "SORRY, I'M OUT"
+ > (test-coroutine-1 'status?)
+ dead
+ > (test-coroutine-1 'dead?)
+ #t
+ > (test-coroutine-1)
+ . error: dead-coroutine
+
+A more useful example:
+
+ > (define (make-iterator list)
+     (coroutine (lambda (yield)
+                  (for-each yield list))))
+ > (define (iterator-empty? iterator)
+     (iterator 'dead?))
+ > (define my-iterator (make-iterator (list 1 2 3)))
+ > (my-iterator)
+ 1
+ > (my-iterator)
+ 2
+ > (my-iterator)
+ 3
+ > (iterator-empty? my-iterator)
+ #f
+ > (my-iterator)
+ > (iterator-empty? my-iterator)
+ #t
+
+The following page gives a rather detailed explanation.
+
+http://www.eleves.ens.fr:8080/home/madore/computers/callcc.html
+----
+CategoryScheme CategoryContinuation

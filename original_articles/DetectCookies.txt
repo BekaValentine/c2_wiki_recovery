@@ -1,0 +1,152 @@
+More of an AlarmBellPhrase than an AntiPattern.
+
+	 :	"[This or that functionality of our site] is implemented with cookies, right? So, we'll need our server to transparently detect whether the user has enabled cookies in their browser."
+
+This reveals a basic misunderstanding of the nature of the HTTP protocol. I suggest the following antidote:
+
+	 :	"You're probably right. Can we sit down and devise an AcceptanceTest and/or UnitTest for that functionality?"
+
+----
+
+I think I'm going to disagree with this analysis. I think that in cases such as this, what the website owner is probably asking for in the first quote above is to have behaviour change in some way depending on whether the client browser is returning cookies or not. The most (only?) reasonable scenarios are, if the client browser is not returning cookies, to say 'you cannot use this site unless you enable cookies' or (to be a bit more friendly) 'certain parts of the functionality of this Web site will not work for you unless you have cookies enabled.'
+
+Either is achieved fairly simply. When a request comes in, examine it to see if it's come with a cookie you want (say, '''testcookies=1'''). If not, issue a redirect to another page along with a Set-cookie header line to set testcookies=1, and add a parameter to the request that contains the URL of the original page. This redirects to a page that again tests for the testcookies=1 cookie. If set, it redirects back again to the original page, using the parameter for it you set. If not set, it spits out a message explaining the consequences of not returning cookies, and perhaps some instructions about how to turn on cookies in common browsers.
+
+This can, of course, be 'fooled' by some rather odd browser behaviour (which is unlikely to occur) or a knowledgeable hacker-type who's just trying to play with your Web server's itty bitty little mind (a much more likely probability). In that case, well, most protocols and systems can be 'broken' by someone who really sets out to break them...
+
+-- CurtSampson
+
+''Have you actually implemented such a detection method? Did it work? :->''
+
+I've not personally implemented it (though I'll write up a little demonstration servlet if anybody is terribly interested...I'm sure pretty much everyone here could write it themselves) but I've experienced it. I keep cookie warnings on in my browser, so I get pretty familiar with all of the cookies that a site sends out.
+
+I neglected to mention a third option I've seen for dealing with a response with no cookie: always hand out a cookie and redirect again. Usually after clicking 'don't accept' on the same cookie four or five times, I abort the site load. I don't really want to think about what happens if you have your browser set to reject cookies without asking. ''-- cjs''
+
+''It's one of the things a Web site developer '''needs''' to think about. Would you trust all Net users out there '''not''' to have their browsers set to "reject cookies, don't ask me about them" and confidently implement what you describe above?''
+
+''Also note that a demonstration servlet would not quite be a proper SpikeSolution. It's possible for one page of your site (actually two) to detect cookies. It's not practical to implement the detection functionality across all pages of your site. Unfortunately, when people bring up DetectCookies, they usually mean the latter. I have added the word "transparently" to the phrase above to reflect that.''
+
+Again, respectfully, I have to disagree. While it's certainly possible to code your site such that it would be very difficult to do cookie-detection on every page, it's also possible to code your site such that this is quite simple. If you have a single servlet for all your pages, it can do the detection before it dispatches the request to the appropriate code for the page requested. If you have multiple servlets, each will have to do this, but this shouldn't require more than a method call. I would have no problem with the request that every page on a site (and even the images, too, if you want to go that far) disable use of the site if the user does not have cookies enabled.
+
+But if cookies are so desperately important, more likely I would suggest that, if a cookie can't be set, the URL be modified to add a parameter holding the same state information. (This means, though, all the URLs you generate that lead to another page in your site have to have this same state token added, but the servlet API has support for this.)
+
+-- CurtSampson
+
+You're probably right. Can we sit down and devise an AcceptanceTest and/or UnitTest for that functionality? -- LaurentBossavit
+
+----
+
+ // DetectCookies acceptance test
+
+ import junit.framework.*;
+ import com.meterware.httpunit.*;
+
+public class DetectCookies extends TestCase {
+
+	final String	where		= "http://www.blink.com/servlets/CookieTest?page=foo";
+	WebConversation	wc		= new WebConversation();
+	boolean		cookiesEnabled;
+
+	public void testBrowseWithCookiesDisabled() {
+		cookiesEnabled = false;
+		WebRequest surf = new GetMethodWebRequest(where);
+		WebResponse page = getResponse(surf);
+		assert(page.getText().indexOf("This is page foo") < 0);
+	}
+
+	public void testBrowseWithCookiesEnabled() {
+		cookiesEnabled = true;
+		WebRequest surf = new GetMethodWebRequest(where);
+		WebResponse page = getResponse(surf);
+		assert(page.getText().indexOf("This is page foo") >= 0);
+	}
+
+	public WebResponse getResponse( WebRequest request ) {
+		WebResponse result = null;
+		if ( cookiesEnabled )
+			result = wc.getResponse( request );
+		else
+			result = new WebConversation().getResponse( request );
+		return honorRedirect(result);
+	}
+
+	public WebResponse honorRedirect( WebResponse original ) {
+		int code = original.getResponseCode();
+		if ((code >= 300) && (code < 400)) {
+			String newLocation = original.getHeaderField("Location");
+			WebRequest follow = new GetMethodWebRequest(newLocation);
+			return getResponse(follow);
+		}
+		return original;
+	}
+}
+
+----
+
+Are you being sarcastic, or do you really believe that I'm right? If the latter, I'm going to remove the conversation from this page and just leave it with the description of how to "detect" that browsers are not returning cookies and what options you have to deal with it. ''-- cjs''
+
+I'm not being sarcastic, but neither do I believe you are right. I am suggesting that we find out by writing (as a VirtualPair) the AcceptanceTest, UnitTest and code that implements the desired functionality. We might both gain a better understanding of the issue thereby. -- lb
+
+----
+
+Ok. How about I cons up a spec, you write the test, and I'll write the servlet that will pass the test? Here's my proposal for a 'Web site':
+
+	* All pages will be accessed via the URL  http://www.blink.com/servlets/CookieTest ''[NOTE: link broken]''. The parameter ''page=foo'' must be supplied, where ''foo'' is the name of the page to display. For simplicity, all pages on the site will return a plain text response saying 'This is page ''foo''.'
+
+	* No page as described above will display unless the user's Web browser appears to return cookies that the server passes to it. If a session comes in without a cookie, an attempt will be made to give it a cookie. (Via a redirect back to the site again.) If the browser comes back to the site without returning the cookie, an error page will be displayed.
+
+-- CurtSampson
+
+First cut of the acceptance test done, above.
+
+----
+
+In general, you can't tell the difference between 
+
+	* this browser has not accepted the cookie you sent it
+	* you haven't sent the browser a cookie yet
+
+unless you have prior knowledge ('this page is never accessed before we've made an attempt to give the user a cookie, so our attempt must have failed').
+
+''Yup. It always surprises me how few people in the Web biz grasp that basic fact.''
+
+Given that Curt's proposed solution involves setting a cookie and redirecting to such a page, I can't see offhand why it doesn't work.  
+
+''I can see how it might work. I'm concerned that it will fall far short of the "transparently" requirement (i.e. requiring your entire URL space to conform to Curt's scheme isn't what I would call "transparent").''
+
+Unrelatedly, I invite people to consider the wisdom of making a whole Web site require cookies anyway - do search engine robots accept cookies?
+
+''And do they automatically honor redirects?''
+
+''Off the top of my mind, here are a couple other problems with Curt's suggestions: reaching any page of the site involves passing a GET method parameter. This means that any HTML form on the Web site that uses the GET method must pass the "page" parameter in an <input type="hidden"> element. For forms that use the POST method, two new issues arise; first, we need to make sure that all browsers will carry POST method parameters through a redirect. (And our acceptance test must simulate that functionality, as well.) Second, we need to make sure that the server-side technology we use accepts mixtures of POST method and GET method parameters in the same request.''
+
+----
+
+Actually, you can get most of what you need just by never displaying a form
+unless the request for it had your cookie. You can still be fooled by someone
+who takes a cookie, gives it back to you when he gets the form, and then
+deletes it before resubmitting. But this is probably somebody who's
+intentionally trying to freak you out, and you can just give him a "nice try,
+buddy" page.
+
+And, for the record, my opinion is that it's very unwise to require cookies
+to access every page on your site. Not only is it annoying to some users,
+but if you're creating a new set of session data for every request without a
+cookie, you're eating up memory for no good reason when a robot scans you,
+or whatever.
+
+Anyway, sorry about never implementing this; it's the usual 'out of time'
+thing. ''-- cjs''
+
+----
+
+Having designed a website where we have a transparent FrontServlet, I think Curt's solution can be made transparent to the entire Web site URL space (or any convenient subspace), from the surfer's point of view (address bar *won't* look like http://mysrv.org/bigfrontservlet?page=foo) AND the programmer's point of view (programmer of a servlet won't see magic cookie detection code, and doesn't need to call it everywhere). This is even easier to do in AllaireColdFusion (with application.cfm) or ActiveServerPages. Also, there is no need for special parameters. I'm willing to set up a demo. The AcceptanceTest would be similar to the one above but include the transparency requirement (/page1.cfm, /dir1/page2.cfm, /page3.cfm would all work and be protected. If required, I could also demo the limited URL space thing). Please say so if interested.
+
+Regarding the fact that the whole Web site would require cookies, yes it might not be good if you are doing a Web site for a very wide audience, but it's OK if you are making a Web ''application'' (e.g. there's no point for search engines to index hotmail content). And again, it's easy to do it on a subset of the pages. -- mg
+
+----
+
+The cost/benefit of worrying about cookie issues at all seems pretty out of whack for the vast majority of applications. I read somewhere a little over a year ago that something like 1 in 150 Web users disables cookies. Probably the fraction of paranoid surfers is disproportionate among engineers, hence the discussion how to accommodate disabled cookie settiings. I say screw em', they're an edge case if there ever was one.
+
+----
+See WebsitePatterns

@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Language Lawyer Required
+      </h1>
+      <p>
+        C <a href="LanguageLawyer.html">LanguageLawyer</a> needed to answer the following question:
+      </p>
+      <ul>
+        <li>
+           int a,b,c; a=b=c=0;
+          <ul>
+            <li>
+               Does <em>b</em> get read?
+            </li>
+          </ul>
+        </li>
+        <li>
+           int a,c; volatile int b; a=b=c=0;
+          <ul>
+            <li>
+               Now does <em>b</em> get read?
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        <strong>Summary</strong>
+      </p>
+      <p>
+        With a standards-compliant compiler:
+      </p>
+      <p>
+        Without "volatile", <em>b</em> might get written to, and then later read. Or <em>b</em> might only be written to. Or the entire statement might be optimized away, and <em>b</em> is never written or read.
+      </p>
+      <p>
+        With <em>volatile int b</em>, <em>b</em> will be written to, but <em>b</em> will *not* be read from. (The "value" of an assignment operator is the value that "has been" written to the left operand.)
+      </p>
+      <p>
+        (Unfortunately, the standard is confusing, so many otherwise fine compilers force you to break up the statement to force them to do what a truly standards-compliant compiler would do:
+      </p>
+      <ul>
+        <li>
+           int a,c; volatile int b; a=c=0; b=0;
+          <ul>
+            <li>
+               (emphasize that the volatile b is written once, but not read).
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p>
+        )
+      </p>
+      <p>
+        <em>Is GCC therefore compliant, or non-compliant? And are you basing the above on the standard? If so, could you quote chapter and verse please. - Thanks.</em>
+      </p>
+      <p>
+        At least one version of GCC is non-compliant. I hope that will be fixed soon (perhaps it has already been fixed?). See below.
+      </p>
+      <hr/>
+      <p>
+        The following is based on the widely-circulated C9x draft. I don't guarantee its correctness for any of the actual standardizations of C.
+      </p>
+      <p>
+        According to section 5.1.2.3 #6, the only requirements actually imposed on an implementation are (1) that volatile objects be stable at sequence points, and (2) that externally visible behaviour be the same as that of the abstract machine described by the standard, in a rather weak sense. In my opinion, this is actually weaker than what is required elsewhere, e.g., in 5.1.2.3 #2 as supplemented by annexes C and D.
+      </p>
+      <p>
+        Accordingly, in the first fragment (without <em>volatile</em>) there is no requirement for <em>b</em> to be read. Nor indeed for anything else to happen; the whole thing could get optimized away. In the second fragment, however, the description in annex D guarantees that <em>b</em> will be read exactly once. (The standard uses the term "access" instead of "read".)
+      </p>
+      <p>
+        -- <a href="GarethMcCaughan.html">GarethMcCaughan</a>
+      </p>
+      <p>
+        Wow, thanks Gareth.  How does that compare with <a href="http://gcc.gnu.org/ml/gcc/1999-10n/msg00201.html">http://gcc.gnu.org/ml/gcc/1999-10n/msg00201.html</a> which resultant discussion seems to disagree with your interpretation?
+      </p>
+      <p>
+        (Added later) I refer you to <a href="http://gcc.gnu.org/ml/gcc/1999-10n/msg00258.html">http://gcc.gnu.org/ml/gcc/1999-10n/msg00258.html</a> in which a member of the standard committee says that it's unspecified. Conclusion seems to be that it's implementation defined, although the standard doesn't actually say so.  Perhaps the value is <strong><em>not</em></strong> read back. The alternative behaviour can be forced by re-writing it into two assignments: <em>b=c; a=b;</em> whereas not re-reading cannot be forced. Comments welcome, but it should probably be flagged as a strong warning.
+      </p>
+      <p>
+        Hmm. Having gone over this again, I now think that (1) I was wrong, and (2) that member of the standard committee was wrong too, in so far as annex D is normative. (Which is to say: not at all, in theory.) Specifically, I think that <em>b</em> should not be read by any implementation. Here's the whole analysis, in gruesome detail.
+      </p>
+      <p>
+        Annex D, section D.1, says (emphasis mine):
+      </p>
+      <p>
+        <em>[#2] An implementation is not required to follow the model defined in this annex. In particular, the model assumes serial evaluation, but parallel evaluation is equally valid. However, </em>'an implementation should ensure<strong> -- for all expressions that are not determined to be undefined in this model -- that expressions are evaluated in a way that will yield one of the results specified by this model, and </strong>that each volatile object is accessed exactly the number of times determined by the model<em>'.</em>
+      </p>
+      <p>
+        It goes on to define a pile of notation, of which all we need here is the following: (1) [D.2.1 #1] an <em>event</em> is one of 5 things including (a) reading the value of a byte, (b) writing a value to a byte, (c) identifying a particular address as somewhere to be read or written, (d) a sequence point. (2) [D.2.4 #1] These are written as <em>R(a)</em>, <em>W(a)</em>, <em>L(a)</em> and <em>S</em>, respectively. (3) [D.2.4 #4] The <em>R</em>/<em>W</em>/<em>L</em> notation is extended so that, e.g., <em>L(a,n)</em> means <em>L(a)</em>, <em>L(a+1)</em>, ..., <em>L(a+n-1)</em>. (4) [D.2.4 #4] When one event has to occur before another, we write that as <em>E1 < E2</em>. (5) [D.2.4 #4] The events and ordering constraints associated with an expression <em>e</em> are denoted <em>E(e)</em>.
+      </p>
+      <p>
+        The first thing you do with any expression is to transform it by marking lvalues that are going to be read. The exact text of the relevant bit (from [D.3.1 #3]) is as follows:
+      </p>
+      <p>
+        <em>Finally, wherever 6.5 requires an lvalue not of array type to be converted to the value stored in the designated object, replace the lvalue expression e by the expression $e</em>.
+      </p>
+      <p>
+        Well, [6.5.16 #2] says that <em>in simple assignment (=), the value of the right operand is converted to the type of the assignment expression and replaces the value stored in the object designated by the left operand</em>, and [6.5.16 #3] says that <em>An assignment expression has the value of the left operand after the assignment, but is not an lvalue</em>. OK. Now back to annex D.
+      </p>
+      <p>
+        So, then it says [D.3.2 #3] that when <em>x</em> is an identifier, <em>E(x)</em> is <em>L(x,n)</em> where <em>n</em> is the size of <em>x</em>. And then [D.3.2 #6] <em>E(a=b)</em> is made up of the following things: <em>E(a)</em> with each <em>L</em> replaced by a <em>W</em>, <em>E(b)</em>, and an ordering constraint <em>E1 < E2</em> whenever <em>E1</em> is in <em>E(b)</em> and <em>E2</em> is one of the <em>W</em>s derived from <em>E(a)</em>. Oh, and [D.3.2 #6] <em>E($a)</em> is obtained from <em>E(a)</em> by turning <em>L</em>s into <em>R</em>s.
+      </p>
+      <p>
+        Now, <em>a=b=c</em> parses as <em>a=(b=c)</em>, of course. This contains exactly one "lvalue not of array type to be converted to the value stored in the designated object", namely <em>c</em>, so the transformation step turns the expression into <em>a=(b=$c)</em>. So, pretending for convenience that <em>sizeof(int)==1</em>, we get the following, in order. <em>E(c)</em> = {<em>L(c)</em>}. <em>E($c)</em> = {<em>R(c)</em>}. <em>E(b)</em> = {<em>L(b)</em>}. <em>E(b=$c)</em> = {<em>W(b)</em>, <em>R(c)</em>, <em>R(c)<W(b)</em>}. <em>E(a)</em> = {<em>L(a)</em>}. <em>E(a=(b=$c))</em> = {<em>W(a)</em>, <em>W(b)</em>, <em>R(c)</em>, <em>R(c)<W(b)</em>, <em>W(b)<W(a)</em>, <em>R(c)<W(a)</em>}.
+      </p>
+      <p>
+        OK, so we have the events <em>R(c)</em>, <em>W(b)</em>, <em>W(a)</em>, in that order. Now, [D.3.3 #4] says <em>If an R(a) event applies to a volatile object, this is an access to the object.</em>
+      </p>
+      <p>
+        There is no <em>R(b)</em> anywhere in there, so the model of annex D doesn't prescribe any accesses to <em>b</em>. Hence, by [D.1 #2], an implementation should ensure that exactly 0 accesses to <em>b</em> happen if <em>b</em> is volatile.
+      </p>
+      <p>
+        Now, of course, [6.7.3 #6] <em>what constitutes an access to an object that has volatile-qualified type is implementation-defined</em>, so I suppose an implementation can say that reading its value doesn't count as accessing it; but if your implementation doesn't say that explicitly [3.11] then you can probably assume that reading <em>b</em> counts as accessing it.
+      </p>
+      <p>
+        Yow! -- <a href="GarethMcCaughan.html">GarethMcCaughan</a>
+      </p>
+      <hr/>
+      <p>
+        I prompted this entire discussion when I wrote something equivalent to the following:
+      </p>
+      <code>
+        a = b = constant;<br/>
+      </code>
+      <p>
+        What was in my head was:
+      </p>
+      <code>
+        a = constant;<br/>
+        b = constant;<br/>
+      </code>
+      <p>
+        and I was just saving on typing.
+      </p>
+      <p>
+        I was surprised by the behaviour of the compiler, and wondered what ANSI had to say on the matter.
+        As observed below, saving on typing was the wrong thing to do. But for non-volatiles,
+      </p>
+      <code>
+        a = b = constant;<br/>
+      </code>
+      <p>
+        is safe and (I would claim) the <a href="RightThing.html">RightThing</a> to do because the constant occurs <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a>.
+      </p>
+      <p>
+        -- <a href="NeilWalker.html">NeilWalker</a>
+      </p>
+      <p>
+        These statements are not equivalent. Consider this program:
+      </p>
+      <code>
+        #include <stdio.h><br/>
+        int main(void) {<br/>
+        double d;<br/>
+        int i;<br/>
+      </code>
+      <code>
+        d = i = 3.14159;<br/>
+        (void) printf("d = %f\n", d);<br/>
+        (void) printf("i = %d\n", i);<br/>
+        return 0;<br/>
+        }<br/>
+      </code>
+      <p>
+        The output is
+      </p>
+      <code>
+        d = 3.000000<br/>
+        i = 3<br/>
+      </code>
+      <p>
+        -- RolandIllig
+      </p>
+      <p>
+        <em>They are equivalent when the variables are of the same type, yes?</em>
+      </p>
+      <p>
+        With your particular compiler, on your particular system, the output is as you demonstrated. However, according to Gareth's comments at the top of the page, with a standards compliant compiler d could end up as 3.14159. So this is another case where saving on typing would be the wrong thing to do.
+      </p>
+      <hr/>
+      <p>
+        If you have a choice and time, I would suggest simplifying such expressions to make the behavior more clear to the reader so that they don't have to be a <a href="LanguageLawyer.html">LanguageLawyer</a>. Personally, I don't like "leaky assignment" operators.
+      </p>
+      <p>
+        <em>Indeed, you should be careful. When the language designers set down the lvalue of an assignment operation, they did it with the intent to avoid having to wastefully reload the rvalue, or else there wouldn't be much point in chaining assignments. However, that doesn't mean that compiler writers haven't cheated by hacking in volatile behaviour by forcing a new sequence point to be created whenever a volatile is encountered. Volatiles are problematic because they are 100% side effect, so don't expect their behaviour to be simple or correctly implemented. -- </em><a href="SunirShah.html">SunirShah</a><em></em>
+      </p>
+      <p>
+        This was my point all along. If the compiler is going to do some weirdness with your variable space or stack then you need to slap it around a little to make it behave. Gone are the daze when I used to compile my C stuff through the Tektronix 80186 compiler into assembly and then hand massage the assembly code to get what I wanted. Nowadays I may be a little more verbose, but the code comes out all right because I have clarified everything I'm worried about the compiler misunderstanding. If you take no shortcuts you catch no brambles.
+      </p>
+      <hr/>
+      <p>
+        When 'dest' is *not* volatile, gcc (and egcs) for m68k targets (and probably for others too) generates this code:
+      </p>
+      <code>
+        ;    char * dest;<br/>
+        ;    char * source;<br/>
+        ...<br/>
+        ;    // copy string<br/>
+        ;    while( *dest++ = *source++ );<br/>
+        loop:<br/>
+        move.b (a0)+,(a1) // a0 is the source, a1 is the dest<br/>
+        tst.b  (a1)+      // Does 'dest' contain zero ?<br/>
+        bne loop<br/>
+      </code>
+      <p>
+        That is fine.
+      </p>
+      <p>
+        When 'dest' is a volatile char *, egcs generates exactly the same code. I believe that this ... is wrong.
+      </p>
+      <p>
+        ( -- copied from <a href="http://gcc.gnu.org/ml/gcc/1999-10n/msg00201.html">http://gcc.gnu.org/ml/gcc/1999-10n/msg00201.html</a> )
+      </p>
+      <p>
+        To comply with the standard, the compiler should generate code more like this:
+      </p>
+      <code>
+        ;    char * source;<br/>
+        ;    volatile char * dest<br/>
+        ;    ...<br/>
+        ;    // copy string<br/>
+        ;    while( *dest++ = *source++ );<br/>
+        loop:<br/>
+        move.b (a0),(a1)+ // a0 is the source, (volatile)a1 is the dest<br/>
+        tst.b  (a0)+      // read from the non-volatile source *again*.<br/>
+        bne loop<br/>
+      </code>
+      <p>
+        If both the source and the dest are volatile, the compiler should generate code more like this:
+      </p>
+      <code>
+        ;    volatile char * dest;<br/>
+        ;    volatile char * source;<br/>
+        ;    ...<br/>
+        ;    // copy string<br/>
+        ;    while( *dest++ = *source++ );<br/>
+        loop:<br/>
+        move.b (a0)+,d0<br/>
+        move.b d0,(a1)+<br/>
+        tst.b  d0        // avoid touching volatiles again<br/>
+        bne loop<br/>
+      </code>
+      <p>
+        (<a href="PreferredOrderOfSrcDstArguments.html">PreferredOrderOfSrcDstArguments</a>)
+      </p>
+      <hr/>
+      <p>
+        <em>Originally this page said:</em>
+      </p>
+      <p>
+        C <a href="LanguageLawyer.html">LanguageLawyer</a> needed to answer the following question:
+      </p>
+      <ul>
+        <li>
+           int a,b,c;a=b=c;
+          <ul>
+            <li>
+               Does <em>b</em> get read?
+            </li>
+          </ul>
+        </li>
+        <li>
+           int a,c; volatile int b; a=b=c;
+          <ul>
+            <li>
+               Now does <em>b</em> get read?
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p>
+        <em>There's 2 different things going on here:</em>
+      </p>
+      <ul>
+        <li>
+           what happens when we read from a variable that hasn't been properly initialized with any particular value yet.
+        </li>
+      </ul>
+      <p>
+        There is an important gotcha. The value placed in <em>c</em> - which is unspecified, of course - might be what the standard calls a "trap representation", which would cause undefined behaviour as soon as that value is accessed. See section 6.2.6.1 #4. It is explicitly permitted for integral types to possess trap representations; see section 6.2.6.2 #1 and footnote 37 thereto. So, strictly, the behaviour of both examples above is undefined, and there is no guarantee that <em>b</em> is read or even written; indeed, I think a conforming implementation is permitted to refuse to compile a program containing that code.
+      </p>
+      <p>
+        -- <a href="GarethMcCaughan.html">GarethMcCaughan</a>
+      </p>
+      <p>
+        see <a href="http://www.eskimo.com/~scs/C-faq/q1.30.html">http://www.eskimo.com/~scs/C-faq/q1.30.html</a> for more details.
+      </p>
+      <ul>
+        <li>
+           the "volatile" thing (which I think is what Wright really wants to know about)
+        </li>
+      </ul>
+      <p>
+        <em>I find this is more interesting; I modified the above discussion to focus on that.</em>
+      </p>
+      <p>
+        -- <a href="DavidCary.html">DavidCary</a>
+      </p>
+      <hr/>
+      <p>
+        <em>When 'dest' is a volatile char *, egcs generates exactly the same code. I believe that this ... is wrong.</em>
+        It seems to me that if i have a string pointer that can be modified by something outside my program (i.e. a volatile char *), and such a modification occurs when I am in the middle of copying the currently-pointed-at data somewhere else, that in virtually every case I would much rather be allowed to finish what I was doing first before acknowledging the change, rather than changing proverbial horses in midstream. Therefore I would support the egcs behaviour. -- <a href="KarlKnechtel.html">KarlKnechtel</a>
+      </p>
+      <p>
+        <em>I don't understand. In the above code, it's the data in the string itself that is being modified. One might hope that</em>
+      </p>
+      <code>
+        while( *dest++ = *source++ );<br/>
+      </code>
+      <p>
+        <em>would eventually null-terminate the destination string and exit the loop; but the above (egcs-compiled) assembly code can in some cases exit without ever null-terminating the destination string -- to me, that seems more like switching horses in midstream than the standards-compliant behavior. If the pointer itself can be modified by something outside the program (i.e.,</em>
+      </p>
+      <code>
+        char * volatile pci_card_name;<br/>
+      </code>
+      <p>
+        <em>) then I would agree that copying the entire string before acknowledging that the pointer has been changed would be less confusing than the alternative. Could you give an example where changing egcs to be standards-compliant would be a bad thing?</em>
+        -- <a href="DavidCary.html">DavidCary</a>
+      </p>
+      <p>
+        <a href="http://rdrop.com/~cary/html/c_programming.html#volatile">http://rdrop.com/~cary/html/c_programming.html#volatile</a>
+      </p>
+    </div>
+  </body>
+</html>

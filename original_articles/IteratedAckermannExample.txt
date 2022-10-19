@@ -1,0 +1,158 @@
+In RecursionVsLoop somebody asked how to implement AckermannFunction non-recursively.
+
+There are a few basic approaches to derecursify a procedure or a function
+* emulate the implicit call stack and flow of control manually
+* memoization
+
+The first one is both obvious and relatively boring. Memoization is more interesting and often times yields higher performance -- if you have enough memory to store intermediary results. So here's a sketch (pseudo-code) of the general memoization approach:
+
+*Initial phase:
+**i0: set up the goal calculate a function F in the initial point x. unknown_set={x}
+**i1: the set of already calculated points is empty. known_set= {} //empty
+*Loop: while 'there's something more we need to calculate'  do
+**l1: try to calculate the function in one or more of the points that are unknown yielding one of the following
+**l2: '''if''' more points were calculated in step l1, add them to the known set and subtract them from the unknown set
+**'''else''' the step l1 yields more points to calculate before we can calculate (the dependencies we are missing). Add those to the unknown set.
+
+With many recursive functions or algorithms (such as the case of AckermannFunction) the dependecies management is very simple: we keep the ''unknown_set'' as a stack, we always try to calculate the head of the stack, and we either get the result in step l1: in which case we simply pop the stack, or else we find in each step exaclty one more point, that we add to the top of the stack (push). In case of Ackermann function the "points" are pairs of integer coordinates (i,j).
+
+So here are two implementations one in Scheme (the MzScheme dialect for the convenicence of using hash-tables) and in Java 5, which is kind of verbose but was picked for the fun of it (let's test the new features of Java 5 generics), and efficiency. OF course, the full exercise taking half-an hour, the code is subject to heavy criticism and improvements.
+-----
+
+In Scheme (MzScheme), comments are one liners following a semi-colon. To watch the evolution of the algorithm closer uncomment the lines with display statements following the ; .
+
+(define (ack-iter m n)
+  (let* 
+      ((solved-set (make-hash-table 'equal))
+       (to-solve   (list (cons m n)))   ; the initial pooint to solve is the pair m,n
+       (add-unknown (lambda (x) (begin (set! to-solve (cons x to-solve))
+                                       ;(display "to-solve: " ) (display x) (display #\newline)
+                                        )
+                                 ))
+       (add-solved-head 
+                      (lambda (val) (begin
+                                      (hash-table-put! solved-set (car to-solve) val)
+                                      ;(display (car to-solve)) (display " -> ") (display val) (display #\newline)
+                                      (set! to-solve (cdr to-solve))
+                                       ))
+               )
+       )
+   (do  () ;main loop no initialization needed
+        ((null? to-solve) ; condition to exit loop
+          (begin
+            (display "hash size: " ) (display (hash-table-count solved-set)) (display #\newline)
+            (hash-table-get solved-set (cons m n)) ; yielding the result
+          ))
+        (let ((i (car (car to-solve)))
+              (j (cdr (car to-solve)))  )
+             (cond ((= i 0) (add-solved-head (+ j 1)))
+                   ((= j 0) (let ((result (hash-table-get solved-set       ;try to pick ack(i-1,1)
+                                                           (cons (- i 1) 1) 
+                                                           (lambda () ()))  ; exception handler for hash-table-get
+                                          ))
+                              (if (null? result) ;ack(i-1,1) not found
+                                   (add-unknown (cons (- i 1) 1) ) 
+                                   ; else  result= ack(i-1,1)
+                                   (add-solved-head result)
+                               )))
+                   (else (let 
+                             ((result1 (hash-table-get solved-set ;try to pick-up result1= ack(i, j-1)
+                                                       (cons i ( - j 1))
+                                                       (lambda ()()) ;exception handler
+                                         )
+                                 ))
+                             (if (null? result1) 
+                                   (add-unknown (cons i ( - j 1)))
+                                 ;else   result1=ack(i,j-1)
+                                 ;try result= ackerman(i-1 , result1)
+                                 (let 
+                                      ((result (hash-table-get solved-set ;try to pick-up ack(i, j-1)
+                                                       (cons (- i 1) result1)
+                                                       (lambda ()()) ;exception handler
+                                               ))
+                                       )
+                                       (if (null? result)
+                                             (add-unknown (cons (- i 1) result1))
+                                             (add-solved-head result)
+                                            )
+                                           
+                                  )
+                              ))
+                         ) ;end of else block
+             )) ;end of cond and let block
+            ))); end the definition of the big loop, the let and the function ack-iter 
+ (ack-iter 3 10)
+
+----
+In Java 5:
+
+ package examples;
+
+ import java.util.HashMap;
+ import java.util.Stack;
+
+ public class Ackerman {
+	static class  Pair <T1,T2>{
+		T1 x; T2 y;
+		Pair(T1 x_,T2 y_) {x=x_; y=y_;}
+		public int hashCode() {return x.hashCode() ^ y.hashCode();}
+		public boolean equals(Object o_) {Pair o= (Pair) o_; return x.equals(o.x) && y.equals(o.y);}
+	}
+
+	/**
+	 * @param args
+	 */
+	public static int ack_iter(int m, int n) {
+		HashMap<Pair<Integer,Integer>,Integer> solved_set= new HashMap<Pair<Integer,Integer>,Integer>(120000);
+		Stack<Pair<Integer,Integer>> to_solve= new Stack<Pair<Integer,Integer>>();
+		to_solve.push(new Pair<Integer,Integer>(m,n));
+		
+		while (!to_solve.isEmpty()) {
+			Pair<Integer,Integer> head= to_solve.peek();
+			if (head.x.equals(0) ) {
+				solved_set.put(head,head.y + 1);
+				to_solve.pop();
+			}
+			else if (head.y.equals(0)) {
+				Pair<Integer,Integer> next= new Pair<Integer,Integer> (head.x-1,1);
+				Integer result= solved_set.get(next);
+				if(result==null){
+					to_solve.push(next);
+				} 
+				else {
+					solved_set.put(head, result);
+					to_solve.pop();
+				}
+			}
+			else {
+				Pair<Integer,Integer> next0= new Pair<Integer,Integer>(head.x, head.y-1);
+				Integer result0= solved_set.get(next0);
+				if(result0 == null) {
+					to_solve.push(next0);
+				}
+				else {
+					Pair<Integer,Integer> next= new Pair<Integer,Integer>(head.x-1,result0);
+					Integer result= solved_set.get(next);
+					if (result == null) {
+						to_solve.push(next);
+					}
+					else {
+						solved_set.put(head,result);
+						to_solve.pop();
+					}
+				}
+			}
+		}
+		System.out.println("hash size: "+solved_set.size());
+		System.out.println("consumed heap: "+ (Runtime.getRuntime().totalMemory()/(1024*1024)) + "m");
+		return solved_set.get(new Pair<Integer,Integer>(m,n));
+	}
+	
+   public static void main(String args[]) {
+	   int m=3;
+	   int n=10;
+		System.out.println(ack_iter(m,n));
+   }
+ }
+      
+

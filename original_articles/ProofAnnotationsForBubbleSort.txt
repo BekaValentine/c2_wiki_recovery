@@ -1,0 +1,165 @@
+I did the following proof annotations for bubblesort today morning in the underground (yes I admit, I worked around with it a bit when I keyed it in):
+
+The following bubble sort method is given in a hypothetical java-like language.
+
+  // [ predicate ] is a proof annotation about the variables at the spot where this "comment" is located. 
+  // The predicate must hold (evaluate to true) every time the program can reach that point.
+  // These predicates state simple but relevant facts about the state of the algorithm like what part is already sorted.
+  // The predicate language must be closed i.e. not depend on unlimited execution (not turing complete), but only predicate logic.
+  // Example: "forall 0 < num i < n : a[i]>0" means that all elements of a with an index of 1..n-1 are positive.
+  // Strictly this forall is syntactic sugar for  "forall i elem num : (0 < i && i < n) && ( a(i) > 0 )"
+
+  void bubblesort(number[] a)
+  {
+    unsigned n = a.length;
+
+    for (unsigned i = 0; i + 1 < n; i++)
+    {
+      // 1 (partially sorted at the end, trivially true for i=0)
+      // [ forall n-i <= num l && l < n :
+      //       forall l <= k && k < n :
+      //           a[k] <= a[l]
+      // ]
+
+      for (unsigned j = 0; j + 1 < n-i; j++)
+      {
+        // 2 (higher than all earlier elements; trivially true for j=0)
+        // [ forall 0 <= num k && k < j :
+        //       a[k] <= a[j]
+        // ]
+
+        if (a[j] > a[j+1])
+        {
+          //[ a[j] > a[j+1] ]  // 3a (trivial from if condition)
+          a[j] <=> a[j+1];
+          //[ a[j] < a[j+1] ]  // 3b (trivial, swap)
+          //[ a[j] <= a[j+1] ]  // 3c (trivial, relaxation of 3b)
+        }
+        else
+        {
+          //[ a[j] <= a[j+1] ]  // 3d (trivial)
+        }
+
+        //[ a[j] <= a[j+1] ]  // 3 (two elements ordered)
+        //[ forall 0 <= num k && k < j+1: a[k] <= a[j+1] ]  // 4 (higher than all earlier elements+1)
+      }
+      //[ forall 0 <= num k && k < n-i: a[k] <= a[n-i] ]  // 5 (last one is higher than all earlier elements)
+
+      //[ forall n-i-1 <= num l && l < n : forall l <= num k && k < n : a[k] <= a[l] ]  // 6 (partially sorted at the end+1)
+    }
+
+    //[ forall 0 < num l && l < n : forall l < num k && k < n : a[k] <= a[l] ]  // 7 (all sorted)
+    // might be shortened to [ sorted a ] if "sorted" were a predefined predicate
+  }
+
+I started with the result of the "swap" (annotation 3); later I added 3a to 3d, because that would guarantee that 3 can be proven by simply joining over both if-branches.
+
+I remembered, that the inner loop will move the highest element to the end, so I wrote it down and to prove it I added annotation 2 to the beginning of the loop. Any simple reasoning system will now be able to prove 4 from 2 and 3 as well as 2 from 4 (next iteration).
+
+Then I wrote down 6, that the last elements are ordered. To prove this, I added 1 (trivially true at start) and 5 (just the annotation for the last nested loop iteration).
+
+From this follows 7 the same way as 5.
+
+We do not even need mathematical induction in the prover to prove 5 or 7, but just plug in the instance of the annotation for the last element of the nested loop.
+
+I believe, that these annotations can be proven fully automatically, because they are
+* trivial facts about statements in the program
+* simple logical joins over the branches of the control flow graph.
+
+I suppose, that most of these annotations could be dropped and inferred automatically (especially 3a-3d, but possibly also 1, 2, 4 and 6). But every dropped annotation will drive the search space for the prover up (with all the given annotations it will not have to do any searching, but only to test).
+
+I think the difficulty is not the proof itself, but selecting the few relevant annotations (invariants), that together lead to the conclusion (here 7). The programmer, who has an understanding of the algorithm will be able to select these easily and the prover will easily prove them from the expressions (or not) and combine them together to the surrounding annotations (or not). An automatic prover cannot guess these invariants, because there are just too many of them. To repeat: The difficulty lies in the selection of the annotations not in their complexity.
+
+Of course, I can't test the above program, because these proof annotations are not yet (:-) understood by any system, but they might be added easily, say to Java as code attributes, that may (!) be evaluated by the JavaVirtualMachine to, e.g., improve the code (remove unneeded bounds checks or assertions) or by an automatic verification system.
+
+The latter could, e.g., run in the IDE and tell us beforehand, that e.g. the last annotation ([sorted a]) cannot be proved from the other (I probably made fence post errors and could then correct these until the proof completes successfully). That way there will be no errors in the proof ''provided'' the sorted predicate is defined correctly, because the primitive assertions must follow from the code itself.
+
+-- GunnarZarncke
+
+----
+Comments/Critique:
+
+'''Shouldn't you also prove that n is the correct number of elements to sort?'''
+
+*''I don't know, what you mean. N is no parameter, it is identical to the length of the array.''
+
+* You should prove it is correct because it is not a parameter, because you generated its value inside your function.  A hypothetical automatic proof-checker should tell you that you can't use n as an input to an annotation until you either prove it is correct, or assume it is correct as an axiom.  (I'm thinking it should work kind of like Perl's taint feature -- if I haven't proven or assumed something, it and everything dependent on it is unproven).  If the checker had access to the definition of a.length, it could check that it returned an unsigned, and therefore n doesn't lose any data.  It would also have to have already proven that a.length is correct, or you would have to tell it to assume that.
+
+* ''I assumed, that 'the checker has access to the definition of a.length'. But you are right, that I have to state something about n, namely the allowed range (your comment below), e.g. 'assert n < unsigned.max' (if the assert is part of the contract of the method it should better be called "require"), otherwise I'd get a failure to validate due to overflow.''
+
+'''What if n is the maximum unsigned value?  Then your calculations i+1 and j+1 can overflow!'''
+
+*''You are right here. I glossed over the problem of value ranges. But I'd prefer a language, that distinguishes between numeric types without overflow and ring types with overflow (for the record: I'd like "<" and ">" to behave for these overflow type like water-mark comparisons, which can be implemented in assembly with one branch instruction, e.g. bpl/bne). For numeric types I'd assume, that arithmetic overflow is either not possible (due to proof checking) or raises an exception (which can be modeled as a failure or bottom type).''
+
+* I would expect it to sort any input it said it could sort, i.e. any legal array of numbers, without raising an overflow exception (an out of memory exception or similar, I could see).  Otherwise, the proof of any function depending on bubblesort would have to include a proof that the length of the array it passes to bubblesort <= max(unsigned) - 1 
+
+* ''See comment above.''
+
+* By the way, a number of languages (including PerlLanguage) support these two types of integers with a "big int" package.  The standard int of the language can overflow, and the "big int" is correct until you run out of memory.
+
+* ''No, I didn't mean a "big int", but an int, which is either guaranteed by the checker not to overflow, or to throw some kind of OverflowException if it does.''
+
+** The "big int" package from PerlLanguage does work this way.  The number of bits is not just a bigger constant; it allocates more memory for a given int as needed.  It will fail due to lack of memory before overflowing.  However, I don't think you can use one to index an array...
+
+* ''I'd assume array.length to be of this kind of type, thus overflow is not possible, but boundary conditions still are. I will prepare an example on ProofAnnotationsForArithmetic shortly.''
+
+'''Why do the annotations have int types for indices and the code has unsigned?  Are the ints in the annotations supposed to be of infinite range?'''
+
+*''Yes, more inaccuracies on my side - remember, this is just a sketch. But yes, I'd like annotations to be supposed to be the real - err - integer types.''
+
+* When you attempt to prove something, inaccuracies are not allowable.  I am pointing out what I believe to be holes in your proof to see if they can be plugged, and if so, can it still be simple?  (I would like it to be simple, but I'm currently not sure that's possible).
+
+* ''You are right 'When you attempt to prove something, inaccuracies are not allowable'. My focus was not on proving the correctness of bubblesort, but to show the way of doing it. Your points indicate, that I have overlooked some relevant points, but to me it seems, as if these could be ameliorated easily (compared to the proof annotations and the checker itself).''
+
+* ''As for the int/unsigned. I should have used "num" instead of "int" in the proof annotations indicating 'unlimited' size (corrected in text). Because the proof holds for this more general case, it follows immediately, that it holds for the restriction to ranges. One could add a step 8:''
+    //[ forall 0 < unsigned l && l < n : forall l < unsigned k && k < n : a[k] <= a[l] ]  // 8 (all sorted in range)
+* ''But I think, that such restrictions are usual business for a checker anyway.''
+
+'''Critique: I cannot read the annotations, even for an example as simple as this.'''
+* ''May I ask why? What is the problem? The "forall" predicates? These are fairly simple PredicateLogic statements. I added an short explanation at the top. PredicateLogic is required for such kinds of proofs in any case. Or is it unclear how they combine or are derived?''
+* Interleaving declaration and definition thoroughly derails me when I read the forall statements.  I think it'd be substantially easier to read if things were written as [ given l, k unsigned: forall l. 0 < l < n in forall k. l < k < n in a[k] <= a[l] ].  However, trying to understand how the pieces fit together also impedes my willingness to use the technique, much less offer encouragement for others to use it.  When I find I need formality in verifying a piece of code works, I find it far easier to rewrite it in a functional language (e.g., HaskellLanguage), where I can prove things work inductively, turn the inductive proofs into unit tests for the imperative language, and re-code the desired implementation in the imperative language.  I find it works better for me for two reasons: I have unit tests that codify my proofs of correctness, and because the functional representation is kept concise.  I don't have to worry about imperative flow ''and'' invariant checking interleaved.
+* ''I understand that the interleaving is difficult to follow. But I don't really understand your method. Could you please give a short example of your method. Preferably using the bubble sort?''
+* Please see QuasiFormalMethods.
+
+----
+'''Possible implementation strategy'''
+
+This probably would not generate a universal checker, but it seems like it would lead to something damn useful:
+
+Add an "assume" annotation, to patch over what you can't get the checker to do automatically (yet).  Then, start with a sample piece of code (probably much simpler than a sort), and an annotation that assumes the final result, and one to check the final result:
+    if (a >= 10) a = 0;
+    //[ assume [a < 10]]
+    //[a < 10]
+At each step, find an assumption that you are unsure about, then set about proving it, and remove the assumption.  Proving the assumption may require only changing the annotations, or it may require extending the checker.
+
+''I take it, the checker should reject any program with assumptions it cannot prove (yet) and list exactly these remaining assumptions.''
+
+Actually, I was thinking that the checker should accept an assumption as a fact, unless a previously existing fact contradicts it - i.e. it is an axiom.  Also, the programming language definition (and maybe the implementation) would be treated as a set of axioms.  The source code could be treated also as a set of axioms, and the non-assumption annotations as hypotheses.
+
+So, maybe there are 3 states for any given annotation:
+* known false (an unresolvable contradiction arose while attempting to prove it)
+* known true (follows from axioms and/or other known true hypotheses and/or assumptions)
+* unknown -- can't prove or disprove it based on the axioms
+
+And an attribute "depends_on_assumptions" that is true if
+* The annotation is an assumption
+* The annotation depends on any annotation that depends_on_assumptions.  
+** The really tricky bit here is with rules like: X is true if either A or B are true.  If A is true and does not depend on assumptions, then X is also true and does not depend on assumptions, regardless of B.
+
+It would, of course, be able to list the assumptions that any hypothesis depends on.
+
+'''Disclaimer'''
+
+Maybe I should add, that I have done little actual formal verification of programs myself. I know, that it is done, but not, if the annotations sketched here are a viable way.
+----
+This sounds similar to the Z Notation (ZedLanguage), a FormalSpecification language.
+
+http://en.wikipedia.org/wiki/Z_notation
+
+''From what I have seen, Z is not about annotating a program (like shown in the comments above), but about the separate specification of a program. Further it has quite a different syntax and use. Not what I expected.''
+----
+It looks like EscJava does at least 90% of this.
+----
+See also HoareTriple
+
+See ProofsCanBeSimple, AutomatedTheoremProving, ProofOfCorrectness

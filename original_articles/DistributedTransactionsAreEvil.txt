@@ -1,0 +1,266 @@
+
+
+The long version:
+Multi-phase commit protocols provide the minimum facilities for supporting distributed transactions. Unfortunately they do not help you much when you have physical failure. Even replicated data has problems. There are partial workarounds but they generally involve very heavy-weight infrastructure.
+
+''Nothing will help you very much when you have a physical failure.''
+
+The problem is that by distributing a transaction, you create a very tight dependency between two independent physical devices. There are two basic failure modes. One is the loss of communication. The other is unrecoverable failure of one of the nodes. The two cannot be distinguished in a number of 'hang' cases. Timeouts are also an issue. How long do you wait before assuming loss of the peer?
+
+So, we have a detection problem. We also have a recovery problem.
+
+Replicated database systems can continue using only the cached local data. This machine becomes the 'master' for all transactions, with its peer recovering data from it. This works okay but tends to avalanche failures under saturation, as each node takes up extra traffic, saturates, and drops out. If the nodes spontaneously recover then the recovery itself can cause saturation failures, and so on. In networks this is known as a RIPStorm. Many routers coming online simultaneously send out RIP (router information protocol) requests which spawn further requests. The extra traffic causes timeouts and buffer overruns leading to recovery and so on. In distributed applications the same problems occur, often causing deadlock timeout problems leading to resubmission of transactions leading to more lock collisions and so on. 
+
+If one has not half a brain, but 'merely' a split-brain. Then both nodes may attempt to become 'master' and later transaction resolution problems happen. The alternative is to have all nodes fail if one node appears to fail. This is safe with respect to the running transactions but still has a recovery problem.
+
+We need to resynchronize the failed node. Presumably the node can be recovered with some historical set of data (say only an hour old). How to recover the new information? In a replicated system the data can be recovered fairly easily bearing in mind that it will thrash the peer unless specially handled. Non-replicated systems cannot do this. The data is lost. A separate transaction journalling system can be set up using timestamps and such things, but it is the opposite of trivial.
+
+My conclusion is that distributed objects, created implicitly by distributed transactions, are so evil that they should be avoided if possible. If you don't then you have created a difficult management problem that I don't believe should be ignored. --RichardHenderson. 
+
+----
+
+By having multiple databases, you limit the quantity of operations that are down when a specific database fails, at the cost of some applications having to use multiple databases.  There are often good reasons not to put all of your data into one humongous database.
+
+How does one recover if one of the databases fails?
+
+This is discussed in books on transaction processing like TransactionProcessingConceptsAndTechniques or online at http://research.microsoft.com/pubs/ccontrol.
+
+''Chapter 7 is good. It illustrates some of the pain you automatically buy with distributed objects. Here's a quote:''
+ Proposition 7.2: No ACP [atomic consistency protocol] can guarantee 
+   independent recovery of failed processes.-----
+
+
+An example situation where distributed transactions are a big win...
+
+I use the distributed/embedded MnesiaDatabase for my distributed
+transaction needs. It's a real masterpiece. Because it's easily
+embedded in programs, it basically gives you a new datatype:
+replicated, transactional tables - either persistent on disk, or
+purely in memory. And it's lightweight enough that you can use it for
+problems that wouldn't usually bring the word "database" to mind.
+
+We use this to manage configuration on clusterable internet
+appliances, like the Alteon SSL-offloader. The boxes share a
+replicated Mnesia database containing all of the system's
+configuration - from the network settings all the way to SSL
+certificates.
+
+When someone logs in to one and makes some config changes, it gets
+committed to the database, which (after consistency checking) does a
+standard two-phase commit on all the boxes that're currently
+online. If that succeeds, the database makes a callback on each node
+saying what's changed, and the application syncs its config with the
+database contents. Then they're all running the new configuration and
+the job is done.
+
+So what happens if a box is offline during a change, or fails at an
+awkward time? We carry on without it. Logically the next thing that
+box has to do is come back online at some point (if it doesn't do
+that, who cares about it?). So the first thing it does when it comes
+online is to download the latest copy of the database from a
+neighbour, sync itself with that, and then continue as normal. The same mechanism works when you add a new machine to the cluster.
+
+Lovely, and what a pain this would be without distributed
+transactions!
+
+There are other hard problems like partitioned networks, which we have
+some special mechanisms for, but I conveniently skip that because I'm
+not intimately familiar with it.
+-- LukeGorrie
+
+----
+
+I'd say it is pretty difficult to support a distributed application with multiple transacted services (such as one or more databases) without a common two-phase commit transaction manager. --RobertDiFalco
+
+----
+
+But data results from operations. These
+operations need to be rolled back, not just the data. So, aren't distributed transactions of limited usefulness?
+
+We're lucky here. In our system the operations take place in a
+configuration editor, and all they do is generate data (like "set foo
+to bar when we decide to commit"). So to "rollback" the operations, all
+we need to do is forget that data. The operations themselves don't take place inside a transaction, nor does anything involving "side-effects".
+
+I suspect the real problem is that implementing distributed
+transactions is really hard. I would dread to build our system using a
+CORBA transaction server and writing our own resource managers,
+rollback logic, etc. Ugh! But with the luxury of a lightweight
+distributed database that works beautifully, it's a real pleasure.
+
+There's probably a good design pattern there too, at least for some
+systems: Our transactions only deal with "dumb" data, and we leave it
+completely in the DB's hands. We need to validate data, but we do that
+at the end of "our part" of the transaction and leave the commit phase
+completely up to the DB. Then we use a callback from the DB after the
+commit to get configuration change events and apply them after the
+transaction. It's OK if something fails after the transaction but
+before processing the event, because the system makes itself
+consistent as it comes back online. Something failing ''during'' the transaction isn't our problem, because the DB can handle that.
+
+One consequence of the separate event is that our changes do not
+actually become *operational* atomically (if such a thing would be
+possible), so we rely on the "soft realtime" characteristics of the
+application to get the asynchronous event processed very quickly - which is
+perfectly OK for our system.
+
+I wonder what some good examples are of real systems that can't just
+use "dumb data" and genuinely need to have customized rollbacks?  It
+seems like a tremendous advantage to stick with data if you can.
+-- LukeGorrie
+
+----
+
+What are some good examples are of real systems that can't just
+use "dumb data" and genuinely need to have customized rollbacks?  It
+seems like a tremendous advantage to stick with data if you can.
+
+Most often it's not possible when you interact with the physical world. 
+If you make a change to a sensor, add a route to router, etc, then it
+either happens or it doesn't.
+
+''But that sounds very much like the system I'm describing. In analogy, what we do is perform a side-effect-free consistency check inside the transaction to confirm that we can add this route to the router, then we complete the transaction, and then we update the routing table to reflect the contents of the database. The fact that it's done in a distributed transaction is what prevents concurrent conflicting configuration changes. In fact our system is used to store the master configuration of an external IP switch, and behaves in precisely this way! -- LukeGorrie''
+
+The device can't stop the world from changing. When the operation is performed it can still
+fail. If you do the operation before the database change then your database operation can 
+fail at which time the physical world and the informational world can be out of sync.
+Or vice-versa. It takes a lot of work to handle all these scenarios.
+''Yes it does. Each failure mode needs to be handled. Since some failure modes appear identical manual intervention is almost always required. The human factor makes things much much worse IMO.''
+
+
+-------
+
+
+''Can you give an example scenario where the approach that I describe breaks down? On something in a similar domain to what I describe, that is. -- LukeGorrie''
+
+Consider any double failure scenario. Your check works, the add to the database succeeds, the add route fails, your program fails. There is now a consistency problem.
+
+''That's true. We rely on "eventually" being able to get valid changes applied. I suppose the analogous case in a distributed objects system is the rollback failing. If a nasty problem like this occurred in our system, the solution would be to reboot the faulty appliance so that it resynchronizes - but this would mean the software is broken if it can do it by itself. -- LukeGorrie''
+
+What needs to happen is consistency check/merge process on the restoral of any component.
+Someone needs to be considered master and the master should have a fixup procedure
+on restoral so a backup can be installed before it comes up, if necessary.
+Otherwise service could be lost. If the switch comes up and blindly syncs to the
+database service can be lost because the database may be out of sync and a route
+could be removed. For the same reason the database can't consider the switch the
+master. It can get complicated when you get down to the fine details because nobody
+can be believed in all scenarios. In a slow changing environment this risk isn't
+great. But in a fast changing environment with huge unpredictable load spikes, it sucks.
+Consider if your switch could change routes on its own in response to failure.
+The picture gets even more complicated.
+
+''Yeah. In our system, the database is the master configuration. But it's distributed in itself, so you get the partitioned network problem, which is hard. In the worst case for that component, you'll lose some configuration changes (but at least you can detect this). (Well, in the ''worst'' case all your machines will simultaneously blow up, and you with them ;-)) -- LukeGorrie''
+
+----
+
+''Luke, I think you are slightly outside my definition of a distributed object. That sounds like a replicated object. Furthermore it sounds like you aren't using distributed transactions, otherwise all the databases would rollback if one failed on an update. In any case, master-slave replication is an excellent way of avoiding distributed transactions. It is a vectorized approach. First one (master), then the next ones(slaves), with explicit recovery strategies on failure. Excellent architecture IMO.''--RIH.
+
+Right, I'm not using distributed objects in the object-oriented sense of the word. But I am using distributed transactions. On a failure in the two-phase-commit the DB does a rollback, but I think (must check) that it transparently retries on e.g. network failures. It's possible that the rejection actually makes it to the user, who retries - I'm not sure. -- LukeGorrie
+
+'''So if an update to one database fails, all the updates fail? Or do you continue, ignoring the failed machine? Sorry if I'm being dim here. --RIH'''
+
+A good question. I believe that we retry with only those nodes that are still operational, relying on those that are down to sync with our changes when they come back up. I'll check if this is transparent or something for the user to do when I have more time. -- LukeGorrie
+
+''I think this is not a distributed transaction as it is not all-or-nothing. Or maybe you just don't need to. The explicit support for recovery by reference to replicates and timestamps makes each transaction separable. As you say, if a machine comes up it just synchronizes with its neighbours. A kind of RAID for databases :).--RIH''
+
+I think it is :-) because it is all or nothing, but if we get nothing we can try again, since our system can tolerate partial failure. -- LukeGorrie
+
+''P.S., Master-Slave seems a very good and simpler solution too. We use something along those lines for really big clusters. But I guess master-slave, even with one master, still has consistency problems? I imagine that in a partitioned network there is the risk of electing two masters that don't know about one another. Unless you have one distinguished master, but that's a single point of failure :-) -- LukeGorrie''
+
+----
+
+OpenVms tries to solve the partitioning problem by using the idea of '''quorum''' (http://www.openvms.compaq.com/doc/73final/6318/6318pro_018.html#index_x_697).
+
+By the way, I highly recommend reading http://www.openvms.compaq.com/doc/73final/6318/6318PRO.HTML for anyone interested in high availability (including disaster tolerance) clusters. --NikitaBelenki
+
+----
+'''Enter Costin [clap of thunder etc.]:'''
+
+Assuming you want this to be a pattern, and assuming you want others to follow your advice and not use distributed transactions, you have to describe what you intend to put in place of distributed transactions. I contend that you will necessarily reinvent the wheel, or you'll find a better implementation of the distributed transaction concept, or chances are great that you'll invent a worse wheel than others have already done.
+You have a set of operations where you need to access two different databases. And the set of operations as a whole needs to have the famous ACID properties. Please share with us how do you do it. It would be better if you put it on a separate page, what you described below is not good enough and is not a substitute for distributed transactions.
+
+The advantage of using a distributed transactions is that they  are a workable solution to a concrete problem. There's a very , very slim chance in the distributed transaction protocol (usually we're talking about two phase commit) that things we'll go wrong in subtle ways, and we need to recur to operational heuristic (in most of the cases the DBAs for the databases involved will have to do some manual work).
+However this highly improbable annoyance does not belong to the nature of distributed transaction implementation, but to the problem itself. 
+
+So the burden is not on us to defend distributed transactions , since it's been proven both theoretically and practically that they work. But I think the burden is on you to prove that you have a better replacement.
+--CostinCozianu
+
+'' I don't think anyone is seriously suggesting that n-phase commit protocols are unnecessary. They are the minimum requirement. I am suggesting, however, that distributed objects should be avoided because they are brittle; they can fail unrecoverably under pressure. Is it important? Depends what sort of systems you are building.''
+
+Well, you may as well change the title. Or please provide further proof.
+Distributed transactions have the commonly used meaning of distributed database transaction, and they are not evil. I can wait for you if you promise that you really have something better to put in their place. Otherwise, it is only '''intellectually honest and fair''' for you to either change the title, or stop pretending you give good advice, or just advertise you're only expressing an individual rant and not a pattern.
+
+----
+I think we're lacking a distinction between "distributed transactions" and "distributed objects" on this page. I'm sticking up for distributed transactions because they help us a whole lot, and we use a reliable distributed database to do it all for us. That's a lot different to using e.g. the CORBA transaction service with custom "distributed transactional objects" participating in the commit, etc. I imagine it's much harder that way, having to worry about all the failure cases yourself. I suppose bad experiences doing things at the "blood and guts" level is what lead to this page. (NB: if you ask the guy who actually wrote the database that we use what he thinks about distributed transactions, I think he'd say "they're a real fucker" :-))-- LukeGorrie
+
+''A distributed transaction effectively defines a distributed object. The two pieces of data have become one in a logical dependency sense. I don't believe you can bury the problem in the infrastructure, though you can minimise your exposure through replication. I just had a look at Mnesia. Nice database. Still fails on a double-fault, or it hangs forever plus a few other nasty cases. Such is life :).''
+
+More details to backup claims about Mnesia, please :-)
+
+''Here's the most common disaster event, node fails on a multinode power-cut/restore :''
+
+from http://www.erlang.org/doc/r7b/lib/mnesia-3.9.2/doc/html/Mnesia_chap7.html#6.8
+
+ This means that Mnesia (on one node)may hang if a double fault occurs, 
+ i.e. when two nodes crash simultaneously and one attempts to start when 
+ the other refuses to start e.g. due to a hardware error. 
+
+Fun! Thanks for the pointer, I'll have a read of the code. -- LukeGorrie
+
+----
+
+I'm sticking up for distributed transactions because they help us a whole lot, and we use a reliable distributed database to do it all for us. 
+
+This is assumes you can live with manual recovery in certain rare, but real failure conditions.
+In some applications it's not good enough.
+
+----
+
+Duh. Don't you have failure conditions using a single transaction?
+''Yes but they are easier to recover. There are no split data problems. A simple transaction buffer can replay recent changes to bring a backup machine online. Uncompleted transactions will fail back to the client object. This can be fully automated so its a burden but not an evil burden :).''
+
+
+----
+----
+
+History: refactored 18 July. Shifted bits around. Did some light summarization. I might do an AvoidingDistributedTransactions page if someone else doesn't beat me to it. --RIH.
+
+----
+There is a good article on DistributedTransaction''''''s in the Jini Context for anyone interested. See: http://www.javaworld.com/javaworld/jw-07-2001/jw-0720-jiniology_p.html --RobertDiFalco
+
+''A partial discussion. Completely ignores the problems presented above, though the use of leasing as a specifiable timeout is a good thing. Repeats the lie that distributed transactions can be reliable. Nope, not in the sense of disasters and contingency. So I wouldn't use the Jini system to buy anything, for example. Or I might hack a local disaster and rollback my payment :).''
+
+Yeah, I guess I just don't agree with your premise. If a computer goes down during a single-phase commit of a local store, you still have the same possibilities for corruption. I believe you are having a hard time seeing the coordinating processes of a peer-to-peer system as a single machine. Since Jini services, such as the Transaction Manager, are activatable, if it does go down it is automatically restarted. Furthermore, you can have many transaction services across many machines. But then again, I may be missing what you think it special about non-distributed transactions that makes them so robust.
+
+''It is a question of recovery following a physical failure. I don't know enough about Jini to comment on how they have approached (or not) the issue. Single machines can fail, and industrial-scale databases take great pains to mitigate physical failure, and at worst you go to backup and lose some transactions.  The main feature is that you cannot ever get  into a state where only half the transactions are applied. With a distributed physical system this is not guaranteed without significant effort, and compromise. If we could always avoid distributed transactions then they wouldn't be evil, just wrong.''
+
+''There are other issues too, and they interact with each other. Long timeouts avoid fragile networking, but snarl up locking. Any time performance becomes an issue this will cause problems. And so on...  ---RIH''
+
+
+I guess I'm not sure how mitigating physical failure is any different. Most databases log each transaction, if the database goes down during the actual commit, when it comes back up, it finishes processes the transaction log as part of its initialization. As a result, multiple services coordinated with DistributedTransaction''''''s will stay in sync. I've read through this page and I still don't see any evilness that is peculiar to TwoPhaseCommit. Any chance you could try being more specific about this? I'm also not sure what you mean about long timeouts and snarled lockings. In fact, if you are referring to leased resources, the longer the timeout the WORSE it is for fragile networks. Better to keep the leases short but renewable.
+
+''2 phase commit does not rescue you from failure (as opposed to interruption). When a severely failed system comes back up it is not in the state it went down. You need to work a lot harder (or spend a lot more money) to handle failure. Performance suffers as latency increases, but a premature timeout can be just as bad (lots of failed transactions or retry thrashing). Jini may have strategies for these situations, but they must be explicit and go beyond simple transaction protocols. Check out 'split brain syndrome' in the literature. You may consider such issues trivial, but it is risky to think they don't exist or are solved by a 2-phase commit. --RH''
+
+I thought Split Brain Syndrome (i.e. Network Partitioning) has to do with ''Culster Computing'' (say in multi-node replication), when a node is cut off from the network but still attached to a shared drive. I'm not sure how this is distinct from general availability problems when it comes to TwoPhaseCommit. I just want to understand what you are saying.
+
+''Okay :). I may edit this down soon if we can meet minds. Here's a real-world problem I fixed. There are two systems in a bank. One sends money to the other from various accounts to satisfy transaction charges. The mapping is complex since a single charge can be distributed across a number of accounts. Originally this was a normal distributed 2-phase commit which updated all the records correctly and all was well. One day something happened to the power so it cycled ten or fifteen times between the battery backup and the main power. This trashed both machines (but the network survived, praise be to CISCO) and their databases. These machines were both twinned in HA pairs so no expense spared. The HA behaviour probably made the situation worse as machines popped up and down and wrestled disks from each other.''
+
+''Standard procedure, go to backup. Unfortunately the backups weren't synchronized. These were 24X7X364 systems. That left a number of transactions half-baked. Furthermore, there was only limited information about which trades needed redoing manually, forcing a large-scale manual reentry of transactions from a known good point (previous week end). Furthermore the systems had to be carefully isolated to prevent them sending real money to clients twice. If you send a transaction on Swift it has gone. You only have limited recourse to recovering the cash.''
+
+''None of these problems are insoluble, but a number of companies haven't a clue how much danger they are in. They trust to 2-phase transactions and independent backups. They spend huge sums of money on HA paired servers to try and make the physical system failure-proof. At the end of the day, however, it is impossible. Nature finds a way to make your life miserable, and all because of these horrid distributed transactions. ----RH.''
+
+Now you are talking, Richard. I wonder if those things were relational databases, or traditional mainframe systems. Two normal relational databases sitting on distinct machines should be able to do a coordinated recovery process and get back up to the point of the last committed transactions, without too much DBA intervention. If they were both from the same vendor everything ''should have been'' a snap. 
+
+Now, you're right that having an HA duplication (do you mean parallel shared disks ?) in each of the systems probably made matters worse.
+
+But I think the worst of all is that you had a ''resource'' involved (Swift as you say) which was not participant in the two phase commit. Therefore you probably didn't have a distributed transactions at all, and it was wrong to think that distributed transaction mechanisms can solve a inherently difficult problem, while there were no premises for a distributed transaction protocol, even a three phase commit wouldn't have helped :) 
+
+The complications of this scenario could have been a lot worse and the bank was ''extremely lucky'' that it got away with manual reentry of transactions. -Costin
+
+''I agree Costin. Unfortunately, most systems interact with the real world in some sense. I think of them as upstream and downstream. It is not reasonable to expect every participant to take part in an atomic transaction. Sometimes downstream services will provide an XA interface but synchronized disaster recovery just isn't an option, nor can it be guaranteed in the event of backup media failure. Central backups work. Single device so no split problems. Unfortunately most Swiss banks don't want their clients backing up their data or vice-versa.''
+
+''My approach is to 'vectorize' physical transactions where possible. This is, effectively, building a transaction mechanism into the logical architecture which encapsulates fault detection and recovery logic. This removes the dependency on the physical implementation. I'll put more into AvoidingDistributedTransactions (or a better named page) if I get some time. --RH''
+
+----
+CategoryEvil
+

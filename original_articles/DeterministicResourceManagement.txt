@@ -1,0 +1,96 @@
+[Moved from JonathanTang]
+
+I know constructors in C++ can be pretty evil, but using them with destructors to manage resources was handy. I thought there was a discussion of this on c2 but I can't find it. What's your thinking about ctors & unwind protect and such? -- dm
+
+Try ChrisHines.  Yeah, most unlikely place for it.  But it does link back to ResourceAcquisitionIsInitialization, and has some of my thoughts on it. 
+
+Basically...I prefer a Schemish way of doing things.  Create a function that takes care of acquiring and releasing the resource, and pass it a closure for what to do with the resource.  That way you can also pass the resource acquisition along to other functions, and use it on-demand.  DynamicScoping can be used to make the resource available to the closure executing.  
+
+DynamicWind is a more general version of this that also takes into account FirstClassContinuation''''''s.  I'm basically going to need to use this with Alohomora, as it will support continuations and they wreak havoc with safe deallocation of resources.
+
+Chris pointed out a problem with this in that sometimes a resource needs to outlive the allocating function.  This happens fairly often in eg. Java, where you might have a Socke''''''tFactory that returns a Socket that then needs to be manually closed.  All the downsides of new/delete.  But using destructors also has all these downsides, because then you just replace 'socket.close' with 'delete socket'.  As far as I can tell, there isn't an easy way around this.  ''Yes there is - AutoPtr.'' I hate finalizers because they're non-deterministic and most external resources have visible side effects (this is what I was getting at on Chris's home page).  But if you want deterministic anything, you have to specify when, so it seems that the difficulties are inherent in the problem.  -- jt
+----
+
+[Moved from ChrisHines]
+
+''I just wish the newer languages didn't all have GarbageCollection.  My problem with GarbageCollection is that it treats memory as a privileged resource.  First, this takes control away from the programmer, which means that when they do need to do special things with memory they are out of luck.  Second, it tends to make managing non-memory resources more annoying because these languages do not easily support ResourceAcquisitionIsInitialization.  As a result we always have to remember to close our files, network connections, etc.''
+
+
+''I ask you this, if a programmer cannot be trusted to release memory, what makes us think they can be trusted to close a file or a network connection?''
+
+
+
+In some ways, memory ''is'' a privileged resource.  And not just because it's allocated and released so frequently.  Allocating memory has ReferentialTransparency - no other area of the program will know that you've allocated a block, unless you run out.  Similarly, freeing memory has no side effects on the rest of the program.  ReferentialTransparency means that you can freely change when the collection occurs (as long as it happens before lack of memory makes an allocation fail), and nothing in the program will be the wiser.
+
+Most other resources don't exhibit this property.  When you close a file, you may be releasing locks and writing back data to disk that's depended upon by other programs.  When you close a socket, the other end is left talking to empty aether.  When you release a mutex, you let other processes enter a protected space.  Failure to perform these operations at a specific time can lead to starvation, race conditions, and all sorts of other nastiness.
+
+I think what you really want is deterministic cleanup.  In C++, you know when a destructor will be invoked: it's either when a local variable goes out of scope, when you explicitly perform a delete on a heap object, or when the program terminates.  In Java, you have no such guarantees, and IIRC the destructor is not even guaranteed to be invoked by program termination.  The problem isn't so much that GarbageCollection is bad, it's that FinalizersAreEvil.  They let you lazily evaluate code with side-effects, and LazyEvaluation + side effects do not go together.
+
+I'd suggest taking a look at CommonLisp, Dylan, or Ruby.  There the idiom is:
+  (with-open-file input "filename.txt")
+	(do-stuff-with input))
+where you specify that you're acquiring a resource, say what you're going to do with it, and then it's automatically released when control passes outside of the with-open-file statement.
+
+-- JonathanTang
+
+----
+
+Thanks for your comments Jonathan.
+
+Allow me to disagree:  In poorly written programs freeing memory can result in a DanglingPointer.
+
+Allow me to agree:  Yes, I do want DeterministicResourceManagement.  What I find discouraging is that the most commonly used languages that force GarbageCollection upon the programmer either fail to provide a method for DeterministicResourceManagement that is OnceAndOnlyOnce friendly, or make it less than elegant.  I'm referring specifically to JavaLanguage in the first case and CsharpLanguage in the second.
+
+[ DeeLanguage has the best GarbageCollection for People Who Hate GC that I've yet seen. It's easy to pull control away from the the GC when you know better, and it has immediate objects with destructors for ResourceAcquisitionIsInitialization.]
+
+Your CommonLisp example is not unlike the ''using'' statement of CeeSharp.  I propose that this is an incomplete solution, however.  It is great for resources whose lifetime can be controlled by a stack frame, but what about resources that have a more dynamic lifetime.  In short, what if I need to create the resource in one scope and release it in another (think FactoryMethod)?  The advantage of wrapping a resource with a class is that you can pass resource objects around.  When the object gets destroyed it should clean up the resource.
+
+''RAII shares this problem unless you manually implement ReferenceCounting -- a form of GarbageCollection. -- MikaelBrockman''
+
+Yes, no, and yes.  Yes, RAII requires some means of managing resource lifetime in the context of object copying.  No, we don't have to manually implement ReferenceCounting.  In many cases we end up using a form of HandleBodyPattern, but it doesn't have to be reference counted.  In C++ we could have our factory return a std::auto_ptr<> to transfer ownership out of the factory method.  We could use any number of off the shelf reference counting implementations (e.g. BoostLibraries has a nice set of smart pointers).  Finally, yes, reference counting is a form of garbage collection, but it is ''optional'', and it is deterministic.  We can use it where appropriate, and use something else at other times.  Languages with GC tend to ram it down our throats, and we are stuck with it, even when it gets in the way.
+
+''Another disadvantage of the ''using'' statement is that it doesn't free the end-user from the need to think carefully about which objects should be cleaned up when.  Yes, it's a lot less typing than a try/finally block, but at the end of the day it's still the same thing, and it's very easy to misuse it.''
+
+----
+
+Would a dangling pointer ever be desired behavior in a program though (as in, a feature, not a bug)?  By not having side-effects, I mean "not having intentional side-effects".  The whole point of garbage collection is to get rid the nasty unintentional side effects caused by manual memory management.  The garbage collector knows that a chunk of memory is completely unreferenced, and so it can get rid of it without anything knowing.
+
+You're right about C++ destructors being more flexible than CommonLisp "with-".  But I'm not sure that I'd want to pay the price for that.  In the heap-allocation case, you only get destruction when you explicitly delete the object.  I thought the whole point of ResourceAcquisitionIsInitialization was so that we don't have to explicitly free the resources we've allocated.  That's the error-prone part that everybody forgets to do.  ''That's what implicit resource managers like AutoPtr are for.''
+
+I suppose there is a small improvement in that you can free several resources in one swoop.  But you don't need destructors for that; normal Java objects will let you hold onto a bunch of references at once and free them all with a single method call.
+
+-- JonathanTang
+
+----
+
+Of course a dangling pointer would not be a desired feature, but neither would an unclosed socket, file, or mutex.  Why should garbage collection only provide it's benefit for memory?  Why treat memory as a special resource?
+
+I think the point of ResourceAcquisitionIsInitialization is to tie the lifetime of a resource directly to the lifetime of an object.  There are at least two contexts in which this is valuable.
+
+*Resources that are declared locally that you want to release no matter how the local scope is exitted.  This is the context that is addressed by the CommonLisp "with-" constructs and the CsharpLanguage using blocks.
+
+*Resources that have a dynamic lifetime for which you want to ensure release when the last reference to them is removed (if the program logic has not already released them).
+
+I'm concerned that my description of the second is not as refined as I'd like, so allow me to provide an example.
+
+Suppose you are writing a network server that must handle multiple simultaneous client connections that arrive in no particular order and last variable amounts of time.  A simple design is to have a thread that accepts network connections, instantiates a connection object to manage this new resource and adds the object to a list of active connections.  In addition, a pool of worker threads respond to I/O events on the list of active connections.  A worker thread may decide to close a connection (and remove it from the list) based on the network traffic.  In this case the resource is closed explicitly by the code.  However, suppose another part of the system has a fatal error, or the sys admin decides to shut down the server.  During the shutdown process the list-of-connections object is destroyed, and in so doing each connection is destroyed, and using ResourceAcquisitionIsInitialization each connection is gracefully closed
+
+''It works the same way with a correctly designed 'using' construct instead of ResourceAcquisitionIsInitialization. What is needed is thread cancelation which asynchronously throws an exception in it. Asynchronous exceptions, or asynchronous signals handled by a thread in general, are tricky to design correctly. There exist sequences of statements which should not be interrupted in the middle, so threads must be able to selectively block asynchronous signals. It should better be done automatically by various constructs (like processing data with a mutex being held), so code is not peppered with blocking asynchronous signals in all places. Mainstream programming languages don't support asynchronous signals well enough. The 'using' construct must include the code which acquires the resource, unlike CsharpLanguage which concerns only with its releasing. The "acquire" part must be explicit because there must be no window between the "acquire" part and the body when an asynchronous exception could interrupt the thread. 'try...finally' is insufficient. With proper language support asynchronous exceptions are not that dangerous. Canceling a thread causes the "release" parts of active 'using' constructs to be executed, and thus ResourceAcquisitionIsInitialization is not needed for deterministic resource management in this case. -- MarcinKowalczyk''
+
+I don't think this suggestion works when the lifetime of the managed resource is not fully encompassed by the time during which a specific thread is using the resource?  High performance network servers usually don't dedicate a thread to each connection.  Usually there is a small number of threads handling network events as they arrive.  A specific thread will handle one incoming packet, save the state for that connection and move on to do other work until another packet arrives for the first connection.  In that case the thread will not be able to stay within the scope of a single using clause for the network socket the entire time that connection is active.  In fact, the next packet might be handled by a different thread.
+
+----
+
+In practice, all programs allocate memory orders of magnitude more often than they allocate other resources, such as files or sockets. Also, non-determinististic freeing of memory is generally safe (aside from possible RealTime delays), while it's much more important to release other resources in a deterministic manner. For those reasons, automatic memory management makes sense, while manual other-resource management isn't much of a burden.
+
+----
+
+What about UniquePointer''''''s (see: RustLanguage [uses them heavily], CeePlusPlusEleven [std::unique_ptr in particular and move semantics in general], LinearLogic)? Those statically guarantee that at most one entity [thread, stack frame, container object, whatever] will ever be concerned with deterministic cleanup of the object at any given time, and shared-ownership semantics usually aren't needed (and cause their own problems, especially wrt thread semantics, the 'cascading decrements' problem, forgetting to manually break cycles with weak references, etc), and they play nicely with many kinds of collection.
+
+----
+
+See also:
+
+DeterministicFinalization
+----
+CategoryGarbageCollection

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Dont Use Exceptions For Flow Control
+      </h1>
+      <p>
+        [<a href="ExceptionPatterns.html">ExceptionPatterns</a>]
+      </p>
+      <p>
+        Exceptions (in Java and C++) are like non-local goto statements. As such they can be used to build general control flow constructs. For example, you could write a recursive search for a binary tree which used an exception to return the result:
+      </p>
+      <code>
+        void search( TreeNode node, Object data ) throws ResultException {<br/>
+        if (node.data.equals( data ))<br/>
+        throw new ResultException( node );<br/>
+        else {<br/>
+        search( node.leftChild, data );<br/>
+        search( node.rightChild, data );<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        The cute trick here is that the exception will break out of the recursion in one step no matter how deep it has got. (Note this is a linear search rather than a binary one, despite the binary tree. Better example requested.)
+      </p>
+      <p>
+        This violates the <a href="PrincipleOfLeastAstonishment.html">PrincipleOfLeastAstonishment</a>. This makes it harder for programmers to read. There are existing control structures whose sole purpose is to handle these types of operations.  Be kind to the developers who follow you and use a standard approach rather than being creative.
+      </p>
+      <p>
+        Perhaps more important, it's not what compiler implementors expect. They expect exceptions to be set up often but thrown rarely, and they usually let the throw code be quite inefficient. Throwing exceptions is one of the most expensive operations in Java, surpassing even <em>new</em>. On the other hand, don't forget the first rule of optimization (<a href="RulesOfOptimization.html">RulesOfOptimization</a>).
+      </p>
+      <hr/>
+      <p>
+        Another example might be code like:
+      </p>
+      <code>
+        try {<br/>
+        for (int i = 0; /*wot no test?*/ ; i++)<br/>
+        array[i]++;<br/>
+        } catch (ArrayIndexOutOfBoundsException e) {}<br/>
+      </code>
+      <p>
+        This is equivalent to:
+      </p>
+      <code>
+        for (int i = 0; i < array.length; i++)<br/>
+        array[i]++;<br/>
+      </code>
+      <p>
+        Some people advocate the exception version as being faster for sufficiently large arrays. The belief is that it avoids doing the bounds check against array.length twice.
+      </p>
+      <p>
+        In practise it makes almost every programmer who sees it barf. The extra check can be optimised out by a good JVM anyway, so nothing is gained (admittedly not all JVMs are that good). Alternatively, some JVMs have the option to manually disable array bounds checking, for speed, and this code will break under such an option.
+        -- <a href="DaveHarris.html">DaveHarris</a>
+      </p>
+      <p>
+        I've seen exceptions used as loop sentinels written up in <a href="ByteMagazine.html">ByteMagazine</a>. They
+        said that it resulted in faster code  under a Sun JVM (over the equivalent loop with a proper termination condition). Apparently using exceptions this way 
+        with a Microsoft JVM took longer. So it's not even a reliable speed-hack.
+      </p>
+      <hr/>
+      <p>
+        Modern JVMs can optimise away the bounds check if they can see that the loop will never go beyond the end of the array.  The version using exceptions is impossible to optimise in this way. --<a href="NatPryce.html">NatPryce</a>
+      </p>
+      <p>
+        <em>Interesting.  Python uses exceptions for flow control, but they are implicit.  I am referring, of course, to </em>StopIteration, an exception thrown by iterators when they are exhausted.  Ironically, because python's for loop (really ForEach) takes care of them automagically, and since you don't have to write a StillHasNext? method in your iterator, usually cleaner than using other methods--except when you try to use the damn iterators <em>outside</em> of the for-eaches!!<em></em>
+      </p>
+      <hr/>
+      <p>
+        I use exceptions for flow control in some situations.  A simplistic example is:
+      </p>
+      <code>
+        template<typename T, typename F> void <br/>
+        stream_foreach(F& f, istream& in) {<br/>
+        try {<br/>
+        in.exceptions(istream::failbit | istream::badbit); // NOT eof<br/>
+        while(true) {<br/>
+        T t;<br/>
+        in >> t;<br/>
+        f(t);<br/>
+        }<br/>
+        } catch(istream::failure&) { /* expected */ }<br/>
+        }<br/>
+      </code>
+      <p>
+        This simply reads Ts until failure occurs.  Most of the time 'F' will simply dump the values into a deque.  There is a high chance that any failure is caused by attempting to read after reaching eof (in.eof() and in.fail() both set).  I do the same for grabbing all the lines from a file.  I consider this to be something of a <a href="TellDontAsk.html">TellDontAsk</a> issue, but since the exception -always- occurs for finite streams (which I use in practice), this is still flow-control.
+      </p>
+      <p>
+        It's probably worth commenting expected exceptions of any sort.
+      </p>
+      <p>
+        <em>Considering that your alternative would be to put the try/catch </em>inside<em> the while loop, which would only exist to issue a break, this is much cleaner.</em>
+      </p>
+      <hr/>
+      <p>
+        Another real world example (seen in a <a href="JavaServerPage.html">JavaServerPage</a>):
+      </p>
+      <code>
+        } catch(RedirectException e) {<br/>
+        response.sendRedirect(e.getURL());<br/>
+        }<br/>
+      </code>
+      <p>
+        I needed some time to realize that it was part of the normal control flow of some form of weird caching mechanism...
+      </p>
+      <p>
+        <em>What's wrong with that code?  What else can you do when a third-party library throws an exception in a situation that your code can handle?</em>
+      </p>
+      <hr/>
+      <p>
+        My two bits on the above example... In a loosely coupled system I have used Exceptions to control flow, for example every action has one of three possible outcomes, (1) success (2) failure (3) alternate. Normal processing would result in (1), an Exception would result in (2) and normal processing but a particular return code would result in (3). I realize Exception's are very expensive but this seemed the most clean way of achieving flow control.
+      </p>
+      <p>
+        <em>Magic return codes... THOSE are smelly, except in typeful programming that force you to handle them (like in Haskell).</em>
+      </p>
+      <hr/>
+      <p>
+        We should also note that this depends on the language. In the <a href="PythonLanguage.html">PythonLanguage</a>, iterators raise a StopIteration exception if there are no further items. Even standard language constructs (such as 'for') rely on this. Therefore, it is quite common to use exceptions for flow control.
+      </p>
+      <p>
+        The <a href="RubyLanguage.html">RubyLanguage</a> has separate mechanisms for reporting errors and <a href="UnwindingTheStack.html">UnwindingTheStack</a> as flow control.  The begin...rescue and raise statements are used for reporting and handling methods.  The throw...catch statements are used for unwinding deeply nested calls.
+      </p>
+      <hr/>
+      <p>
+        One thing I've found in Python is that if code looks like this without exceptions:
+      </p>
+      <code>
+        flag = 0<br/>
+        for i in whatever:<br/>
+        for j in whatever2:<br/>
+        if somefunc(j):<br/>
+        flag = 1<br/>
+        break<br/>
+        if flag:<br/>
+        break<br/>
+      </code>
+      <p>
+        Then while the solution may be:
+      </p>
+      <code>
+        try:<br/>
+        for i in whatever:<br/>
+        for j in whatever2:<br/>
+        if somefunc(j)<br/>
+        raise StopIteration<br/>
+        except StopIteration:<br/>
+        pass<br/>
+      </code>
+      <p>
+        ... a better solution is often to put it in its own function:
+      </p>
+      <code>
+        def do_something():<br/>
+        for i in whatever:<br/>
+        for j in whatever2:<br/>
+        if somefunc(j):<br/>
+        return<br/>
+        do_something()<br/>
+      </code>
+      <p>
+        I <a href="HaveThisPattern.html">HaveThisPattern</a>, I always use return statements to jump out of nested work, it's a natural pattern when using <a href="LotsOfShortMethods.html">LotsOfShortMethods</a>, goes right along with <a href="GuardClause.html">GuardClause</a>s to bail early.
+      </p>
+      <hr/>
+      <p>
+        Given that people seem to want to use Exceptions for flow control and the only reasons not to are that the name 'Exception' makes it harder to read when it's not an exceptional condition and that compilers/vm's don't optimise exceptions very efficiently is telling people not to use exception for flow control really the correct response?
+      </p>
+      <p>
+        Why not have a superclass of exception such as Java's Throwable (which doesn't imply anything exceptional) and insist that compilers/vm's optimise this appropriately?
+      </p>
+      <p>
+        <em>It might be hard for the compiler/VM to optimize because it's hard to know, at the place an exception is thrown, whether the stack trace is needed (whether the exception will be caught or it will be printed out).</em>
+      </p>
+      <p>
+        That is, if we look at the problem from another point of view it's not that code using exceptions for flow control is convoluted, it's that the exception was incorrectly named. Likewise it's not that using exceptions is inefficient, it might be more accurately said that exceptions haven't been correctly optimised.
+      </p>
+      <hr/>
+      <p>
+        I just found myself using exceptions for flow control.  I don't like to do it, but I was using a library
+        which has a routine that throws an exception on invalid input.  There's nothing wrong with that, but I
+        wanted to know whether some data I had was valid input for that routine, and do normal flow control
+        based on whether it was or not.  Unfortunately, the library in question ( the JDK SimpleDateFormat class )
+        gave me no way to see if my input string matched my date format except to attempt a parse and catch the 
+        exception.	If there was a method
+      </p>
+      <p>
+        boolean canParse( String )
+      </p>
+      <p>
+        in addition to the
+      </p>
+      <p>
+        Date parse( String )
+      </p>
+      <p>
+        I would have the choice of whether to assume my input is valid, accepting an exception if my assumption is wrong, or to check whether my input is valid.
+      </p>
+      <p>
+        I think this is a lesson for library builders.
+      </p>
+      <p>
+        (Of course, I could violate <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a> by writing my own validation routine, but that's worse)
+      </p>
+      <p>
+        <em>It is true in general that there should be a way to execute normal control flows without throwing exceptions. Parsing can be tricky though. You're often talking about an interface to the outside world there. Best to parse as soon as possible, in a top-level routine, and then deal with properly typed information. I don't think wrapping a single top-level bunch of parsing calls in a try block is too onerous...</em>
+      </p>
+      <hr/>
+      <p>
+        <em>...Unfortunately, the library in question ( the JDK </em>SimpleDateFormat class ) gave me no way to see if my input string matched my date format except to attempt a parse and catch the exception.<em></em>
+      </p>
+      <p>
+        This is an easy one: create a class <em>DateUtil</em> with the following method:
+      </p>
+      <code>
+        public static boolean isParseableDate(String pattern, String dateString)<br/>
+        {<br/>
+        SimpleDateFormat format = new SimpleDateFormat(pattern);<br/>
+        try<br/>
+        {<br/>
+        format.parse(dateString);<br/>
+      </code>
+      <code>
+        return true;<br/>
+        }<br/>
+        catch (ParseException e)<br/>
+        {<br/>
+        // date cannot be parsed<br/>
+        return false;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Instead of relying on the ParseException to decide whether the string can be parsed, use this method. -- <a href="PeterDeBruycker.html">PeterDeBruycker</a>
+      </p>
+      <p>
+        If isParseableDate() returns true presumably subsequent code will create another SimpleDateFormat and call parse again, which will still have to catch and ignore the exception.  I don't see any benefit to this. -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <p>
+        Ok, my DateUtils example was not complete. It also requires a parseDate method, in which I <a href="ConvertExceptions.html">ConvertExceptions</a>, like this:
+      </p>
+      <code>
+        public Date parseDate() throws UncheckedParseException<br/>
+        {<br/>
+        SimpleDateFormat format = new SimpleDateFormat(pattern);<br/>
+        try<br/>
+        {<br/>
+        return format.parse(dateString);<br/>
+        }<br/>
+        catch (ParseException e)<br/>
+        {<br/>
+        // date cannot be parsed<br/>
+        throw new UncheckedParseException(e);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        This way, I converted the <a href="CheckedException.html">CheckedException</a> to an <a href="UncheckedException.html">UncheckedException</a>, allowing me to write code like this:
+      </p>
+      <code>
+        String dateString = ... // get it from somewhere<br/>
+        if (DateUtils.isParseableDate(dateString)){<br/>
+        Date date = DateUtils.parse(dateString);<br/>
+        // do something with the date instance<br/>
+        }else{<br/>
+        // show error message to user, or do something else<br/>
+        }<br/>
+      </code>
+      <p>
+        If I'm coding, I always try <a href="CheckDontCatch.html">CheckDontCatch</a>. If another programmer uses the parseDate() method without checking with isParseableDate() first, that's his problem (in my opinion). -- <a href="PeterDeBruycker.html">PeterDeBruycker</a>
+      </p>
+      <p>
+        Can I point out that <a href="CheckDontCatch.html">CheckDontCatch</a> doesn't apply, if you're catching to allow checking in the first place.  You can't avoid the exception, so you gain nothing by wrapping it, and force yourself to write more code than if you just caught it.
+      </p>
+      <p>
+        How is that mess better than this.. since your isParseableDate method is doing this anyway?
+      </p>
+      <code>
+        String dateString = ... // get it from somewhere<br/>
+        try{<br/>
+        Date date = DateUtils.parse(dateString);<br/>
+        // do something with the date instance<br/>
+        }catch(ParseException e){<br/>
+        // show error message to user, or do something else<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>Why go to all this trouble just to hide an exception?  What's the benefit?</em>
+      </p>
+      <p>
+        A little anecdote: Once we had a programmer who wrote the following method to accept a String and parse it to a Date (I guess he was intellectualy challenged at that time ;)):
+      </p>
+      <code>
+        public Date parseDate(String dateString) throws Exception<br/>
+        {<br/>
+        SimpleDateFormat format = new SimpleDateFormat(pattern);<br/>
+        try<br/>
+        {<br/>
+        return format.parse(dateString);<br/>
+        }<br/>
+        catch (ParseException e)<br/>
+        {<br/>
+        e.printStackTrace();<br/>
+        throw e;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        I think he duplicated this method about 10 times throughout the project he was working on (he never came to the idea to write a util class), and everywhere this method was called, he was letting the exception propagate, just because he didn't know how to recover from the thrown ParseException (In this case it is relatively easy). He also assumed the user would never ever enter an invalid Date (The user cannot be that stupid!). Once I got aware of this problem, I wrote a few Util classes (for handling Strings, Numbers and Dates), and forced the programmer to work with these classes.
+      </p>
+      <p>
+        He quickly grasped the concept of checking if it's parseable before parsing it. His code quickly became more readable and robust, and from then on, it is company policy to work according to the following flow: <em>First check if it can be done, if not, show an error, log, or whatever ..., if it can be done, do it.</em> The major benefit is that we have a uniform way to do something; instead of using exceptions in one case and a "check" method in the other, we always use the "check" method. This discussion should be placed somewhere else, perhaps to <a href="CheckDontCatch.html">CheckDontCatch</a>. -- <a href="PeterDeBruycker.html">PeterDeBruycker</a>
+      </p>
+      <p>
+        I think you're working against the language.  SimpleDateFormat.parse() checks if it can be done while it does it.  If it can't, it lets the calling code know by throwing an exception.  The calling code should then "show an error, log or whatever."  There's no need to check if it's parseable before parsing it.  They are the same operation. -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <hr/>
+      <p>
+        I am starting to waver on this one and I am not sure I strongly believe in Don't Use Exceptions for Flow Control.  My revelation came from implementing our project test code.  At first we tried to handle errors through boolean returns and our code became a mass of nested if statements with flags sometimes being passed up several levels of function call as well.  I don't even want to get into the debates over whether "true" should indicate pass or fail.  We have begun changing over to using exceptions and the amount of code clean up in old tests is immense and the level of effort of creating new tests has decreased.
+      </p>
+      <p>
+        I am struggling to define a new rule for use of exceptions,  but the dividing line doesn't appear to be quite so clear to me as it did in the past.
+      </p>
+      <p>
+        --<a href="WayneMack.html">WayneMack</a>
+      </p>
+      <p>
+        It should say don't use exceptions for regular flow control, they are obviously meant for exceptional flow control.  Errors should be handled via exceptions, but successes shouldn't.  Code should be written as if there can be no failure, <a href="LetExceptionsPropagate.html">LetExceptionsPropagate</a> back on failure, but a success should just work, no exceptions for successful scenario.
+      </p>
+      <p>
+        This is exactly why exceptions were invented and why I liked the the first time I saw them.  I worked in a VMS shop where one of our rules was that every C method (in several million lines of code) had to return a VMS status code.  Every method call was followed by one or more tests on the status code to check for errors and warnings containing flow control logic.  All that error handling code made it hard to see what was going on.  It also meant "return" couldn't be used to return anything meaningful and pointers had to be passed in to receive return values, increasing the chance of pointer errors.  Add all the manual garbage collection that came with C++ and you'll understand why I jumped on Java as soon as it came out. -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <p>
+        There are two issues here: (1) as mentioned above, compilers optimize for frequent "try" and infrequent "throw", and this is no small issue if you have efficiency concerns. (2) The typical <strong>meaning</strong> of the word "exception" is an event that is unexpected rather than part of normal operation; otherwise people would just say "event".
+      </p>
+      <p>
+        <em>No, "exception" doesn't mean unexpected.  It just means an exception to the normal or usual or common case.</em>
+      </p>
+      <p>
+        Some languages (or runtimes or OSes or libraries or GUIs) support both events and exceptions, some don't, so there can be some implementation-related confusion, but nonetheless, if it's part of normal expected operation, then arguably it should be called an event even if it used a language's exception mechanism. It's rare for it to be a good idea to use exception mechanisms to implement events, not only because that's inefficient, but also because it tends to be confusing, but every rules has its...ummm...exceptions.
+      </p>
+      <p>
+        Still, if you find yourself wanting to use exceptions for normal processing all the time, that's probably a sign that you actually want to switch to some language that supports events natively in some way. Icon, maybe, with success/failure built in to everything. -- <a href="DougMerritt.html">DougMerritt</a>
+      </p>
+      <p>
+        <em>[New discussion moved to </em><a href="LookBeforeYouLeap.html">LookBeforeYouLeap</a>]<em></em>
+      </p>
+      <hr/>
+      <p>
+        I have to disagree with the isParsable concept also. There are operations that can only be tested by doing them, and parsing dates is one of those. It's extra work for no benefit. The only time you should do that (and I've done this) is when you need to limit the parsing to a subset of what date.parse() will accept. I do this in a system where we're passing date/times as strings between 3 different systems, all of which implement slightly different date parsing. So at the top level, I implement my own date validation which is stricter than the language-provided, ensuring a date string which is usable in all systems. --ChrisMellon 
+      </p>
+      <hr/>
+      <p>
+        The idea of what is "exceptional" and what is not, depends on context.  If I'm writing the DateParser class, it is exceptional in that context to have an invalid date format.  However, in the program using DateParser to test if 10,000 strings are dates, invalid date formats are par for the course.  
+      </p>
+      <p>
+        Methods should have a way to indicate various kinds of results.  Whether those results are treated as exceptional should depend on the caller.
+      </p>
+      <p>
+        -- <a href="MichaelSparks.html">MichaelSparks</a>
+      </p>
+      <hr/>
+      <p>
+        What if you're writing a function which fails 99.99% of the time, but succeeds in the 0.01%? A recursive brute-force backtracking sudoku solver would be one such instance, in such cases most of the time your guess is wrong so failing and backtracking should be part of the normal flow while finding a complete solution is the Exception; throwing an Exception has a nice side effect of unwinding your function stack (since if you found the solution, you're likely to be in the deepest part of the call stack). This is a situation where you raise Exception when you succeeded. Every rule has its exception.
+      </p>
+      <p>
+        <em>I find it hard to accept any approach to coding that uses constructs other than control structures for control. Magic tricks always carry a certain penalty, be it complexity, execution speed, maintenance hassles, etc. The excuses for using these "shortcuts" are often lame, and any "optimization" issue can be resolved by the application of the proper construct in the code. Methinks, anyway.</em>
+      </p>
+      <p>
+        [I concur.  I use exceptions when the preconditions are met, but I can't meet the postconditions.  While I won't go into detail about how I decide what appropriate postconditions are, a sudoku solver that has "failed to solve" as a postcondition would be quite jarring.]
+      </p>
+      <hr/>
+      <p>
+        See: <a href="CheckDontCatch.html">CheckDontCatch</a>, <a href="LookBeforeYouLeap.html">LookBeforeYouLeap</a>
+      </p>
+      <p>
+        Contrast: <a href="TellDontAsk.html">TellDontAsk</a>, <a href="ExceptionsTidyThreads.html">ExceptionsTidyThreads</a>, <a href="CoupleLeapingWithLooking.html">CoupleLeapingWithLooking</a>
+      </p>
+      <p>
+        <a href="CategoryException.html">CategoryException</a>
+      </p>
+    </div>
+  </body>
+</html>

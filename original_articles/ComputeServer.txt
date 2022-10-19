@@ -1,0 +1,165 @@
+ComputeServer is an AssociativeMemory idiom (or pattern composite) that allows multiple distributed ''Masters'' to submit task and gather results computed by multiple, distributed, and possibly parallel ''workers''. A Master submit tasks to the AssociativeMemory. Workers blindly grab Task objects from the AssociativeMemory, send them the #run method and store its answer back into the AssociativeMemory. The Master can then retrieve this result. The Task object is usually some implementation of the CommandPattern. This is a simplification of the BlackboardMetaphor.
+
+'''Sample:'''
+
+This is an example of a simple ComputeServer using JavaSpaces. First, we will define the basic ''T''''''askEntry''. JavaSpaces requires the use of concrete classes that implement the ''net.jini.core.entry.Entry'' interface. Since we want to ''use'' it as an abstract class, we will define its ''run'' method to throw a ''subclass responsibility'' exception:
+
+ import net.jini.core.entry.Entry;
+
+ public
+     class      T''''''askEntry
+     implements Entry
+ {
+     public R''''''esultEntry run()
+     {
+         throw new R''''''untimeException( "Subclass Responsibility" );
+     }
+ }
+
+The ''R''''''esultEntry'' is even simpler:
+
+ import net.jini.core.entry.Entry;
+
+ public
+     class      R''''''esultEntry
+     implements Entry
+ {
+ }
+
+The worker is pretty straightforward -- it looks for ''T''''''askEntry'' objects , removes them from AssociativeMemory, sends them the #run message, and write the ''Result''''''Entry'' back to AssociativeMemory. Here's some basic code:
+
+
+ import net.jini.core.entry.Entry; 
+ import net.jini.core.lease.Lease;
+ import net.jini.space.J''''''avaSpace;
+
+ public
+     class      Worker
+     implements Runnable
+ {
+     public void run()
+     {
+         J''''''avaSpace space = Space''''''Accessor.getDefault();
+         T''''''askEntry pattern = new T''''''askEntry();
+
+         for (;;)
+         {
+             try 
+             {
+                 T''''''askEntry aTask = (T''''''askEntry) 
+                    space.take( pattern, null, Long.MAX_VALUE );
+
+                Entry result = aTask.run();
+                if ( result != null )
+                    space.write( result, null, Long.MAX_VALUE );
+             }
+             catch ( Exception e ) 
+             {
+                 log( e );
+             }
+         }
+     }
+ }
+
+This can be started from a thread, an exec-process, or from a main. An actual implementation would include leased entries and transactions. We can also create an abstract Master that generates tasks and collects results on discrete threads:
+
+ public abstract class Master
+ {
+     private J''''''avaSpace m_space;
+     private Thread m_generator;
+     private Thread m_collector;
+
+     public Master( J''''''avaSpace space )
+     {
+         m_space = space;
+
+         m_generator = new Thread() {
+             public void run() {
+                 generate(); } };
+
+         m_collector = new Thread() {
+             public void run() {
+                 collect(); } };
+     }
+
+     public void start()
+     {
+         m_generator.start();
+         m_collector.start();
+     }
+
+     public J''''''avaSpace getSpace()
+     {
+         return m_space;
+     }
+
+     abstract public void generate();
+     abstract public void collect();
+ }
+
+Now that we have the basic infrastructure in place, we can start using our compute server by defining concrete Task, Result, and Master types.
+
+ public class M''''''andelTask extends T''''''askEntry
+ {
+     public Complex x, y;
+     ...
+
+     public R''''''sultEntry run()
+     {
+         ''calculate next in mandelbrot in set...''
+     }
+ }
+
+ public
+     class   M''''''andelResult
+     extends R''''''esultEntry
+ {
+     ...
+
+     public void draw()
+     {
+     }
+ }
+
+The more worker processes we add to the ComputeServer, the faster the set will be calculated. Of course, this is just an example and the distributed overhead may outweigh the benifits of the compute server. The master for this would look something like the following:
+
+ public
+     class   M''''''andelMaster
+     extends Master
+ {
+     public M''''''andelMaster()
+     {
+         super( Space.getDefault() );
+     }
+
+     public void generate()
+     {
+        while ( ''complex points'' )
+        {
+            getSpace().write( new Mandel''''''Task( ''params'' 0 ) );
+        }
+     }
+
+     public void collect()
+     {
+        Entry pattern = new M''''''andelResult();
+
+        while ( ''more to collect'' )
+        {
+            M''''''andelResult result = (M''''''andelResult)
+                getSpace().take( pattern, null, Long.MAX_VALUE );
+
+            result.draw();
+        }
+     }
+ } 
+
+When you call master #start, the collector thread will start plotting the results on the screen as soon as they are generated.
+
+----
+A good example of the ComputeServer pattern is the SetiAtHome screen saver project (http://setiathome.ssl.berkeley.edu/sciencepaper.html). SetiAtHome uses multiple, autonomously collaborating unskilled workers (your computer in screen saver mode) that continually grab tasks (figures to be analyzed), process them, and return the results to an AssociativeMemory (i.e. SETI). 
+
+Processes posting tasks, processes retrieving results, and processes that are removing and executing Tasks from AssociativeMemory operate collaboratively but autonomously -- they aren't aware of each other. One can bring on new workers without disturbing the system. Adding a new processor will usually result in increased performance. You also see this style used a lot in crypto-analysis. Unlike the BlackboardMetaphor, the algorithm is specialized within the actual Task Tuple. -- RobertDiFalco (this comment was edited and moved from TupleSpace)
+
+----
+'''See also:''' GenerativeCommunication 

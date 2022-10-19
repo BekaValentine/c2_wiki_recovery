@@ -1,0 +1,456 @@
+(Moved From PythonProblems)
+
+'''Dynamic code generation'''
+
+I tried to get at the dynamic code generation issue with our PythonRubyAttrComparison, but the Python guys found a way to do it using plain ordinary classes and the getattr/setattr methods (which is perfectly fair, and taught me that plain ordinary classes in Python can do some really cool things). I'd like to try again.
+
+In the Ruby community, there's been some discussion of a method that could be added to the Class class to eliminate duplication in initialize() methods. There's no consensus, as far as I can tell, on what the method should be called or what exactly it should do, so I'll offer my favourite version here (stolen from a ruby-talk post by Avi Bryant):
+
+	class Class
+	  def initializer(*args, &b)
+	    define_method(:__init_proc) {b}
+	    params = args.join(", ")
+	    vars = args.collect{|a| "@#{a}"}.join(", ")
+
+	    class_eval <<-EOS
+	      def initialize(#{params})
+		#{vars} = #{params}
+		instance_eval &__init_proc
+	      end
+	    EOS
+	  end
+	end
+This lets me write code like:
+
+	class Person
+	  initializer(:name, :age, :gender) do
+	    puts "Do more initialization for #{@name}"
+	  end
+	end
+instead of:
+
+	class Person
+	  def initialize(name, age, gender)
+	    @name, @age, @gender = name, age, gender
+	    puts "Do more initialization for #{@name}"
+	  end
+	end
+Not that big a deal, of course, but you get really tired of typing out the parameter list three times. I've had to do it in every other language I've ever used. But Ruby gives me a way to eliminate the duplication.
+
+What do you do in Python when you want to initialize a bunch of instance variables from parameters to the __init__ method?  Could you write a Python equivalent to the initializer() method above?
+
+Feel free to move all this to a separate page, if you think it's going to grow much bigger. (Maybe RubyConstructorConstructor? :)
+
+-- AdamSpitz
+
+An extraordinarily simple approach to this in Python would be:
+
+    class Person:
+        def __init__(self, name, age, gender):
+            self.__dict__.update(locals()); del self.self
+	    print "Do more initialization for", name
+"locals()" gives access to the current local variables as a dictionary, which are then used to update the object's instance dictionary. The "del self.self" then gets rid of the extra 'self' attribute that would otherwise occur. Notice also that default values can be used as part of the signature, in the normal Python way.
+
+In a sense, this doesn't address your question, since you were aiming at metaclass manipulation and use of blocks. But, I think it's a more Pythonic solution, and one that one might actually use. Alternatively, one might do this:
+
+    def setup(ob,attrs):
+        for attrName in attrs:
+            if attrName=='self': continue
+            setattr(ob,attrName,attrs[attrName])
+
+    class Person:
+        def __init__(self, name, age, gender):
+            setup(self,locals())
+	    print "Do more initialization for", name
+and this, too, is a solution that might actually be used.
+
+-- PhillipEby
+
+Here's are two Python implementations that don't use the compiler:
+
+  def initializer(instance, names, values):
+      names = names.split(',')
+      for name,value in zip(names, values):
+          name.strip()
+          setattr(instance, name, value)
+
+  class Test1:
+      def __init__(self, *args):
+          initializer(self, "name,age,gender", args)
+
+  t = Test1('John', 32, 'M')
+  print t.name, t.age, t.gender
+
+  def kw_init(instance, kwds):
+      instance.__dict__.update(kwds)
+
+  class Test2:
+      def __init__(self, **kwds):
+          kw_init(self, kdws)
+          
+  t = Test2(name='John', age=32, gender='M')
+  print t.name, t.age, t.gender
+The compiler is available in the code module, maybe someday I'll think of a good example for using it, or maybe re-implement the PythonRubyAttrComparison to demonstrate.
+
+-- DirckBlaskey
+
+Sigh... I should have known better. :) One last question, though: would anybody actually ''use'' the mechanism that you've just created? -- AdamSpitz
+
+No, probably not.
+
+However, here is something similar that is useful:
+(from AlexMartelli, http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/52308)
+
+  class Bunch:
+      def __init__(self, **kwds):
+          self.__dict__.update(kwds)
+
+  b = Bunch(name='John', age=32, gender='M')
+  print b.name, b.age, b.gender
+-- DirckBlaskey
+
+That's really cool. I like it a lot.
+
+But does it help us with (what I think is) the more common case, where you've got a real, full-fledged object, and you want to avoid typing out the __init__ method's parameter list three times?
+
+(I don't mean to be making a bigger deal out of this than it is. I know that this constructor-parameter-list issue is not causing anybody any huge amounts of grief. And I ''am'' having trouble thinking of other examples. But Python still feels kinda restrictive to me, and I'm trying to figure out why.)
+
+My personal prediction is that you're not going to be able to come up with a mechanism that people would actually ''use'' unless you resort to the compiler. And once you do resort to the compiler... well, I've got some predictions there, too, but I'd rather keep them to myself, because it's possible that I'm just not familiar enough with Python to know how to do it.
+
+-- AdamSpitz
+
+I re-worked the sample above slightly. Normally, I don't use string methods, but what the heck. It's slightly less verbose, but I still don't think anyone would use it. It doesn't quite fit the PythonPhilosophy
+
+PythonPeople would rather type a little more to make what they're doing obvious.
+
+Python won't be able to do something that directly corresponds to the Ruby example, because Python doesn't have blocks.
+
+The closest I could come up with is the example below. It's still unlikely anyone would use it.
+
+BTW, it would have been simpler without using the compiler, but I wanted to see what it looked like. You'll notice it's a bit odd, because the definition has to be compiled, and ''then'' executed.
+
+Python is more restrictive than Ruby, in the sense that the language isn't as mutable.
+
+Sometimes that's a good thing. :)
+
+-- DirckBlaskey
+
+  import codeop, new
+
+  def initer(klass, parms, andthen=""):
+      locals = { '__name__': __name__ }
+      pl = parms.split(',')
+      source = "def __init__(self, %s):\n" % parms
+      for p in pl:
+          source = "%s\tself.%s = %s\n" % (source, p, p)
+
+      source = source + '\tself.__init__after()\n' + andthen
+      code = codeop.compile_command(source)
+      exec code in locals    
+      klass.__init__after = klass.__init__
+      klass.__init__ = new.instancemethod(locals['__init__'], None, klass)
+
+  class T:
+      def __init__(self):
+          print "__init__after"
+
+  initer(T, "name,age,gender")
+
+  t = T('John', 32, 'M')
+  print t.name, t.age, t.gender
+----
+
+Cool! I didn't know the "exec code in locals" trick, which is why I was having so much trouble getting the compiler stuff working properly.
+
+I played with your code a bit, tried to come up with something close to the Ruby version. Here's my favourite so far:
+
+        import codeop, new
+
+        def sourceOfMethod(name, paramString, lines):
+            source = "def %s(self, %s):\n" % (name, paramString)
+            if lines == []: lines = ["pass"]
+            for line in lines:
+                source += "\t" + line + "\n"
+            return source
+
+        def newMethod(name, source):
+            code = codeop.compile_command(source)
+            locals = { '__name__': __name__ }
+            exec code in locals
+            return locals[name]
+
+        def addMethod(klass, methodName, method):
+            setattr(klass, methodName, new.instancemethod(method, None, klass))
+
+        def initializer(klass, paramString):
+            paramList = paramString.split(",")
+            varString = ", ".join(["self." + p.strip() for p in paramList])
+            lines = [varString + " = " + paramString]
+
+            # If they don't specify an __extra_init__ method, we don't call it.
+            initMethod = getattr(klass, "__extra_init__", None)
+            if initMethod:
+                lines.append("self.__extra_init__()")
+
+            name = "__result__"
+            addMethod(klass, "__init__", newMethod(name, sourceOfMethod(name, paramString, lines)))
+
+        class Person:
+            def __extra_init__(self):
+                print "__extra_init__"
+
+        initializer(Person, "name, age, gender")
+
+        p = Person('John', 32, 'M')
+        print p.name, p.age, p.gender
+Some things to note:
+
+	* I'm really not sure how to write Python idiomatically. Feel free to refactor my code to make it look more like Python.
+	* Functions like sourceOfMethod(), newMethod(), and addMethod() functions ought to be generally useful, and only need to be written once. They make this Python code look a lot bigger than the corresponding Ruby code, but that's not really a fair comparison - the initializer() function is only slightly more cumbersome than the Ruby version.
+	* Since Python is so particular about whitespace, and since it doesn't really have any convenient string interpolation mechanism like Ruby has, it seemed to make more sense to construct the source of the method as a list of lines, rather than one big string. Works OK.
+	* I chose to force users to name their "extra initialization" method __extra_init__, rather than letting them name it __init__ and then aliasing it to __init__after. Seems clearer that way.
+	* If they leave out the __extra_init__ method, everything still works fine.
+	* Looking at the Person code, the only things that bug me are that the call to initializer() needs to happen ''after'' the class definition (where you're likely to overlook it), and that it needs to be explicitly passed the name of the class (which is livable, and unavoidable without completely changing Python - Ruby manages to avoid it because "self" is used as the receiver for "function-style" calls). What do you think the chances are of pushing through a PEP that would let the class object be accessible from inside its own definition?
+
+-- AdamSpitz
+
+Adam, very nice code. I contributed a slight refactoring, so that __result__ is only in one place now. -- SteveHowell
+
+That weird bit is where you compile the definition, and then you have to execute the definition, in order to create the actual function. It may seem a bit odd, but def is an executable statement returning a function object.
+
+It took me some mucking about to get this solution.
+Originally, I tried new.function, but trying to create a function parameter list isn't obvious.
+There are some relevant posts on news:comp.lang.python - http://groups.google.com/groups?q=new.function&hl=en&group=comp.lang.python.
+
+I still prefer the more Pythonic approach dB^)
+
+  import new
+
+  class Initer:
+      def __init__(self, names):
+          self.names = names
+      def init(self, instance, *args):
+          for name,arg in zip(self.names, args):
+              setattr(instance, name, arg)
+          xi = getattr(instance, '__extra_init__', None)
+          if xi:
+              xi()
+
+  def initializer(klass, namestring):
+      names = namestring.replace(" ","").split(",")
+      klass.__init__ = new.instancemethod(Initer(names).init, None, klass)
+      
+  class Person:
+      def __extra_init__(self):
+          print "__extra_init__"
+
+  initializer(Person, "name, age, gender")
+
+  p = Person('John', 32, 'M')
+  print p.name, p.age, p.gender
+-- DirckBlaskey
+
+Very cool. Cleanest Python version yet, at least from an implementation point of view. I still like the code-generation version better for this particular task, because it avoids the runtime performance hit - object construction is done ''everywhere'', so I'm willing to make the implementation a bit more complex if it'll be faster. But in general, I'm willing to believe that neato class tricks can solve many of the problems that I'd ordinarily use code generation for.
+
+The thing that still bugs me, though, is the need to put the call to initializer() ''outside'' the class definition. I fear that that's just so unnatural that nobody will ever use it. (Am I wrong? Maybe I'm wrong.)
+
+By way of contrast, I've been using the initializer() method in all my Ruby code for the last month and I absolutely love it. It feels completely natural now. I'm never going to write out an initializer parameter list in triplicate again. Such a little thing, objectively, but it brings me so much joy. :) I'm probably being irrational.
+
+-- AdamSpitz
+
+ import sys
+
+ def initer(parameters):
+     classdict = sys._getframe(1).f_locals
+     params = [x.strip() for x in parameters.split(',')]
+     
+     def init(self, *args):
+         for x, y in zip(params, args):
+             setattr(self, x, y)
+         self._init()
+     
+     classdict['__init__'] = init
+
+ class Person(object):
+     initer('name, age, gender')
+     def _init(self):
+         print 'bla'
+
+ p = Person('John', 32, 'M')
+ print p.name, p.age, p.gender
+-- AnonymousDonor
+
+Or more idiomatically, with less "magic":
+
+ class Person(object):
+     __init__ = initer('name, age, gender')
+     def _init(self):
+         print 'bla'
+(assuming you change initer to just return the init function). Then there's no need to do the getframe and classdict manipulations. "Magic" code (defined as monkeying with the call stack, bytecodes, etc.) is generally frowned on in Python, because it's not guaranteed portable across Python compilers or VMs (e.g. Jython, Pippy, etc.).
+
+-- PhillipEby
+
+----
+
+I liked this and wanted it to be able handle optional parameters (with default values). I'm still new at Python, so this could probably be improved, but this is what I came up with. As far as I can think, it should behave pretty much how one would expect:
+
+    def initializer(*p_args, **p_kw):
+        def init(self, *args, **kw):
+            for x, y in zip(p_args, args):
+                setattr(self, x, y)
+            for x in p_args[len(args):]:
+                try:
+                    setattr(self, x, kw[x])
+                    del kw[x]
+                except Key''''''Error:
+                    setattr(self, x, p_kw[x])
+            self._init(*args[len(p_args):], **kw)
+        return init
+
+    class Person(object):
+        __init__ = initializer('name', 'gender', 'age', age=None)
+        def _init(self):
+            print "I'm a whole new person!"
+
+    class Dog(object):
+        __init__ = initializer('name', 'gender', name='Fido', gender='M')
+        def _init(self, age=0):
+            print "Every dog has %s day." % ({"M": "his", "F": her}[self.gender])
+            self.age = age * 7
+
+    p = Person('John', 'M')
+    print p.name, p.gender, p.age
+    d = Dog(name='Rex')
+    print d.name, d.gender, d.age
+    d2 = Dog('Lady', 'F', 3)
+    print d2.name, d2.gender, d2.age
+I think I might start using this, or something similar. A couple things could be improved... The generated __init__ could call _init only if it exists so you don't have to define it for classes that don't need it. It would also be excellent if it raised useful exceptions on errors (i.e., it currently produces a Key''''''Error instead of a Type''''''Error if a required parameter is not supplied). I don't care for the duplication in the calls to initializer(), but it's only required for the optional parameters and I prefer it to just sending a string to initializer() which it then has to parse. I had a longer version here that did that (imperfectly), but I much prefer this version.
+
+-- TomSchumm
+
+----
+I was just reading up on MetaClass''''''es, which stirred up this thing in my brain again, so I came up with a solution I like ''even better'' which uses a MetaClass (naturally) and some nifty introspection. If somebody refactoring this page thinks my previous version is redundant, they should feel free to delete it.
+
+    class Meta''''''Initializer(type):
+        def __init__(cls, name, bases, dict_):
+            super(Meta''''''Initializer, cls).__init__(cls, name, bases, dict_)
+            try:
+                old_init = dict_['__init__']
+            except Key''''''Error:
+                return
+
+            code = old_init.func_code
+            defaults = old_init.func_defaults or ()
+            p_args = code.co_varnames[1:code.co_argcount]
+            p_kw = dict(zip(p_args[-len(defaults):], defaults))
+
+            def new_init(self, *args, **kw):
+                for name, value in zip(p_args, args):
+                    setattr(self, name, value)
+                for name in p_args[len(args):]:
+                    if name in kw:
+                        setattr(self, name, kw[name])
+                    elif name in p_kw:
+                        setattr(self, name, p_kw[name])
+                # original raises a Type''''''Error if a required parameter is missing
+                self._extra_init(*args, **kw)
+
+            setattr(cls, '_extra_init', old_init)
+            setattr(cls, '__init__', new_init)
+
+    class Initializer(object):
+        __metaclass__ = Meta''''''Initializer
+
+    class Person(Initializer):
+        def __init__(self, name, gender, age=50):
+            # no need to set self.crap, I've got the powah of metaclasses
+            print "Hi, I'm %s, age %d." % (self.name, self.age)
+
+    class Dog(Initializer):
+        def __init__(self, name, gender, *args, **kw):
+            self.more_init(*args, **kw)
+            print "%s is %d dog-years old." % (self.name, self.age)
+
+        def more_init(self, age):
+            self.age = age * 7
+
+    p1 = Person('Joe', 'M', 21)
+    p2 = Person('Sue', gender='F')
+    d = Dog('Fido', 'M', 4)
+    p3 = Person('Guido') # <= Throws Type''''''Error (required parameter missing)
+Slick!  Just subclass Initializer and the __init__ becomes more magical transparently. I can think of lots of useful variations (and intend on writing a little module that has a few of them, or maybe one big mega-cool one with various conditional behaviors.) The new_init function could be created using the compiler to get a little bit better performance during instance creation. It could be changed a bit so that it works properly with properties if some extra encapsulation or funky functionality is necessary. The metaclass could be modified to examine the signature of a method other than __init__ (perhaps you want to use turn only some of the parameters into object attributes).
+
+The only problem I see is that somebody who doesn't know about MetaClass''''''es (which are indeed known for their brain-exploding properties) could be quite confused. Even you know how they work, it's far from obvious when they're being used if they're inherited like this. It might be better to put the __metaclass__ declarations in Person and Dog rather than a base class to make it explicit what's going on.
+
+''DavidMertz and Michele Simionato have written a couple very clear papers, with nice examples, about MetaClass programming in PythonLanguage (http://gnosis.cx/publish/tech_index_dw.html).''
+
+Actualy I understood Python metaclasses through ruby. 
+In ruby, you have Class#new, which is equivalent to type.__call__ (they are the container in which object creation happens), then Class#allocate which is the same that type.__new__ (they allocate an object) and finally you do Object#initialize like object.__init__ (they initialize it).
+If you start showing someone that he can craft object creation with class methods and in the end you show them that metaclasses are just sugar for that thing, they understand it easily.
+
+----
+
+I've written a new version based on the function decorator syntax in Python 2.4. I kinda like this and I'd probably use it.
+
+ import types
+ 
+ def initializer(list=[]):
+     """
+         Function decorator that modifies __init__ to initialize the object
+         with members based on the arguments to __init__
+         
+         If list is not present or empty, then all arguments (except self) are used,
+         otherwise only arguments with names matching those in the list will be used
+     """
+     def init_hook(func):
+         def init(self,*kwargs):
+             argnames = func.func_code.co_varnames #grabs the names of the arguments
+             argnames = argnames[1:] #strip self
+             if type(list) is not types.''''''FunctionType and len(list) > 0:
+                 argnames = [arg for arg in argnames if arg in list]
+             for argname, kwarg in zip(argnames, kwargs):
+                 setattr(self, argname, kwarg)
+             return func(self,*kwargs)
+         i = init 
+         i.func_name = func.func_name #This will make the right name show up in exceptions, etc.
+         return i
+     if type(list) is types.Function''''''Type:
+         return init_hook(list)  #decorator syntax with no () means the function got passed
+     else:
+         return init_hook
+ 
+ class Person(object):
+     @initializer
+     def __init__(self, name, age, gender="M"):
+         pass
+         
+ class Dog(object):
+     @initializer(["owner", "color"])
+     def __init__(self, owner, color, gender):
+         pass
+         
+ p = Person("bob", 14, "M")
+ 
+ print p.name
+ 
+ d = Dog(p, "red", "Neuter");
+ 
+ print d.owner.name
+ 
+ print d.color
+ 
+ print d.gender #note error
+
+Some things I like about this:
+* No need for compiler tricks, function decoration means the re-binding happens at class creation, not instance creation
+* Despite what I said in the docstring, there's no reason this has to be bound to __init__ - if you use 2-stage creation or something it can be used on your late creation method. 
+* Syntactically cleaner than using the metaclass directly, and conceptually cleaner than hiding the metaclass behind a base class.
+* Option of specifying which params you want bound is neato
+
+One thing I don't like is the funky way decorators with arguments work - instead of being called as func = decorator(func, args) they're called as func = decorator(args)(func) - that's why the obnoxious type checks above to have both syntaxes work.
+-- ChrisMellon
+
+----
+See PythonVsRuby, PythonVsRubyCodeExamples
+
+CategoryProgrammingLanguageComparisons CategoryPython CategoryRuby

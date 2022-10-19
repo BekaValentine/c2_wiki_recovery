@@ -1,0 +1,92 @@
+Do macros really add something? Are they really needed?
+
+Macros put the programmer on par with the language designer, allowing the programmer to implement control structures which look just like the ''builtin'' control structures.
+
+''In every language I've ever worked with, there have been concepts that I haven't been able to express succinctly enough using the language's ordinary constructs. I think that macros are the language designer's way of saying, "Sorry, my language isn't perfect yet." --AdamSpitz''
+
+Isn't it rather the language designer saying "I can't anticipate every data and control structure you might ever need, however abstract, concrete, general or domain specific they might be, so here's a way to roll your own as required, and have them on a par with the ones I did provide (guessing that everyone will need those ones sooner or later)"?
+----
+Yes, the macros you write are on a par with the macros the language designer writes. But none of those macros are as real or flexible as any of the ''functions'' that anybody writes. (See LispMacroDiscussion.)
+
+I've seen it, but I don't see that it supports the point you claim that it does. The value of macros is not that yours are on a par with the language designers', it's that the functions that the macro writes (that's what macros do) are on a par with the functions that the language designer wrote (which they often do using macros). Note that in a strict language like Scheme, the functions the macro expresses can be ''more'' flexible than any that anybody except the language designer writes, since they can be non-strict, that is, on a par with the language designers' choice of special forms. In Scheme, as I understand it, macros can be used to do things in ordinary programs that would otherwise requires tweaking the evaluator (or writing a new one).
+
+But, more importantly than that, Lisp programmers  have found that certain problem/solution scenarios are more clearly expressed in Lisp using a mixture of procedures written by hand and procedures written by macros. Why is this observation in any way controversial?
+
+----
+
+In SmalltalkLanguage or SelfLanguage, I can also write control structures that are on a par with the control structures provided in the standard library - because all of those control structures are just ordinary methods. ''Well, OK then. So maybe when programming in Self and Smalltalk you don't want LispMacro''''''s. That seems neither surprising nor controversial.''
+
+But I still wish that those languages had some kind of environment-supported notion of code generation, because there have certainly been times when I've had concepts that couldn't be expressed concisely enough within the language. (It's easy enough to write code that writes code, but after the code is generated, the environment has no way to distinguish between real "source" code and generated code. So when I'm debugging, for example, I have to step through the generated stuff, rather than being able to see the real source of it.)
+
+--AdamSpitz
+
+''Who is the "we" here? Lisp programmers certainly want Lisp macros when programming in Lisp.''
+----
+A Lisp macro is a piece of syntax; a form denoted by a symbol, whose semantics is completely under the control of some Lisp code that is invoked at compile time. Lisp macros can abstract in ways that are not available to Lisp functions. A function receives only the values that result from evaluating the argument expressions in left to right order. A macro receives the raw source code of the entire macro call form as an argument, and can do whatever it wants.
+
+In effect, a macro implements a miniature language (see LittleLanguage and DomainSpecificLanguage). A key feature of well-designed macros is that that the mini-language they implement interacts seamlessly with the lexical environment in which the macro call appears. The user is not aware of any of the messy guts, or tortuous context translations in which the pieces of the macro call are embroiled.
+
+This is the area where functions start losing power. Sure you can pass source code to functions in the form of quoted forms. But such passing does not preserve the environment. Therefore, suppose that you have a macro which implements a language called blorg, and you can call it like this:
+
+  (let ((a ...) (b ...) (c ...))
+    (blorg (zorch a (blat c d))))
+
+Everything is cool because the interpretation of (blorg (zorch a (blat c d))) is entirely under control of the macro. Could you do it with a function? The naive attempt:
+
+  (let ((a ...) (b ...) (c ...))
+    (blorg-interpreter '(blorg (zorch a (blat c d)))))
+
+won't work as expected: blorg-interpreter has no access to the lexical environment in which the bindings for A, B and C are established. So the user of the function has to switch to the use of closures which capture that environment. Ah, but now the user is doing the job of the machine, because he or she must decide *what* should be in a closure and what should not! For example, it may be the case that just the access to the lexical variables ought to be closed over:
+
+  (blorg-interpreter `(blorg (zorch ,#'(lambda () a)
+					(blat ,#'(lambda () c)
+					  ,#'(lambda () d))))
+
+But what if (blat c d) is an ordinary Lisp function call that is intended to be embedded into the BLORG language---in other words, BLAT has no special meaning? You would then just want:
+
+  (blorg-interpreter `(blorg (zorch ,#'(lambda () a)
+					,#'(lambda () (blat c d))))
+
+Decisions, decisions, manual labor! The abstraction is broken; the user has to know the evaluation semantics of the language, and manually stick in the glue between that language and the lexical scope.  Moreover, the user has given up the ability to change just one macro, recompile the whole program, and thus instantly switch all instances of the BLORG language from an interpretive implementation to a compiled one.
+
+The point is, yes we have HigherOrderFunction''''''s in the form of closures, but they are tedious to use, and their use implies an implementation decision which breaks abstraction.
+
+The BLORG macro, on the other hand, can generate a call to BLORG-INTERPRETER, passing it a heavily modified version of the form loaded with closures to glue to the lexical environment. Or it can completely open-code the behavior of the BLORG language, translating it to Lisp. 
+
+Macros can decide how to implement some abstraction, optimize it, reduce special cases, and so forth.
+
+Functions don't have access to that information, so the user has to manually adapt the abstraction to the given function call interface.
+
+This might not be such an issue in a different language. If you get rid of lexical scope, then issues regarding communication between an embedded language and the lexical scope in which it is uttered go away.
+
+Or suppose that every expression carries its own lexical context, so that you can do evaluation lazily: do it before calling a function, or do it inside that function, doesn't matter. This is how FunctionalProgrammingLanguage''''''s work.
+
+The problem is that this is not equivalent to the power of macros; the evaluation model is fixed. Evaluation is only delayed, not altered.
+
+A Lisp macro on the other hand can completely alter the evaluation semantics. Trivial examples of this are control and iteration constructs which can suppress the evaluation of something in a predictable way, or evaluate it two or more times.  But a macro can in fact invent whole new evaluation semantics; it can give any meaning whatsoever to any syntax which constitutes the macro call.
+
+For instance, in principle, we could write a macro which is called like this:
+
+  (execute-on-remote-server (s)
+    forms ...)
+
+and if we work hard enough, we can make the forms which are executed on the remote machine have access to the local dynamic and lexical environment: signal conditions that pass to the local environment, invoke restarts across the machine boundary, fetch or update lexical variables, GO to tags in a local TAGBODY, return closures which call back into the remote server, etc.
+
+Setting up this environment correspondence will probably involve a lot of work. Some code walking may have to be done over the forms. All kinds of implementation decisions and tradeoffs will have to be made. The implementation will undoubtedly be a mixture of some very messy inline code that replaces the macro call, as well as quite a bit of supporting functions, and over the lifetime of the macro, there will be a lot of churn within and between both of them. But users of the macro will consistently use the same convenient syntax. Just wrap your code in (EXECUTE-ON-REMOTE-SERVER (S) ...) where S is some connection object representing the server; that's it!
+
+(Any volunteers? ;)
+
+--KazKylheku
+
+Sounds like KaliScheme.
+
+----
+Lispy macros are, to me, simply a ReFactoring tool. When I see the same pattern appear thrice in my code, I try to generalize & capture that pattern. Sometimes I can achieve the ReFactoring with a function. Sometimes, a function can't do it but a macro can.
+
+It's analogous to why it would drive me crazy to have to program CeePlusPlus without templates.
+
+--RobertFisher
+----
+See also:
+
+LispMacro''''''s, LispMacroDiscussion, SchemeMacroExamples, CommonLispMacroExamples

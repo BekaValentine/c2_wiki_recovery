@@ -1,0 +1,43 @@
+Sample code for TestForMemoryLeak.
+
+  long GetAvailMemory()
+  {
+    MEMORYSTATUS stat;
+    GlobalMemoryStatus (&stat);
+    return stat.dwAvailPhys;
+  }
+
+  test()
+  {
+    int mem = GetAvailMemory(); // get initial amount of memory
+    char* x = new char[5];	// allocate some memory (MarkSchumann says try new char[500000])
+    x[4] = 0; // added this line
+    assert( mem != GetAvailMemory() );  // make sure we allocated (FAILS)
+    delete x; // free the mem
+    assert( mem == GetAvailMemory() ); // should be back at what we started
+  }
+
+----
+
+I'd be interested in seeing what the compiler has done to this under the covers. It seems likely to me that the optimizer has stripped out lines 2 and 4, as the variable is never used. 
+
+----
+
+
+I think maybe the GetAvailMemory() function isn't returning what I want it to.  Is there any function in windows that returns the amount of memory used by a process?
+
+---- 
+
+You're on the right track.  I don't think it's guaranteed that GetAvailMemory() is granular to the degree you expect.  Just for fun and games, consider the change I suggest in your test() function above. Betcha that shows some change.
+
+In classic MS-DOS, the system doles out memory in multiples of 16 bytes, but I don't know how Win98 does it.  Note that "new char" doesn't hit the OS directly; it uses the compiler-supplied runtime library to buffer that request. You probably made a request that happened to be satisfied from the buffers managed by that runtime library.  --MarkSchumann
+
+''(Someone, perhaps the original poster, wrote:) comments, i put in new char[5000] and this causes some new memory to be allocated''
+
+Okay then, I think that answers it.  When you allocate about 5 Kbytes in this circumstance, the runtime library has to make a call to the operating system to get that memory, thereby decrementing the counter returned by GetAvailMemory().  When you allocate merely 5 bytes, that O/S call is (usually) unneeded, hence no change in GetAvailMemory().
+
+If you are using GetAvailMemory() as a way to count every single byte your application is using via new, it won't work.  For that purpose you might prefer a custom "new" handler.  --MarkSchumann
+----
+Alternately, one could just overload the malloc,free, new, and delete functions - Then track each call either with a running counter, or per pointer(it helps if you record the caller's __FILE__ and ___LINE__)
+----
+The MSVCRT (MiscroSoft Visual C runtime), if you're using visual studio, has great memory leak detection support, including dumping leaks, inspecting the heap, and (niftily) breaking into the debugger on specific allocations. This technique can help you detect a memory leak but is not especially usefull for figuring out where the leak is. --ChrisMellon.

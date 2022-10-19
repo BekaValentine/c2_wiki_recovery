@@ -1,0 +1,133 @@
+(Refactoring from AreTablesGeneralPurposeStructures, still out-of-sync as of writing.)
+
+'' '''Use case:''' You wish to represent a collection of beliefs.  Each belief is a datum - a proposition held to have a certain truth value in a set of worlds (or, alternatively, a proposition held to have a certain function of world->truth value), where time is one descriptor of world (so the world of the distant past is different than the world of the present or future).  In addition to being a datum, a belief is held without absolute confidence; it is relatively easy to represent confidence in a database as a simple realnum ranging from 0.0 to 1.0; it doesn't even require much precision... 8 bits is plenty since quantifying confidence is such a fuzzy and imprecise thing anyway.  For now, we'll also simplify worlds and simply give each one a string name (can come back to this if you pass the first challenge).  Propositions, however, will be more difficult.  A proposition is an abstract logic function over a world... e.g. P(x) is true or false depending on what 'x' happens to be in the world.  A proposition can be a predicate (... make it a simple string for now ...) over some (possibly empty) ordered set of identifiers (which are world-dependent variables, and may also be strings for now), which for the moment we'll simplify to at-most-two identifiers - that is: Truth:(PredicateName,Identifier1,Identifier2) (with some null ID). And:(Proposition,Proposition), Or:(Proposition,Proposition), Not:(Proposition), ExOr:(Proposition,Proposition) (to allow OnceAndOnlyOnce), Impossible:(Proposition) ('I believe X is impossible', which tends towards the inference 'I believe Not:X'), Possible:(Proposition) (I believe X is possible; does not infer 'I believe X'), Probable:(Proposition,Probability) (I believe that X has Y% chance of being true), Contingent:(Proposition,Proposition) (I believe that if X is true, then Y is true).  You have inference rules, too (e.g. 'Not:(Possible:(Not:(X))) => X, with same confidence'), but those needn't be represented in ''this'' collection, so don't worry about them overly much (they could be, though... it's perfectly reasonable to have one believe in a certain set of inference rules.  However, that adds pattern-matching stuff and meta-level worlds that make the problem remarkably more difficult).  However, to use those inference rules efficiently, you need to be able to quickly find propositions that share common substructures in common worlds in order to find: contradictions, beliefs applying to the same targets (identifiers), beliefs applying in the same worlds, beliefs using the same predicates, replications (where two beliefs support one another), abstraction points, and more.  My expectations that a typical table's indexing can provide more than a sputtering bit of help on the searches, or that even several would work to well represent the collection (even as well as a straightforward 'set of value objects' or 'list of value objects'), are extremely dismal.  The structure needed here needs an enormous variety of indices if it is to meet time-constraint requirements of a modern inference engine.''
+
+Is your argument related to "variants", or performance?
+*''A collection provides access and manipulation, and '''the characteristics (conceptual and computational) of access and manipulation are the sole determinants as to whether the collection is appropriate for the task'''.  You can't ever, ever, EVER dismiss performance as relevant.  The issue here in particular is the representation of variants (a challenge) while under the constraint of maintaining certain (algorithmic) performance characteristics (a far greater challenge).  Failure to meet both requirements is a failure for the use of tables in this domain.''   
+* But I would like to separate the issues for discussion. If slowness is still an issue, they we can look deeper for ways to improve it. Otherwise, you might be tossing out something that makes the developer's job easier for the sake of performance, and 20 years from now it may not matter if tables are slower, just like GUI's versus command lines.
+**''You do know the difference, do you not, between '''algorithmic performance''' and '''speed'''?  I speak only of the former.  Faster processors don't fix algorithmic performance issues.''
+
+'' '''Use case:''' Interactive scene-graph - a collection of object-descriptors to be drawn and animated over a sequence of frames with constraints on ordering and occlusion, plus a feedback requirement requiring that ready access to which objects might be the target of a user's attention when the user points at something on the screen.  The collection itself needs only to provide the indexing to make this possible.''
+
+I would like to see some sample data. Remember, anything that can be represented as a graph of object pointers can also be represented relationally. 
+
+*''"relationally" as in more than one table?  (oh! I can do with 10 tables that which you can do with one list and a memory address space.  Whoopee!).  If a table is general purpose, then do it with at most two tables.  Anyhow, the relevant aspects of a scene-graph are that you have many geometric shapes, each of which have position and orientation, that must be displayed.  The shapes also have animation information, though that can be handled later if necessary.  For an 'example' scene, look around your room or office and consider how you'd represent every single object in it as having a position, orientation, and image in a 'scene' that may, itself, be viewed from many positions (e.g. floating camera).  Representing the data is part of the problem, with the other part being that tables need to represent it -without- reaching algorithmic complexities above those required by a realtime domain.''
+* Ten tables may still be better than navigational RAM-pointer hell; (''pointers to ten tables each with pointers into the other nine and themselves... I'm not sure you've gained much over one big table called "memory" with pointers into the one big table called "memory".  Can you explain to me the difference?'') the GO TO of the 2000's. Anyhow, the devil is in the details, and I don't have enough details to formulate a design. Also note that pointers to RAM objects often make it difficult to share the framework among different languages. The obsession with RAM pointers is one reason why GUI kits tend to be language-centric, making standardization and reuse difficult. 
+
+Although I am no Cyc expert, initially, it seems one may be able to represent the above with just one table:
+
+ table: beliefs
+ ---------
+ beliefID
+ operator   // ex: and, or, probable, etc
+ weighting  // 0.0 to 1.0
+ param1
+ param2
+ param3
+ param4
+
+And I have no problem using generic strings to store parameters which may be numbers in some cases. I prefer using dynamic or type-free languages anyhow such that it does not matter to my app code. If we want to validate numericness for some combinations, we can put in triggers like this:
+
+  TRIGGER ON CHANGE TO TABLE BELEIFS(newrec, oldrec))
+     IF newrec.operator = 'FOO' AND NOT IS_NUMERIC_PARSE(newrec.param2)
+        RAISE ERROR '2nd parameter must be numeric for op FOO'
+     END IF
+  END TRIGGER
+
+''Where does '''beliefID''' come from?'''
+
+Let's assume it is an auto-number.
+
+''and, more importantly, how do we know which propositions are in our collection of beliefs,''
+
+Don't the operators determine that? I am hesitant to make a hard-split between them in order to serve future flexibility.
+
+''and which are simply propositions that are part of other beliefs?''
+
+Add a many-to-many table
+
+ table: belief_xref
+ --------------
+ beliefRef1
+ beliefRef2 
+ relationStrength
+
+''And why do propositions that are not directly associated with beliefs have confidence values?  propositions don't have confidence values... only beliefs do. ''
+
+If they are not used, then ignore them.
+
+''Do plain old propositions have 'beliefIDs'?''
+
+Perhaps I should have called them "suppositions" instead of beliefs. I don't yet see a reason to make two different tables, but am not hard against it. I tend to combine similar entities into one rather than split them for similar reasons that I don't like hierarchical taxonomies. It's worked better for me, but others may disagree. Is there any solid and significant difference between "propositions" and "beliefs"? Can there be something in-between?
+
+''What would be the algorithmic cost of querying something simple like, say, all the beliefs with predicates referencing a particular identifier?  (I think it will be higher than O(N^2) due to reducing from sub-propositions back up to the belief).  Oh, and you lost the world (that one is an easy fix).  You've a ways to go yet, and I think you'll quickly violate several "philosophies of relational" that come from Codd (in particular, normalization forms).  Your use of triggers to maintain consistency as part of the database is admirable, but I don't recall it being a general property of tables or even of relational databases.  I imagine, though, you could say it in a declarative manner.''
+
+I will not comment on performance issues, other that saying that if you can roll-your-own Cyc engine then one could also roll their own relational Cyc engine and tune it to need.
+
+As far as triggers, perhaps constraints can do the same thing. The difference between them is mostly a language implimentation issue. And I don't see it violating common normalization because there is no duplication from not using columns. (Maybe in fixed-record implementations there is such, but I am not assuming we're using such.)
+
+------------------------
+
+'''Section B'''
+
+I could go through the text with you and show you where I feel the wording is poor or ambiguious. However, I would rather move on rather than get into a marriage spat. Here is my current model:
+
+ // incarnation 2.0
+
+ table: statements
+ ---------
+ statementID
+ operator   // ex: and, or, probable, truth, etc
+ weighting  // [DEPRECATED]
+ param1
+ param2
+ param3
+
+ table: group_membership
+ ----------------
+ groupRef   // ID of group
+ statementRef  // ID of statement
+ weighting  //  0.0 to 1.0 [added 9/1/2007]
+
+I am still not clear on the difference between "beliefs" and "propositions" and "worlds". But the above can put any of the statements in any or all of these groups. In essensce, make different views of reality.
+
+''A proposition is a logical statement that evaluates to true or false.  For example: "Bob stole the cookie from the cookie jar."  However, you can't evaluate a proposition without a world to evaluate it against.  Bob, cookies, and cookie jars are all referents to a world.  Our present is just one world, but there are many others... a dream constitutes a world, as does a mathematical construct, canon of a fiction book, etc.  Bob might have stolen cookies from the cookie jar in some of these worlds but not others.  In some worlds there might be no such thing as a cookie jar or Bob, making the proposition nonsensical.''
+
+''A belief is proposition '''held by an agent''' to be true (possibly without complete confidence) with respect to a particular world (or set of worlds... getting into variant levels of abstraction is a bit above this discussion).  The agent might be right or wrong, of course.  A belief is only attached to truth insofar as the agent attempts to verify beliefs against their respective worlds, and even then it is only inductive.  The only way an agent can '''have''' truth is by creating the world (e.g. "imagining" it, or creating a mathematically constructed universe).''
+
+''The above tables are not ideal.  Closest to a statement is the '''proposition'''.  You should probly shift the 'weight' (or confidence) into the group, leaving the propositions in a dedicated table.  You also need to find a home for 'world', which (right now) would do best in 'group' (at which point you have 'belief', with each tuple representing: (agent/group (believes) proposition (with) confidence (in) world)).  If world is to be extended into its greater form (a possibly infinite set of truths, or an axiomatization) you'll probably need a whole new table just to describe worlds.''
+
+* I am still not seeing any structural difference between beliefs and props. You said it does not depend on the "operator" column, so the difference is merely a classification of a statement, which can be handled by the Group table, no? 
+** To describe a belief requires describing a proposition, but not vice versa.  Semantically: Beliefs are not '''just''' statements.  Beliefs are statements that an agent ''holds to be true'' with some confidence relative to a certain world.  E.g. I can state, "QWERTY is the best possible organization for a keyboard", but it doesn't mean that I believe it.  Thus a collection of statements isn't the same as a collection of beliefs.  Structurally: belief has confidence, proposition does not.  Structurally: a belief is associated with a particular world, a proposition is not (ignoring modal logics-on-worlds for the moment). Regarding your tables: the '''groups''' table could be renamed to '''beliefs''' table and it'd be a bit more accurate (seeing as the 'fact' each row in it currently represents is: (<agent> believes <statement> with <confidence>)).  Of course, the statement table represents nothing at all, at the moment.  
+
+''The requirements as specified allow you to drop 'agent/group', since you need only represent a collection of beliefs (which implicitly belong to the agent holding the collection), but there is no harm in having it.  In reality, it is very, very rare that one agent can '''actually''' know what another agent believes, so there is little point in carrying around that sort of information.  You very well might have beliefs about what other agents believe (I believe with 90% confidence that Bob believes with 80% confidence that James stole the cookie from the cookie jar...), but each agent has ''its own'' collection of actual beliefs, and your beliefs about their beliefs are likely imprecise at best.  Now, if you were programming a game AI or something, where one agent (the controller) is modelling a bunch of other agents (the bots), then the domain is somewhat different and you might actually benefit from the 'group' section.  The original specifications aren't for that domain.  Even so, going more general isn't of any severe cost... even at 32 bytes per belief, the total cost will only be a few hundred megabytes plus index for a medium-sized collection of beliefs.''
+
+* What is an "agent"? If it is like an individual, then the "groups" table can track that also. The groups are not mutually exclusive so that we can also use them to track "belief" statements versus "proposition" statements, or whatever classification you can dream up. (It may complicate group naming if something is a belief to one individual but a proposition to another. But we don't have a need to worry about that yet unless we're tracking gajillions of people.)
+* '''Agent''' is intentionally abstract, and defined by a set of requirements.  It must fulfill all the requirements of an actor, but agents are additionally described by their capacity for motives, roles, and purpose.  A person is an agent, as is a web-crawling spider, or the little program that interprets messages and actuates the arm on a robot, or the big program that processes visual inputs and dumps data on what is visible into memory, or the whole robot, or the single neuron that receives neurotransmitters and delivers an electrical pulse.  You can always draw a big box around any group of agents and, so long as there is at least one input signal and at least one output signal, you've got another agent.  
+* Anyhow, I've no opposition to the "groups" table tracking which agent is holding the belief.  My above statements are more to the effect that: "It's really kinda odd that one agent (whomever owns the database) is some sort of '''authority''' as to what another agent believes."  After all, if it's in the beliefs table, it's true! (this is a projective database, not a reflective one; see WhatIsData).  It'd be more appropriate that an agent (whomever owns the database) have in that database beliefs about what other agent believes (e.g. I believe with 70% confidence that top believes with 80% confidence that types are a messy hassle.)''
+* ''Who or what the groups are need not be hard-wired at this stage. If we want to build a group classification or ranking system on top of in within the groups, we can. Without a specific application or customer identified, I see no reason to hard-wire that kind of stuff at this stage. The beliefs/statements can belong to gods, humans, time-travelers, or dogs.''
+** I dunno... I'd feel rather presumptuous to say that the beliefs sitting in a table belong to any agent but the one that makes decisions based upon it, be they human gods or time-travelling dogs.  It's rather pointless to put, say, Jane's beliefs in the database if Jane doesn't ever look at it to remember what Jane believes.  It's a domain thing... you're probably most familiar with using databases to representing facts that '''reflect''' truths that exist in the real world as opposed to representing facts that '''project''' truths into the real world.  A belief database is projective.  That is, the agent believes something '''because''' it is in the database (rather than vice versa: it's in the database because the agent believes it).  Check out DataManipulation for discussion on that particular subject.
+** ''If we want to keep the system flexible (especially since the context of usage has not been formalized here), it makes sense to keep the associations flexible. Using set-based membership acheives that relatively easily. It gives us mix-and-match grouping and allows overlaps (sharing beliefs).''
+
+''I don't wish to give the impression that the variant problem has been conquered.  The hard part hasn't even been touched yet: access and manipulation.  Representation isn't too difficult with variants (though it gets messy when variants themselves contain unbound lists of other variants, which is why I simplified the "Truth" proposition to have at most two referents, whereas the more natural definition has finite-but-unbounded number).  The real problems start after you've chosen your crisp and clean representation and actually want to access or manipulate the data... e.g. to find all beliefs involving "Bob" and "Cookies".  The requirements stated mention only access, so you can assume that manipulation (removal, addition, modification of confidence) is allowed to be slow (e.g. performed in batch).  Access requirements are that you be able to find the -belief- fast... not the propositions, but the higher, top-of-the-tree, '''beliefs'''.''  
+
+''Can you write the relational code that tells me all beliefs associating (in any manner) (op:"Truth",param(Any):"Bob") with (another or the same) proposition (op:"Truth", param(Any):"Cookie")?  I'd prefer you discover how navigational such a query is for yourself.'' 
+
+* ''Please clarify "associating in any manner". ''
+* Eh, well something like (op:"Truth", param2:"Bob", param3:"Cookie") would obviously associate the two.  However, (op:"Or", param1:1234, param2:1235) might also associate "Bob" and "Cookie"... e.g. if proposition 1234 references "Bob" and proposition 1235 references "Cookie".  The 'in any manner' means 'any level of recursive depth'; so long as a proposition references both "Bob" and "Cookie" '''somewhere''' in the overall description, that proposition associates (in some manner) Bob and Cookie.  Another way of saying it: if "Bob" is mentioned and "Cookie" is mentioned in the same statement, no matter how complex, compound, or run-on that statement might be, then that statement associates "Bob" with "Cookie".
+* ''A (proposed) standardized traversal operation like that in QueryTraversalVersusRecursion could possibly do it without explicity looping or recursion. One may have to UNION some of the statements to "align" the reference numbers. And perhaps we could rework the schema to emphasize traversal simplicity/speed:''
+
+      table: statements  // VARIATION "JANE"
+      ---------
+      statementID
+      operator   // ex: and, or, probable, truth, etc
+      stmtRef1   // foreign key to this table (null if not applic)
+      stmtRef2   // ditto
+      param1
+      param2
+      // (not very pretty by relational standards, but workable)
+
+
+''The navigational nature of access for even the simplest of the domain requirements really demonstrates (... at least after you perform the exercise and sum the algorithmic costs) why even a whole pair of tables turns out no stronger than the humble list.  The domain, however, requires more: that you be able to rapidly find beliefs (that means "faster than O(N) - the cost of scanning through the list of ten-million beliefs") that meet certain patterns on their propositions... where the patterns might be two or three 'deep' (e.g. so beliefs that Not:(Possible:(Not:(X))) can be found, or beliefs that Not:(Possible:(X)) can be found, or beliefs that X can be paired with beliefs that Contingent:(structure-similar-to-X,Y).  Procedurally, this sort of indexing can be done (after some hassle, but at least a very straightforward hassle) with highly specialized indices that identify certain commonly requested patterns over beliefs.  The relational representation or model, however, doesn't allow for this.  It indexes keys over one table.  There is nary a glimmer of an approach - to find these patterns, you need pre-indexing on what is, essentially, ((beliefs left-join propositions on propositionID) left-join ((propositions on (param1 or param2 or param3 = lhs.propsitionID))) (this allowing to identify patterns of at most 2 levels deep... perhaps add one more recursive self-join on 3 params to get the whole three levels). Even the very most flexible implementations of relational will not allow for indexing patterns that can be identified only through two or three left-joins over the proposition table combined with a left-join from the behaviors table.  You'll need to specialize heavily, and whichever implementation you choose (even build-tables-and-query-processor-from-scratch) will fight you every step of the way.''
+
+I don't claim to have a suggested implimentation right now, but that does not mean that a better implementation cannot be devised. Lack of creativity on my part is not the same as "impossible" (AbsenceOfEvidenceIsNotEvidenceOfAbsence). If you can mathematically prove that certain relational expressions are implimentationally limited to O(n), then it may deserve an acedemic paper. And, I am also not dismissing a bastardized form of relational to speed up a niche. Many things don't have to be all-or-nothing. I'd probably start by dissecting your proposed alternative, and somehow work its indexing system into the new B-RDBMS. But your complaint about *current* implementations may deserve merit.

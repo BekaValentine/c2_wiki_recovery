@@ -1,0 +1,118 @@
+In CeePlusPlus you can guard against a header file being included more than once with what is called an IncludeGuard.
+
+A naive compiler will reload the file every time it's included. To avoid that, put RedundantIncludeGuards around the include:
+
+header.h
+  #ifndef HEADER_H_
+  #define HEADER_H_
+  // declarations
+  #endif
+foo.c
+  #ifndef HEADER_H_
+  #include "header.h"
+  #endif
+If the preprocessor sees this sequence after once including header.h (and therefore defining HEADER_H_) it will skip over the #include directive entirely - without scanning, or even opening, header.h.
+
+This example is slightly misleading. Note:
+
+''Using RedundantIncludeGuards in implementation files has much less gain than doing the same in a header, and adds quite a  bit more confusion due to the usually larger number of includes there.''
+
+In other words:
+
+header.h
+  #ifndef HEADER_H_
+  #define HEADER_H_
+  // declarations
+  #endif
+fooheader.h
+  #ifndef HEADER_H_
+  #include "header.h"
+  #endif
+RedundantIncludeGuards are ''not'' essential for making SelfContainedHeaders. Ordinary IncludeGuard''''''s work just fine, only a lot slower in large systems and given a lot of today's compilers.
+
+''See LargeScaleCppSoftwareDesign (the book, not the page) for an achingly exhaustive discourse on the results of testing these compile times on huge projects.''
+
+Notes:
+Preprocessing happens on a per translation unit basis. Which basically means that you start over from scratch each time you open a new .cpp file. Since everything that gets #included in the .cpp file is likely (though not guaranteed) to be getting #included for the first time the value of RedundantIncludeGuards is lessened (though not eliminated) for .cpp files. So if there is resistance to using RedundantIncludeGuards you can still get most of the value by mandating that they get used only for nested #includes (#includes in header files). This has the positive side-effect of making nested #includes more unpleasant to use and therefore (hopefully) less frequent. -- PhilGoodwin
+
+----
+Good compilers make this idiom unnecessary. They notice the header is using the include-guard idiom (that is, that all non-comment code in the file is bracketed with the #ifndef). They store an internal table of header files and guard macros. Before opening any file they check the current value of the guard and then skip the entire file.
+
+I believe GCC does this today. Eventually all quality compilers will. VC++ doesn't, but it does use "#pragma once" to similar effect (which is of course a hacky and non-portable scheme which no sensible compiler vendor should prefer, but that's Microsoft for you).
+
+Redundant guards have several drawbacks. They make include sections significantly harder to read. They are, well, redundant. They leak the guard name, which should be a secret implementation detail of the header. If, for example, someone renames the guard they might forget to update all the places where the guard name is assumed. Finally, they go wrong if anyone adds code outside of the guard. And of course, they are just a compile-time efficiency hack. Use only when all else fails. -- DaveHarris
+
+''Other compilers support ''''#pragma once''''. (And they did it '''before''' Microsoft did.)''
+
+''GNU CPP manual reference: http://gcc.gnu.org/onlinedocs/gcc-4.5.0/cpp/Once_002dOnly-Headers.html''
+----
+A possible solution is to create for each header a "header-guard" header:
+
+header_guard.h
+
+  #ifndef _REAL_HEADER_H_
+  #define _REAL_HEADER_H_
+  #include "real_header.h"
+  #endif
+''[Note: in your own code, you should not use names starting with _[A-Z], as they are reserved for use of the C++ implementation. -- JamesDennett]''
+
+Then of course you have to make sure that people include the header_guard.h and not the real_header.h in their code. The upside is that client code is not clattered with redundant include guards, the downside is that people should conform to a discipline ( creating two headers, including only appropriate headers) . A solution to this may be an a script that receive a list of pairs ( real header, header ) and scans all the source files to make sure only the corresponding header guard of each header includes that real header.
+Now the we have the script, who will make sure that the list of pairs is updated ?
+
+''Much of the overhead is in actually opening and closing the file, rather than in parsing it. So this approach will bring a smaller benefit; it may even double the number of files that are opened and read. However, if one really big header dominates, say, picking names at random, windows.h or stdafx.h, it may be worth treating it specially.''
+
+----
+When Napoleon was asked "Who will guard the criminals?" he said "Bigger criminals". This concept seem to fit here naturally. -- GigiSayfan
+
+Argh! If this isn't an affront to trying to DoTheSimplestThingThatCouldPossiblyWork, I don't know what is! My opinion is that (in C++) if you do this:
+
+ #ifndef _FILE_NAME_EXT
+ #define _FILE_NAME_EXT
+
+ <contents>
+
+ #endif//_FILE_NAME_EXT
+You've done enough. Who cares if it compiles slightly faster if you then (to this) add:
+
+ #ifndef _FILE_NAME_EXT
+	#include "F''''''ileName.ext"
+ #endif
+What a mess! This is just the most horrible thing I've ever seen. Really. Even if it is faster by milliseconds to compile, who cares? As a result, you now have this macro name relied on by two different files with twice as many chances to mistype and create a maintenance '''nightmare'''. The only thing that enforces consistency between macro names is a naming convention.
+
+''-- RobertDiFalco''
+
+The difference may be more than milliseconds. For example, Windows.h traditionally brings in several 100k of source. Nowadays it's factored better and spread over more files, and we have #define LEAN_AND_MEAN, but it is still big. We're talking an order of magnitude bigger than the user's .cpp file. It might be included 10 times when only needed once, giving a total factor of 100. That turns a 5 minute rebuild into 8 hours.
+
+''If you are talking about the Windows platform it becomes even easier - use PrecompiledHeader''''''s.''
+
+The problem is very real. What's at issue is the solution. There are better solutions than redundant include guards. -- DaveHarris
+
+''And those would be...''
+
+The ones already mentioned, namely PrecompiledHeader''''''s, #pragma once, and compilers that keep a table of included files and their (non-redundant) guard macros. Oh, and better dependency management in the first place. -- DaveHarris
+
+----
+In ObjectiveCee, you can use #import instead of #include. #import will include the header file only once. If you use GCC, you can also use it when writing C or C++ (but that's nonstandard of course). Why this trivial solution isn't adopted by the C and C++ standards committees is beyond me. -- StephanHouben
+
+Well, it prevents you from doing the pseudo-template style of:
+
+ #define TYPE char
+ #include "List''''''Template.h"
+ #undef TYPE
+
+ #define TYPE int
+ #include "List''''''Template.h"
+ #undef TYPE
+Of course, supporting both #import and #include would be nice. -- SunirShah
+
+ObjectiveC still potentially suffers from the same bug. Think of both hard and soft linking. How do you avoid redundant includes when a link is in place. The easy answer would be compare the inodes. However, some platforms, like Windows, do not support inodes in NTFS.  As an additional point of reference, ObjectiveC does support both #include and #import simultaneously.  -- WesleySpikes
+
+In ''TheDesignAndEvolutionOfCpp'', p, 425, Stroustrup calls for proper ''include'' directives.
+
+Adding #import has the problem of moving the onus of whether a file should be able to be included multiple times from the header implementor (who is the one that will decide) to the user/subscriber of the header. Sometimes headers should be included multiple times (not often, but sometimes) and the #import makes it impossible for the coder to know unless they look it up in the header itself. If you place control in the hands of the header implementor (i.e. through the guards or pragma once), then you completely sidestep this issue.
+
+----
+Or you could use the guards to improve the documentation to users of your class by doing making recursive includes an error that stops the compile (see the bottom bits of LargeScaleCppSoftwareDesign). -- SvenDowideit
+
+----
+CategoryCpp CategoryCee CeeIdioms

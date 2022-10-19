@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Virtual Functions And Shared Memory
+      </h1>
+      <p>
+        Object-oriented programming and <a href="SharedMemory.html">SharedMemory</a> generally don't work well together. 
+      </p>
+      <p>
+        Many object-oriented languages such as <a href="CeePlusPlus.html">CeePlusPlus</a> implement inheritance using a <em>virtual function table</em> (<em>vtable</em> for short). For each object class in your program, the compiler creates a vtable pointing to the location of each function implemented by that class. When you create an instance of an object, that instance contains the object's data members, plus a pointer to the vtable; when you invoke a virtual (inheritable) function on that object, the compiler inserts code to find the function in the object's vtable and jump to it. 
+      </p>
+      <p>
+        This approach allows different subclasses to have different implementations of the same function: given a superclass A which defines a virtual function <strong>foo()</strong>, subclass B's vtable will map foo to B::foo(), while subclass C's vtable will map foo to C::foo().
+      </p>
+      <p>
+        This works fine, as long as there's only one process involved. When you try to pass objects between two processes using <a href="SharedMemory.html">SharedMemory</a>, though, you get problems:
+      </p>
+      <ul>
+        <li>
+           When you create the object in the shared memory space from process 1, the object's data and vtable pointer are stored in the shared memory space...
+        </li>
+        <li>
+           BUT the vtable that the object points to is in the non-shared memory space of process 1.
+        </li>
+        <li>
+           So when process 2 tries to call a virtual function on the object in shared memory, it follows the pointer to the class's vtable... which does not exist in process 2's memory space! 
+        </li>
+        <li>
+           Even if process 2 contains all of the code for the object's class, it is in a different location, so the pointer to the vtable is invalid.
+        </li>
+        <li>
+           If you're lucky, process 2 will SEGV as soon as it tries to read the vtable. If you're not, it will jump into an unexpected location and begin to wreak havoc.
+        </li>
+        <li>
+           Yet another serious problem is members of pointer type. These kind of members will always point into the memory space of the first process (which is not necessarily the shared memory area), and hence will generate problems when used from other processes.
+        </li>
+      </ul>
+      <p>
+        There is no way, in C++, to control where the vtable goes or even to gain access to it from program code, so it's not an option to put that into shared memory. Even if you could access the vtable, it's implemented differently on each platform and compiler, so you don't know what information to copy to shared memory or how to access it. 
+      </p>
+      <hr/>
+      <p>
+        Some ways to get around this problem are:
+      </p>
+      <ul>
+        <li>
+           Marshalling all of your shareable objects into shared memory, as if you were writing them to a file. The other process then reads them out of shared memory, and creates copies in its own dataspace, using its own local vtables.
+        </li>
+        <li>
+           Divide your classes into data and code layers; you can then use the marshalling technique to deal with your code layer while leaving the data itself in shared memory.
+        </li>
+        <li>
+           Don't use shared memory -- use a different kind of inter-application communication method. Typically, this will also involve marshalling your objects into a data stream and reading them out at the other end.
+        </li>
+      </ul>
+      <p>
+        <em>Has anybody come up with other ways of dealing with this? I </em><a href="HaveThisProblem.html">HaveThisProblem</a> and have no choice but to use shared memory for interprocess communication (old protocols and such). Any contributions would be greatly appreciated. --<a href="RickSamuels.html">RickSamuels</a><em></em>
+      </p>
+      <p>
+        I've always solved this problem with serialization/deserialization.  There's no point copying the vtable to shared memory.  Just copy the data.  Alternatively, avoid copying objects between processes in the first place by using some equivalent of remote procedure calls.  It's often cheaper to copy arguments than objects.  -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <hr/>
+      <p>
+        It seems to me that it's likely to <em>just work</em>.
+      </p>
+      <p>
+        Let's assume
+      </p>
+      <ol>
+        <li>
+           All processors accessing this object are identical (homogeneous).
+        </li>
+        <li>
+           Each processor accessing this object is running an identical application.
+        </li>
+        <li>
+           The OS loading the application has placed that application in precisely the <em>same</em> (virtual) address in every processor. It doesn't matter if there is only one copy of the application in the shared memory (the same physical address), or if there is one copy in each processor's local memory.
+        </li>
+      </ol>
+      <p>
+        Practically all shared-memory computers already do all 3 of these things -- right ?
+      </p>
+      <p>
+        Then what happens is
+      </p>
+      <ul>
+        <li>
+           When the OS loads the application and all its code and vtables, the vtable is loaded into exactly the same virtual address (but possibly a different physical address) in every relevant processor.
+        </li>
+        <li>
+           When you create the object in the shared memory space from process 1, the object's data and vtable pointer are stored in the shared memory space...
+        </li>
+        <li>
+           BUT the vtable that the object points to is in the non-shared memory space of process 1.
+        </li>
+        <li>
+           So when process 2 tries to call a virtual function on the object in shared memory, it follows the pointer to the class's vtable... which <strong>does</strong> exist in process 2's memory space.
+        </li>
+        <li>
+           Process 2 contains all of the code for the object's class, at precisely the same virtual address, so the pointer to the vtable is perfectly valid.
+        </li>
+      </ul>
+      <p>
+        (members of pointer type are still a problem).
+      </p>
+      <p>
+        <em>That only works when the communicating processes are running the same program and can get completely blown away by Address Space Layout Randomization (ASLR). It's not recommended on modern operating systems.</em>
+      </p>
+      <hr/>
+      <p>
+        Interested:
+      </p>
+      <ul>
+        <li>
+           <a href="DavidCary.html">DavidCary</a>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        <a href="CategoryCpp.html">CategoryCpp</a>
+      </p>
+    </div>
+  </body>
+</html>

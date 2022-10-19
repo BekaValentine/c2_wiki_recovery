@@ -1,0 +1,64 @@
+''Note: this page is a bit of ancient WikiWiki history.''
+
+The bugs section of the dbopen (3) manual page warns...
+
+       None of the access methods provide any form of concurrent
+       access, locking, or transactions.
+This always bothered me. I guess I just hoped Perl would take care of it. Then, two days after soliciting traffic with my InvitationToThePatternsList, I saw what could be signs of trouble. I asked PatrickMueller and PaulMcKenney for help.
+
+----
+Hey Pat -- I got the impression you knew a lot about httpd so I'm going to try a question on you. Will httpd fork multiple copies of my cgi-bin script at the same time? If so, I have a little homework to do. What is a good unix way to serialize access to my dbm files?
+----
+Paul -- I got the impression you were pretty good at unix so I've got a question for you. What's a good way to serialize access to my dbm files inside a Perl script? Thanks -- Ward
+----
+Ward -- Yes, I believe it will fork multiple copies. At least, it ''should'' fork multiple copies. And then force the use to worry about serialization, if that's a concern.
+
+To serialize Wiki, you should be able to use semaphores. I'm sure Perl supports them in the best way it can. I know for OS/2, the easiest thing to do would be to run a ''semaphore manager'' that opened a system-side semaphore, then each of the scripts would do a ''request'' on it, do their processing, then ''release'' it. I'm not familiar with Unix semaphores at all, so I don't know if they have a concept of a system semaphore (on OS/2, they have a name).
+
+Even if they don't have it, you could use a file as a lock - have the script attempt to open the ''lock'' file in rw mode. If it fails, sleep 5 seconds, and try again. Die after 10 or [or what??] attempts. That's what I do in REXX on OS/2, since I can't easily get a system semaphore from REXX.
+
+Then again, Perl may handle this automagically. Are you using the DBM support in Perl for this? Perhaps you get a bad return code when opening the file, and can just do a spin lock there. -- Pat
+----
+Ward -- The following is pretty rude and crude - about its only redeeming feature is that it should work on most systems. The idea is that a given lock is represented by an empty directory with an agreed-upon name. Only one process can have created a given directory, and that process currently holds the lock. If you start having problems with processes dying while holding the lock, you might try putting a file in the directory whose name is the process ID of the holder of the lock (i.e., the creator of the directory).
+
+There is probably a better way of doing this, but this is what I am aware of. Hope this helps! -- Paul
+
+        #!/usr/local/bin/perl
+
+        while (mkdir("/tmp/argh", 0555) == 0) {
+                if ($! != 17) {
+                        die("cannot open /tmp/argh: $!\n");
+                }
+                # EEXIST == 17 is OK, try later.
+                sleep(1);
+        }
+        # This is the critical section -- do exclusive-access stuff here.
+        sleep(10);
+        rmdir("/tmp/argh");
+PS. I take it that activity on your WikiWiki site is much heavier after your announcement!
+----
+Paul -- Yea, I had a scare this morning when search reported that it only looked at 25 pages. Everything seemed to be there but Perl's '''each %db''' command only gave me 25. After testing with some backup db files I concluded that Perl just quit early.
+
+Then someone posted another page and all returned to normal. So I made a few more copies, including one by element into a new db. This had the interesting property of being 1/10 the size of the production db. Funny, I had noticed the db size to be growing rather quickly.
+
+I examined the bloated db and found many copies of RecentChanges, a page that grows often. In fact, many old copies occurred in a clump, around where the 26th page would normally be. This is also suspicious since every write is really two writes, the second to RecentChanges.
+
+So, I'm thinking now that I should serialize just the update logic in my script. Your code will do nicely - thanks. If I serialize the whole thing, I'm much more prone to some unanticipated exit.
+
+I'd like to leave this thing for weeks at a time and not have to worry about it. I don't think that will happen until I understand two big pieces: the httpd above me and the dbm hash access method below me. Right now, I'm out on a limb. -- Ward
+----
+WikiFiles
+----
+Ward -- Thought of another serialization problem. What if two people try to update a page at the same time? Given that the DBM serialization is fixed, one person's changes will get lost. Seems like the best answer is to have the edit page keep a 'revision' number for the page, that gets sent when the user presses submit. If a modification for a revision comes in that isn't the latest revision, inform the user that their page was out of date. -- Pat
+----
+Pat -- Yes, a lossage due to stale data in a browser is most likely in a hot spot like RecentVisitors. I put rev numbers in the db with the intention of doing as you say. Two things have slowed me down. First, I'm not sure how to explain what has gone wrong without further confusing the operators. I'm amazed at how many people write me and tell me that what I already have is hard to use. Sometimes I try to operate Wiki from the point of view of someone who doesn't understand that there are really two computers behind the screen. Try to explain to them the difference between Reload and Reset.
+
+The other problem is more just coding complexity. I often continue editing in a form that I have already saved. The browser and the server are in synch but you couldn't tell from the stale rev number hidden in the form. Avoiding this false alarm seems to require heuristics based on which hosts send what. And then there is the guy with several EditText forms on the same page...
+
+So, I'm now keeping backup copies of pages which are accessible with a special link called EditCopy. The backup is the most recent text from a host other than the one who saved the current text. I'm recruiting "Housekeepers" who will volunteer some time to watch for lossages and fix them up with this and other tools. Interested? Read MoreAboutHousekeeping. I would appreciate your help.
+
+In fact, I already appreciate your help. It was kinda interesting to go though my little crisis yesterday. I had a hint of trouble, a suspicion of a cause, my peak load to date, and the possibility of a very public failure. I wasn't in the mood to experiment. With your clear advice (and Unix advice from Paul) I didn't have to. Thanks. -- Ward
+----
+'''Epilogue.''' I combined both suggestions, checked it in a model and then installed it in wiki that day. I then wrote a compress utility and doubled my backup frequency. The experience gave me a hint why guys running big commercial databases are so conservative. I also learned how helpful net friends can be. -- WardCunningham
+----
+'''Post Epilogue.''' The hints of trouble are still there but I am confident they do not come from concurrent requests stepping on each other's toes. I now suspect a PerlDatabaseIterationProblem.

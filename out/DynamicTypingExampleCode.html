@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Dynamic Typing Example Code
+      </h1>
+      <p>
+        Some people deny any usefulness of dynamic typing.
+        This little program below is my attempt to show that
+        dynamic typing can be a big help to get working code
+        as fast as possible. Nothing more. This is especially not
+        an argument that dynamic typing is universally "better"
+        than static typing.
+      </p>
+      <p>
+        It's a minimal build tool, essentially how the Rake
+        and Rant programs (both can be found on <a href="http://rubyforge.org)">http://rubyforge.org)</a>
+        started out. It's written in Ruby, but I'm sure a straightforward
+        translation to Python, Perl and Lisp is possible.
+      </p>
+      <p>
+        It shows the following features/characteristics usually
+        found in dynamic languages:
+      </p>
+      <ul>
+        <li>
+           No type or interface declarations to make the compiler happy
+        </li>
+        <li>
+           List and hashtable literals
+        </li>
+        <li>
+           Heterogeneous lists (arrays in the example, to be precise)
+        </li>
+        <li>
+           Embedded DSLs
+        </li>
+        <li>
+           Dead easy dynamic code loading, no file compilation step needed
+        </li>
+        <li>
+           Late binding. The interpreter is happy to run the code even if some parts are not type correct.
+        </li>
+      </ul>
+      <p>
+        All of the points listed above have advantages and disadvantages,
+        but they are all very handy for prototyping.
+      </p>
+      <code>
+        #!/usr/bin/env ruby<br/>
+      </code>
+      <code>
+        class Task<br/>
+        def self.valid_name?(name)<br/>
+        name.kind_of?(Symbol)<br/>
+        end<br/>
+        attr_reader :name<br/>
+        # Array of symbols and strings. A symbol names a regular task<br/>
+        # whereas a string names a file (for which a FileTask may exist).<br/>
+        attr_reader :prerequisites<br/>
+        def initialize(name, prerequisites, block)<br/>
+        @name = name<br/>
+        @prerequisites = prerequisites<br/>
+        @done = nil<br/>
+        @block = block<br/>
+        end<br/>
+        def done?<br/>
+        @done<br/>
+        end<br/>
+        def run<br/>
+        @block.call(self) if @block<br/>
+        @done = true<br/>
+        end<br/>
+        def uptodate?<br/>
+        done?<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <code>
+        class FileTask < Task<br/>
+        def self.valid_name?(name)<br/>
+        name.kind_of?(String)<br/>
+        end<br/>
+        def uptodate?<br/>
+        done? or<br/>
+        File.exist?(name) &&<br/>
+        prerequisites.all? { |pre|<br/>
+        File.mtime(name) >= File.mtime(pre)<br/>
+        }<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <code>
+        class Build<br/>
+        attr_reader :tasks<br/>
+        def initialize<br/>
+        @tasks = {}<br/>
+        end<br/>
+        def load_build_file(filename)<br/>
+        instance_eval(File.read(filename), filename)<br/>
+        end<br/>
+        def make(taskname)<br/>
+        t = @tasks[taskname]<br/>
+        if t.nil?<br/>
+        if taskname.kind_of?(String)<br/>
+        unless File.exist? taskname<br/>
+        raise "Don't know how to make file #{taskname}."<br/>
+        end<br/>
+        else<br/>
+        raise "No such task: #{taskname}"<br/>
+        end<br/>
+        else<br/>
+        t.prerequisites.each { |pre| make pre }<br/>
+        t.run unless t.uptodate?<br/>
+        end<br/>
+        end<br/>
+        def task_(klass, args, &block)<br/>
+        case args<br/>
+        when Symbol, String:<br/>
+        name = args<br/>
+        prerequisites = []<br/>
+        when Hash:<br/>
+        name = args.keys.first<br/>
+        prerequisites = args.values.first<br/>
+        unless args.size == 1 && prerequisites.kind_of?(Array)<br/>
+        raise "Invalid task argument syntax."<br/>
+        end<br/>
+        else raise "task syntax error"<br/>
+        end<br/>
+        raise "Invalid name #{name.inspect}." unless klass.valid_name? name<br/>
+        @tasks[name] = klass.new(name, prerequisites, block)<br/>
+        end<br/>
+        def task(*args, &block)<br/>
+        task_(Task, *args, &block)<br/>
+        end<br/>
+        def file(*args, &block)<br/>
+        task_(FileTask, *args, &block)<br/>
+        end<br/>
+        def sh(cmd)<br/>
+        puts cmd<br/>
+        system cmd or raise "command failure"<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <code>
+        if $0 == __FILE__<br/>
+        build = Build.new<br/>
+        build.load_build_file "makefile.rb"<br/>
+        taskname = ARGV[0] || :default<br/>
+        taskname = taskname.to_sym if build.tasks[taskname.to_sym]<br/>
+        build.make(taskname)<br/>
+        end<br/>
+      </code>
+      <p>
+        To try the code, save it in a file called make.rb and set the
+        executable bit. An example build description (save it in a file
+        called makefile.rb) is below:
+      </p>
+      <code>
+        require "fileutils"<br/>
+      </code>
+      <code>
+        task :default => ["hello"]<br/>
+      </code>
+      <code>
+        file "hello" => ["hello.c"] do |t|<br/>
+        sh "cc -o #{t.name} #{t.prerequisites.join(' ')}"<br/>
+        end<br/>
+      </code>
+      <code>
+        task :rebuild => [:clean, "hello"]<br/>
+      </code>
+      <code>
+        task :clean do<br/>
+        FileUtils::Verbose.rm_f "hello"<br/>
+        end<br/>
+      </code>
+      <p>
+        A shell session might look like:
+      </p>
+      <code>
+        $ cat hello.c<br/>
+        #include <stdio.h><br/>
+        int main() {<br/>
+        printf("Hello, world!\n");<br/>
+        return 0;<br/>
+        }<br/>
+        $ ./make.rb<br/>
+        cc -o hello hello.c<br/>
+        $ ./make.rb<br/>
+        $ touch hello.c<br/>
+        $ ./make.rb<br/>
+        cc -o hello hello.c<br/>
+        $ ./make.rb rebuild<br/>
+        rm -f hello<br/>
+        cc -o hello hello.c<br/>
+        $<br/>
+      </code>
+    </div>
+  </body>
+</html>

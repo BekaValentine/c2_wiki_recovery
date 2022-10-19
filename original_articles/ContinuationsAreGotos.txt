@@ -1,0 +1,188 @@
+Many languages, such as StacklessPython, SchemeLanguage, OriginalIoLanguage, IconLanguage and SmlLanguage support first-class ''continuations'' (see ContinuationExplanation), the ability to save the current execution context in a variable, and "call" it later.
+
+''This is entirely unlike a goto, as goto moves the programme counter to another place in the programme text, while continuations capture a place in the text AND the entire call stack AND programme state into an object. As such, 'invoking' a continuation is also unlike a goto.''  [We know the difference between a continuation and a raw goto; however many of the arguments against gotos apply to continuations as well; hence this page]
+
+That page calls it "goto with parameters".  Which is essentially what continuations are--GotoStatement''''''s that are "cleaner" with regard to the underlying machine (goto statements where the label can be saved in a variable).  And like the goto statement, continuations can be used to implement any control structure--e.g.:
+
+* Procedure call:  Save current location as a continuation, jump to the (static) continuation naming the function (passing in the current location), when done, call the current location.
+
+* Procedure call with DynamicDispatch (OO method call):  Similar to plain procedure call, except the continuation to be called is looked up in a VeeTable or something like that.
+
+''This does not require continuations, only closures (or even just function pointers).''
+
+* Exceptions:  When you enter a try {} block, a continuation to the start of the corresponding catch() block is saved in a convenient place; a throw() executes that continuation.  (Actually, some compiler-generated code to select the appropriate catch block; or to call yet another continuation to try a different catch block, is what gets called).
+
+* Loops:  Save a continuation to the start of the loop:  Jump to the continuation at the end:
+
+* Conditionals and case statements:  Save continuations to each of the cases (these continuations are static), call the appropriate one.  At the end of each choice, call another continuation representing the end.
+
+* Coroutines:  In the simple case, have two continuations call each other.  In the general case, maintain a dictionary of continuations, a transfer call saves the current continuation in the current "thread"'s entry; and retrieves and calls the continuation for the "target" thread.
+
+* LogicProgramming: Here's a quick-and-dirty piece of Scheme code that does something of the sort:
+
+ (define (fail) (error "No solution!"))
+ (define (amb . params)
+   (if (null? params) (fail)
+                      (call/cc (lambda (cont) (set! fail (lambda () (cont (amb cdr params))))
+                                              (car params)))))
+
+ ; Utility routine:
+ (define (assert pred) (if (not pred) (fail)))
+
+ ; Simple example:
+ > (define foo (amb 1 -1 2 3 5 7 8)
+               (assert (even? foo))
+ > foo
+ 2
+ > (fail)
+ > foo
+ 8
+ > (fail)
+ Error: No solution!
+
+Etc.
+
+Of course, like GotoStatement''''''s, continuations can be abused in all sorts of bizarre manners; virtually every argument that EwDijkstra makes in GotoConsideredHarmful can be applied to continuations.  Further, first-class continuations severely complicate the design of a language.
+
+Many feel it is better to provide only "higher level" control structures, and leave explicit continuations out of languages.  Others swear by them.  (Is that because many languages that support continuations ''don't'' have, for example, explicit CoRoutine''''''s, and continuations must be used instead?) 
+
+----
+
+
+[from ContinuationsAndCoroutines]
+
+Bah, humbug.  More pig entrails and obfuscation.  It's just gotos, man.
+
+The implementation and execution of something called a coroutine or a continuation is vastly different depending on which high level language you choose to use.  Ways to confuse the reader of code.  And pretend towards elegance.
+
+And in the end it becomes assembly jmps calls and rets.  Yay.
+
+''This is a silly argument. Any high-level language construct gets compiled to machine/assembly code (if it is not interpreted).''
+
+Are you telling me you're really going to implement an if-then-else in terms of continuations?
+
+	if (beavis)
+	{
+	  // stuff...
+	}
+
+	  |
+	  |
+	  V
+
+	if (!beavis)
+	  elseContinuation.Go();
+
+	// stuff...
+
+	elseContinuation = thisContinuation();
+
+	// uhhhh... time travel? overcomplication!
+	// it's a conditional branch instruction ForGodSakes!
+
+-----
+
+''Continuations give you a _name_ for something which didn't have one before.  They allow you to assign the "current" state of a program to a variable.''
+
+''The primary difference between continuations and something like setjmp() or goto is that continuations encapsulate the entire state (memory) of the program.''
+
+''Consider this scheme code (which can certainly be clarified -- takers?):''
+
+ (let ((a 4))
+	(format #t
+		"1: a is ~s, lambda returns ~s\n"
+		a
+		(call/cc
+		(lambda (k)
+		(set! a 3)
+		(format #t "2: (inside lambda) a is ~s\n" a)
+		(k 0))))
+	(format #t "3: (final) a is ~s\n" a))
+''The result from evaluating this code is:''
+
+ ''2: (inside lambda) a is 3''
+ ''1: a is 4, lambda returns 0''
+ ''3: (final) a is 3''
+''Notice that the function inside the (lambda (k) ...) executes first, and sets a to three instead of four.''
+
+''However, when it "returns" inside the format statement, a is "still" four!''
+
+''In the third format statement, a "becomes" three again.''
+
+''The semantics of a call-with-current-continuation are not directly possible in ANSI C.  I think you would need something like copy-on-write memory pages.  Here is a first try using the Unix fork() function:''
+
+ #include <unistd.h>
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ #include <stdio.h>
+ int
+ main()
+ {
+	int a=4;
+	pid_t k;
+	k = fork();
+	if (0 != k) {
+	int status=0;
+	int options=0;
+	waitpid(k,&status,options);
+	printf("%d %d\n", a, WEXITSTATUS(status));
+	return 0;
+	} else {
+	a=3;
+	printf("%d\n", a);
+	return 10;
+	}
+ }
+''I think a fundamental limitation of this for C on Unix is that you can't return into another program's address space.''
+
+* No; that would imply that Scheme on Unix had the same problem, which it does not. The OS issues are separate from the language issues. -- dm
+
+I think you've misunderstood what goes on slightly:  if you drop the token 'call/cc' and replace '(k 0)' with '0' (replacing the call/cc with a function application), you get the same result.  If I'm not mistaken, the value of 'a' is passed to format before the lambda is applied.  If, with a suitable definition of format, you modified the a to use a lazier form (a lambda returning the value of a, or simply quoting 'a' and then evalling it), you would get the expected result of "1: a is 3".  
+
+In a similar manner, if you pass a function to another function "(display call/cc)", 'display' is not receiving the variable 'call/cc', but the lambda which 'call/cc' represents.  "(define blah call/cc) (display blah)" will display exactly the same thing as "(display blah)".
+
+--WilliamUnderwood
+
+----
+
+If you've ever done assembler, continuations are very simple. A continuation is just a structure containing:
+	* A complete copy of the stack
+	* A snapshot of all registers (including program counter)
+To create one you just suck this stuff out of the computer. To invoke one you just copy it all back into the hardware. The effect of invoking a continuation is to jump the program back to the same state as when the continuation was created, but only with regards to stack and registers (the rest of memory is left alone).
+
+Or, in C terms, it's like setjmp() and longjmp() except that it makes a copy of the stack instead of just taking a pointer. Since invoking the continuation copies a whole old stack back into memory, you can call it at any time and as many times as you like, and it will always take you back to the same place.
+
+People use tricks to avoid actually copying the whole stack all the time, but that is an implementation detail.
+
+If you understand that explanation you may wonder what all the fuss is about. Part of it is because continuations are often explained in terms of DenotationalSemantics instead of assembler (but it amounts to the same thing both ways). The other part is the hair-raising things that you can do with them.
+
+If you don't understand this but you do know assembler, then the description is lacking, so please ask a question. If you don't know any assembler then the explanation isn't for you, but they can probably be explained easily in terms of something else that you do know.
+
+Discussion on realistic implementation moved and refactored to ContinuationImplementation. 
+
+----
+
+A really handy background to have for understanding continuations is a basic knowledge of Lisp. Then you can look at a small interpreter for a Lisp dialect with first-class continuations, written in Lisp, that actually works and is a closer match for how continuations are really implemented in practice. GuySteele recently posted such an interpreter, and a copy can be found at http://www.bluetail.com/~luke/misc/foo1.lisp.
+
+Demonstrating new language features by writing simple implementations of them (as interpreters, macros, or functions) is a wonderful piece of Lisp culture (SiCp being the best introduction to this). It's also one of the areas where continuations themselves have been a big help, because they make it possible to implement control constructs like try/catch or Prolog-style backtracking using plain functions. -- LukeGorrie, MissingWikiBeforeWeHatedLisp :-
+----
+
+I have only just recently started playing with LispMe, (IwannaLearnScheme!) and I only just '''barely''' understand  continuations, but they strike me as being similar to goto's, but up a level.  Seeing as how you can implement all manner of high level control structures like for, while, until, etc. with if's and gotos, it seems to me that continuations are the higher-level gotos, and that there might be more than CoRoutine''''''s, Exceptions, and Threads available to us.  (Excuse me if this ground is already covered in ComputerScience.) -- JonathanArkell
+
+----
+You can't pass goto statements around as values.
+
+''Depends on the language.  In CeeLanguage, labels (the only thing that can be a target of a GoTo) are third-class; you cannot assign them to variables, pass them to functions, or return them from functions.  In other languages (many dialects/implementations of BasicLanguage; some extensions of C such as GnuCee), you can do such things.''
+
+''In general, abuse of GoTo''''''s in this fashion leads to horrible SpaghettiCode.  You don't want to go there.''
+----
+Is there a relation between ContinuationsAndClosures similar to ScopeAndClosures or ClosuresAndObjectsAreEquivalent ?
+
+''Yes -- in a language with closures but not continuations, you can rewrite your functions into ContinuationPassingStyle to the same effect. For example Node.js is done like this. In a language with continuations the compiler does this for you.'' 
+----
+
+Contributors:  ScottJohnson
+
+----
+
+CategoryLanguageFeature, CategoryContinuation, CategoryBranchingAndFlow

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Continuation Passing Style In Cee Plus Plus
+      </h1>
+      <p>
+        Example and discussion on <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a> in <a href="CeePlusPlus.html">CeePlusPlus</a> moved here.
+      </p>
+      <hr/>
+      <p>
+        Example:  <strong>callcc</strong> is defined, using the methods described in <a href="FunctoidsInCpp.html">FunctoidsInCpp</a>, as a function object which takes three arguments, a value and two function objects each taking one argument. The third argument is called with an argument which is the result from the call of the second argument using the first argument, thus
+      </p>
+      <code>
+        int x = 2;<br/>
+        callcc(x,f,g); // implies g(f(x))<br/>
+        callcc(x,succ,succ); // will take the successor of x twice.  <br/>
+      </code>
+      <p>
+        Incomplete calls are allowed, so that 
+      </p>
+      <code>
+        callcc(x,succ);<br/>
+      </code>
+      <p>
+        is an object which takes a suitable function as an argument.
+      </p>
+      <code>
+        callcc(x,succ) (succ); // Allows deferred decision about last argument.<br/>
+      </code>
+      <p>
+        Also, the last argument in <strong>callcc</strong> can be another <strong>callcc</strong>, so that these also work.
+      </p>
+      <code>
+        callcc(x,succ,callcc(_,succ,succ));  // _ is a placeholder for the first argument.<br/>
+        callcc(x,succ) (callcc(_,succ,succ));  // The second callcc is an argument to the first call.<br/>
+      </code>
+      <p>
+        <em>You need to take some care here, John.  You're actually passing more continuations into that porridge than you seem to be thinking:  (1) A </em>'return<strong> continuation, (2) A </strong>throw<em>' continuation.  The difficult part of CPS in C++ is figuring out how to remove these until you desire them explicitly.  If you do not do so, CPS will break the stack - the stack cost to pass unused 'return' and 'throw' continuations is linear with program duration.  There are mechanisms to avoid this... but most of them involve passing/returning a functor-object to a handler that can then execute the 'next' action, such that the stack cost is constant with the runtime duration.  Unfortunately, this does make handling return values considerably more difficult (you'll end up passing continuations into continuations simply so they can be passed back to the handler after some return-value is set), and requires careful consideration of how data is stored (most will be on the heap... at least anything that needs to go from one continuation to another).  Further, it requires a great deal of programming discipline.</em>
+      </p>
+      <p>
+        <em>I've only used CPS in C++ once, and it was when implementing a compiler/interpreter for a small </em><a href="DomainSpecificLanguage.html">DomainSpecificLanguage</a> for scripting.  That is a far easier place to use it, seeing as it doesn't require explaining it to the other programmers.<em></em>
+      </p>
+      <hr/>
+      <p>
+        I am not sure quite what is so terrible in what I am doing, as nothing is being done which is not in C++. First of all, <strong>callcc</strong> is a function object rather than a function. This means that the calls of <strong>callcc</strong> are to overloads of operator() and the actual evaluation calls are being held up until the function finally returns, when all the calls are then made and return in the usual sequence. The FC++ functoids provide the means for such lazy behaviour.
+      </p>
+      <p>
+        Here is the actual code of <strong>callcc</strong>, which uses a template called <strong>Full3</strong> which is part of FC++.
+      </p>
+      <code>
+        struct XCallCC<br/>
+        {<br/>
+        template <class T, class F, class G> struct Sig : public FunType<T,F,G,<br/>
+        typename G::template Sig<typename F::template Sig<T>::ResultType>::ResultType> {};<br/>
+        template <class T, class F, class G><br/>
+        typename Sig<T,F,G>::ResultType<br/>
+        operator()( const T& x, const F& f, const G& g) const {<br/>
+        return  g(f(x)) ;<br/>
+        }<br/>
+        };<br/>
+        typedef Full3<XCallCC> XcallCC;<br/>
+        XcallCC callcc;<br/>
+      </code>
+      <p>
+        callcc(x,succ,succ) amounts to succ(succ(x))
+      </p>
+      <p>
+        callcc(x,succ) (callcc(_,succ,succ) ) is FC++ currying and amounts to succ(succ(succ(x))
+      </p>
+      <p>
+        The power is that callcc(x,succ) is a C++ object which can be passed e.g. as an argument and then further processed.
+      </p>
+      <p>
+        callcc(x,succ) will be instantiated by FC++ as an object of type binder1and2of3 which looks like this. It holds the parameters of the call until the time when the call is complete when the operator() is called.
+      </p>
+      <code>
+        template <class Ternary, class Arg1, class Arg2><br/>
+        class binder1and2of3 {<br/>
+        const Ternary f;<br/>
+        const Arg1 a1;<br/>
+        const Arg2 a2;<br/>
+        public:<br/>
+        template <class Arg3><br/>
+        struct Sig <br/>
+        : public FunType<typename Ternary::template Sig<Arg1,Arg2,Arg3>::Arg3Type,<br/>
+        typename Ternary::template Sig<Arg1,Arg2,Arg3>::ResultType> {};<br/>
+        binder1and2of3(const Ternary& w, const Arg1& x, const Arg2& y) : <br/>
+        f(w), a1(x), a2(y) {}<br/>
+        template <class Arg3><br/>
+        typename Sig<Arg3>::ResultType <br/>
+        operator()(const Arg3& z) const { return f(a1,a2,z); }<br/>
+        };<br/>
+      </code>
+      <hr/>
+      <p>
+        <em>Further, it requires a great deal of programming discipline.</em>
+      </p>
+      <p>
+        I agree with this, and this is what the original authors of FC++, Brian McNamara and Yannis Smaragdakis, teach by the thoroughness of their code. A full set of binders is supplied for 1, 2 and 3 parameter objects and I have been replicating this code for 4 and 5 argument objects. The beauty is that it supplies a good foundation for extension to different problems, which is what I have been doing here. -- <a href="JohnFletcher.html">JohnFletcher</a>
+      </p>
+      <hr/>
+      <p>
+        <em>I was only suggesting you take care.  It's easy to implement badly.</em>
+      </p>
+      <p>
+        <em>Your approach to </em>'callcc<em>' above is unlikely to suffer the stack problem at the immediate level since it follows the pattern of acquiring a result then passing the result to another function, which can (if fully optimized for removal of unnecessary temporaries) avoid stack growth issues... essentially by avoiding recursion.  Of course, elimination of unnecessary temporaries is an absolute must.  So long as the continuation you wish to pass can be determined statically by the programmer, it would be a fine means of composing programs in a manner that optimizes easily.  I'm fairly certain it's less useful than function composition, but it certainly isn't useless.</em>
+      </p>
+      <p>
+        <em>Where it might break is if optimization is insufficient... </em><a href="TailRecursion.html">TailRecursion</a> is an optimization that makes a language well suited for <strong>callcc</strong>, but C++ lacks <a href="TailRecursion.html">TailRecursion</a>.  Your implementation requires that C++ perform very good temporary elimination, which can be difficult given that C++ now defines temporary elimination happening only after End of Full Expression (basically after the semicolon) to avoid wiping out things like temporary 'std::string' objects and the inner 'const char*' one can access with '.c_str()'.  Further, the approach isn't entirely suited for CPS where branching occurs (multiple continuations)... it does not naturally extend to the broader spectrum of CPS.  You'll need to ensure no other CPS things you implement will break the C++ stack due to the C++ calling convention.<em></em>
+      </p>
+      <p>
+        <em>Consider that with CPS, the goal of passing the continuation is to control program flow... possibly for a very large application.  E.g. you might pass in two continuations, the first to be followed in the event an integer is parsed, and the second in the event a string is parsed.  Or you might pass in a third continuation, to be followed in the event an exceptional condition occurs.  The continuations that won't ever be followed can be discarded, along with any data that only they continue to depend upon.  In a fully CPS program, the stack can be eliminated entirely, though some equivalent may exist for program areas that perform a great number of 'upwards' continuations.</em>
+      </p>
+      <p>
+        <em>If you wish to consider </em><a href="ContinuationPassingStyleInCeePlusPlus.html">ContinuationPassingStyleInCeePlusPlus</a>, it's these other uses of continuations that are essential for you to cover.  Branching, Looping, Co-Functions (that, e.g., 'yield' a different value on each call), and Exception handling are necessary.)  And all of these must be done without potentially breaking the stack. I think it could be done, and would be interesting to do, just not in a manner similar to your current approach.  Have any ideas for cpWhile, cpFor, cpIf, cpIfElse?<em></em>
+      </p>
+      <p>
+        <em>On a lesser note, the signature on your </em>'callcc<strong> description is likely broken... you need to use a composed signature if you're going to return a composed value; the return type is: </strong>typename G::template Sig<typename F::template Sig<T>::ResultType>::ResultType<strong>, not </strong>T<em>'.</em>  - accepted and implemented.
+      </p>
+      <p>
+        <em>Further, incrementing x when x is </em>'const<em>' will probably fail.</em> - this is now clarified.
+      </p>
+      <p>
+        Note that <strong>succ</strong> is another functoid with the following guts. It is called <strong>inc</strong> in FC++ which is deliberately following <a href="HaskellLanguage.html">HaskellLanguage</a>, where side effects are not allowed. I have made <strong>succ</strong> a synonym for <strong>inc</strong> and <strong>prev</strong> a synonym for <strong>dec</strong>.
+      </p>
+      <code>
+        template <class T><br/>
+        T operator()(const T& x) const { T y = x; return ++y; }<br/>
+      </code>
+      <p>
+        Thanks for the comment on the return type, you are quite right. This would all go away using <a href="FunctoidsInCppWithConceptCpp.html">FunctoidsInCppWithConceptCpp</a>. I agree that compiler optimisation is important for run time efficiency. On the wider issue of handling problems where there are choices of processing see <a href="ContinuationPassingStyleInCppQuadraticEquationExample.html">ContinuationPassingStyleInCppQuadraticEquationExample</a> which is a first attempt at this, although the implementation is not (yet) a continuation. (Sorry for the long page name.) The example could be reimplemented using the Lambda language below. -- <a href="JohnFletcher.html">JohnFletcher</a>
+      </p>
+      <hr/>
+      <p>
+        The comments on extensions take this into another league. FC++ has a lambda language with placeholders, which is described in <a href="CppTemplateMetaprogramming.html">CppTemplateMetaprogramming</a>, p.244 etc. Here is an example in the current context. <strong>X</strong>, <strong>F</strong> and <strong>G</strong> are placeholders of type <strong>LambdaVar<int></strong>.
+      </p>
+      <code>
+        LambdaVar<1> X;<br/>
+        lambda(X,F,G) [ callcc [X,F,G] ] (35,succ,succ);<br/>
+        lambda(C,X,F) [ C [X,F,C [_,F,C [_,F,F] ] ] ] (callcc) (45,succ);<br/>
+        //The last example is equivalent to <br/>
+        callcc(45,succ,callcc(_,succ,callcc(_,succ,succ)));<br/>
+      </code>
+      <p>
+        The lambda language does have structures for <strong>IF</strong> and various other things. See examples below. -- <a href="JohnFletcher.html">JohnFletcher</a>
+      </p>
+      <p>
+        <em>Being unfamiliar with the syntax used here, I don't quite follow the example. However, having the structure for the "if" conditional isn't entirely sufficient to make it practical at runtime in production code.</em>
+      </p>
+      <p>
+        A couple of examples from working code of for <strong>IF</strong>. For more details on this refer to the FC++ web page referenced on <a href="FunctoidsInCpp.html">FunctoidsInCpp</a>.
+      </p>
+      <code>
+        // Minimum<br/>
+        lambda(X,Y) [ if0[ X %less% Y, X, Y ] ] (2,10);<br/>
+        // Factorial n.<br/>
+        lambda(X) [ letrec [ F == lambda(Y)[ <br/>
+        if1[ Y %equal% 0,<br/>
+      </code>
+      <ol>
+        <li>
+          ,
+        </li>
+      </ol>
+      <code>
+        Y %multiplies% F[Y%minus%1] ] ]<br/>
+        ].in[ F[X] ] ] (n);<br/>
+      </code>
+      <p>
+        <em>Note: This code depends upon a combination of </em><a href="OverloadingCommaOperator.html">OverloadingCommaOperator</a> with <a href="ArgumentDependentNameLookup.html">ArgumentDependentNameLookup</a>.<em> -- </em><a href="JohnFletcher.html">JohnFletcher</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="JuneZeroSeven.html">JuneZeroSeven</a>
+      </p>
+      <p>
+        <a href="CategoryCpp.html">CategoryCpp</a>
+        <a href="CategoryFunctionalProgramming.html">CategoryFunctionalProgramming</a> 
+        <a href="CategoryCodingConventions.html">CategoryCodingConventions</a>
+        <a href="CategoryContinuation.html">CategoryContinuation</a>
+      </p>
+    </div>
+  </body>
+</html>

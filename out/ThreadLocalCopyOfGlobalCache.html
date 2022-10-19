@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Thread Local Copy Of Global Cache
+      </h1>
+      <p>
+        I'm trying to find a reasonable alternative to DCL for my object cache. I came up with the code below.
+      </p>
+      <p>
+        Only read performance and consistency are concerns, the object retrieved from the cache are immutable. In the pseudo-code below I also skipped the invalidation scheme for the objects, but that will be handled on a per object basis and will escalate from the thread local to the global cache.
+      </p>
+      <p>
+        This should hopefully mean that synchronization only occurs when an object is invalid, whereas with only a global cache, the lazy initialization/invalidation would force the use of synchronization for every get().
+      </p>
+      <p>
+        I haven't been able to do any comparative testing of speed yet, and most likely the use of ThreadLocal is not a good idea in JDKs previous to 1.4.
+      </p>
+      <p>
+        Anyway, here's the code. Could this be a reasonable option? Comments?
+      </p>
+      <code>
+        public class Cache {<br/>
+      </code>
+      <code>
+        private static ThreadLocal threadCache = new ThreadLocal() {<br/>
+        Object initialValue() {<br/>
+        return new HashMap();<br/>
+        }<br/>
+        };<br/>
+      </code>
+      <code>
+        private static final HashMap globalCache = new HashMap();<br/>
+      </code>
+      <code>
+        public static Object getFromCache(Object key) {<br/>
+        Object value = ((HashMap) threadCache.get()).get(key);<br/>
+        if (value==null) {<br/>
+        value = getFromGlobalCache(key);<br/>
+        ((HashMap) threadCache.get()).put(key, value);<br/>
+        }<br/>
+        return value;<br/>
+        }<br/>
+      </code>
+      <code>
+        private static Object getFromGlobalCache(Object key) {<br/>
+        synchronized (globalCache) {<br/>
+        Object value = globalCache.get(key);<br/>
+        if (value==null) {<br/>
+        value = getFromSlowSource(key);<br/>
+        globalCache.put(key, value);<br/>
+        }<br/>
+        }<br/>
+        return value;<br/>
+        }<br/>
+      </code>
+      <code>
+        private static getFromSlowSource(Object key) {<br/>
+        return new Object();<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        -- FredrikNylander
+      </p>
+      <hr/>
+      <p>
+        It may be just me but this strikes me as using a howitzer to kill a fly.  If your problem is synchronization because of lazy initialization in the global cache, then don't lazy initialize the global cache! --<a href="KyleBrown.html">KyleBrown</a>
+      </p>
+      <p>
+        Ah, the example might be a bit misguiding in that sense. The synchronization isn't only a problem at initialization, but also when objects in the cache get invalidated and reloaded, which might happen at any get(). This way, there's no synchronization except when the item is missing or invalid. If I use a singleton/static HashMap as a cache I basically have to synchronize the entire HashMap on every access. The line:
+      </p>
+      <code>
+        if (value==null) {<br/>
+      </code>
+      <p>
+        is in reality:
+      </p>
+      <code>
+        if (value==null || value.isInvalid()) {<br/>
+      </code>
+      <p>
+        -- FredrikNylander
+      </p>
+    </div>
+  </body>
+</html>

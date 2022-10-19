@@ -1,0 +1,79 @@
+[From RefactoringWithaFrameworkExperiences]
+
+Based on the book, "Designing Solutions With COM+ Technologies" (DesigningSolutionsWithComPlusTechnologies).
+
+This page includes JeffGrigg's experiences writing and refactoring code that uses the book's framework.
+The main motivation for writing this is to help MartinLippert with his PhD thesis.
+
+-----
+
+The book has good examples and advice on how to effectively use MicroSoft COM/DCOM/COM+ technologies,
+including object persistence mechanisms and strategies for managing network round trips on calls to DCOM objects.
+
+Of particular interest to me is what I'll call the "Object Persistence Framework."
+''It's documented in chapter 11, as the "Four-Tier Enterprise Application Architecture."  (I would call it 2-tier.)''
+
+The framework enables using XML documents as "streams" to...
+	1. carry business data from MTS server objects to clients,
+	2. build hierarchies of COM business object proxies, for client use, and
+	3. uses a similar XML document "stream" to save changes to the database (and to return database-assigned values, such as system assigned keys, to the client business proxies).
+
+-----
+
+The book describes the framework in over 80 pages, not counting whole chapters devoted to supporting concepts.
+
+''Briefly, this is how you'd select an Order, given that you know the primary key "order_id":''
+	* Client logic, assumed to be VisualBasicScripting on an ASP web page, creates an instance of the COrders proxy.  This is an "instance manager" of COrder (singular) objects.  It's also a collection object.  And it's an AbstractClassFactory.  (OK, so we have a little Pattern Role Confusion going on here.)
+	* Client calls the COrders::GetOrderByID function/method, giving it an "order_id" parameter, and expecting a COrder instance in return.
+	* COrders, being a proxy for the ORDER table, creates an instance of the "trxOrders" object, which lives in an MTS/COM+ server.  COrders calls a similar "get one order by order_id" method/function on trxOrders, giving it the "order_id" parameter, and expecting an XML document (As String) in return.
+	* The trxOrders::GetOrderByID function, executes an appropriate SQL statement, such as "SELECT * FROM ORDER WHERE ORDER_ID = <parameter>".  It creates a framework object to represent the result stream, and calls methods to write (1) a collection, (2) one instance for each row, and (3) one property for each column (for each row).  There are a number framework objects involved, but in the end, the trxOrders method asks the top object for the data as an XML document, and returns the String representation as its result.
+	* When the COrders manager/collection/AbstractClassFactory receives the XML document (As String), it creates a framework object to manage it, and asks the framework object to parse the document, making callbacks to create child instances and load them with data.
+	* The for each "object" (database row) that was written by the data layer, the framework asks COrders to create the appropriate child.  Then the framework calls the child, asking it to load its properties from the framework's stream, giving it a reference to the appropriate node where it will find its properties.
+	* The COrders::GetOrderByID function extracts the child COrder instance from the collection (there will be only one in this case), and returns it.
+
+How the framework persists changes back to the database:
+	* As you make changes to objects, like COrder, and collections, like COrders, each instance keeps track of its state -- knowing if it needs to be inserted, deleted or updated.
+	* The client calls "Save" on the root object of some hierarchy -- say, COrders.
+	* COrders creates an instance of the trxOrders MTS/COM+ server object and passes it to the framework, with a request to do "Save" processing.
+	* The framework checks object statuses, and calls back to objects, asking them to write all their properties to the stream.
+	* The framework serializes the object hierarchy, with properties, to an XML document (As String), and calls a standard "Save" method on the MTS/COM+ object -- trxOrders.
+	* trxOrders::Save, receiving the XML document as a String, creates a framework object to manage it, and calls a method to do save processing, through callbacks.
+	* The framework calls back to framework-defined insert, update and delete methods on trxOrders.
+	* The framework also traverses the object hierarchy, asking objects to create transaction objects to persist their children, and giving objects the opportunity to update properties using database generated values.
+	* The framework uses a similar XML based scheme to return the database generated values to the client proxy objects, update their properties and confirm their changes.  (Confirming a delete, for example, causes an object to be dropped from all collections.)
+
+-----
+-----
+[JeffGrigg says...]
+
+While writing client code that uses this framework, I encounter opportunities for refactoring:
+	* In the Database Layer code, which lives between the framework and the database API, there are plenty of opportunities for reuse.  ''(This is a polite way of saying that unless you're careful, rampant code duplication will wipe you out.  ;-)''
+The data layer code is responsible for mapping between the framework's XML streams and the database.
+The framework's XML streams (each an XML document), each contain a hierarchy of business object instances, each with named attributes/properties.
+Relational databases contain (typically) normalized tables, which can only be accessed and manipulated using SQL.
+
+"Out of the box," the book's examples already demonstrate the following good practices:
+	* Shared "SELECT" logic within each class:  The methods for "select one Order, given it's primary key" and "select all orders for this customer" would, after forming an appropriate SQL WHERE clause, call a common private method that builds the SELECT statement, executes it, and pushes the data from the result rows into the framework stream.
+
+	* Delegation to other objects -- so each data layer object need only deal with one table.
+But there's still '''a lot''' of repetitive coding -- all those INSERT, UPDATE, DELETE and SELECT statements, WHERE clauses, refetching system (database) assigned column values, and lots of manipulation of column/property data.
+
+'''''[This is where the REFACTORING starts.]'''''
+
+So, starting with a few data layer classes I wrote during the first iteration, I refactored and generalized out a set of data-driven functions to form the "Data Layer Implementation Library."
+You can delegate work to it, from your Data Layer classes, to perform these functions:
+	* After executing a SELECT statement, the ADO Recordset object contains all the metadata needed to automatically write a record's field values as framework properties:  Primarily, we need the column name.  And if the developer needs to customize names, the SQL "AS <new-name>" syntax gives them some control.
+
+	* Executing the SELECT statement and retrieving results can be tedious, so higher level functions exist that accept a SELECT statement, execute it, and populate the XML stream with the data from the entire result set.
+
+	* At each row of a parent object (such as an Order), the application may wish to call other objects to build child objects in the object hierarchy (IE: Order Lines).  The library makes callbacks to your data layer object, at each line, and again at the end of your recordset, so you can make these calls -- without having to open multiple connections to the database.
+
+	* Forming INSERT, UPDATE and DELETE statements to process the corresponding calls from the persistence framework can be tedious, so the Data Layer Library provides default implementations of these functions (which rely on metadata present in the XML stream to generate appropriate SQL statements).
+
+	* Of course there are exceptions for system assigned columns, auto-generated keys, timestamps and other such things, so the Data Layer Library accepts parameters that help it deal with these issues.  (Long term, a more flexible scheme is needed, such as callbacks to provide column name to property name mapping.)
+''-- JeffGrigg''
+
+----
+CategoryComponentObjectModel
+
+

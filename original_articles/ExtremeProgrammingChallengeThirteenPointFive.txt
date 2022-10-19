@@ -1,0 +1,101 @@
+ExtremeProgrammingChallengeThirteen dealt with Refactoring RDBs. All well and good. But how do you go about UnitTest''''''s for them? There seem to be three equally obnoxious alternatives:
+
+	* In a TestFixture, set up up test data and tear it back down again afterwards. But we're talking about some pretty hairy tests here - this is far from quick to do and not usually reusable.
+
+	* Set up your test data inside a transaction, and always SetAbort to roll it back. Okay, but I want to see the effects in a database ... and anyway this isn't realistic because what we're testing is broken across DLL and process boundaries. We have multiple processes and DLLs that operate on the DB to achieve the required effect.
+
+	* Initialize a special database just for this test and do away with it afterwards. This is a huge hassle to maintain, and also we'd have to either use a different database name which would be ugly or we'd need a special server for it. Not good.
+
+Other factors: RDBs are by definition stateful. Different tests require different states (combinations of entries/nulls in various tables). But Beck&Gamma's unit testing philosophy suggests the tests should not depend on one another, and for good reason... what to do?
+
+For new chums, in XP we can't refactor with confidence unless we have a bunch of regression tests, therefore XPChallenge13 requires this here challenge to be solved ... so, what's the best way?
+
+----
+
+These are just my general opinions for comment, feel free to change them...
+
+My feeling is that you need to do your first suggestion of setting up a database before the test and tearing it down afterwards. If the database is complex enough that this becomes a significant amount of work, that just means that it is more important to test it fully.
+
+Although tests shouldn't depend on each other, that doesn't prevent you from factoring out the common code between tests into common functions and using them, does it? I suppose if this gets complex enough you'll end up having to write unit tests for your unit tests.
+
+Your setup code could just set up the actual database tables and any records that are always needed. Individual tests would need to populate the database with relevant data for each test and remove it afterwards.
+
+All my testing of databases in the past has been interactive. We've written a program with menu options to exercise the functions of the database manually and checked the database afterwards ourselves. Not ideal, but as you say it's hard to automate and it's better than nothing.
+
+-- JohnBurton
+
+----
+
+Whenever you are faced with a big problem like this in UnitTest''''''ing you have to orthogonalize - break the problem down into its constituent dimensions each of which can be tested separately. In this case, a trick I have used several times is to make an InMemoryImpostor for the database. A unit test sets up its own database and runs against that. You have to have tests that demonstrate that you can substitute the real database for the in-memory database.
+
+The challenge this poses is that you have to concentrate the database behavior in one object so replacing it is easy. But this is a good practice anyhow - LazyTestingIsGoodDesign.
+
+-- KentBeck
+
+----
+
+You're saying that you don't need to test using the real database as long as your database access classes have the correct interface to plug into? This is because you are testing the database access classes, not the database itself? -- John Burton
+
+No, I'm saying that you test them orthogonally.
+
+I have some tests that make sure that the lowest layer of database access works as planned. That has to really use a database, but (I hope) it is a small suite because we don't have a million ways of interacting with the database (if we do have a million ways, we fix the design so we no longer have a million ways).
+
+Then I write a suite based on the assumptions demonstrated by the first suite. It assumes that I can get things into and out of the real database, so I don't have to have the real database there. That way, I can create an in-memory impostor for the database and exercise the higher-level objects.
+
+The latter suite runs very quickly and is very stable. The former suite is relatively slow and it breaks all the time (because servers move around, the schema changes, etc.)
+
+This would work much better with an example, wouldn't it?
+
+-- KentBeck
+
+----
+
+Kent's suggestion sounds fine for OODBs, but still doesn't cut it for RDBs. At least I'm not writing an InMemoryImpostorForOracle. But here's my best thoughts today. Option 3 in the preamble here is actually the right way to go. The reason initializing a special database sounds like a lot of work is you don't have a starting point. So, create two databases:
+
+	0 one database containing a typical starting schema
+	0 one database that's the actual fixture
+
+Create a stored procedure or similar to copy from your starting schema into the fixture. If you're willing to wear the cost, you can use the same starting schema with many different fixture DBs. You pretty much need to do this to keep your tests independent. Your setup code then looks like
+
+	0 copy from starting schema into fixture db
+	0 make whatever changes you need in order to specialize the starting schema for this test
+
+There is no teardown per se. You have to get your DBAs to buy in before you can do this, of course, but then again they should be able to get good use from your testing framework too if you do this right, and at no cost to them - you're writing the tests, not them. So if you sell it right this shouldn't be too hard.
+
+Running this, on the other hand, isn't going to be quick. C3's figure of 13,000 tests per hour is several orders of magnitude away from how fast this will run. You'll probably have to work this part of your test suite as a SmokeTest.
+
+Sometimes you just have to solve these bloody XP challenges yourself.
+
+-- PeterMerel
+
+Actually this sounds very much like what we did to do acceptance and unit testing with our OODB. The problem we had to solve was different of course. We had the problem of changing source code in the database. The problem here is one of structure and normalization. However, our problem also included object structure and test data so the solution turns out to be similar. ContinuousIntegrationGemStoneStyle is how we did it.
+
+In summary the key points are having gold, silver and bronze databases. The gold is the one that resembles the production database. Silvers are refactored data bases based on the gold standard with a well known migration path. Each developer has a bronze standard that they are personally responsible for. A bronze database becomes silver when the developer's code is released. A silver database becomes gold when the production database is migrated. It is important that everyone can easily get a copy of the gold or silver data base to use as bronze at any moment and that we keep track of migration paths.
+
+At any moment in time, the gold database and the production release match up for production support.
+
+At any moment in time, the silver data base and the most current development release match up so that I can load both of these up and have the latest version ready to run the unit tests at 100%. I can then add my changes and migrate my own bronze database as needed.
+
+For testing we had code to create a gold database. We refactored and extended this code as our data became more complex or changed structure. We found it useful to create a new gold and migrate it to silver once a week to avoid inevitable data corruption and to assure ourselves that our migration path was correct.
+
+We did have an occasional problem with migration though. We didn't do as good a job of keeping track of changes as we should have. What we ended up doing near the end was create a migration object to hang our migration code onto. This seems like a good idea if you have an RDB since this will consist of SQL statements to make the migration. Set them up as a sequence and run them on the gold once a week, or more, to create the silver, run the unit tests to verify the silver.
+
+-- DonWells
+
+----
+
+It's also important to distinguish unit from AcceptanceTest''''''ing here. "I want to see the effects in a database" - that's acceptance testing. DB UnitTest''''''s can use extremely simplified databases and can populate 'em and delete 'em in their setup/teardown routines. If you want to see the effects, that means you want to test something end to end - ergo you're looking to construct a acceptance test, and that justifies all the bronze/silver/gold overhead Don mentions. -- PeterMerel
+
+True enough Peter, good advice. We did a poor job of differentiating between AcceptanceTest''''''s and UnitTest''''''s at VcapsProject. We had tests that created data from scratch as you say. But we had to do the overhead anyway because much of our source code was in the database itself. We had to keep the browsable version in sync with the compiled database version. We did get lots of practice migrating our database that way. -- DonWells
+
+----
+
+This is interesting. An ex-colleague who is completely convinced of the benefits of the XP testing regime, but hadn't used it against RDBMS's suffered a real mental block over this. He couldn't get over the idea that the contents and or schema of his test DB (we had something similar to the gold/silver/bronze setup) instance might have to change as new tests came along, or existing ones were modified during refactoring. He had a lot of difficulty overcoming this strong feeling that the db schema was the definitive document, not the tests. This is a cultural problem, I think, and needs to have an eye kept out for.
+
+There is the more general point, however: mayn't the clunkiness of some RDBMS implementations tend to start flexing the cost-of-change curve upwards, thus weakening the conditions for XP? This is mentioned on ExtremeProgrammingChallengeThirteen, and highlights the sensitivity to conditions that Beck mentions in EPEEC, but which seems (to me) to have been glossed over in the various online discussions.
+
+At this point in the development of XP, when the early adopters are starting to come on line, maybe the XP community should face up to this sensitivity (which I think is inherent in any development approach) and maybe head off the disillusion that could result from mis-application.
+
+-- KeithBraithwaite
+----
+See ExtremeProgrammingChallenge

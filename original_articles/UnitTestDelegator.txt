@@ -1,0 +1,75 @@
+'''''[An application of MockObject.]'''''
+-----
+
+Delegation often seems to exhibit confusion for unit testing vs functional testing. I'm hoping this example will help clarify things (at least for me :-)
+
+Imagine you have two functions, a() and b():
+
+  class Foo
+  {
+    int a() const { return 7; }
+    int b() const { return 5; }
+  }
+You test these quite simply:
+
+  Foo t1;
+  TEST_EQUAL(t1.a(), 7)
+  TEST_EQUAL(t1.b(), 5)
+OK, things are going great so far. Now we add a second class and method:
+
+  class Bar
+  {
+    private:
+      Foo _delegate;
+
+    public:
+      int c(bool flag) { return flag ? _delegate.a() : _delegate.b(); }
+  }
+If we are writing unit tests while thinking functionally, then we might test Bar as:
+
+  Bar t2;
+  TEST_EQUAL(t2.c(true), 7)
+  TEST_EQUAL(t2.c(false), 5)
+However, we now have repeated the tests of Foo in Bar. We have violated OnceAndOnlyOnce. A unit test may seem more complicated, but if the behaviour of Foo is volatile then it will stabilize the tests of Bar. We ensure that the methods in Foo are not final (in c++: are virtual) and produce:
+
+  class FooForTestingBar : public Foo
+  {
+    public:
+      bool expectCallToA;
+      bool expectCallToB;
+
+      int a() const { ASSERT(expectCallToA); expectCallToA=false; return 0; }
+      int b() const { ASSERT(expectCallToB); expectCallToB=false; return 0; }
+  }
+Now, with the introduction of a few bits of indirection, we can use this class
+to test that Bar delegates correctly.
+
+  class Bar
+  {
+    private:
+      Foo* _delegate;
+
+    public:
+      Bar() : _delegate(new Foo) {}
+      Bar(Foo* arg) : _delegate(arg) {}
+
+      int c(bool flag) { return flag ? _delegate->a() : _delegate->b(); }
+  }
+
+  Bar t3(new FooForTestingBar);
+  t3.expectCallToA = true;
+  t3.expectCallToB = false;
+  t3.c(true);
+  TEST_EQUAL(t3.expectCallToA, false);
+  t3.expectCallToA = false;
+  t3.expectCallToB = true;
+  t3.c(false);
+  TEST_EQUAL(t3.expectCallToB, false);
+The summary is: You could test the delegator by testing the results of the delegation. However, this introduces redundency. From the perspective of unit testing (i.e. not functional testing), the purpose of Bar.c(bool) is to call Foo.a() or Foo.b() depending on the value of the flag. However, the infrastructure to do this is more complex.
+
+--DaveWhipp
+
+-----
+See also HowToTestCallsMadeByAnObject, MockObject.
+----
+[CategoryMockObjects]

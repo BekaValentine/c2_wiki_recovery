@@ -1,0 +1,235 @@
+One of the LoopingConstructs.
+
+A WhileNotDoneLoop is a while loop in which the loop-control variable is a boolean, typically named ''done'', which is set to true somewhere in the body of the loop. This is a CodeSmell that may indicate the designer didn't understand the purpose of the loop or didn't understand what the exit condition is. Frequently, you can refactor a WhileNotDoneLoop into a more expressive for loop.
+
+Consider the following (based on real code):
+
+    boolean done = false;
+    int idx = 0;
+    while (! done) {
+        int idxNext = -1;
+        if (! isSomeTest()) {
+            done = true;
+        } else {
+            idxNext = findNext(idx);
+        }
+        if (idxNext >= 0) {
+            doSomething(idx, idxNext);
+        } else {
+            done = true;
+        }
+        if (! done) {
+            idx = idxNext;
+        }
+    }
+
+This can be refactored into:
+
+    int idxFound = 0; // renamed from idx
+    for (int idx = 0; idx >= 0 && isSomeTest(); ) {
+        idxFound = idx; // Is this a bug?
+        int idxNext = findNext(idx);
+        doSomething(idx, idxNext); // this must now handle idxNext < 0 correctly
+        idx = idxNext;
+    }
+
+We could create even better code by making isSomeTest() and findNext() the responsibility of some iterator object:
+
+    int idxFound = 0;
+    for (Some''''''Iterator iterator = new Some''''''Iterator();
+        ! iterator.isAtEnd();
+        iterator.goNext())
+    {
+        idxFound = iterator.getIdx();
+        doSomething(iterator.getidx(), iterator.getNextIdx());
+    }
+
+''But this is an unusual example, since the original code really truly was a '''for''' loop badly written as a '''while''' loop, as if by a student programmmer. There's comparatively little room for judgment here (i.e. the original is badly written, period, regardless of how one thinks it should be rewritten), and so it doesn't reflect at all on different examples that may in fact need a judgement call.''
+----
+''Actually, as-stated, the while loop ''cannot'' be refactored into the above loop, since the guarded sections of code are not mutually exclusive, as the above for-loop demands.  The equivalent while-loop to the above, literally, is expressed as follows:''
+
+    int idx = 0;
+    int idxNext, idxFound;
+    bool done = (idx < 0) || (!isSomeTest());
+
+    while(!done) {
+      idxFound = idx;
+      idxNext = findNext(idx);
+      doSomething(idx, idxNext);
+      idx = idxNext;
+      done = (idx < 0) || (!isSomeTest());
+    }
+
+''Even in this situation, I feel the while loop is superior to a for loop.  For implies iteration over a sequence; I don't see a sequence in the above code.  Sure, we're dealing with indices, but indices to what?  It's not apparent to me.  However, I '''would''' get rid of the done flag all-together:''
+
+    while((idx >= 0) && isSomeTest()) {
+      idxFound = idx;
+      idxNext = findNext(idx);
+      doSomething(idx, idxNext);
+      idx = idxNext;
+    }
+
+''That makes the code substantially easier to read, painfully obvious what the loop invariant requires, and actually ''almost'' makes the code self-documenting.  It's at least clear that it's searching for something.''
+----
+But see MessyLoopConditions for examples in which while(!done) or while(true) may be appropriate.
+----
+What about using while(false) breakout loop? Is this smelly? (Move/delete this question if it should be elsewhere).
+It's kinda like a goto, except much less harmful because it's structured (imho). Much better than serial if statements because conditionals that don't need to be evaluated can be bypassed...
+
+eg:
+
+ // (highly hypothetical...)
+ do {
+	if (!user.loggedIn()) { break; }
+	if (!user.postedMessage()) { break; }
+	if (!user.hasPermissions()) { break; }
+	database.postMessage(user.getMessage());
+ } while (0);
+
+''I have seen this pattern in some code I've maintained.  Seems to me it's better to ExtractMethod and use "return" instead of "break". -- MichaelSparks''
+* Often, but it depends on the context, and this example is not a CodeSmell in itself.
+
+I have also seen the following pattern:
+
+ try {
+	if (!user.loggedIn()) { throw false; }
+	if (!user.postedMessage()) { throw false; }
+	if (!user.hasPermissions()) { throw false; }
+	database.postMessage(user.getMessage());
+ }
+ catch(bool) { }
+
+Would you consider it to be a CodeSmell? -- MichaelSparks
+
+Exceptions are errors, not normal conditions that influence control flow, so I would call that example outright bad practice, not a mere CodeSmell, since it is using exceptions where simple conditionals are called for.
+
+This, too, is context-dependent, though; the problem domain '''could''' be one where the user is for some reason expected to always be logged in, etc, and for it to be a fatal error if ever they are not -- but that's a nitpick, and no different than the question of whether divide by zero should trigger an exception or not. It depends, although we have some default rules of thumb on such things, in the absence of specific problem domain guidance on the topic.
+
+Different issue than what is otherwise being discussed on this page.
+
+Or maybe not...let's say that the exceptions being thrown are in fact reasonable fatal errors, like divide by zero is by default -- then no, that wouldn't seem like a CodeSmell to me, offhand, it just would look like a normal try/catch. Or am I missing something? The fact that it's all at one level, rather than the throw happening at a different call level than the catch? What exactly do you have in mind? -- DougMerritt
+
+I was a little thrown off by your statement that the while(0) example isn't necessarily a code smell.  I brought up the exception example because it is similar in form and function to the while(0) example, but it is almost sure to make any programmer cringe.  They accomplish the same thing.  I dislike both of them, because they both misuse the language features.  I tend to cringe a bit more at the exception example because my mind is always in PrematureOptimization mode and exceptions are typically expensive, but that's not the point.  In the first case, there is no intention to do any looping, so it shouldn't use a looping construct.  In the second example, there are no exceptional conditions, so it shouldn't use exceptions.  (Since the first example just ignored the "errors", I'm assuming they aren't exceptional.) -- MichaelSparks
+
+I see. Originally I thought you were just commenting on break vs return, so that was all I was responding to.
+
+Ok, the things you're saying about do { } while(0) are a matter of taste and arguable, so those things then are perhaps CodeSmell''''''s (but not a CodeStench). I don't find your argument for your tastes persuasive because I regard it as a matter of working around the fact that C (or other languages) is missing certain constructs that I wish it had, in order to express my intent better. And by analogy, one could say "if (1)" and "if (0)" are language misuses, and similarly that "while(1) { }" is, too -- but I would disagree; such things, to my mind, do in fact express my intent, in certain situations. So it's just a matter of taste. -- DougMerritt
+
+----
+I disagree with this page. First of all, the most popular programming languages in the world (VB6/VBscript/VBA) don't have this construct. The for loop is not conditional. That would make the code unfamiliar to anyone from that background. Secondly, your example is less intuitive IMO. In your brain, you picture the loop as occuring WHILE something isn't done. Not a loop occuring from this begin point to this dynamically determined end point. For loops conceptually represent a continuum of iterations from a start to an end, not a loop which is halted upon a condition. This is kludging the for loop to act as a while.
+
+----
+A '''for''' loop is generally used to loop from a fixed point to another fixed point, either or both possibly being determined by a calculation before the loop starts. A '''while''' loop indicates that you are looping until something happens.  Warping the '''while''' logic into the '''for''' syntax could easily obscure the author's intent purely because of a particular language definition/implementation/syntax.
+
+If you're looping for as long as something is true, why not use the '''while''' loop?  Distorting the '''for''' loop to cover this situation is the true smell.  Remember that in '''C''':
+    for(init;cond;step) {
+        ... stuff ...
+    }
+is ''not'' the same as
+    init;
+    while (cond) {
+        ... stuff ...
+        step;
+    }
+
+The reason?  These two code snippets are different because if '''stuff''' contains a '''continue''', the '''step''' is not executed in the '''while''' case, but is executed in the '''for''' case.
+
+'''Let your code express your intent.'''  Don't warp "while not done" loops into "for" loops.  Use a '''for''' loop if you have a range of things over which to iterate, use a '''while''' loop if you want to execute until a condition is true (or false).  '''Let you code express your intent'''.  Sorry, some people don't seem to read things if you only say them once.
+
+-- Frustrated
+
+You certainly do need to repeat things.
+
+And while I agree that code should express intent, on the other hand I very, very strongly disagree with your particular examples in the C language. Your claim is in direct opposition to the language idioms that have been heavily used and heavily recommended by essentially everyone in the core of the C language community from Thompson/Kernighan/Ritchie et al on. For instance, this is completely idiomatic in C, and you are in a small minority to object to the use of '''for''' versus '''while''' here:
+
+   for (ptr=list_start; ptr; ptr=ptr->next)
+          ...do stuff with current list node...
+
+Linked lists are not ranges, yet this has always been '''the''' appropriate idiom. Therefore, your claim about '''for''' versus '''while''' in C is merely an idiosyncratic taste.
+
+In idiomatic C, '''while''' and '''for''' constructs are very similar, and neither expresses a widely different '''intent''' than the other, it's just a question of whether the author has initialization and/or step clauses that they believe will be better expressed in a '''for''' or not.
+
+All of these issues are highly language-dependent, of course. -- DougMerritt
+
+''Doug, I agree completely that the idiom you quote is wide-spread, clear in context, and the right thing to do exactly because of the '''continue''' issue mentioned above.  It is an excpetion to what I explicitly state is a general principle about '''for''' loops. Specifically, however, you are agreeing withmy point that '''while''' loops until something happens, but '''for''' loops over an existing structure (as it were).  I believe the original whould be changed to express that shift in emphasis. Agree?''
+
+I don't think that there is any really universal thing you can say along those lines. Consider another example:
+
+   for (ev=EVENT_INIT; ev != EVENT_CLOSE_WINDOW; ev=get_event())
+        ...process current event...
+
+There is no existing structure; the '''for''' is looping until something happens. Yet this is again valid and idiomatic C. The usual time to use '''for''' in C is if any two of the three elements (init, cond, step) occur, nothing more, nothing less. The only reason to use '''while''' in C at all is simply because it looks funky to say '''for (; condition; )'''.
+
+I think that writing clear code is not pure science, there is a degree of art in it, and that even something as low level as whether to use a '''for''' versus a '''while''' in C often involves judgement calls.
+
+It's not uncommon for me to start with a '''while''', and then add an initialization above it, and then decide it needs a '''step''', at which point I often change it to a '''for''', and some time later decide to add a second initialization, condition, and step, and then decide that the '''for''' has now gotten too large and cluttered, and may break it up into a '''while''' again, and then after it ends up needing to eventually handle some funny "loop and a half" type of things, turn it into a '''while (1)''' whose body contains '''if (...) break''' here and there. Some people are allergic to the latter, but it is a matter of aesthetics and clarity, not of absolute right and wrong.
+
+It's also clear that people who have done a lot of scientific programming tend to have somewhat different feelings about what is natural than those with different backgrounds (as is also true of someone who primarily thinks in Lisp versus APL versus Perl, or people who are accustomed to solving most tasks with finite state machines versus those who have used strings especially heavily, etc.
+
+Knuth gives Iverson acclaim for inventing the mathematical convention (which of course he immediately applied to APL) of representing series element properties, such as IsPrime, as one/zero truth values, since it can vastly simplify the notation for expressing series by eliminating special cases.
+
+And I have sometimes found value in applying that to C programming -- but not all that often. It's a judgement call, but it's just not generally as natural in C as  it is in APL or in the math Knuth is talking about.
+
+Although I'd programmed in 3 or 4 languages before I learned C, right from the start C was the first language I did really heavy programming in, and so it early on became my native tongue, and its idioms are natural to me -- except of course in areas where it is just plain lacking useful features that exist in other languages, in which case I do the best I can. E.g. lack of support for first class lists means that it is awkward to do certain things in C that are trivial in Lisp. Should I null-terminate vararg lists? Error prone! There's no perfect solution. So I don't use variable length lists in C very much, although of course I do in Lisp. They're not a C idiom.
+
+Everywhere I look, I see judgement calls about the best way to express things in any and all languages. I see very few universals on the subject. Even the infamous '''goto''' avoidance isn't a universal; it's a rule of thumb.
+
+If you want to say that you use your above statement as a rule of thumb for your personal coding style, I have no problem with that. I just can't see how it could be extended into a strong rule that could be claimed should be applied to everyone's coding styles. -- Doug
+
+''Doug, I agree with you - I mis-stated my case initially and it carries the wrong emphasis and misleading "advice".  I do not have time here and now to correct it, but if you care to do so I will check later to confirm that you have not materially distorted my intent.''
+
+I would in fact be concerned about distorting your intent, so I will wait. -- Doug
+----
+Given the choice between using a language-dependent concept which contradicts every other languages intent versus a language-independent concept consistent with every other language, which do you choose? DUH!
+
+''"Duh" is your intellectual rebuttal? Look, ace, choosing to use lowest common denominator constructs, only the things that are available in all languages, is retarded. You may as well program in Basic. The whole '''point''' of having more than one language is that each attempted to do something '''better''' than other languages.''
+
+''"Duh"-people are the ones who stick to programming in Basic because languages like Lisp, Smalltalk, Haskell, etc, baffle them. Then they defensively criticize all constructs, concepts, and practices that don't appear in Basic -- after all, they couldn't understand them, so that proves that they are impossible for anyone to understand, and therefore bad.''
+
+''School boards think like that (and worse; see MarkTwain), and are the reason why education is so poor in the U.S.''
+
+''I may as well start signing my name, since anyone who would say "duh" to me must be unaware that one of my main areas is language design and language implementation, that I started programming in C in 1976. Experts are quite capable of being wrong, and I'm wrong often enough, but "duh" is inappropriate; you screw with the bull, you get the horns. -- DougMerritt'' 
+----
+Did you ever think there may be a reason why other languages prefer their For loops to be conceptually distinct from While loops? It not just a consensus or 'lowest common denominator', it's that they choose to model the thought process. C needs a design pattern just to justify its muddling of the For-loop to converge into territory already covered by the While loop. The word For itself brings to mind a loop constuct FOR a given range. While brings to mind a loop construct WHILE a condition holds. C kludge the For to eliminate the range, making it dynamic and indefinite so that it no longer is 'For' a range if the range keeps moving.
+
+If you think C has nothing to learn from Basic, take a look at all of the Basic-derived enhancements in C#. Part of why C has such a high learning curve is the loose and muddy semantics you are advocating. In Basic For=For and While=While. In C, For==(For||While) && While==While.
+
+''Run of the mill Basic had fancy string ops and memory management for strings, and some had support for a matrix data type, and that was all that they had that C didn't have, and those are inappropriate features to put into a systems programming language.''
+
+''The rest of what you're saying is completely unsupported. Basically you don't know what you're talking about. But since you like Basic so much, well, you know where to find it.''
+
+I have to step in to defend "blue collar programmers" to some extent (I guess that's my wiki role of late). The biggest problem is that you guys don't know HowToSellGoldenHammers, as demonstrated in ChallengeSixVersusFpDiscussion. You try to appeal to some abstract purity or conceptual elegance instead of showing exactly how it will reduce hand and eye movements. (I have my set of gripes with VB and MS also, but that's another topic.) --top
+
+----
+   for (ev=EVENT_INIT; ev != EVENT_CLOSE_WINDOW; ev=get_event())
+        ...process current event...
+
+Contrary to the claims above, '''this is not idiomatic C.'''  I've been coding for AmigaOS, Windows, and Linux systems in C, across a wide variety of application domains, and have '''never''' seen code even remotely like the above.  Almost universally, the above construct is expressed as a while loop:
+
+    while((ev = get_event())) {  // extra parens to shut compiler = vs == checking up
+      // process current event
+      switch(ev) {
+        case EVENT_CLOSE_WINDOW:
+          // ...
+          goto fini;
+        // ...
+      }
+    }
+
+  fini:
+    // ...
+
+--------
+
+I've found that the original form is usually friendlier to future additions. Often new rules come up that complicate things enough such that cramming it all into the loop criteria becomes messy. Future maintenance tends to get more attention than code reduction in my book. In general, heavily nested functions or long conditional expressions tend to be this way. Intermediate variables and flags often make it easier to add new criteria without overhauling the structure of the loop or phrase, even if they are a bit more code. 
+
+I will admit that sometimes I find an interesting way to shrink code, but later realize it was mostly MentalMasturbation. Most programmers need to experiment to learn, and experimenting often requires "mistakes", which would be a non-change-friendly design in this case. It may seem elegant or clever at the time, but revisiting it later for new requirements will make me miss IntermediateValues. It also gives more room to stick comments in.
+
+--top
+
+----
+(Unrelated discussion moved to RecursionVsLoop "On Memoization.")
+----
+NovemberZeroFive
+
+CategoryProgrammingLanguage

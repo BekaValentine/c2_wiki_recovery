@@ -1,0 +1,114 @@
+Consider the following schema, representing an undirected weighted graph:
+
+    CREATE TABLE nodes (
+        id  VARCHAR(20),
+        PRIMARY KEY(id)
+    );
+
+    CREATE TABLE edges (
+        node1 VARCHAR(20) NOT NULL,
+        node2 VARCHAR(20) NOT NULL,
+        weight REAL NOT NULL,
+        FOREIGN KEY(node1) REFERENCES nodes(id),
+        FOREIGN KEY(node2) REFERENCES nodes(id),
+        PRIMARY KEY(node1, node2),
+        CHECK(node1 < node2), -- undirected graph
+        CHECK(weight > 0)
+    );
+
+    CREATE TABLE mst (
+        node1 VARCHAR(20) NOT NULL,
+        node2 VARCHAR(20) NOT NULL,
+        FOREIGN KEY(node1, node2) REFERENCES edges(node1, node2),
+        PRIMARY KEY(node1, node2)
+    );
+
+There are two challenges here: (i) write a check predicate for the MST table
+which ensures that it stores a minimum spanning tree for the graph. (ii)
+Replace the MST table with a view, i.e. solve the on-line MST problem: node
+and edge CUDs must change the MST atomically.
+
+If you want to prove that SQL is the end all language, write all the above in
+pure SQL (you can use postgres which allows you to write your own functions in
+pure SQL). If you've come to your senses, the real challenge begins: write
+(ii) using a server side PL and compare the solution with one using a
+middleware ORM.
+
+------
+
+Two questions. First, what is "MST" and "CUD"? Second, who claimed that 100% of all algorithms can be (or should be) done in SQL (or another relational query language)? Most RelationalWeenie''''''s I know don't claim 100%, but merely a much higher percentage than is common.
+
+----
+
+"Minimum spanning tree" and "Create update delete". Those ''could'' have been spelled out, but I don't sense that the intent here was originally to be clear and objective. The author should have instead demonstrated ''why'' this problem can't be solved with SQL, supposing that this is true and that the author actually knows why. ''Your'' argument, ''you'' do the work; that's not our job. --JesseMillikan
+
+----
+
+RelationalAlgebra is not TuringComplete.
+
+''Nor should it be.  Its lack of TuringComplete''''''ness permits a degree of predictability not feasible with TuringComplete languages.  The HaltingProblem is not a problem.  However, in order to solve problems where TuringComplete''''''ness is necessary, many SQL dialects incorporate a TuringComplete procedural sublanguage, and the combination of SQL and any client-side TuringComplete language is TuringComplete.  It is not necessary to use a "middleware ORM" as the writer above suggests.'' -- DaveVoorhis
+
+The task, as given by the author, is both undefined and not well concieved. It doesn't specify a concrete language or subset to use. Furthermore, the author has written key components of the solution into the challenge; it isn't just about finding MSTs, it is about ''doing it the way the hostile author demands''. So the whole challenge is, basically, bogus and not really worth discussing. --JesseMillikan
+
+What is not defined? I'll be happy to provide further details. The only not so well defined part is that I didn't detail that you have to handle a forest of MSTs if the graph is not connected. I assure you this is a real problem I had to solve about 5 years ago. I took about 1100 lines of Java 1.2 code (fairly heavily commented). I can provide all the details you want, algorithms, full listing etc.
+
+Feel free to use any SQL dialect you like, but specify which. Same goes for the PL.
+
+The only hostile thing see here is the RDBMS. It won't let you store adjacency lists because they're not 1NF etc. It's not matter of OO, but a matter of being able to use rich data structures to solve a problem efficiently both in terms of coding and computing effort. Just being able to store the data as relations is not good enough to solve many problems efficiently. If you don't use some data mapping middleware, i.e. write all code in stored procedures, you'll have to create and tear down these data structures for every CUD, or have to write inefficient algorithms. Below is the insert edge procedure. Note that the deletes and updates require you keep track of disjoint sets, so you need more data structures than just adjacency lists with cross links.
+
+  public void insertEdge(Vertex v1, Vertex v2, double w)
+  {
+    if(w <= 0) {
+      pw.println("Warning: Illegal non-positive weight. Operation ignored.");
+      return;
+    }
+    // the graph part
+    Edge e = newEdgePair(v1, v2, w);
+    if(v1.edges.contains(e)) {
+      pw.println("Warning: Duplicate edge ignored.");
+      return;
+    }
+    v1.edges.add(e);
+    v2.edges.add(e.xlnk);
+    // the MST part
+    // first check if there's a path between v1 and v2 in the MST
+    v1.evert();
+    List lst = v2.pathFromRoot();
+    // no path, just insert the edge :-)
+    if((Vertex)lst.get(0) != v1) {
+      //pw.println("  Inserting edge " + e);
+      v2.evert();
+      v2.linkUnder(v1, w);
+      return;
+    }
+    // path exists, find heaviest edge
+    // using the weight info in the MST
+    // we can retreive this in linear time
+    // wrt. path length.
+    Vertex v3 = (Vertex)Collections.max(lst,VTEX_WGHT_CMP);
+    Vertex v4 = (Vertex)v3.parent; // for printing purposes only
+    // test if replacement diminishes MST cost
+    if(v3.weight > w) {  
+      //pw.println("  Replacing edge (" + v3 + "--" + v4 + ":" + v3.weight + ") with " + e);
+      // we delete v3-v4 from the MST and replace it with v1-v2
+      v3.cut();
+      // v3 is above v2 because it's on v2's path to root
+      // so we can evert v2 in the new tree containing v2 and v3;
+      v2.evert();
+      // and link it under v1
+      v2.linkUnder(v1, w);
+    } else {
+      //pw.println("  No change to the tree.");
+    }
+  }
+
+----
+I've found SQL pretty poor for creating GUIs, too.  Not so hot for developing operating systems and language parsers, either.  That may seem sarcastic, but it isn't.  SQL is hardly a universal tool, and your "challenge" merely highlights that fact.  General-purpose programming languages with built-in DBMS capabilities (e.g., persistence, relations and relational algebra, atomic transactions, etc.) are the solution; ORMs and the like are merely a band-aid. -- DaveVoorhis
+
+''I see nothing wrong with relational for GUI's. However, current RDBMS are not cut out for that job from an implementation perspective. See RelationalGuiDilemma, DynamicRelational, and SimplifyingRdbms. --top''
+----------
+See also: GraphAlgorithmsWithTables
+-----------
+MarchZeroSeven
+
+CategorySqlProgramming

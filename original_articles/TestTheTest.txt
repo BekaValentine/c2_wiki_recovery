@@ -1,0 +1,73 @@
+About the testing architecture described in FakeTheSideEffects, someone asked:
+
+	 :	''When your tests reach this level of complexity, don't they have a high probability of being defective? How do you know whether your code is really invalid? Test the tests?''
+
+In reality, it doesn't turn out to be much of a problem.  The worst case is that bad code passes through the test undetected.  In order for bad code to pass the bad test, the test has to expect exactly what the bad code is doing.  I haven't seen this happen often enough to consider it a problem.
+
+The other case is that good code gets flagged as bad.  In that case, you have to figure out whether it is the code or the test that is wrong.  If you are writing and refactoring itty bitty chunks of code between tests, it's usually very obvious whether it is the test or the code that is wrong, and you fix it and move on.  If you are writing and refactoring big chunks of code between tests, ''don't.''
+
+The habit of writing the test first helps. Most tests should fail the first time they are run, because they are verifying features which don't work yet. If you've never seen a test fail, consider how you might briefly "break" the system so that it does. Doing this gives you some confidence that the test is actually being executed and testing what it claims to test.
+
+Contributors: WayneConrad, DaveHarris
+
+----
+
+''In order for bad code to pass the bad test, the test has to expect exactly what the bad code is doing''
+
+This is very optimistic. For a test to pass bad code, all that is needed is for the test to fail to check what it's meant to be testing.
+
+Here's an example of the type of thing I've seen:
+
+  a=7;
+  a.increment();
+  ASSERT(a != 7);
+
+This test might be reasonable, but it would be much better to test that "a equals 8".
+
+I frequently see tests that don't test boundary conditions; or which use data values that really don't prove very much. Imagine:
+
+  int multiply(int a, int b) { return a * a; }
+
+  ASSERT( multiply(2,2) == 4);
+
+These things happen! They are usually much more subtle though.
+
+--DaveWhipp
+
+Oh yeah, I agree, this can be a real problem.  Everything you say makes perfect sense, and I ''should'' have seen things like this happen to me all the time, but I seldom have.  I might have complete amnesia where my unit test failures are concerned -- a real possibility, given that humans like to remember their successes and forget their failures.  Or maybe there are forces that keep test errors from being a big problem in my unit tests.
+
+Some possibilities:
+	* Through long habit, I'm used to thinking about and testing for fencepost errors and other common gotchas.
+	* A method is usually called by more than one of the methods in the class's unit test.  I may have a method ''testA()'' dedicated to method ''a()'', but other tests may need to call method ''a()'' as well.  This may provide some redundancy in the event that ''testA()'' lets a bug slip through.
+	* A class's unit test is not the only unit test which exercises that class.  It is the unit test which is directly responsible for that class, but there are probably other other unit tests which indirectly exercise that class; when the class fails, the other unit test will probably fail also.  This gives me more redundancy, another change to catch bugs.
+	* I only mean for my tests to point out the eggregious errors anyhow.  The subtle ones are too hard to test for (I'd spend all of my time thinking up subtle bugs and testing for them).  Instead, I write the test that's easy and obvious.  I know, this sounds completely irresponsible, but it turns out that most bugs fall into this category, so not many slip through.  The ones that slip through are usually weird enough that I never would have figured out how to test for them up front.  Once such a bug is discovered, I add a test for it to the unit test.
+
+It doesn't make much more sense to me than it does to you that this smallbore testing would stop the bug elephant from trampling me.  I'm a little amazed every time it does.  -- WayneConrad
+
+Its not the elephant that worries me: its the mosquito! A lot of my testing
+work involves hardware. I recently had to write a set of tests for a floating point unit -- and we all remember the Pentium FDIV fiasco, dont we?
+
+I will agree that having a solid tangle of interconnecting tests will tend to mask the bad tests. However, it does make refactoring more tricky. There have been a number of occasions when I have delayed a code change because my test
+suite was too brittle. As I commented on OnceAndOnlyOnce, XP requires that every fact be stated at least 3 times. You are suggesting that each fact is stated
+many more times. --DaveWhipp
+
+Dave, Brittle tests can be a problem.  I work hard to make sure that the tests don't get too much in the way of refactoring (they do get in the way, in that many refactorings cause you to have to change the tests, but they pay you back in showing when your refactoring has caused a problem).  I probably gave the impression that there are more intentional ties between tests than there really are.  Most of the coupling between tests is due to the "uses a" relationship: If ''ClassA'' uses ''ClassB'', then ''TestClassA'' will end up indirectly testing ''ClassB'' also.  Or, perhaps methods of ''ClassA'' take references to ClassB.  These are the usual cases, and they cause these problems:
+
+	* When ''TestClassA'' reveals a bug in ''ClassA'', and ''ClassA'' uses ''ClassB'', the bug may be in either ''ClassA'' or ''ClassB''.  This is not a problem because I am making itsy bitsy changes -- it's obvious where the bug is: it's in the tiny change I just made.
+	* If ''ClassA's'' signature references a complex ''ClassB'', it may be very difficult to set up the test for ''ClassA''.  Dealing with this takes some work.  Perhaps I can turn ''ClassB'' into an interface, with a real implementation and a "dummy" implementation.  ''TestClassA'' uses the dummy ''ClassB'', not the real one.
+	* If ''ClassA'' uses a ''ClassB'' which dependings upon a database, communication channel, or other not-very-deterministic things, I apply FakeTheSideEffects.  This is a fair amount of work, not so much to fake the interface -- that part is pretty easy -- but to have ''TestClassA'' set up the fake interface takes a fair amount of work.
+
+In general, though, my goal is that refactoring ''ClassA'' should require me to touch only ''TestClassA.''  If ''ClassA's'' signature changes, then of course I have to touch everything that uses ''ClassA'', including any other unit tests.  This is unavoidable, but I haven't found it to be an impediment to refactoring.
+
+I don't have much experience with testing hardware.  For some kinds of hardware I'll bet you need to be stricter with testing than I am.  What kind of hardware are you testing?  -- WayneConrad
+
+I agree with your comments about mitigation stategies for test suite redundancy.
+But just as its easy to lose the discipline of writing tests (esp. when you don't pair-program), so it is easy to churn out tests without thinking. In fact, maybe the XP approach should be to write the tests first, and then refactor them later when you need to refactor the code. This approach simply adds another blob into the XP iteration. Unfortunately, this extra blob might destabilise the process: stabilising three interacting processes is harder than two.
+
+I work on the verification of the TriCore, a 32 bit microcontroller with DSP. We have a test suite that takes 500 hours to run: fortunately this runs overnight on 50+ machines. We have a full regression that we can run every weekend. We also do RandomTesting. Our test oracle for random tests is a software model of
+the processor: we do a cycle-by-cycle comparison of the behaviours. Having this software model also allows us to TestTheTest with a high speed debug-iteration loop before we attempt an HDL simulation.
+
+I suppose the real difference between hardware and software verification is the attitude towards CornerCases: The software attitude seems to be the you test the mainline cases and ignore the corners (you imply that above). In hardware, the verification of the mainline is pretty much irrelevant. Sure, we test it,
+but the real effort goes into testing the corners (e.g. what happens if you get an interrupt during the last cycle of a zero-overhead loop when the loop register is an odd numbered register in the upper half of the register file?). Much of the complexity comes because hardware tends to be more optimised (If it doesn't need to be optimised then we can do it in software -- just look at Transmeta!). --DaveWhipp
+----
+CategoryTesting

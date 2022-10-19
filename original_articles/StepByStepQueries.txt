@@ -1,0 +1,79 @@
+I am reading the book SqlAndRelationalTheory, and I found the section with the title “Formulating Expressions a Step at a Time” particularly interesting:
+
+First, they book shows you this the query for the sentence "Get pairs of supplier numbers such that the suppliers concerned are colocated (i.e., are in the same city)" written in Tutorial D:
+
+ ( ( ( S RENAME ( SNO AS SA ) ) { SA , CITY } JOIN
+    ( S RENAME ( SNO AS SB ) ) { SB , CITY } )
+        WHERE SA < SB ) { SA , SB }
+
+And then it proceeds to show you how to write this query in a more readable (step by step) way:
+
+ WITH ( S RENAME ( SNO AS SA ) ) { SA , CITY } AS R1 ,
+     ( S RENAME ( SNO AS SB ) ) { SB , CITY } AS R2 ,
+     R1 JOIN R2 AS R3 ,
+     R3 WHERE SA < SB AS R4 :
+     R4 { SA, SB }
+
+Finally, it shows you how to write this query in SQL:
+
+ WITH T1 AS ( SELECT SNO AS SA , CITY
+             FROM   S ) ,
+     T2 AS ( SELECT SNO AS SB , CITY
+             FROM   S ) ,
+     T3 AS ( SELECT *
+             FROM   T1 NATURAL JOIN T2 ) ,
+     T4 AS ( SELECT *
+             FROM   T3
+             WHERE  SA < SB )
+     SELECT SA , SB
+     FROM   T4
+
+Thanks to the “with” keyword, both in SQL and in Tutorial D, it is possible to deal with this query in a “step by step” way, instead of having to deal with it a single hard to write and hard to read expression(note that this is not a recursive query, so the with  keyword is not being used for that in this examples) Sadly, so far I have been unable to find a equivalent for this syntax in Dataphor… While it is possible to write something like (I am not 100% confident the syntax is right, but I think it should give you the general idea):
+
+ var R1 := S {SNO SA, CITY}
+ var R2 := S {SNO SB, CITY}
+ var R3 := R2 JOIN R3 
+ var R4 := R3 WHERE SA < SB 
+ select R4 {SA, SB}
+
+In AlphoraDataphor, the variables (R1, R2, etc) are not lazily evaluated, and therefore the performance is not as good, as in, for example, the SQL case (I ran a similar example in SqlServer, and the expressions were evaluated lazily, at the end, instead of one by one, resulting in far better performance). I wonder if in RelProject the expressions are evaluated lazily (if they are  (or not) will become very important when (if? ;-)) Rel finally gets support for external datasources: The more Rel waits before sending a query to the external data source, the more specific it will be, and therefore, it will use less bandwidth, and run faster.
+
+This kind of "lazy evaluation" reminds me of functional language (AFAIK Haskell evaluates everything lazily). Does that mean that the best match for a relational database language is a functional language?
+
+''The RelProject uses LazyEvaluation and pipelining for all relational expressions. Rel's internal architecture is quite influenced by functional programming, and in addition to the LazyEvaluation already mentioned, internally makes extensive use of functions, higher-order functions, fold and map.  Its use of assignment and allowance of side-effects makes it impure, of course. Almost every internal processing mechanism employed to process a query is defined at run-time as functions.  The WITH construct mentioned above, for example, is currently implemented via nested function definitions. However, WITH will be re-implemented at some point to not use nested function definitions, because the nested-function approach precludes (or at least complicates) certain desirable optimisations.  To facilitate query optimisation, the WITH construct's steps should be internally expanded into a single expression.''
+
+And how about the ability to use operations to wrap queries? In AlphoraDataphor I can write:
+
+ create operator GetR4(ACityName:String):table
+ begin
+  var R1 := S {SNO SA, CITY} where CITY = ACityName
+  var R2 := S {SNO SB, CITY} where CITY = ACityName
+  var R3 := R2 JOIN R3 
+  var R4 := R3 WHERE SA < SB 
+  result:= R4 {SA, SB}
+ end;
+
+and then:
+
+ select GetR4('Tokyo');
+
+In SQLServer, I can do something very similar using UserDefinedFunctions  (the advantage of operators and UDF over views is that I can pass parameters to change the conditions of the query), but again, performance (and lazy evaluation) is the key difference, SQLServer evaluates lazyly, and therefore turns out to be much faster than Dataphor... what is the  Rel approach to deal with this kind situation? (the AlphoraDataphor authors tell me that it will be easier for them to create parametrized views than to make operators work in lazy evaluation mode)
+
+''In Rel, the above (with some mistakes corrected) is this:''
+
+ OPERATOR GetR4(ACityName CHAR) RETURNS RELATION {SNO SA, SNO SB};
+   RETURN WITH S {SNO SA, CITY} WHERE CITY = ACityName AS R1,
+               S {SNO SB, CITY} WHERE CITY = ACityName AS R2,
+               R1 JOIN R2 AS R3,
+               R3 WHERE SA < SB AS R4:
+               R4 {SA, SB};
+ END OPERATOR;
+''Invoke the above as:''
+
+ GetR4('Tokyo')
+''It evaluates lazily.  No evaluation occurs until the caller of GetR4 starts requesting tuples.  The results are pipelined so there are no temporary tables and only as many tuples are retrieved as are requested by GetR4's caller.''
+
+''By the way, the use of capitalised keywords is a convention, not a requirement.''
+
+----
+RelationalDatabase, RelationalLanguage, CategoryRelationalDatabase, TqlRoadmap, TutorialDee

@@ -1,0 +1,511 @@
+A wide range of claims is being made about TestDrivenDevelopment, TestFirstDesign. Not least among which is that the tests are driving your design. Ok, I said to myself, it's always good to learn something new. So I set out to look here and there for examples, and my disappointment couldn't have been greater seeing all these wide claims being made by absolutely the most trivial examples (including the TDD book). How on Earth can anybody learn something real from such examples ?
+
+So here I posted this challenge initially on usenet. The idea is to take the well known DiningPhilosophers problem and drive home a solution through TestDrivenDevelopment, TestFirstDesign. The problem is well known and almost all books on concurrency, parallel and/or distributed programming discuss it and some present a full solution. So I added the rule that using any of the known solutions is fair game (we don't want to reinvent the wheel, right ?) as long as you can drive home the idea that one can reach the design by progressing through the tests, i.e. the design decision should be the results of failing tests that you turn them green.
+
+In addition to the standard requirement I added the additional requirement that the scheduling of philosophers to their portions of food should be fair. Given the fact that the underlying multithreading on OSes like Linux Windows and languages like Java, C# doesn't offer too much fairness guarantees, I said that the fairness we can offer is that no philosher should be unnecessarily disadvantaged in comparison to the others as far as our code is concerned ( every philosopher should run in his own thread and OS scheduling might put it at a slight disadvantage if we analyze data for relatively short time spans).
+
+This was my initial requirements. What was unstated, but assumed was that DP is not about simulating some philosophers, but  about granting access to shared resources to do some real work. As such, I consider that a solution that reduces throughput  unnecessarily (the number of meals served) is a not a great design.
+ 
+I thought the problem is a good test bed for TDD because it is relatively easy to come up with a solution, it is small but not trivial, and it is concurrent, and we all know that concurrent programs are anywhere from hard to impossible to test.
+
+-- CostinCozianu
+
+----
+
+RonJeffries posted an article on a proposed solution: http://www.xprogramming.com/xpmag/acsDiningPhilosophers.htm. 
+
+Given the fact that his philosophers do a Thread.sleep(...) instead of real work, I took that he looked more into the simulation problem, rather than the real work scenario.  Nevermind the throughput, I consider his article a failure on 2 counts:
+
+	* the worst failure is quote: ''Well, I think we're done. The Philosophers seem to run in their own threads, and seem to be getting fed. The system isn't locking up as far as I can tell, and no philosopher ever timed out.''. This is precisely the wrong attitude one should take towards his code. It is against the ProofObligation principle, to say the least. Actually, he missed the rather trivial fact that his solution will never deadlock because it's synchronizing on only one object.
+
+	* Another failure, is that he later claimed that the fairness is guaranteed by the fact that philosopher sleep random amount of times. That's a design decision he got it from reading some articles on the web, he mentioned. That's within the rule of the game. But from the point of view of exemplifying how TDD drives home the design it is a failure. Here's the quote: ''I keep getting the same numbers. That's a little odd, sounds too deterministic. But everyone is waiting the same amount of time. Let's randomize that just for fun.''. The most crucial design decision is not the result of some failing tests, but taken rather randomly.
+ 
+I later mentioned to him, that I consider his design a bad design because it might decrease throughput unnecessarily. He's not agreeing to this conclusion, but he didn't bother to do any measurement either. 
+
+''Maybe you (or Ron) should specify exactly what the throughput requirements are, so that appropriate tests can be written to drive the design.  Other "fairness" requirements should be more rigorously specified as well.  It is unfair to criticize TDD if you don't provide specific criteria to test against.  It was also a mistake for Ron to accept the challenge without a more specific problem description--as you say, a lot of his assumptions and decisions seemingly come from nowhere.''
+
+Well, it was my mistake and I admitted that. I didn't specify initially that throughput is of concern. I believe it should be on everybody's mind that throughput is always one of the concerns and DP wasn't invented just to play some arbitrary simulation.
+
+
+It is, I think, a drawback of XP that they don't focus as much on requirements (elicitation, validation, etc), instead they just want to pass the buck to the customer. I'm not willing to specify a hard figure or anything precise at all about the throughput. As far as I understood from a recent dicussion with RobertCecilMartin, that would be a dead end for their XP method. They want me as a customer to sign off on specific executable acceptance tests, and they want to only take responsibility for passing those tests irrespective of what real bugs might happen in the software. That's absurd in the case of concurrent software. 
+
+As a counter example, I asked them to play my customer (I'll work for free) and to write me acceptance test for the mutual exclusion problem. I'll make sure that I will deliver a flawed piece of software that will pass their tests consistently. 
+
+That is another point of the challenge to simulate a situation in real life. Let's say I implement the philosophers, I know my job very well in that regard, but I know almost nothing of concurrent systems. I want to outsource, and I want to be satisfied with the results. It is the contractor's job  to keep me satisfied and it is good business to deliver quality software to customers. If I get a software that I quicly test and find out that it's 100 times or slower than my amateurish and dumb implementation, then you can bet what our relationship will be in the near future.
+
+------
+
+So given these misunderstandings I decided to write the challenge down as Java code. I picked up Java because arguably everybody and their grandmothers is familiar with it. So here it is:
+
+ //Philosophers.java 
+ //-----
+
+ package testdp;
+
+ /**
+  * @author ccozianu
+  */
+ public interface Philosopher extends Runnable {
+
+    public void eat(Object forkLeft, Object forkRight);
+    public long getWaitTime();
+    public long getNumberOfMeals();
+    public long getNumberOfTries();
+    public int getNumber();
+    public void stop();
+    
+  // Work around java's lack of virtual constructors  
+  public interface Factory {
+    public Philosopher createPhilosopher(Scheduler s, int number);
+    public Object[] createResources(int n);
+    }
+
+  /**
+   * Default behavior implementation for convenience
+   */
+  public abstract class AbstractBase implements Philosopher{
+    Scheduler s;
+    
+    boolean stopped=false; public void stop() {stopped=true; }
+    
+    int number; public int getNumber() {return number;}
+    
+    long eatCount=0; public long getNumberOfMeals() {return eatCount;}
+    
+    long tries=0; public long getNumberOfTries() {return tries;}
+    
+    long totalWait,waitStart, waitStop; 
+    public long getWaitTime() { return totalWait;}
+    
+
+    public AbstractBase(Scheduler s_, int number_){
+    this.s= s_;
+    this.number= number_;    
+    }
+    
+    public void run(){
+    try {
+    while (!stopped) {
+      think();
+      waitStart= System.currentTimeMillis();
+      tries++;
+      s.requestAccess(this);}}
+    catch(InterruptedException ex) {/*we've been signaled to bail out*/}
+    }
+  
+    protected abstract void think();
+    protected abstract void doEat(Object resourceLeft, Object resourceRight);
+    
+      public void eat(Object resourceLeft, Object resourceRight) {
+    waitStop= System.currentTimeMillis();
+    totalWait += waitStop - waitStart;
+    eatCount++;
+    doEat(resourceLeft,resourceRight);
+    }
+
+    }
+ }
+
+
+
+ // Scheduler.java
+ //-----------
+
+ package testdp;
+
+ import junit.framework.Assert;
+
+ /**
+  * @author ccozianu
+  *
+  */
+ public interface Scheduler {
+
+
+    /**
+     * In order to work around Java's lack of virtual constructors
+     * we have to declare a separate interface that is concerned with setting
+     * up a Scheduler
+     */
+    public interface Factory {
+        Scheduler createScheduler(Object[] resources);
+    }
+
+    /** Philosopher will call this method when they need to eat
+     * the method will either secure access to resources on the left and right
+     * and call back Philopher.eat(); or will return leaving the philosopher hungry
+     * hoping for a better luck next time
+     */
+    public void requestAccess(Philosopher p) throws InterruptedException;
+
+
+    /**
+     * creates the default dummy scheduler . (The most straightforward implementation)
+     */
+    public static class DummySchedulerFactory implements Factory {
+        public Scheduler createScheduler(Object[] resources) {
+
+            return new AbstractBase(resources) {
+                // we synchronize all philosophers globally, dumb isn't it ? 
+                // Still it's very good for testing and comparing
+                public synchronized void requestAccess(Philosopher p) {
+                    int left= p.getNumber();
+                    int right= (left + 1) % this.resources.length;
+                    p.eat(this.resources[left], this.resources[right]);
+                }
+            };
+        }
+    };
+
+    /**
+     * A convenience abstract base
+     */
+    public abstract class AbstractBase implements Scheduler {
+        Object resources[];
+        int n;
+
+        public AbstractBase(Object[] resources_) {
+            this.resources= resources_;
+            n= resources_.length;
+        }
+    }
+ }
+
+
+So basically in order to write a solution, one has to provide a SchedulerFactory and a scheduler, all doable in a few lines of code. No assumption should be made about how philospher will actually perform, however, here's the actual code that will measure a few things about the solution:
+
+ package testdp;
+
+ import java.io.BufferedOutputStream;
+ import java.io.FileOutputStream;
+ import java.io.IOException;
+ import java.io.OutputStream;
+ import java.util.Random;
+
+ /**
+  * 
+  */
+ public class DPExperiment {
+  
+  
+    
+  public static void runTheShow( 
+     int nPhilosophers, 
+     int msecToRun, 
+     Scheduler.Factory schedulerFactory, 
+     Philosopher.Factory philosopherFactory){
+     try {          
+        Object[] resources= philosopherFactory.createResources(nPhilosophers);
+        Scheduler s= schedulerFactory.createScheduler(resources);
+        Philosopher philosophers[]= new Philosopher[nPhilosophers];
+        Thread threads[] = new Thread[nPhilosophers];
+        long startTime=System.currentTimeMillis(),endTime;
+        for (int i=0; i<nPhilosophers; i++) {
+           philosophers[i]= philosopherFactory.createPhilosopher(s,i); 
+           threads[i]= new Thread(philosophers[i]); 
+           threads[i].setDaemon(true);
+           }
+    
+        for (int i=0;i<nPhilosophers;i++) threads[i].start();
+    
+        Thread.sleep(msecToRun); 
+        
+        for (int i=0;i<nPhilosophers; i++) {
+           philosophers[i].stop();
+           //threads[i].interrupt();
+        }
+    
+        for (int i=0;i<nPhilosophers;i++) 
+           if (threads[i].isAlive())
+              threads[i].join(10); 
+           // On some linux jvms we risk hanging above if we 
+           // don't set a timeout to the join 
+    
+        endTime=System.currentTimeMillis();
+        long runningTime=endTime-startTime;
+        int grandTotal=0;
+    
+        for (int i=0; i< nPhilosophers; i++) { 
+           System.out.println("Philosopher["+i 
+              + "] eats="+ philosophers[i].getNumberOfMeals()
+              + " tries="+philosophers[i].getNumberOfTries()
+              + " wait="+philosophers[i].getWaitTime());
+           grandTotal += philosophers[i].getNumberOfMeals();
+           }
+    
+        System.out.println("Grand total: "+grandTotal +
+                       " velocity(eats/msecs)="+(((double)grandTotal)/runningTime));
+                       
+        System.out.println("Approximate running time: "+runningTime);
+        }
+    catch(Exception ex) {
+        System.err.println(ex);
+        ex.printStackTrace(System.err);
+        System.exit(-1);
+        }            
+    }
+  
+  public static void runTheShow ( 
+    int nPhilosophers, int msecToRun, 
+    String schedulerFactory, 
+    String philosopherFactory) throws Exception{
+    
+    runTheShow(nPhilosophers, msecToRun,
+                (Scheduler.Factory) Class.forName(schedulerFactory).newInstance(),
+                (Philosopher.Factory) Class.forName(philosopherFactory).newInstance());
+    }
+  
+  public static void main(String args[]) {
+    try {
+       int nrThreads= 70;
+       if (args.length>0) nrThreads= Integer.parseInt(args[0]);
+       int timeToRun=3500;
+       if (args.length>1) timeToRun= Integer.parseInt(args[1]);
+       String solution= Costin.SchedulerFactory.class.getName();
+       if (args.length>2) solution= args[2];
+       String test= DummyPhilosopherFactory.class.getName();
+       if (args.length>3) test= args[3];
+       runTheShow(nrThreads,timeToRun,solution,test);
+       }
+    catch(Exception ex){
+       System.err.println(ex);
+       ex.printStackTrace(System.err);
+       System.exit(-1);
+       }
+     }
+
+
+ /** 
+   Philosophers doing dummy computations both for thinking and eating 
+   */
+   public static class DummyPhilosopherFactory implements Philosopher.Factory {
+    
+    public Philosopher createPhilosopher(Scheduler s, int number) {
+       return new Philosopher.AbstractBase(s,number){
+    
+          Random r= new Random();
+          long n= r.nextLong();
+          
+          protected void think() {
+             for (int i=0;i<10;i++) 
+                n ^= r.nextLong();
+          }
+    
+          protected void doEat(Object resourceLeft, Object resourceRight){
+             for (int i=0;i<10;i++) 
+                 n ^= r.nextLong();
+          }
+       };
+    }
+
+    public Object[] createResources(int n) {
+       return new Object[n];
+        }
+    }
+ 
+    
+
+ public static class IOPhilosopherFactory implements Philosopher.Factory {
+
+    public Philosopher createPhilosopher(Scheduler s, int number) {
+        return new Philosopher.AbstractBase(s,number) {
+        
+           Random r= new Random();
+           long n= r.nextLong();
+    
+           protected void think() {
+              for (int i=0;i<10;i++) 
+                 n ^= r.nextLong();
+           }
+
+           int turn=0;
+           protected void doEat(Object r1, Object r2) {
+              try {
+                 OutputStream s1= (OutputStream) r1, s2= (OutputStream) r2;
+                 s1.write(("Philosopher "+this.number
+                           +" turn "+(turn++)).getBytes("ASCII"));
+                 }
+              catch(Exception ex) {
+                 throw new RuntimeException(ex.getMessage());
+                 }
+              }
+           };
+        }
+
+  /**
+    * the design is a little sloppy here to make for simplicity, 
+    * it doesn't provide for cleanly closing the file. A real design should make
+    * provision for closing all files at the end of the experiment, typically I
+    * do this by a ExitManager that calls a Cleanup interface for all its
+    * subscriber, 
+    */
+    public Object[] createResources(int n) {
+        try {
+            OutputStream result[]= new OutputStream[n];
+            for (int i=0;i<n;i++) {
+                result[i]= new BufferedOutputStream(
+                    new FileOutputStream("test_"+i+".tmp"),512);
+                }
+            return result;
+            } 
+        catch(IOException ex) {
+            throw new RuntimeException(ex.getMessage());
+            }
+        }
+    }
+ }
+
+-----
+
+And here is RonJeffries design translated into Java:
+
+ package testdp;
+
+ import java.util.Random;
+
+ public class Ron {
+
+    static class RonsScheduler extends Scheduler.AbstractBase {
+
+    Random rand= new Random();
+    
+        RonsScheduler(Object[] resources) {
+            super(resources);
+        }
+
+        boolean forks[]= new boolean[n];
+        {    for (int i= 0; i < n; i++)
+                forks[i]= true; }
+
+        public boolean canEat(Philosopher p) {
+            synchronized (this) {
+                int i= p.getNumber();
+                for (int countdown= 100; countdown > 0; countdown--) {
+                    if (forks[i] && forks[(i + 1) % n]) {
+                        forks[i]= false;
+                        forks[(i + 1) % n]= false;
+                        return true;
+                    }
+                    else {
+                        try {
+                            Thread.sleep(20);
+                        }
+                        catch (Exception ex) {}
+                    }
+                }
+            }
+            return false;
+        }
+
+        public synchronized void doneEating(Philosopher p) {
+            int i= p.getNumber();
+            forks[i]= true;
+            forks[(i + 1) % n]= true;
+        }
+
+        public void requestAccess(final Philosopher p) 
+         throws InterruptedException {
+            int i= p.getNumber();
+            if (canEat(p)) {
+                try {
+                    p.eat(resources[i], resources[(i + 1) % n]);
+                }
+                finally {
+                    doneEating(p);
+                }
+                Thread.sleep(rand.nextInt(20));
+            }
+        }
+    }
+
+    public static class SchedulerFactory implements Scheduler.Factory {
+        public Scheduler createScheduler(Object[] resources_) {
+            return new RonsScheduler(resources_);
+        }
+    }
+
+}
+-----
+
+With apologies to JimWeirich that completed the challenge first I put here my Java translation of his solution (the original is in Ruby at http://w3.one.net/~jweirich/talks/tdd_philosophers/ ).
+
+package testdp;
+
+public class Jim {
+  
+  public static class SchedulerFactory implements Scheduler.Factory {
+    
+		public Scheduler createScheduler(Object[] resources) {
+			return new JimScheduler(resources);
+		}
+
+ }
+  public static class JimScheduler extends Scheduler.AbstractBase {
+    
+    public Object syncs[]= new Object[n]; 
+    {for (int i=0;i<syncs.length;i++) syncs[i]= new Object(); }
+    
+    public JimScheduler(Object[] resources_) {
+      super(resources_);
+    }
+    
+    public void requestAccess(Philosopher p) throws InterruptedException {
+      int left= p.getNumber(), right=(left+1)%n;
+      Object first, second;
+      if (left==0) { first= syncs[1]; second=syncs[0];}
+      else {first=syncs[left]; second=syncs[right];}
+      
+      synchronized (first) {
+        synchronized(second) {
+          p.eat(resources[left], resources[right]);
+        }
+      }
+    }
+
+  }
+ }
+
+
+
+-----
+
+Sorry, the tabs around here ruined a bit my formatting.  Next time, I'll arrange my Eclipse more carefully.
+
+''(I fixed the formating for better view (I hope) -- RafaelAlvarez)'' 
+
+Thanks. I'm trying to fix that also, my idea of good code formatting is something similar to Python, Scheme, Ml formatiing conventions, so that the code will look cleanly like a tree of blocks.
+
+-----
+
+Apologies for my intrusion here but I find this problem rather intertesting. I've been following the discussion on Usenet regarding this problem and it seems to me that many people have missed the point here(?).
+
+A lot of people are focusing on the code, tighter specification etc which really is not the issue IMHO.
+
+As I understand it, the point I think Costin is trying to make is that safety (deadlock) and liveness properties in concurrent systems can only be proved theoretically and not by direct test (the key word being "proved" rather than "test"). The generally accepted approach to problems of this nature (DiningPhilosophers) is to build a model of the system (i.e. the atomic actions being performed) and then go onto to elucidate safety and liveness properties from that model (or revise the model if problems are found). i.e. some form of (semi) formal reasoning is applied to the problem a la EwDijkstra.
+
+''In order to "prove" (in the mathematical sense of that word) a system behaves a certain way you will by definition need to do a theoretical proof, regardless of whether or not the system is concurrent.  It might be more accurate to say tests are less likely to capture important aspects of actual behavior in concurrent systems.''
+
+The conclusion Costin then draws is that TestDrivenDevelopment is inappropriate for such systems as you need some knowledge of how the problem is being solved (i.e. the model) to then determine its correctness - this is contrary to the principle of "test up front" (which is at least my puny understanding of TDD) and is leaning towards "big design up front" (or better, "model up front") for some problem types.
+
+I therefore think that people who are getting bogged down in code and specification either aren't seriously engaging in the exercise or can't "see the wood for the trees". I don't mean this as any form of disrespect to anyone as all input is very useful but I think for the benefit of all we would do well to concentrate on the crux of the problem and not whether the code is written in Java, C# or whatever. In fact I'd even question Costin's request for the submission of code - it really isn't important -how- the dining philosophers is solved but more how you can show the solution satisfies deadlock and liveness properties using TDD principles.
+
+Personally, from my experiences with concurrent systems, I think that Costin is correct. TDD is a tool but it is not a universal one and there are some situations (concurrent systems being one, safety-critical and real-times systems probabling being others) where TDD is not appropriate for all aspects of program validation. I apologise up front if I've picked up the wrong end of the stick or misunderstood this - please feel free to cull my comments if this is the case.
+
+----
+Can somebody provide a URL for where this discussion is taking place on usenet/mailing lists/whatever and where it might be available in archived form?
+
+http://groups.google.com/groups?dq=&hl=en&lr=&ie=UTF-8&oe=UTF-8&threadm=b3iaqr%241lcrkr%241%40ID-75294.news.dfncis.de&prev=/groups%3Fhl%3Den%26lr%3D%26ie%3DUTF-8%26oe%3DUTF-8%26group%3Dcomp.object
+----
+See also ExtremeProgrammingChallengeFourteen and ExtremeProgrammingChallengeFourteenTheBug
+----
+''In order to "prove" (in the mathematical sense of that word) a system behaves a certain way you will by definition need to do a theoretical proof, regardless of whether or not the system is concurrent.  It might be more accurate to say tests are less likely to capture important aspects of actual behavior in concurrent systems.''
+
+Then perhaps "prove" is too strong a word in my comments above? Tests do not prove anything generally themselves (certainly not in accordance with the mathematical definition of the word) so then it seems only fair to level the playing field. 
+
+I'd therefore propose that the weak form of the DiningPhilosophersChallenge is to ''demonstrate'' that safety and liveness properies are upheld within any solution in an informal fashion; be this through modelling, discussion, test case walkthrough etc. A formal proof is not required as tests are not formal proofs themselves: the challenge is not otherwise balanced. A challenger should I think be able to justify through some logical reasoning why they believe that safety and liveness properties are demonstrated by their test cases in a complete and generalised fashion independently of the implementation (i.e. without holes and without resorting to language, OS specifics or code).
+
+I do not believe that it is merely the case that tests are "less likely" to demonstrate behavioural properies in this case - the DiningPhilosophersChallenge in its strongest form states that tests ''cannot'' demonstrate such properties without having some implementation insight or BigDesignUpFront i.e. TDD is impotent for such problems. I think this is the core of the challenge.
+
+Please feel free to correct me or disagree if anyone thinks I'm speaking nonsense etc.
+
+Or better still, offer a set of test cases which shows safety and liveness for this challenge! :)

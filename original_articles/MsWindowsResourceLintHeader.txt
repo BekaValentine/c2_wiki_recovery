@@ -1,0 +1,892 @@
+Part of MsWindowsResourceLint. Save this as ''rcLint.h'':
+
+
+      //  this program parses RC files (as VC++ outputs them)
+      //  and reports on CUA style issues
+
+
+    #pragma warning(disable: 4786)
+    #include <string>
+    #include <map>
+    #include <assert.h>
+    #include <iomanip>
+    #include <vector>
+    #include <sstream>
+    #include <iostream>
+
+        using std::cout;
+        using std::endl;
+        using std::ostream;
+        using std::string;
+        typedef std::map< string, string >  strings_t;
+        typedef std::vector<string>         spec_t;
+        typedef string::size_type           size_type;
+
+
+        class
+    Source
+    {
+      public:
+        Source(string const & rc = ""):
+            m_rc(rc),
+            m_bot(0),
+            m_eot(0)
+                {}
+
+        void           setResource(string const & rc)  {  m_rc = rc;  }
+        size_type      getBOT()  {  return m_bot;  }
+        string const & getPriorToken()    {  return m_priorToken;    }
+        string const & getCurrentToken()  {  return m_currentToken;  }
+
+        string const &
+    pullNextToken()
+        {
+        m_priorToken = m_currentToken;
+        extractNextToken();
+        return m_currentToken;
+        }
+
+        size_type
+    getLineNumber(size_type at)
+        {
+        size_type lineNumber = 1;
+
+        for(size_type idx(0);  idx < at;  ++idx)
+            if ('\n' == m_rc[idx])
+                ++lineNumber;
+
+        return lineNumber;
+        }
+
+        string
+    getLine(size_type at)
+        {
+        size_type bol = m_rc.rfind('\n', at);
+        if (string::npos == bol)  bol = 0;  else ++bol;
+        size_type eol = m_rc.find('\n', at);
+        if (string::npos == eol)  eol = m_rc.length();  else ++eol;
+        return m_rc.substr(bol, eol - bol);
+        }
+
+      private:
+
+        string const &
+    extractNextToken()
+        {
+        char static const delims[] = " \t\n,";
+
+        m_bot = m_rc.find_first_not_of(delims, m_eot);
+
+        if (string::npos == m_bot)
+            m_currentToken = "";
+        else if (m_rc[m_bot] == '"')
+            m_currentToken = parseString();
+        else if (m_rc.substr(m_bot, 2) == "//")
+            {
+            if (skipUntil("\n"))
+                return extractNextToken();
+            }
+        else if (m_rc.substr(m_bot, 2) == "/*")
+            {
+            if (skipUntil("*/"))
+                return extractNextToken();
+            }
+    /*    else if (m_rc.substr(m_bot, 1) == "#")
+            {
+            string line = getLine(m_bot);
+            size_type at(0);
+            while(isspace(line[at]) && at < line.size())  ++at;
+
+            if ('#' == line[at])  
+                {
+                m_eot = m_bot + 1;
+                if (skipUntil("\n"))
+                    return extractNextToken();
+                }
+            }*/
+        else
+            {
+            m_eot = m_rc.find_first_of(" \n,/", m_bot);
+            m_currentToken = m_rc.substr(m_bot, m_eot - m_bot);
+            }
+
+        if ('#' == m_currentToken[0])
+            {
+    //        assert(m_rc.substr(m_bot, 1) == "#");
+            string line = getLine(m_bot);
+            size_type at(0);
+            while(isspace(line[at]) && at < line.size())  ++at;
+
+            if ('#' == line[at])  
+                {
+                --m_eot;
+                if (skipUntil("\n"))
+                    return extractNextToken();
+                }
+            }
+
+        return m_currentToken;
+        }
+
+        bool
+    skipUntil(char const * delimiter)
+        {
+        m_eot = m_rc.find(delimiter, m_eot + 1);
+
+        if (string::npos == m_eot)
+            {
+            m_currentToken = "";
+            return false;
+            }
+        m_eot += strlen(delimiter);
+        return true;
+        }
+
+        char
+    parseStringChar()
+        {
+        if (m_rc[m_eot] == '\\')
+            {
+            m_eot += 1;
+            char escapee(m_rc[m_eot++]);
+
+            switch (escapee)
+                {
+                case 'n' :  return '\n';
+                case 'r' :  return '\r';
+                case 't' :  return '\t';
+                case '0' :  return '\0';
+                case '\\':  return '\\';
+                case 'a' :  return '\a';
+                default  :  //  TODO  \x, \v \b, \f
+                    if (isdigit(escapee))
+                        {
+                        string slug = m_rc.substr(m_eot - 1, 3);
+                        return char(strtol(slug.c_str(), NULL, 8));
+                        }  
+                    else
+                        //assert(false);
+                        return escapee;
+                }        
+            }
+        else if (m_rc[m_eot] == '"' && m_rc[m_eot+1] == '"')
+            m_eot++;
+
+        return m_rc[m_eot++];
+        }
+
+        string
+    parseString()
+        {
+        m_eot = m_bot + 1;
+        string z;
+   
+        while ( m_eot < m_rc.length() && 
+                ( m_rc[m_eot] != '"' || 
+                  m_rc[m_eot + 1] == '"' ) )
+            z += parseStringChar();
+
+        if (m_eot < m_rc.length())
+            m_eot += 1;
+
+        return z;
+        }
+
+        string    m_rc;
+        size_type m_bot;
+        size_type m_eot;
+        string    m_priorToken;
+        string    m_currentToken;
+    };
+
+        class Resource;
+
+
+        class
+    ResourceHandle
+    {
+      public:  //  don't read this it's just a sharing smart pointer...
+        ResourceHandle(Resource *p = NULL):
+            m_pInt(new int(p != NULL)), m_p(p) {}
+        Resource *get()  {  return m_p;  }
+        Resource *operator->()  {  return m_p;  }
+        ResourceHandle(ResourceHandle const & rh):
+            m_pInt(rh.m_pInt), m_p(rh.m_p) {  ++(*m_pInt);  }
+       ~ResourceHandle();
+      private:
+        Resource * m_p;
+        int      * m_pInt;
+    };
+
+
+        class
+    ComplaintDepartment
+    {
+      public:
+        virtual string      getLine(size_type at) = 0;
+        virtual size_type   getLineNumber(size_type at) = 0;
+        virtual void        complain(string const & description, size_type bot, string evidence = "") = 0;
+        virtual string      getString(string const & id) = 0;
+        virtual Resource  * getAccelerators(string const & menuID) = 0;
+    };  //  DependencyInversionPrinciple
+
+
+        class
+    Resource
+    {
+      public:
+                void        setBeginningOfText(size_type bot)  {  m_bot = bot;  }
+                string      getID()  {  return getSpec(0);  }
+        virtual Resource  * clone()  {  return new Resource(*this);  }
+        virtual Resource  * get(string /*id*/) {  return NULL;  }
+        virtual Resource  * get(int /*idx*/) {  return NULL;  }
+        virtual Resource  * get_(int /*idx*/) {  return NULL;  }
+        virtual void        parse(Source & /*aSource*/) { }
+        virtual string      getLabel()  {  return getSpec(getLabelIndex());  }
+        virtual void        LintOne(ComplaintDepartment & ) {}
+        virtual void        LintAll(ComplaintDepartment & ) {}
+                size_type   getBeginningOfText()  {  return m_bot;  }
+                int         getSpecCount() const {  return m_spec.size();  }
+             string const & getSpec(int x) const {  return m_spec[x];  }
+                void        addSpec(string const & token)  {  m_spec.push_back(token);  }  
+        virtual bool        weBePromptLabel()  {  return false;  }
+
+        char
+    getLabelHotkey()
+        {
+        string label = getLabel();
+        size_type at = label.find('&');
+
+        if ( string::npos != at && 
+             (at + 2) < label.length() && 
+             '&' != label[at + 1] )
+            return label[at + 1];
+
+        return '\0';
+        }
+
+        virtual void
+    printTree(ostream & out, int depth = 1)
+        {
+        out << std::setw(depth) << " " << getID() << endl;
+        }
+
+        void
+    LintLabelPrompt(ComplaintDepartment & aCD)  //  TODO  oaoo?
+        {
+        char hotKey = this->getLabelHotkey();
+        if (!hotKey)
+            aCD.complain("Missing & in Menu Label", m_bot);  //  TODO  make m_bot private
+        }
+
+      private:
+        virtual int         getLabelIndex()  {  return 1;  }
+        spec_t     m_spec;
+        size_type  m_bot;    
+    };
+
+
+        class  //  TODO  or Accelerator
+    Control:  public Resource
+    {
+      public:
+
+        bool weBePromptLabel()  {  return "LTEXT" == getSpec(1) && 
+                                              ':' == *getLabel().rbegin();  }
+
+      private:
+        virtual int         getLabelIndex()  {  return 2;  }
+        Resource     * clone()  {  return new Control(*this);  }
+
+        bool weBeButton()  {  return  "CONTROL" == getSpec(1) && 
+                                       "Button" == getSpec(4);  }
+
+        bool weBePushButton()  {  return ( "PUSHBUTTON" == getSpec(1) || 
+                                        "DEFPUSHBUTTON" == getSpec(1) ) && 
+                                                 "IDOK" != getSpec(3)   && 
+                                             "IDCANCEL" != getSpec(3);  }
+
+        virtual void
+    LintOne(ComplaintDepartment & aCD)
+        {
+
+      //  TODO  put quotes back on strings
+
+        if ( weBeButton() ||
+             weBePromptLabel() ||
+             weBePushButton() )
+            {
+    //        cout << getLabel() << endl;
+            if (!getLabelHotkey())
+                aCD.complain("Button missing hotkey", getBeginningOfText());
+  
+            }
+        }
+
+    };
+
+
+        string
+    toString(int i)
+        {
+        std::stringstream z;  z << i;
+        return z.str();
+        }
+
+
+        class
+    ResourceCollection:  public Resource
+    {
+      public:
+
+        void
+    add(Resource & nu)  
+        {
+        m_Resources[nu.getID()] = nu.clone();
+        }
+
+        void
+    printTree(ostream & out, int depth = 1)
+        {
+        Resource::printTree(out, depth);
+
+        for( Resources_t::iterator it = m_Resources.begin();
+             it != m_Resources.end();
+             ++it )
+            it->second->printTree(out, depth + 5);
+        }  //  TODO  this merged with LintAll() == Visitor
+
+        int getCount() {  return m_Resources.size();  }
+
+
+        Resource * 
+    get(string id)
+        {
+        Resources_t::iterator it = m_Resources.find(id);
+        if (it == m_Resources.end())  return NULL;
+        return it->second.operator->();
+        }
+
+        Resource  *
+    get(int idx)
+        {
+        Resources_t::iterator it = m_Resources.begin();
+        while (it != m_Resources.end() && idx--)  ++it;
+        return it != m_Resources.end()?  it->second.operator->():  NULL;
+        }
+
+        Resource  *
+    get_(int idx)
+        {
+        return get(toString(idx));/*
+        Resources_t::iterator it = m_Resources.begin();
+        while (it != m_Resources.end() && idx--)  ++it;
+        return it != m_Resources.end()?  it->second.operator->():  NULL;*/
+        }
+
+        virtual string parseName(Source & /*aSource*/) {  return "";  }
+
+        void
+    parseResource(ResourceCollection & aSink, Source & aSource)
+        {    
+        setBeginningOfText(aSource.getBOT());
+        addSpec(parseName(aSource));
+        string begin;
+
+        do  {
+            begin = aSource.pullNextToken();
+            if (begin == "")  return;
+        } while("BEGIN" != begin);
+
+        aSource.pullNextToken();
+
+        for(;;)
+            {
+            string token = aSource.getCurrentToken();
+            if ("" == token || "END" == token)  break;
+            parse(aSource);
+            }
+        aSink.add(*this);
+        }
+
+        void
+    LintAll(ComplaintDepartment & aCD)
+        {
+        for( Resources_t::iterator it = m_Resources.begin();
+             it != m_Resources.end();
+                ++it )
+            {
+            it->second->LintOne(aCD);
+            it->second->LintAll(aCD);
+            }
+        }
+
+        void
+    LintDupedLabelHotKeys(ComplaintDepartment & aCD, string type)
+        {
+        Resource * pControl = NULL;
+
+        for ( int idx(0); pControl = get(idx);  ++idx )
+            if (char hotKey = pControl->getLabelHotkey())
+                {
+                string evidence;
+                Resource * pControl2 = NULL;
+
+                for ( int idx2(idx + 1); pControl2 = get(idx2);  ++idx2 )  //  TODO OAOO
+                    {
+                    char hotKey2 = pControl2->getLabelHotkey();
+
+                    if (hotKey == hotKey2)
+                        evidence += aCD.getLine(pControl2->getBeginningOfText());
+                    }
+                if ("" != evidence)
+                    aCD.complain( "Duplicated " + type + " hotkey",
+                                  pControl->getBeginningOfText(), evidence );
+                }
+        }
+
+        virtual bool isFirstTokenOfNextItem(string const & token) {  return false;  }
+
+        void
+    initResource(Resource & aResource, Source & aSource)
+        {
+        aResource.addSpec(toString(getCount()));
+        aResource.addSpec(aSource.getCurrentToken());
+        aResource.setBeginningOfText(aSource.getBOT());
+        string token = aSource.pullNextToken();
+
+        while (token != "END")
+            {
+            if ( isFirstTokenOfNextItem(token) )
+                break;
+
+            aResource.addSpec(token);
+            token = aSource.pullNextToken();
+            }
+        add(aResource);
+        }
+
+      private:
+        typedef std::map< string, ResourceHandle >
+                            Resources_t;
+        Resources_t m_Resources;
+    };
+
+
+    ResourceHandle::~ResourceHandle()  //  permits derived Resource objects to occupy std::map<>
+    {
+        --(*m_pInt);
+        if(!m_pInt)  {  delete m_p;  delete m_pInt;  }
+    }
+
+
+        class
+    MenuHierarchy:  public ResourceCollection
+    {
+      public:
+                   void setMenuID(string const & nu)  {  m_MenuID = nu;  }
+         string const & getMenuID()  {  return m_MenuID;  }
+           virtual void addMenuItem(Source & aSource);
+                   void parse(Source & aSource);
+
+      private:
+        string m_MenuID;
+    };
+
+
+        class  //  also string in STRINGTABLE
+    MenuItem:  public MenuHierarchy
+    {
+      public:
+
+      private:
+        Resource * clone()  {  return new MenuItem(*this);  }
+
+        void
+    complainAbout(ComplaintDepartment & aCD, char const * description, Resource & aResource)
+        {
+        aCD.complain
+                ( 
+                description,
+                getBeginningOfText(),
+                aCD.getLine(aResource.getBeginningOfText())
+                );
+        }
+
+        void
+    LintAccelerator(ComplaintDepartment & aCD, Resource & aControl)
+        {
+        if (getID() == aControl.getSpec(2))  //  TODO  make getLabel get the label
+            {
+            size_type at = getLabel().find('\t');
+
+            if (string::npos == at)
+                complainAbout(aCD, "Missing accelerator prompt in Menu Label", aControl);
+            else
+                {
+                string slice = getLabel().substr(at);
+                string keyCap = slice.substr(slice.length() - 1, 1);
+
+                if (keyCap != aControl.getSpec(1))
+                    complainAbout(aCD, "Wrong accelerator prompt in Menu Label", aControl);
+                }
+            }
+        }
+
+        void
+    LintAccelerators(ComplaintDepartment & aCD, Resource & anAccelerator)
+        {
+        for(int idx(0);;++idx)
+            {
+            Resource * pControl = anAccelerator.get(idx);
+            if (!pControl)  break;
+            LintAccelerator(aCD, *pControl);
+            }
+        }
+
+        void
+    LintOne(ComplaintDepartment & aCD)
+        {
+        LintLabelPrompt(aCD);
+
+        string help = aCD.getString(getID());
+    
+        if ("" == help)
+            aCD.complain("Missing StringTable help for MenuItem", this->getBeginningOfText());
+
+        Resource  * p = aCD.getAccelerators(getMenuID());
+        if (p)  LintAccelerators(aCD, *p);
+        }
+
+    };
+
+
+        class
+    Popup:  public MenuHierarchy
+    {
+      public:
+
+        Resource *clone()  {  return new Popup(*this);  }
+
+        string
+    parseName(Source & aSource)
+        {
+        return aSource.pullNextToken();
+        }
+
+      private:
+    
+        void
+    LintOne(ComplaintDepartment & aCD)
+        {
+        LintLabelPrompt(aCD);
+        LintDupedLabelHotKeys(aCD, "MenuItem");
+        }
+
+      private:
+        virtual int         getLabelIndex()  {  return 0;  }
+
+    };
+
+
+        void
+    MenuHierarchy::addMenuItem(Source & aSource)
+        {
+        string label = aSource.pullNextToken();
+        assert(label.size());
+        if ("SEPARATOR" == label)  
+            {
+            aSource.pullNextToken();
+            return;
+            }
+        size_type bot = aSource.getBOT();  //  TODO  getBeginningOfText()
+        string id = aSource.pullNextToken();
+        MenuItem anItem;    
+        anItem.setBeginningOfText(bot);
+        anItem.addSpec(id);
+        anItem.addSpec(label);
+        anItem.setMenuID(getMenuID());
+        string token;
+
+        for (;;)
+            {
+            token = aSource.pullNextToken();
+
+            if ( "END" == token || "POPUP" == token || "MENUITEM" == token)
+                break;
+        
+            anItem.addSpec(token);
+            }
+        add(anItem);
+        }
+
+
+        void
+    MenuHierarchy::parse(Source & aSource)
+        {
+        string token = aSource.getCurrentToken();
+
+        if ("MENUITEM" == token)
+            addMenuItem(aSource);
+        else if ("POPUP" == token)
+            {
+            Popup aPopup;
+            aPopup.setMenuID(getMenuID());
+            aPopup.parseResource(*this, aSource);
+            token = aSource.pullNextToken();
+            }
+        else
+            assert(false);  //  syntax error in your resource code! Look at token and m_bot
+        }
+
+
+        class
+    Menu:  public MenuHierarchy
+    {
+      public:
+
+        Resource *clone()  {  return new Menu(*this);  }
+
+        string
+    parseName(Source & aSource)
+        {
+        string token = aSource.getPriorToken();  //  TODO  commonalize this
+        setMenuID(token);
+        return token;
+        }
+
+    };
+
+
+        class
+    StringTable: public ResourceCollection
+    {
+      public:
+        StringTable(int idx):  m_idx(toString(idx))  {}
+
+      private:
+        string
+    parseName(Source & aSource)
+        {
+        return m_idx;
+        }
+
+        void
+    parse(Source & aSource)
+        {
+        string token = aSource.getCurrentToken();
+        Resource anEntry;
+        anEntry.setBeginningOfText(aSource.getBOT());
+        anEntry.addSpec(token);
+        anEntry.addSpec(aSource.pullNextToken());
+        add(anEntry);
+        aSource.pullNextToken();
+        }
+
+        Resource *clone()  {  return new StringTable(*this);  }
+        string m_idx;
+    };
+
+
+        class
+    Accelerators: public ResourceCollection
+    {
+        Resource *clone()  {  return new Accelerators(*this);  }
+    
+        string
+    parseName(Source & aSource)
+        {
+        return aSource.getPriorToken() + " ACCELERATORS";
+        }
+
+        bool
+    isFirstTokenOfNextItem(string const & token)
+        {
+        return (1 == token.length() && "|" != token) || 
+                    "VK_" == token.substr(0, 3);
+        }
+
+        void
+    parse(Source & aSource)
+        {
+        Control aCtrl;
+        initResource(aCtrl, aSource);
+        }
+
+    };
+
+
+        class
+    Dialog: public ResourceCollection
+    {
+      public:
+
+        Resource *clone()  {  return new Dialog(*this);  }
+
+        string
+    parseName(Source & aSource)  //  get prior name class?? TODO
+        {
+        return aSource.getPriorToken();
+        }
+
+
+        void
+    LintPromptLabel(ComplaintDepartment & aCD, Resource & aResource, int idx)
+    {
+
+        if (Resource * pNext = get(toString(idx + 1)))
+            {
+            bool found (false);
+
+            for(int x(0);  x < pNext->getSpecCount();  ++x)
+                {
+                if ("WS_TABSTOP" == pNext->getSpec(x))
+                    {
+                    found = true;
+                    break;
+                    }
+                }
+            if (!found)
+                aCD.complain( "Prompt before control without tabstop",
+                              aResource.getBeginningOfText() );
+            }
+        else
+            {
+            aCD.complain( "Prompt at end of control list",
+                          aResource.getBeginningOfText() );
+            }
+
+    }
+
+
+        void
+    LintOne(ComplaintDepartment & aCD)
+        {
+        LintDupedLabelHotKeys(aCD, "Control");
+
+        Resource * pResource = NULL;
+
+        for ( int idx(0); pResource = get(toString(idx));  ++idx )
+            if (pResource->weBePromptLabel())
+                LintPromptLabel(aCD, *pResource, idx);
+        }
+
+        bool
+    isFirstTokenOfNextItem(string const & token)
+        {
+        return token == "LTEXT"       || token == "RTEXT"        || token == "DEFPUSHBUTTON"   || token == "PUSHBUTTON" || 
+                 token == "AUTO3STATE"  || token == "AUTOCHECKBOX" || token == "AUTORADIOBUTTON" || token == "CHECKBOX"   || 
+                 token == "COMBOBOX"    || token == "CONTROL"      || token == "CTEXT"           || token == "EDITTEXT"   || 
+                 token == "GROUPBOX"    || token == "ICON"         || token == "LISTBOX"         || token == "PUSHBOX"    || 
+                 token == "RADIOBUTTON" || token == "SCROLLBAR"    || token == "STATE3";
+        }
+
+        void
+    parse(Source & aSource)
+        {
+        Control aCtrl;
+        initResource(aCtrl, aSource);
+        }
+
+    };
+
+
+        class
+    ResourceFile :  public ResourceCollection, public ComplaintDepartment
+    {
+      public:
+
+        Resource *clone() {  return NULL;  }  //  the buck stops here
+        ResourceFile():  m_pComplaints(NULL)  {}
+
+        virtual size_type getLineNumber(size_type at) {  
+            return m_Source.getLineNumber(at);  }  
+
+        virtual string getLine(size_type at) {  
+            return m_Source.getLine(at);  }  
+
+        string
+    getString(string const & id)
+        {
+        int idx(0);
+
+        for(;;)
+            {
+            Resource * p = get(toString(idx++));
+            if (!p)  return "";
+            p = p->get(id);
+            if (p)  return p->getLabel();
+            }
+        }
+
+        void
+    callLint(ostream & complaints)
+        {
+        m_pComplaints = &complaints;
+        LintAll(*this);
+        m_pComplaints = NULL;
+        }
+
+        Resource *
+    getAccelerators(string const & menuID)
+        {
+        return get(menuID + " ACCELERATORS");
+        }
+
+        void
+    complain(string const & description, size_type bot, string evidence = "")
+        {
+        size_type lineNumber(getLineNumber(bot));
+        *m_pComplaints << getID() << '(' << lineNumber << "): " << description << "\n";
+        *m_pComplaints << getLine(bot);
+        if ("" != evidence)  *m_pComplaints << evidence;
+        *m_pComplaints << "\n";
+        }
+
+        void
+    parseFile( string const & rc,
+               string const & fileName = "" )
+        {
+        m_Source.setResource(rc);
+        setBeginningOfText(m_Source.getBOT());
+        addSpec(fileName);
+        int idx(0);
+
+        for(;;)
+            {
+            string token = m_Source.pullNextToken();
+            if ("" == token)  return;
+
+            if ("MENU" == token)
+                {
+                Menu().parseResource(*this, m_Source);
+                }
+            else if ("DIALOG" == token || "DIALOGEX" == token)
+                {
+                Dialog().parseResource(*this, m_Source);
+                }
+            else if ("ACCELERATORS" == token)
+                {
+                Accelerators().parseResource(*this, m_Source);
+                }
+            else if ("STRINGTABLE" == token)
+                {
+                StringTable(idx++).parseResource(*this, m_Source);
+                }
+            else
+                {
+    //            std::cerr << "Unrecognized: " << token << endl;
+                }
+            }
+        }
+
+    //  TODO  everyone deals with END the same way. 
+
+      private:
+        Source      m_Source;
+        ostream   * m_pComplaints;
+    };
+
+
+----
+CategoryLint

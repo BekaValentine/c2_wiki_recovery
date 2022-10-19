@@ -1,0 +1,162 @@
+The Pimpl idiom, also known as the compilation firewall or Cheshire Cat technique, is a "private implementation" technique useful only in CeePlusPlus and statically compiled languages like it...
+
+Benefits:
+	1. Changing private member variables of a class does not require recompiling classes that depend on it, thus '''make''' times are faster, and the FragileBinaryInterfaceProblem is reduced.
+	1. The header file does not need to #include classes that are used 'by value' in private member variables, thus '''compile''' times are faster.
+	1. This is sorta like the way SmallTalk automatically handles classes... more pure encapsulation.
+
+Drawbacks:
+	1. More work for the implementor.
+	1. Doesn't work for 'protected' members where access by subclasses is required.
+	1. Somewhat harder to read code, since some information is no longer in the header file.
+	1. Run-time performance is slightly compromised due to the pointer indirection, especially if function calls are virtual (branch prediction for indirect branches is generally poor).
+
+How to do it:
+	1. Put all the private member variables into a struct.
+	1. Put the struct definition in the .cpp file.
+	1. In the header file, put only the ForwardDeclaration of the struct.
+	1. In the class definition, declare a (smart) pointer to the struct as the only private member variable.
+	1. The constructors for the class need to create the struct.
+	1. The destructor of the class needs to destroy the struct (possibly implicitly due to use of a smart pointer).
+	1. The assignment operator and CopyConstructor need to copy the struct appropriately or else be disabled.
+
+----
+
+It seems to me like the need for something like this reflects a less than ideal design decision in the C++ language: namely, the need to declare private members as part of the declaration that the rest of the system compiles against. DelphiLanguage has the same "feature". It would seem to make more sense to have an "interface" declaration which the rest of the system sees, with no mention of anything private to the class. The implementation portion would specify private members etc. -- KyleCordes
+
+It's a less than ideal design decision in the CeeLanguage that's causing the problem. This would be unnecessary if the linker wasn't separated from the compiler, but alas, you don't have access to information like the size of the aggregate type at compile time except through the declaration. Therefore, you need to present the location and types of the private members so you can do things like offset calculations, PointerArithmetic, etc. -- SunirShah
+
+Disagreed strongly. The linker being separate from the compiler is important too when attempting to compile to a known interface without a known library. Though the common example used - creating libraries which are safe upwards - isn't that big a deal, this tool has many other applications, not the least of which is writing code ignorant of the underlying implementation. -- StoneCypher
+
+Put it this way, there is no truly "private" data in CeePlusPlus. You can always catch a glimpse of the private instance variables at compile time with sizeof(). -- JohnCarter
+
+This is a misunderstanding of the concept of privacy, which is an organizational tool intended to help a programmer sort the parts of code which are intended to interface with the outside world from the stuff which is meant to be kept internal. TC++PL is quite clear on the point that this has nothing to do with run-time and compile-time effects which can be easily used to look at the class's guts; it's merely a method to help programmers encapsulate. -- StoneCypher
+
+----
+
+It's a significant idiom for another reason not mentioned above: operations on pointers (and auto_ptrs, for that matter) are guaranteed '''not''' to throw. This is important because it means you can write strongly exception-safe constructors, CopyConstructor and assignment operator, even if your members can throw during their construction. Granted, you can still suffer from unexpected SideEffect''''''s but you're a long way nearer exception-nirvana. -- JonKale
+
+----
+
+An even better reason for using it is creating UnitTest''''''s in legacy CeePlusPlus systems. Suppose you have an object with big hairy beasties embedded in it as instance variables....
+
+  class A {
+  private:
+	BigScaryM''''''onster orc;
+	BiggerScarierM''''''onster troll;
+  };
+
+If you include A.H, you need to compile and link all the big scary stuff _even_ though they are private. That can get you into quite a sprawl of needing to link in BigScaryM''''''onster.o and then BiggerScarierM''''''onster.o and then this, then that, then everybody and its snotty little brother.
+
+You could create a MockA that doesn't have the scary stuff in and link that in your tests. Unfortunately, strange and foul things may happen if you link some of the other modules that see the real A, with the tests that see only the MockA. Bad. Bad. Bad.
+
+Enter pimpl.
+  struct AImp;
+  class A {
+  public:
+	// Same public interface as A, but all delegated to concrete implementation.
+  private:
+	AImp * pimpl;
+  };
+You can now create tests that can link with impunity to other real modules from the system, and you don't have to link in the scary stuff. Just a tame mock implementation. In fact, it doesn't even have to be a complete implementation. Just the bits you test. -- JohnCarter
+
+----
+
+In practice, this idiom is just a one-off SmartPointer, and there's really no point not using a general smart pointer template instead. You don't actually have to write the code to delegate every method on to the "real" object. Instead, you declare a pure abstract class:
+
+  struct ILightSwitch
+  {
+	virtual void switchOnn() = 0;
+	virtual void switchOff() = 0;
+	virtual bool isOn() = 0;
+
+	virtual ~ILightSwitch() {}
+  };
+This can go in the header because it reveals nothing about the implementation (which derives from it and so has to implement the methods). Then you write the wrapper class that holds a pointer to an ILightSwitch, and defines the -> operator to forward all method calls to the real object. And finally, you realize this pattern has nothing to do with a specific interface. It's just something that "manages" a pointer for you and ensures it is cleaned up in a predictable way. So you turn it into a reusable template, and there you are: it's a SmartPointer. -- DanielEarwicker
+
+''Hmm. Last time I looked, there was still additional hoop jumping to ensure that the destructor can deal with the incomplete type. See http://www.boost.org/libs/utility/checked_delete.html for one solution. -- DanilSuits''
+
+Also, I forgot that if the SmartPointer is going to delete ILightSwitch, we really need a virtual destructor, so I just added one. :) -- DanielEarwicker
+
+''Take it a step further: In your .C file, you write the following:''
+
+  class LightSwitchI''''''mpl: public ILightSwitch {
+  public: bool isOn() {return on;} ...
+  private: bool on;
+  };
+
+  ILightSwitch *MakeLightS''''''witch() {return new LightSwitchI''''''mpl;}
+''Voilà! Light switch implementation and structure size is hidden from class users, so changes to the light switch implementatation don't cause sprawling recompilations - and no unsightly pimpls, either! -- BillTrost''
+
+Yes indeed, this "hidden constructor" pattern is a must in shared libraries or DLLs that represent "plug-ins" to some core product. The only symbol that needs to be found using the platform's dynamic linking features is the "factory function" MakeLightS''''''witch. Also it makes using dlopen (Unix) or LoadLibrary (Win32) a lot easier if you only have to find one entry point. Incidentally, we are well on our way to re-inventing COM here (check out Mozilla's XPCOM). -- DanielEarwicker
+
+----
+
+If you use a SmartPointer and you only have one implementation, there is no need to make any of the member functions virtual, except possibly the destructor. The run-time cost of non-virtual member function calls is much lower, and a compiler that does whole-program optimization can inline them even though they're in a separate translation unit. Here's an example:
+
+  // foo.h
+
+  class foo_impl;
+
+  class foo {
+	// Boilerplate
+	friend class foo_impl;
+	foo() {} // so only foo_impl can derive from foo
+	const foo_impl * impl() const;
+	foo_impl * impl();
+  public:
+	virtual ~foo() {}
+	// Factories
+	static std::auto_ptr<foo> create(int value);
+	// Interface
+	int value() const;
+  };
+
+  // foo.cpp
+
+  class foo_impl : public foo {
+	friend class foo;
+	// Constructors mirroring the factory functions in foo
+	explicit foo_impl(int value) : value_(value) {}
+	// Member data
+	int value_;
+  };
+
+  inline const foo_impl * foo::impl() const {
+	return static_cast<const foo_impl *>(this);
+  }
+  inline foo_impl * foo::impl() {
+	return static_cast<foo_impl *>(this);
+  }
+
+  std::auto_ptr<foo> foo::create(int value) {
+	return std::auto_ptr<foo>(new foo_impl(value));
+  }
+
+  int foo::value() const { return impl()->value_; }
+
+Here, the destructor needs to be declared virtual foo so that std::auto_ptr<foo> calls foo_impl's destructor. If you use boost::shared_ptr<foo> instead, even that doesn't need to be virtual, because shared_ptr remembers how to call the correct destructor. (This doesn't improve performance or memory use, because shared_ptr is larger and slower than auto_ptr, but if you need to use shared_ptr anyway you may as well eliminate the virtual destructor.) -- BenHutchings
+
+----
+
+There's lots of good discussion and code on this idiom in LargeScaleCppSoftwareDesign. A wonderful book, even if you don't do C++ for a living.
+
+----
+
+ScottMeyers notes another use for the PimplIdiom in EffectiveStl. Function objects (as used by the StandardTemplateLibrary) must be passed by value, which rules out polymorphism (a derived class object being copied into a base class object is "sliced".) You can avoid this problem by using a PimplIdiom-style wrapper as a bridge. -- DanielEarwicker
+
+This sounds similar to the combination of patterns I worked out for myself, which I recently christened ZitfacePattern -- KarlKnechtel
+
+----
+
+Still another thing that makes this a very useful idiom is the fact that it provides a way for you to inherit functionality from a third party library without passing any dependencies on the library to your class users. Just make your XImpl class inherit from your third party library class. Dependencies are only in your .CPP file, not the header files. -- FernandoRamos
+
+----
+
+Other names/variants for this are HandleBodyPattern, BridgePattern, or EnvelopeLetter (see JimCoplien's ''AdvancedCeePlusPlusProgrammingStylesAndIdioms'').
+
+See also this WikiPedia page http://en.wikipedia.org/wiki/Pimpl which has examples for AdaLanguage, CeeLanguage and CeePlusPlus.
+----
+One particular use is when ProgrammingCudaCee, to separate code which will compile with the NVIDIA C compiler from a class implementation which will only compile with a CeePlusPlus compiler.
+----
+CategoryIdiom CategoryCpp

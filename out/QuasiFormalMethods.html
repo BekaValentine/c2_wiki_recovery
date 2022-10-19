@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Quasi Formal Methods
+      </h1>
+      <p>
+        I've always held firm in my belief that <a href="FormalMethods.html">FormalMethods</a> compliments <a href="UnitTest.html">UnitTest</a>ing; folks who argue one approach over the other to the point of exclusion simply hold no credibility for me.  They may be right, but I just don't feel comfortable trusting one to the exclusion of the other.  As an empiricist, I find unit testing more approachable and faster to implement, so I tend to lean towards unit testing.  But, it would be a lie to assume I pay no attention at all to formality.
+      </p>
+      <p>
+        I am not smart enough to understand <a href="FormalMethods.html">FormalMethods</a> fully, but I can see how they may be useful, and why they should be used.  In an effort to improve my own code quality, I've explored the various methods (to the best of my ability, that is) in which unit testing and formal methods can be used together in projects.  However, it wasn't until I learned <a href="HaskellLanguage.html">HaskellLanguage</a> that everything fell into place.  That was the first time I had a full appreciation of how formal methods can play with unit testing.
+      </p>
+      <p>
+        Maybe this isn't completely formal.  I apologize if it's not.  I think that the principles I've stumbled upon, however, can apply to more formal techniques.  For this reason, I've named this page <a href="QuasiFormalMethods.html">QuasiFormalMethods</a>.  Suggestions for better names welcome.
+      </p>
+      <p>
+        I hope to illustrate this via Gunnar's <a href="BubbleSort.html">BubbleSort</a> example (see <a href="ProofAnnotationsForBubbleSort.html">ProofAnnotationsForBubbleSort</a>).
+      </p>
+      <hr/>
+      <p>
+        Let's assume that we already have the bubble sort implementation written, and our job is to write unit tests to cover it, optionally refactoring it as appropriate.  To make my life easier, I'm going to assume C, and my unit tests will be written using an upcoming release of my CUT testing suite.  Let me start out with some trivia:
+      </p>
+      <code>
+        typedef struct {<br/>
+        int *ints;<br/>
+        int length;<br/>
+        } IntArray;<br/>
+      </code>
+      <code>
+        int lengthOf(IntArray *a) {<br/>
+        return a -> length;<br/>
+        }<br/>
+      </code>
+      <code>
+        int elementAt(IntArray *a, int n) {<br/>
+        assert(n < a -> length);<br/>
+        return a -> ints[n];<br/>
+        }<br/>
+      </code>
+      <code>
+        void swapElements(IntArray *a, int x, int y) {<br/>
+        int z;<br/>
+      </code>
+      <code>
+        z = elementAt(a, x);<br/>
+        a -> ints[x] = elementAt(a, y);<br/>
+        a -> ints[y] = z;<br/>
+        }<br/>
+      </code>
+      <p>
+        Here's the code we're examining:
+      </p>
+      <code>
+        void bubblesort(IntArray *a) {<br/>
+        unsigned n = LengthOf(a);<br/>
+      </code>
+      <code>
+        for (unsigned i = 0; i + 1 < n; i++) {<br/>
+        for (unsigned j = 0; j + 1 < n-i; j++) {<br/>
+        if(elementAt(a, j) > elementAt(a, j+1)) {<br/>
+        swapElements(a, j, j+1);<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Basically, I like to work bottom-up, so I work from inner-most nesting level outward.  swapElements() appears in the inner-most level, so we can start by modeling what it does.  Since it only swaps two elements of an array, we can treat it (for our purposes) as returning a new array with the two elements transposed.  In pseudo-Haskell:
+      </p>
+      <code>
+        -- Given these functions...<br/>
+        setElement :: Array Int -> Index -> Int -> Array Int<br/>
+        element :: Array Int -> Index -> Int<br/>
+      </code>
+      <code>
+        swapElements :: Array Int -> Index -> Index -> Array Int<br/>
+        swapElements a x y = setElement a' y (element a x)<br/>
+        where a'         = setElement a x (element a y)<br/>
+      </code>
+      <p>
+        It ought to be pretty obvious at this point that our indices must fit within the bounds of the array.  Additionally, we see the result of one setElement is fed as input to another -- the intermediate array a' is consumed as quickly as it's created.  Thus, in-place array updates in the implementation code proves safe, since nobody else has a chance to use any intermediate results, at least within the context of the swap function.  The use of the temporary variable z seems justified since the definition of swapElements references (element a x), even when working with array a'.
+      </p>
+      <p>
+        One property of the function is that if x = y, nothing happens.  If x = y, then (element a x) = (element a y).  Thus:
+      </p>
+      <code>
+        swapElements a x y = setElement (setElement a x (element a y)) y (element a x)<br/>
+        = setElement (setElement a x n) y m<br/>
+        = setElement (setElement a x n) x m  --  since x = y<br/>
+        = setElement (setElement a x n) x n  --  since (element a x) = (element a y)<br/>
+        = setElement a x n  --  setting element x of array a with element x of array a is idempotent<br/>
+        = a  --  ditto<br/>
+      </code>
+      <p>
+        Thus, we can test this in a unit test.  See below for the complete C code.
+      </p>
+      <code>
+        static int *A;<br/>
+        static int i;  /* Made global for convenience only. */<br/>
+      </code>
+      <code>
+        void __CUT_SETUP__swapElements(void) {<br/>
+        A = malloc(sizeof(int)*10);<br/>
+        for(i = 0; i < 10; i++)<br/>
+        A[i] = i;<br/>
+        }<br/>
+      </code>
+      <code>
+        void __CUT__shouldSwapElements(void) {<br/>
+        swapElements(A, 3, 8);<br/>
+        for(i = 0; i < 10; i++) {<br/>
+        if((i == 3) || (i == 8)) continue;<br/>
+        ASSERT_(A[i] == i);<br/>
+        }<br/>
+        ASSERT_(A[3] == 8);<br/>
+        ASSERT_(A[8] == 3);<br/>
+        }<br/>
+      </code>
+      <code>
+        void __CUT__shouldIgnoreEquivalentIndices(void) {<br/>
+        swapElements(A, 3, 3);<br/>
+        for(i = 0; i < 10; i++)<br/>
+        ASSERT_(A[i] == i);<br/>
+      </code>
+      <code>
+        swapElements(A, 8, 8);<br/>
+        for(i = 0; i < 10; i++)<br/>
+        ASSERT_(A[i] == i);<br/>
+        }<br/>
+      </code>
+      <code>
+        void __CUT_TAKEDOWN__swapElements(void) {<br/>
+        free(A);<br/>
+        }<br/>
+      </code>
+      <p>
+        What happens when our indices are out of bounds?  Our functional code doesn't specify, which makes sense since our imperative code doesn't either.  For now, let's move forward under the assumption that it can't happen.  That being said, I'm reasonably happy with my analysis that swapElements() works as intended.
+      </p>
+      <p>
+        The if statement forms the next outer scope.  It seems dedicated to the task of <em>conditionally</em> swapping elements.  It depends on our swapElements function above, so we can write this as follows, again in pseudo-Haskell:
+      </p>
+      <code>
+        conditionallySwap :: Array Int -> Index -> Index -> Array Int<br/>
+        conditionallySwap a x y = if (element a x) > (element a y)<br/>
+        then swapElements a x y<br/>
+        else a<br/>
+      </code>
+      <p>
+        Once again, the indices must be valid for this definition to make sense.  We've already established that swapElements works as intended courtesy of the above unit tests, so unit testing this code should be fairly easy.  In this case, we have a decision to make, with one of two consequences.  Thus, we need at least two unit tests to provide 100% code coverage.  This code is <em>almost</em> too simple to unit test (TestOnlyWhatCanFail), but not quite.
+      </p>
+      <code>
+        void __CUT_SETUP__conditionallySwap(void) {}<br/>
+      </code>
+      <code>
+        void __CUT__shouldNotSwapIfXlessThanY(void) {<br/>
+        static int B[] = {1, 2, 3, 4};<br/>
+      </code>
+      <code>
+        A = malloc(sizeof(B));<br/>
+        memcpy(A, B, sizeof(B));<br/>
+        conditionallySwap(A, 1, 2);<br/>
+        ASSERT_(A[1] == 2);<br/>
+        ASSERT_(A[2] == 3);<br/>
+        }<br/>
+      </code>
+      <code>
+        void __CUT__shouldSwapIfXgreaterOrEqualToY(void) {<br/>
+        static int B[] = {4, 3, 2, 1};<br/>
+      </code>
+      <code>
+        A = malloc(sizeof(B));<br/>
+        memcpy(A, B, sizeof(B));<br/>
+        conditionallySwap(A, 1, 2);<br/>
+        ASSERT_(A[1] == 2);<br/>
+        ASSERT_(A[2] == 3);<br/>
+        }<br/>
+      </code>
+      <code>
+        void __CUT_TAKEDOWN__conditionallySwap(void) {<br/>
+        free(A);<br/>
+        }<br/>
+      </code>
+      <p>
+        So far, things have been pretty simple.  The next outer scope will provide a greater challenge, however, as it involves looping.  Having proven our ability to conditionally swap, we should tackle the inner loop inductively.  First, we rewrite as usual:
+      </p>
+      <code>
+        float :: Array Int -> Index -> Array Int<br/>
+        float                   = floatFrom 0<br/>
+        floatFrom start a limit = if start >= limit<br/>
+        then a<br/>
+        else floatFrom next swapped limit<br/>
+        where next = start + 1<br/>
+        swapped = conditionallySwap a start next<br/>
+      </code>
+      <p>
+        Knowing that conditionallySwap requires all indices to fit inside the array's bounds, we know that (next = (start + 1)) < (len a).  Solving the inequality for start, we get start < (len a) - 1.  The conditional checks for this condition via the passed parameter limit; limit must therefore equal (len a) - 1, at least to start with.  Hence, we need at least two unit tests -- one for valid indices, and one for out of bounds indicies.  The most obvious behavior occurs with out-of-bounds indices:
+      </p>
+      <code>
+        static int floatFrom_input[] = {5, 4, 3, 2, 1, 10, 9, 8, 7, 6};<br/>
+      </code>
+      <code>
+        void __CUT_SETUP__floatFrom(void) {<br/>
+        A = malloc(sizeof(floatFrom_input));<br/>
+        memcpy(A, floatFrom_input, sizeof(floatFrom_input));<br/>
+        }<br/>
+      </code>
+      <code>
+        void __CUT__shouldIgnoreBadIndices(void) {<br/>
+        floatFrom(9, A, 9);<br/>
+        for(i = 0; i < 10; i++)<br/>
+        ASSERT_(A[i] == floatFrom_input[i]);<br/>
+      </code>
+      <code>
+        floatFrom(10, A, 9);<br/>
+        for(i = 0; i < 10; i++)<br/>
+        ASSERT_(A[i] == floatFrom_input[i]);<br/>
+        }<br/>
+      </code>
+      <p>
+        Given a valid starting position, however, it should "float" an item up in the array, while swapping everything else down.  Let's make sure this works with the simplest possible array, one with two elements:
+      </p>
+      <code>
+        floatFrom 0 a 1 = if 0 >= 1 then a else floatFrom 1 (conditionallySwap a 0 1) 1<br/>
+        = floatFrom 1 (conditionallySwap a 0 1) 1<br/>
+        = if 1 >= 1 then (conditionallySwap a 0 1) else floatFrom 1 (conditionallySwap (conditionallySwap a 0 1) 1 1) 1<br/>
+        = conditionallySwap a 0 1<br/>
+      </code>
+      <p>
+        Thus, we see that floatFrom will work for the smallest array size that makes sense.  Knowing that it works for smaller sizes, we can see if it works for larger arrays by assuming we've already conditionally swapped a few times, and are almost at our limit.  Let's assume we have one more element left in our array, so that N = M - 1.
+      </p>
+      <code>
+        floatFrom N a M = if N >= M then (....(conditionallySwap a 0 M)...) else floatFrom 1 (....(conditionallySwap a 0 M) 1 M) 2 M)...) M<br/>
+        = floatFrom (N+1) (conditionallySwap (....(conditionallySwap a 0 1) 1 2) 2 3)...) (N+1)) M<br/>
+        = floatFrom M (conditionallySwap (....(conditionallySwap a 0 1) 1 2) 2 3)...) M) M<br/>
+        = if M >= M then (conditionallySwap (....(conditionallySwap a 0 1) 1 2) 2 3)...) M) else floatFrom 1 (conditionallySwap (....(conditionallySwap a 0 1) 1 2) 2 3)...) M) M<br/>
+        = (conditionallySwap (....(conditionallySwap a 0 1) 1 2) 2 3)...) M)<br/>
+      </code>
+      <p>
+        As we can see, the loop terminates, and the large, nested set of calls to conditionallySwap exhibits the intended behavior.  Thus, I feel confident that floatFrom behaves as intended, and there seems to be no reason to delve into more detail than comparing the superficial behavior of floatFrom against our expectations.
+      </p>
+      <code>
+        static int floatFrom_expected[] = {5, 4, 2, 1, 3, 10, 9, 8, 7, 6};<br/>
+      </code>
+      <code>
+        void __CUT__shouldFloatAnElement(void) {<br/>
+        floatFrom(2, A, 10);<br/>
+        for(i = 0; i < 10; i++)<br/>
+        ASSERT_(A[i] == floatFrom_expected[i]);<br/>
+        }<br/>
+      </code>
+      <code>
+        void __CUT_TAKEDOWN__floatFrom(void) {<br/>
+        free(A);<br/>
+        }<br/>
+      </code>
+      <p>
+        Finally, we find the outer loop simply selects increasingly narrower subsets of the input array.  This makes sense, since after we've bubbled everything to the end of the array, the need to consider it further disappears.
+      </p>
+      <code>
+        bubblesort :: Array Int -> Array Int<br/>
+        bubblesort = bubbleFrom 0<br/>
+      </code>
+      <code>
+        bubbleFrom start a = if start < limit<br/>
+        then bubbleFrom next (float a limit)<br/>
+        else a<br/>
+      </code>
+      <p>
+        Now, I have problems with the above implementation of bubblesort.  As transcribed from the original source, everything starts by bubbling elements from index 0 to index N, where N is some value less than the length of the current subset of the array.  This will fail, hopefully trivially to the reader, as as we've seen and proven from floatFrom's unit tests, bubbling stops as soon as we find two elements in partial order with each other.  Thus, what we <em>really</em> want is to sort from the far-end down, like this:
+      </p>
+      <code>
+        bubblesort :: Array Int -> Array Int<br/>
+        bubblesort a = bubbleFrom ((len a) - 1) a<br/>
+      </code>
+      <code>
+        bubbleFrom start a = if start >= 0 then<br/>
+        then bubbleFrom (start - 1) (floatFrom start a limit)<br/>
+        else a<br/>
+      </code>
+      <p>
+        I'm actually getting hand cramps from typing so much, so I'll leave it as an exercise to the reader to fill in where to go from here.  I think you see how I combine quasi-formal analysis with unit testing to produce greater confidence in code.
+      </p>
+      <p>
+        Now, extend the above techniques to <em>authoring</em> software.  First, start out by writing code in pseudo-Haskell.  Examine the code you've written for useful properties, and write them out too.  Codify these properties in unit tests.  Transcribe all the pseudo-Haskell back into your imperative language of choice.  <a href="LatherRinseRepeat.html">LatherRinseRepeat</a> as necessary.  --SamuelFalvo
+      </p>
+      <hr/>
+      <p>
+        The above is much more lengthy than <a href="ProofAnnotationsForBubbleSort.html">ProofAnnotationsForBubbleSort</a> and it doesn't guarantee that you did code all necessary tests and covered all cases whereas the annotations will. Also most annotations could be infereed automatically with a modern prover. But I agree that in the absence of such a prover you procedures gives the highest confidence. -- <a href="GunnarZarncke.html">GunnarZarncke</a> 
+        <em>I would be interested in an absolute beginner's tutorial on proof annotations.  I'm always looking for ways to improve my coding methods.  --</em>SamuelFalvo<em></em>
+      </p>
+      <p>
+        Have a look at the links provided on <a href="EscJava.html">EscJava</a>. The user manual gives an introduction. They really already did more or less what I proposed on <a href="ProofAnnotationsForBubbleSort.html">ProofAnnotationsForBubbleSort</a> and there is a Haskell version that might interest you.
+      </p>
+    </div>
+  </body>
+</html>

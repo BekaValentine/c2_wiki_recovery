@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Run And Return Successor
+      </h1>
+      <p>
+        The book <a href="DesignPatterns.html">DesignPatterns</a> has a pattern called <a href="StatePattern.html">StatePattern</a>. <a href="RunAndReturnSuccessor.html">RunAndReturnSuccessor</a> is a variation of that pattern where each state, when run, returns its successor state. A state must return itself, if no state change is intended; it can instead construct and return some other state, or return an existing state it found out about through its parameters.
+      </p>
+      <p>
+        But an object implemented with a <a href="StatePattern.html">StatePattern</a> stays in a given state until it is "bumped" by having one of its member functions called. You can do that with <a href="RunAndReturnSuccessor.html">RunAndReturnSuccessor</a>, but it is more common to just take the first state, run it, run its successor, run <em>that</em> object's successor, and so on, in a loop, until you run out of successors. So you don't wait for any member function to be called. You carry out a whole chain of computations, which was identified only by its initial state.
+      </p>
+      <p>
+        <em>Funny, this sounds exactly like the inner interpreter of a threaded language (such as </em><a href="ForthLanguage.html">ForthLanguage</a>). Every word ends with NEXT, which jumps to the next word in the sequence.  One could consider a Forth program as a very fine-grained spec of state changes.<em></em>
+      </p>
+      <p>
+        You can have a state that acts like a subroutine if you allow it to take, as a constructor parameter, the state it should return to. If you are a state that wishes to "call" that subroutine-state, then you construct it with yourself as the "return-to" parameter and return it as your successor. When it is done, it returns its "continuation" object, which is you, as its successor.
+      </p>
+      <p>
+        Ideally, <em>every</em> state has a "continuation" state when you (the programmer) use this model. Since usually you want your program to terminate eventually, you start by constructing a "final state" which can be recognized by its address. (You can pass NULL, no constructing needed, unless you want to be able to prevent state objects from constructing it -- you might want them to have to receive it as an official parameter.) You construct the start state, passing the final state as its continuation. Then you keep running successors until the current state object, whatever it is, returns the "final state" as its successor. You can recognize it with =. Then you quit.
+      </p>
+      <p>
+        (It is even more fun to have a <em>queue</em> of current states, and, instead of having every state return its successor, give every state the ability to insert zero or more successors into the queue. This amounts to a <a href="MessageQueue.html">MessageQueue</a>.)
+      </p>
+      <p>
+        A state can "tail-call" another state by giving its successor its own continuation, instead of itself as continuation.
+      </p>
+      <p>
+        A state can pass parameters to another state, apart from the continuation. <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> becomes possible to implement, when a state passes its continuation twice. (Once as continuation, once as parameter.)
+      </p>
+      <p>
+        It should be possible to write a Scheme compiler that outputs code using this model. It should be possible to hand-write a Scheme interpreter that uses it.
+      </p>
+      <p>
+        In practice it begins to resemble <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a>.
+      </p>
+      <p>
+        -- <a href="EdwardKiser.html">EdwardKiser</a>
+      </p>
+      <p>
+        In what ways does it differ from <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a>?
+      </p>
+      <p>
+        <em>It differs syntactically. Ordinary stack-based function calls still exist in the language. If you want to do a tail-call you have to emulate it; you actually do something like</em>
+      </p>
+      <code>
+        return new Call(func, params, k);<br/>
+      </code>
+      <hr/>
+      <p>
+        Later I figured out how to use this to write a full-blown Scheme implementation with call/cc and the works. Here's a part of it.
+      </p>
+      <p>
+        In Java, you start with an interface <strong>Runnable</strong> (not to be confused with <strong>java.lang.Runnable</strong>):
+      </p>
+      <code>
+        public interface Runnable<br/>
+        { Runnable run(); // and return successor<br/>
+        }<br/>
+      </code>
+      <p>
+        Then you have <strong>Continuation</strong> and <strong>Function</strong> interfaces:
+      </p>
+      <code>
+        public interface Continuation<br/>
+        { Runnable doReturn(Object[] retvals);<br/>
+        }<br/>
+      </code>
+      <code>
+        public interface Function<br/>
+        { Runnable apply(Object[] args, Continuation k);<br/>
+        }<br/>
+      </code>
+      <p>
+        Then you have some useful <strong>Runnable</strong> objects to return every now and then to keep the Java stack from overflowing:
+      </p>
+      <code>
+        public final class RunnableReturn implements Runnable<br/>
+        { public RunnableReturn(Continuation k, Object[] retvals)<br/>
+        { this.k = k; this.retvals = retvals;<br/>
+        }<br/>
+        private Continuation k;<br/>
+        private Object[] retvals;<br/>
+        public Runnable run()<br/>
+        { return k.doReturn(retvals);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        public final class RunnableApply implements Runnable<br/>
+        { public RunnableApply(Function f, Object[] args, Continuation k)<br/>
+        { ... similar to preceding ...<br/>
+        }<br/>
+        ...<br/>
+        }<br/>
+      </code>
+      <p>
+        Then you have a master class called a <strong>Doer</strong>:
+      </p>
+      <code>
+        public final class Doer<br/>
+        {<br/>
+        private Doer() {};<br/>
+      </code>
+      <code>
+        private static class FinalRunnableStep implements Runnable<br/>
+        { private FinalRunnableStep() {};<br/>
+      </code>
+      <code>
+        public static final FinalRunnableStep INSTANCE = new FinalRunnableStep();<br/>
+      </code>
+      <code>
+        public Runnable run()<br/>
+        { throw new RuntimeException("Ran amok past final runnable step");<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        private static Object retval;<br/>
+      </code>
+      <code>
+        private static class FinalContinuation implements Continuation<br/>
+        { private FinalContinuation() {};<br/>
+      </code>
+      <code>
+        public static final FinalContinuation INSTANCE = new FinalContinuation();<br/>
+      </code>
+      <code>
+        public Runnable doReturn(Object[] retvals)<br/>
+        { if (retvals.length != 1) throw new RuntimeException("Returned wrong number of values");<br/>
+        retval = retvals[0];<br/>
+        return FinalRunnableStep.INSTANCE;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        public static Object apply(Function f, Object[] args)<br/>
+        { innerDo(new RunnableApply(f, args, FinalContinuation.INSTANCE));<br/>
+        return retval;<br/>
+        }<br/>
+      </code>
+      <code>
+        private static void innerDo(Runnable r)<br/>
+        { while (r != FinalRunnableStep.INSTANCE)<br/>
+        { r = r.run();<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        A typical function will look like this <strong>TypicalFunction</strong>:
+      </p>
+      <code>
+        public final class TypicalFunction implements Function<br/>
+        { private TypicalFunction() {};<br/>
+      </code>
+      <code>
+        public static final TypicalFunction INSTANCE = new TypicalFunction();<br/>
+      </code>
+      <code>
+        public Runnable apply(Object[] args, Continuation k)<br/>
+        { if (tail-calling another function)<br/>
+        { Function f = (Function)args[0] or whatever;<br/>
+        return new RunnableApply(f, new Object[] { args[1], args[2], whatever }, k);<br/>
+        }<br/>
+        else if (not calling another function)<br/>
+        { Object result = ... ;<br/>
+        return new RunnableReturn(k, new Object[] { result });<br/>
+        }<br/>
+        else if (calling another function and expecting a return)<br/>
+        { Function f = (Function)args[0] or whatever;<br/>
+        Continuation k2 = new SomeContinuationInnerClass(k, args[1], etc);<br/>
+        return new RunnableApply(f, new Object[] { args[2], whatever }, k2);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        private static final class SomeContinuationInnerClass implements Continuation<br/>
+        // (only some functions need this)<br/>
+        { public SomeContinuationInnerClass(Continuation k, Object param, etc)<br/>
+        { // assign constructor parameters to private data members<br/>
+        }<br/>
+        // private data members<br/>
+        public Runnable doReturn(Object[] retvals)<br/>
+        { // receive return values and use with private data members<br/>
+        return new RunnableReturn(k, new Object[] { result });<br/>
+        // or else tail-call or call another function, etc.<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        From a design standpoint, it seems to work...
+      </p>
+      <p>
+        -- <a href="EdwardKiser.html">EdwardKiser</a>
+      </p>
+      <hr/>
+      <p>
+        See also <a href="IoLanguage.html">IoLanguage</a>.
+      </p>
+      <p>
+        <a href="CategoryScheme.html">CategoryScheme</a> <a href="CategoryCodingConventions.html">CategoryCodingConventions</a>
+      </p>
+    </div>
+  </body>
+</html>

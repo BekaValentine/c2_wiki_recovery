@@ -1,0 +1,95 @@
+[ComponentDesignPatterns | CategoryPattern] 
+
+Please see the following link for the most updated version of the FacadeAtTheDistributionBoundary pattern: 
+
+http://jerry.cs.uiuc.edu/plop/plop99/proceedings/brown/brownfinal.pdf
+
+This is the PLoP'99 version of this pattern. Three other patterns have been added that will be factored into this language.
+
+
+----
+
+[''Old pattern format used originally below; currently metamorphosizing to standard format. -ed'']
+
+'''Intent'''
+
+Group together functionally related small-grained objects behind a Facade (creating a single component) to reduce the distribution cross-section of a system.
+
+'''Also Known As'''
+
+Large-Grained Distribution
+
+'''Motivation'''
+
+Building distributed systems is hard.  That's pretty much the long and the short of it.  When we first come into building distributed systems from building monolithic, non-distributed systems, we tend to bring a lot of design strategies that no longer serve us as well in the new context
+
+Let's consider the following manufacturing scenario.  Let's say we're building a  system for a car factory.  Without much thought we identify our first object -- let's call it a Vehicle.  With some more thought we come up with a few more; for example, a BodyStyle that defines the similar properties of a set of Vehicles.  We might even come up with the idea of BuildInstructions that say "do this particular thing" which are combined together into WorkOrders that are used to create Vehicles having a specific BodyStyle.  (''Your objects may vary.  Bear with me'')
+
+Now this works fine in a single process-space system.  We can do all sorts of nifty things using these objects.  We can create reports on what instructions to execute, and which ones have been executed.  We can find out what Vehicles are currently in production, and how many of what BodyStyles are being built, and change, add and update all of the above objects.
+
+Now, consider the following problem -- we need to distribute this system using CORBA.  We want client machines to run the GUI's, while bigger server boxes handle most of the processing.  We also want to split the processing into the parts of the system that handle the robotics (which must never go down) and the parts of the system that handle reports (which can go down occasionally).
+
+The naive programmer says -- "No problem.  CORBA gives us proxies, so we'll just take our existing objects and write IDL interfaces for them."  But we soon discover that we're writing CORBA interfaces for nearly EVERY object in our system.  Not just Vehicles, BodyStyles, etc. but also for the things they contain like PaintColors and Accessories.  Suddenly we have a LOT of IDL, and that in itself becomes a problem.
+
+Also, we start to notice that we're crossing the network a LOT.  Objects in one process space are sending hundreds of messages to closely linked objects in other process spaces.  We're constantly translating from internal (Java) objects into CORBA structures and vice versa.  Our system performance is abysmal, and the reliability takes a nosedive.
+
+Therefore, we take another approach.  We start to look for the groups of things that are most closely linked together, and bind them together inside a single process space.  We define a few IDL interfaces between these new groups.  We have applied the Facade pattern in that we have built new objects that act as gatekeepers that hide the complexity (and sheer numbers) of the objects they wrap.  We now have less IDL to manage, and the facades can help us determine which messages really need to cross the network, and which can stay local.  Life is good again.
+
+'''Applicability'''
+
+'''Consequences'''
+
+The following are the benefits and liabilities of FacadesAsDistributedComponents:
+	* ''Less flexibility.''  When a component acts as a facade that contains many smaller components, one tradeoff can be that adding new components means you must update the interface and implementation of the facade component and test to ensure that all existing components still work properly.
+
+	* ''Easier to manage change.'' A benefit of the facade is that you are in effect wrapping what would be separate smaller physical components with one larger physical one, then allowing logical access to each component inside it.  You present a "view" into these components with the facade.  Each of these components can share a common infrastructure and operate off of the same framework.  They can reuse standard libraries, and reduce version discrepancy headaches that sometimes happen in less-controlled development, test, or production environments.
+
+'''Known Uses'''
+
+I first used the Facade pattern in this way when we were refactoring some GemStone software in the Genomica project.  We had the problem of wanting to reduce the distribution cross-section to minimize network traffic and swapping between the local and distributed object spaces (We were using a pass-by-value, or copying approach for most of our objects).
+
+Later we applied this pattern in a big way in an options trading system that we developed with a client, where we came up with a set of "services" that each did one key thing like "trade options" or "handle quotes".  Each service wrapped up a '''lot''' of domain objects within a relatively simple Facade API that it presented to the other services.
+
+The page CaseDelusions has a nifty little conversation that seems to point up the need for this pattern.  I'm hoping that the author can contribute some additional known uses here.
+
+----
+Coincidentally, this sounds a lot like WebServices.  ''Actually not so coincidentally.  I'm not surprised that the web services folks arrived at this pattern when facing the same problem.  After all, both MartinFowler and KyleBrown arrived at it independently as well and produced two very similar published versions of the pattern within a few months of each other.  That's what makes us sure it's a pattern.''
+----
+
+I'd like to claim full credit for this pattern, but alas, I can't.  After I had implemented these systems, and had written about this pattern in the Facade section of the DesignPatternsSmalltalkCompanion, I found out that it had been previously documented by MartinFowler in his AnalysisPatterns book.  At least it made me feel good about the pattern since it passed the RuleOfThree.
+
+KyleBrown
+
+----
+
+It seems like the best (or maybe just simplest) model for a conversation between client and server using a facade would be just a pair of producer/consumer couples, passing basic messages between themselves (someone help out -- is there a pattern that describes this?).  You'd get the benefit of having objects ready made for you, but you'd be passing deltas to objects instead of the objects themselves.
+
+WillSargent
+
+-----
+
+I'm not sure I follow all of what you're saying here, but the idea of moving deltas to object instead of the ''whole'' object is one that resonates strongly with my experience.  Some variation of the CommandPattern usually works well for this kind of work.  It combines well with the FacadeAsDistributedComponent model.  As an example, there is a great example that ships with WebSphere Advanced Edition called JStore that illustrates using Facades and Commands in this way.
+
+KyleBrown
+
+----
+
+Another reason I've found to use this pattern is when you have a domain model with persistent objects that are partly dependent on vendor's backend framework which you must integrate.  In your domain model you have an Order class and your business requires that not only save the Order to your own database but that you also interface with, say, a shipping company's b2b order system. You do not want to have your InternalOrder class and your ShippingOrder class, you want a single Order class on the client side and let the lower layers worry about the multiple interfaces.  Yes, this is quite a lot like 2-phase commit.  Someone help me out with a better example?
+
+-- StevenNewton
+
+----
+
+I think Will's point is a good one. IDL etc does not scale. The Facade thing is a partial refactoring to a full message interface. CORBA is acting as a messaging system. Why not just bite the bullet and use messages? You could remove the ORB and be compatible with anyone who can emit XML on a TCP connection.
+
+The reason to not use messaging is simple -- sometimes you need synchronous, transactional message flows.  That's just not really possible (without a lot of painful coding) on anything except an infrastructure like CORBA or RMI-IIOP.  Lightweight and/or asynchronous Messaging works in a lot of cases, just not all.  --KyleBrown
+
+''Sorry if I was unclear. My point is that command can be constructed and a single '''returnMessage doThisPlease(commandMessage)''' applied. It can be a CORBA call, synchronous or whatever. This converts CORBA to a synchronous messaging service. Transactions may be extended to the underlying object. For new systems this design may seem counterintuitive, but if we need to graft distribution onto an existing system then such a scheme is attractive, at least as a first step. It is the ultimate extension of the design described in this page. --RichardHenderson''
+
+Yup.  This is something we discussed earlier in EjbTwoEntityCommands, but the idea still holds.  There are a lot of reasons that this is a GOOD idea, but unfortunately, a lot of reasons why it's not too -- e.g. the number of Commands expand to fill the known universe, and people start putting ALL of their logic in their commands -- making them into glorified CICS transactions (e.g. OO out procedural in).
+
+''I read that discussion, similar issues, I won't comment there since the subject of the page is now redundant. Commands increase to the number of interfaces you would have to define anyway. This technique is significantly more scalable than the IDL equivalent because the transport is now being used only as a transport, and not a translation layer. This immediately gets you out of dependency on CORBA. CORBA IDL created too many extended dependencies to be a scalable technique, it mixed orthogonal responsibilities. Thus the rise of service type architectures. Much easier to evolve too, perhaps this deserves a proper page? Basically, CORBA suffers from the same problems that DCE did, except a little worse. --RichardHenderson.''
+
+I agree.  This is certainly a pattern in its own right that warrants discussion.  Can we call this the CommandMessagePattern and create a writeup there?
+
+''This can also be framed as part of the ApiVsProtocol debate.''

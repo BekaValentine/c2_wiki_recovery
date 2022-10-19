@@ -1,0 +1,245 @@
+''Can we see an example of a simple piece of code, accompanied by a simple proof?'' I think this discussion would be much more fruitful and illuminating if there was a concrete example that went with it.
+----
+People seem to think that a proof needs to be a mechanically verifiable step-by-step crawl from the obvious to the conclusion. Proofs in mathematics are rarely that, and I don't see where this attitude comes from.
+
+How do you show that '''sqrt(2)''' is irrational? You don't use PeanoArithmetic, nor do you go back to SetTheory. You use your understanding of what it really means.
+
+	1 The Fundamental Theorem of Arithmetic says that any positive number can be written uniquely (up to ordering) as the product of primes. This is called the prime decomposition.
+	1 A prime can be defined as a number '''p''' such that if '''p''' divides '''a*b''' then either '''p''' divides '''a''' or '''p''' divides '''b''' (or both).
+		* This follows from the usual definition and the fundamental theorem as quoted above.
+	1 Suppose that '''sqrt(2)=a/b''', so that '''2*b*b''' = '''a*a'''.
+	1 Substitute the prime decompositions of '''a''' and '''b''' into that equation.
+	1 Observe that '''2''' occurs an odd number of times on the left, and an even number of times on the right.
+	1 This is impossible, therefore it is impossible to write '''sqrt(2)''' as '''a/b'''.
+
+This may not be your field of expertise, but that proof is clear, complete and correct. Similar proofs can be given for elementary facts about programs, and given that that probably ''is'' your field of expertise, such proofs can similarly be clear, complete and convincing.
+
+The problem, as I see it, comes down to:
+
+	1 People don't know what constitutes a proof and get embroiled in philosophical argument instead of simply doing it.
+	1 People have been drilled to believe that proofs are useless in computing
+	1 Thinking is hard, and proofs require that you think about your code
+	1 Simple code is easier to prove things about than complex code, and people seem to delight in complex code
+	1 Proofs are best when developed with the code, not afterwards
+
+OK, the above will now no doubt be torn to shreds by people who have never succeeded in proving things about code. I'll go away and continue to prove things about my code and deliver on time and to budget using a mixture of techniques including, but not limited to, ExtremeProgramming and SimpleProofsOfCorrectness. If you deny yourselves a tool that improves code quality then I just don't understand.
+----
+Short example please.
+
+I would estimate that 90% or more programmers would not be able to come up with the above proof (though a computer scientist would probably have an easier time). Proofs are much easier to read than to write.
+
+	1 ''I would estimate that 90% of programmers don't write UnitTest''''''s or use any rigorous techniques or ideas at all. This wiki, fortunately, seems to host mainly the other 10%. That's partly why I get so upset - I'm seeing the top 10% of programmers claiming that proofs are useless.''
+	1 ''While it might be true that many programmers would not be able to come with the above proof, they surely can reason about their own code. Proofs are written from understanding. I would claim that any good coder understands their code well enough to write proofs about it.''
+
+Perhaps there is an unexplored area of CodeProvingPatterns?
+----
+Tell me and I forget, involve me and I learn. Here's some incorrect code to do a binary search. The array is indexed from 1, not from 0, and the code should return the first occurrence of the key.
+
+        int find( Object Array[], int n, Object Key,
+                  int (*cmp)(Object *, Object *),
+                  int notFound
+                 ) {
+          int low=1, high=n+1, mid;
+          while (low < high) {
+            mid=(low+high)/2;
+            if (cmp(&Array[mid],&Key) < 0) high = mid;
+            else                           low = mid;
+          }
+          if (cmp(&Array[mid],&Key) == 0) return low;
+          else                            return notFound;
+        }
+
+What should you prove about it? How can you do so? Perhaps your UnitTest''''''s can find something wrong with it, but do they find everything?
+
+The remainder of the previous discussion was moved to the bottom of this page.  It's irrelevant to the questions asked.
+
+What I would do is work inside out, since more often than not, the interior of a construct tends to be more primitive.  In this case, it is:
+
+ mid=(low+high)/2;
+
+which can be proven trivially, and,
+
+ if(cmp(&Array[mid],&key) < 0) high = mid;
+ else                          low = mid;
+
+This is the crucial factor.  Given an array Array[] in ascending, pre-sorted order, and a function cmp(a,b) = -1 iff a < b, 0 iff a = b, and 1 otherwise, then immediately I can see a bug.  If the first element compared is less than the search key, we need to be resetting '''low''', not '''high''', as we know the key ''must'' reside at least in the upper half of the data set.
+
+To ensure confidence, we can factor this comparison out into a function,
+
+ void check(int Array[], Object key, int mid, int *high, int *low) {
+   if(cmp(&Array[mid], &key) < 0) *high = mid;
+   else                           *low = mid;
+ }
+
+then write ourselves a few unit tests:
+
+ int A[10];
+ void setup() {
+   A = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+ }
+
+ void test_checkUnderstandsAscendingOrder() {
+   int h, l;
+
+   h = 10; l = 1;
+   check(A, 5, 5, &h, &l);
+   assert(h == 10);
+   assert(l == 5);
+
+   h = 10; l = 1;
+   check(A, 3, 5, &h, &l);
+   assert(h == 5);
+   assert(l == 1);
+
+   h = 10; l = 1;
+   check(A, 8, 5, &h, &l);
+   assert(h == 10);
+   assert(l == 5);
+ }
+
+When first run, this test will fail.  Swap high and low assignments in check() to fix the failure.
+
+Now, common sense would suggest that if this works for an array of 10 elements, it ought to work for an array of any size greater than or equal to two.  So, you can test this by writing similar sets of unit tests for arrays of length 1 and 2 as well.  Given these tests, you can now inductively prove the check() code works as intended, for all arrays given to it.
+
+Having proven that code works, you may now advance to the more general procedure itself.  Namely:
+
+          while (low < high) {
+            mid=(low+high)/2;
+            check();
+          }
+
+Unless my math is wrong, the loop terminates when low+high = 2*high, in which case mid=low=high.  This will terminate the loop.  However, I cannot think of a single occurance where (low+high)/2 > high, provided that low < high at the beginning of the process.  To do so, we would need a division operator which rounds up in the face of any fractional component to the result.  Hence, via the observed behavior of the /-operator, we can assert that low <= mid < high for all low and high, such that low <= high.  Knowing that check() works as intended for all conceivably valid inputs, we therefore know that mid > high can never be true.  This proof can also be codified as a unit test.
+
+Since everything else is essentially straight-line code from there, writing tests for that should be relatively trivial.
+
+Anyway, that's how ''I'' would attack the solution to the posed question.  --SamuelFalvo
+----
+''UnitTest''''''s aren't supposed to prove correctness. At least, that's how I've always approached them.''
+
+That's not the point. I'm not saying that you should use proofs and not do UnitTest''''''s. I am saying that proofs are an additional tool that complement UnitTest''''''s. Mathematicians only prove things when they have some idea not only that they are right, but why they are right. You can produce code and use UnitTest''''''s, but there are some errors and failure modes that are easier to find by reasoning about code instead of trying to test it. Tools like "Perfect Developer" can help, but simple thinking about code in the right way can help just as much.
+
+I'd lay odds that nobody is going to take the above example seriously. Yes, it's a toy example, no, it's not irrelevant. I use these techniques every week and it finds errors and provides confidence.
+
+Why do people dismiss code proofs as an extra tool?
+	1 They don't know how to do it?
+	1 It requires thinking?
+	1 They don't know what benefits it can bring?
+
+Sorry, this is becoming a rant, but when something is so blindingly obvious I simply can't understand why people don't see it. I get so frustrated when influential and respected people trot out platitudes, StrawMen and prejudices and warp future generations.
+
+''I totally sympathize with your views. But I can explain you the why of it, so you can understand. '''Money'''. The current crop of "influential and respected people" do not have a proper mathematical literacy, nor are they in the mood to stress their brain with too much mathematics. They can make money selling what they know, and they do not know much math nor do they know much computing science. Given that their target audience is also (by and large) mathematically impaired, the perfect match is then self-sustaining. They can sell their snake oil all they want, their audience will be thrilled that they provide something easy and accessible and digestible for them to munch on. The vast majority of the programming workforce will be shattered out of their comfort zone, should there be a minimum expectation for computing science and mathematical literacy. So that's how they are not only ready to receive but they are also militant, hypester and fanatics about the surrogates that they are trying to put in place. -- CostinCozianu''
+
+No, I refuse to believe that money is at the root of this. I can believe that it's self-perpetuating, but such problems can be overcome. ExtremeProgramming is making inroads, and I believe the time will come when proofs are an integral part of programming. I have no idea when, and I suspect I will never see it.
+----
+But some people are interested in how to automate proofs and logic in general, for its own sake whether or not it is applied to ProgramVerification or ComputerAidedMathematics. Going all the way back to GottfriedWilhelmLeibniz he wanted to formalize thought so it could be analysed step by minute step, and come up with an "algebra" where thought could be manipulated as symbols. 
+
+	 :	"A sort of universal language or script, but infinitely different from all those projected hitherto, for the symbols and even words in it would direct the reason, and errors, except for those of fact, would be mere mistakes in calculation. It would be very difficult to form or invent this language or characteristic, but very easy to understand it without any dictionaries." 
+
+(From http://www.kerryr.net/pioneers/leibniz.htm)
+He actually built a "step wheel calculator" - the history of logic and proofs is intertwined with the desire to make machines do it which makes it necessary to be able to analyse every step. Not that you have to do that if you are doing proofs manually but if you want to do AutomatedTheoremProving, then details are important.
+
+''Yes, and I wish them luck. Automated theorem proving is probably making great strides, just as the GPS appeared to. I look forward to the day when it can duplicate or exceed the efforts people who want to be released to do more creative things. Taking tiny steps through an enormous search space is simply not the way mathematics is done, and most automated systems can't do anything else. Maybe machines will end up doing mathematics the way DeepBlue plays chess, but it seems a long way off.''
+
+Understandable point of view but I think the younger generation will say ThreeStrikesAndYouAutomate and get it done. Note that the same way a human saves steps by proving '''s1->sn from s1->thm_i->thm_j->thm_k->sn''' even though '''thm_i''' may "contain" '''si1->si2->...->six''' (and '''thm_j''', '''thm_k''' similarly have multiple steps in their sub-proofs) a computer can also use theorems and lemmas without expanding out the steps in each theorem. It does not necessarily have to prove '''s1->si1->si2->...->sj1->sj2->...sk1->sk2->...->sn''' if the right theorems are part of the proof environment. A computer proof of the '''sqrt''' problem at the top could also be 6 steps if formulated the right way.
+
+''Exercise for the reader, convert the theorem and proof given at the top of the page to SymbolicLogic and provide the proofs using SecondOrderLogic. See how large it becomes, how many steps there are, and consider the size of the search space. Now provide explicit heuristics that can help, and using those heuristics prove any other theorem.''
+
+[Certainly it is doable to convert the above to SecondOrderLogic not that I have time right now. It would not be possible to prove "any other theorem" but you could provide a set of theorems and heuristics to solve similar proofs in the "neighborhood" of this one, which helps one understand the domain and the proof process in general. Mathematica has not obviated the need for mathematicians and engineers to do calculus manually but it is a helpful tool. As a programmer it is natural to want to automate processes. Even if you can't create a program to do "all mathematics" or even some mathematics better that a human it does not hurt to peer into the mechanics of it.]
+
+''Computers don't yet converge on proofs via plausible hand-waving arguments. Mathematicians always do. There is a qualitative difference that I will be interested in seeing computers bridge, just as I will be interested in seeing computers play the GameOfGo to an acceptable standard. Having worked on computer proofs for some months, reading the literature and trying some experiments, I will be intrigued to see the ingenuity that such success will require. ThreeStrikesAndYouAutomate only works when what you're doing each time is the same thing. The same proof now goes through to show that if '''n''' is an integer then '''sqrt(n)=a/b''' implies that '''b''' is a factor of '''a'''.  Given the '''sqrt(2)''' proof above a computer has found that, but it's like asking someone to show how to construct a tangent at a point on a circle using only a straight-edge, and then telling them what theorem to use!''
+----
+
+''I would estimate that 90% or more programmers would not be able to come up with the above proof (though a computer scientist would probably have an easier time). Proofs are much easier to read than to write.''
+
+In school we did a proof of a simple bubble sort algorithm. The code was a page. The proof was several pages. I don't know if the proof was correct because it was more complicated than the code. I would like to see a more enhanced type system that would use DBC style interface. I think i could handle that.
+
+''I did ProofAnnotationsForBubbleSort today morning in the underground; they are NOT much longer than the algorithm itself.''
+
+[Which is why if ProofOfCorrectness is important, and most programmers can't do it, having an AutomatedTheoremProving system to help ''would'' be valuable]
+
+This is partly my point. I'll bet that the level of detail at which the proof was given was '''''way''''' beyond what's truly necessary. People seem to delight in making it as difficult and impenetrable as possible.
+
+Challenge: Write a bubble sort '''with its proof''', making the combination as clear as possible. Don't write one after the other, write them together.
+
+[[You are proposing a new sort of LiterateProgramming, where the code is fused with proofs rather than with text. ProveItProgramming? The pre/post conditions that Knuth is fond of discussing in TAOCP, and that Barbara Liskov introduced into programming languages in CLU, and that Meyers calls DesignByContract, is a necessary first step in that direction. How would the rest of it work? Has this been done in a programming language? You're not just talking about doing it in the comments, are you?]]
+
+Start somewhere! Yes, do it in the comments to start with (that's what we do), and when you've done it a few times, see if you can automate it. See if you can adjust what you write to make automation feasible. Fully automated theorem proving of general theorems is not here. Specialized theorem proving of specific programming constructs is here. Let's adjust to the idea that it's possible to do something that really does help, rather than constantly saying "We can't achieve perfection so let's not bother". The few researchers working on it are going at it from the top end, and we need some respected, able and influential people to say - "This is actually achievable in these special cases, let's see if we can make it better."
+
+[[Since by now I must have implemented e.g. variations on the theme of binary search at least a dozen times, I would be very interested in this kind of support from a programming language, at least at times such as this. in ProgrammingPearls, JonBentley wrote:
+	 :	"In the history in Section 6.2.1 of his Sorting and Searching, Knuth points out that while the first binary search was published in 1946, the first published binary search without bugs did not appear until 1962."
+	 :	-- http://www.cs.rit.edu/~ark/800/module05/binarysearch.pdf
+[[Knuth also mentions an earlier published binary search of 1960 by D.H. Lehmer. Hence "20 years" should probably be "14 years".]]
+
+[[I personally wouldn't benefit from doing proofs in comments alone, because my track record is to have far more bugs in my proofs than in my code!]]
+
+Definitely not in comments. If it's not real it doesn't matter.
+
+----
+''Whatever else it is, this is not a *new* sort of programming. I know that when I was learning Lisp as a teenager in 1984, my two teachers (both Cornell CS grad students) advocated this sort of proof-first programming. One of their sayings was, "The proof goes a half-step ahead of the program."''
+
+* What '''are''' you going on about? 1984 is extremely recent and new. The industry hasn't really got up with events of the 1970s yet (nor entirely with the 1960s, for that matter).
+
+Did they ever really program this way? Has anyone?
+
+''I have and do. It was invaluable recently when combined with TestDrivenDevelopment and several ExtremeProgramming ideas. We couldn't go full extreme because there was no customer on site, we couldn't pair program, as well as a few other constraints, but the combination was a huge success in that instance.''
+
+What does it look like? I am dubious that you do proofs for all your code, but i am not trusting.
+
+''Of '''course''' I don't do proofs for all my code - have you not read what I have been saying? It's completely obvious that I can not and never have been able to make myself clear about this. As soon as I say "proof" everyone assumes line-by-sodding-line, crawling, step-by-step formal verification of the entire bloody system including hardware, compilers, operating system, user requirements, and resistance to cosmic rays! I don't! I mean a balance between testing, proofs of some areas, reviews of code, automatic code generation, and other techniques as well. I'm not looking for perfection - it's expensive and mostly over-the-top. I'm looking for fewer bugs and more confidence.''
+
+[[So you're saying that you're always able to be clear about this? That you're always looking for perfection, because it's cheap and necessary? Ok, got it. :-) Seriously, though, '''I''' at least understand what you mean...but then, I have an amateur side-interest in automated provers, so I have some idea of what's reasonable versus unreasonable in that subfield. I don't think it's surprising that comments about proofs get misunderstood; there are existing wide preconceptions/misconceptions on the topic, after all.]]
+
+''Doug, in reply to your first sentence, I assume you're being ironic - hence the smiley - but I'm not in the mood. I've had a bloody awful day and this is a subject I take very seriously. I'm going home now (it's 18:30 BST) and leaving this discussion. Some day I might write something about it that people won't dismiss as impractical. I know it works, and I don't believe I'm so much cleverer than everyone that they can't make it work even though I can.''
+
+''Every reasonable programmer can make this work. In ProofObligation it says:''
+
+	 :	... I think that when we write down some code, we all are are at least partially "convinced" in a corner of our mind that "it should normally work", in other words we already have some partial proof or some sketch of a proof in mind, otherwise we wouldn't write that code. He only asked for a bit more rigor and intellectual discipline in the way we do it. I don't think that's such a tall order, that we can refuse a priori to follow his model."
+
+'' 'night''
+
+We all have bad days from time to time. But since it's been several days, it's time to get over it and clean this up; it's not the most constructive thing to leave sitting here permanently. We could either delete a number of paragraphs here, or you could proceed by addressing the point made above that this is a topic where people have existing preconceptions, so of '''course''' there will tend to be misunderstandings.
+
+''I've tried, but I can't clean this up. Someone with a more clinically detached point-of-view will have to find the balance that I can't.''
+----
+
+''From a post on yahoo's agile-testing ...''
+
+XP insists the code be kept clean. We know that UnitTest''''''s aid in refactoring, the primary method of cleaning. But the reverse is true too. Clean code helps in unit testing several ways. First, clean code tends to be more modular and therefore easier to access as units. But, more importantly, clean code is more easily reasoned about. And it is this ability to reason that fills in the gaps between our unit tests. Dijkstra pointed out the futility of testing for quality and sought correctness by reason alone. We're not so quick to discard the "checked example" as an aid to reason. But be clear: It is our ability to reason about our code that makes XP productive. And it is our ability to reason about the code that makes something as simple as unit testing surprisingly complete.
+
+Let me reduce this to a formula:
+
+* reason x test = confidence
+
+Write this down. It is worth remembering. -- WardCunningham
+
+(XP includes social factors enhancing reason but I will leave their discussion for another post.)
+
+----
+
+''As the situation stands now (things can always change for the better) ExtremeProgramming looks at best to be a dilution beyond recognition, and in the worst case, a downright betrayal of the direction set forth by the great pioneer. XP gurus like UncleBob, and RonJeffries use almost every occasion at hand to bash and discredit formal methods with nothing but misguided personal rants (a summary google on comp.object will document this sordid state of affairs), so there's something XP and proofs have a very uneasy relationship to say the least. If "checked examples" as an aid to reason should not be summarily discarded, it is quite sure that XP discarded the more fundamental direction that EwDijkstra (and many many others set) forth. Therefore it is very refreshing to see WardCunningham voting for a belated return to the basics.''
+
+''There are two issues to be settled in conjunction with XP and proofs. First of all, in my rather pragmatic opinion tests are extremely useful even in conjunction with proofs, at least for the foreseeble future. There are many reasons for that, including the fact that not every property of a software systems is currently amenable to formal proofs and will continue to be so for a while, second that they are independent experiments that may detect "bugs" in proofs themselves.''
+
+''But the more fundamental issue, is what drives the development of programs. XP is primarily "test driven", while EwDijkstra and many others claimed that it is proof and provability that should drive the development of programs. Of course, EwDijkstra is a much more reliable and trustworthy source. -- CostinCozianu''
+
+Obligatory quote on the topic of tests in conjunction with proofs: "Beware of bugs in the above code; I have only proved it correct, not tried it." (DonKnuth)
+
+A more memorable quote is the introduction that LeslieLamport wrote for his book SpecifyingSystems, which follows the succession:
+
+* Writing is nature's way of letting you know how sloppy your thinking is. (Guindon)
+* Mathematics is nature's way of letting you know how sloppy your writing is
+* Formal mathematics is nature's way of letting you know how sloppy your mathematics is.
+
+And he concludes:
+
+	 :	Most mathematicians and scientists think that formal mathematics, without words, is long and tiresome. They're wrong. Ordinary mathematics can be expressed compactly in a precise, completely formal language. It takes only about two dozen lines to define the solution to an arbitrary differential equation in the DifferentialEquation''''''s module of Chapter 11. But few specifications need such sophisticated mathematics. Most require only simple application of a few standard mathematical concepts.
+
+----
+''People seem to think that a proof needs to be a mechanically verifiable step-by-step crawl from the obvious to the conclusion. Proofs in mathematics are rarely that, and I don't see where this attitude comes from.''
+
+Let me show you. Take the above binary search example (which I assume is in CeeLanguage). Even after fixing the wrong comparison, the code still contains a bug. Most people won't see it -- in fact I wouldn't have seen it if I hadn't heard of it before. The problem is, that ''int'' has a fixed range, and for large arrays, ''low+high'' can overflow and return a negative value; dividing by two then gives you a value for ''mid'' outside of the array. The problem with non-formal, or "intuitive", proofs (as opposed to mechanically verifiable proofs), are statements like ''which can be proven trivially'' that are just plain wrong. A formal proof with a proper model for int-variables and int-addition would catch that bug, respectively a mechanical verifier would reject the proof. The comparison-bug would have been found by any reasonable unit test, but I doubt that you write tests that search in arrays with more than MAX_INT/2 elements. Note that I'm not saying proofs are useless, just that informal proofs are mostly useless. -- AdrianWillenbuecher
+
+---- 
+See also ProgrammingIsMath, ProofObligation, ProofCarryingCode
+----
+CategoryProof

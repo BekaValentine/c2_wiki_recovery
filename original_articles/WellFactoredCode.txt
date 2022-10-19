@@ -1,0 +1,181 @@
+''This page contains a discussion moved from WellCommentedCode. -- TomStambaugh''
+''See also MethodCommenting.''
+
+'''DaveHarris said (in WellCommentedCode):'''
+
+Routines generally become long when it is convenient to keep context around in local variables. The alternative is to pass long argument lists to functions, or to turn the argument lists into objects and pass those around. Neither alternative always seems worthwhile, especially if the routine is short.
+
+''This sounds like it fits the MethodObject pattern found in KentBeck's book.  From the description on page 34, "How do you code a method where many lines of code share many arguments and temporary variables?"  The solution is to turn the method (routine) into an object with the local variables turned into instance variables for the object.  You create an instance of the MethodObject and invoke a single method which implements the logic found in your long routine.  From there, you refactor as needed.  -- JimHowe''
+
+Splitting a short routine in half can make it harder to understand, because you have to keep referring to both halves. Looking at some of my code, I see a 7-line routine which has 2 comments and 1 blank line. A common pattern is to have a few lines of code to set up a context, and then a few more lines to do something in/with that context, with a blank line between. Perhaps you would never write a routine as long as 7 lines?
+
+----
+
+Remembering that I have a ''very'' strong Smalltalk accent, my immediate intuition is that by the time I finish addressing the code factoring issues DaveHarris mentions (above), I usually don't need as much commenting. I think this may be what KentBeck is driving at. Let me try to say a bit more.
+
+In my Smalltalk experience, when I find methods growing because I've "[kept] context around in local variables", I often discover that the code is trying to tell me about a different way to think about the problem. Instead of turning argument lists into objects, I look for objects where those local variables might live. Sometimes I create new classes to hold them, and I often discover that the discovery of those new classes reveals deep new insight into whats really going on. And so I ultimately end up with a few short methods, each of which does something totally obvious from its name.
+
+Another approach I've had success with is to first define a new method with a keyword selector for each local variable. I then pass each local variable to this new method, and make sure everything still works. This corresponds to the "pass long argument lists to functions" approach. But...then I look at how the caller creates the values of those variables, and I start searching for "defaultValue" routines that can perform the same calculation. I find that I often end up with a family of related methods, where most are shortcuts that default one or more arguments in the full-length root. For example:
+  aMethodWith: arg1 andAnother: arg2 andFinally: arg3
+
+might have a companion that looks like this:
+  aMethodWith: arg1
+    ^self aMethodWith: arg1
+      andAnother: self defaultAndAnotherValue
+      andFinally: self defaultAndFinallyValue
+
+Now I go back to where I set up the local context, and move the rvalues into the corresponding default methods, and replace the rvalue in my original code with a call to the new default method (the same default method my new one will use). Later, if a performance analysis tells me that I need to worry about computing the local context twice, I look for changes in my object structure where I can cache the computation.
+
+Again, this process often leads me to deep insights about my problem. Its almost always worthwhile if my routine is long enough to force an elevator into the scrollbar on its source in a standard browser (my operational definition of when a method is "too long").
+
+-- TomStambaugh
+
+----
+
+''If my routine is LongEnoughToForceAnElevatorIntoTheScrollbar'' - Absolutely. I usually equate that to around 20 lines in my environments. 7 lines is a more typical size. 
+
+It may be that I am wrong about this. (Which is fine - I'm here to learn). However, your comment about when splitting is worthwhile suggests that our differences may be quantitative rather than qualitative. Some of it may be due to the languages involved - I could well believe that it takes fewer lines of code to get something done in Smalltalk than in Java, and that languages without GC require different styles again. 
+-- DaveHarris
+
+------------------------------------------------------------------------
+
+Yes, I agree that our differences are minimal and appear to be both quantitative and language-related, as opposed to qualitative.
+-- TomStambaugh
+
+--------------------------------------------------------
+
+One of the changes I've noticed in my programming style over the last few years is that I use fewer local variables. (My parameter lists are much shorter, and I use far fewer local variables.)
+
+I noticed that usually, when I use local variables, it is in a case like:
+   temp = some calculation
+   someFunction(temp)
+
+So what I do now is to turn the calculation into a method 
+and just use it:
+   someFunction(someCalculation())
+
+I find that this makes it much easier to refactor the code, and frequently I'll end up using someCalculation somewhere else in the class. --MartinFowler
+
+----
+
+''AMEN'' to that!!! People often complain that I'm anal about using load and store accessors (I never reference state directly), and you've highlighted an example of why I do things the way I do.
+
+If ''every'' variable reference is done through a LoadAccessor (often private), then I've discovered that an interesting dual comes up -- every NoArgumentSelector becomes a potential "variable" (though many are never actually kept anywhere).
+
+In your example, "temp" turned into '''someCalculation'''.
+
+In Smalltalk, this would look like: 
+
+ ...
+ temp := some calculation.
+ self someFunction: temp.
+ ...
+
+turning into:
+
+ ...
+ self someFunction: self someCalculation.
+ ...
+
+But now, '''someCalculation''' looks like an instance variable...perhaps read only...but as you've observed, it frequently gets used by other methods in the class.
+
+I've discovered that senders of methods like this often are greatly aided by the mechanisms I always provide in LoadAccessor(s) (which I usually generate automatically based on the name of the attribute they access). For instance, this is a great hook for the ObserverPattern. Many senders of someCalculation would like to be notified when its value changes, just like any other attribute.
+
+By the way, I plug AnalysisPatterns all the time...its a great addition to my own repertoire, right next to GangOfFour. -- TomStambaugh
+
+----
+
+A related pattern that RichGarzaniti has been using is the conversion of code like:
+
+	netPay
+	    | inputSummary |
+	    inputSummary := self summarizeInputFile.
+	    self 
+	        makeSpecialPayments;
+	        extractEntitlements: inputSummary;
+	        rationalizeDeductions;
+	        extractDeductions: inputSummary
+
+into something like this:
+
+	netPay
+	    self netPay: self summarizeInputFile
+
+	netPay: anInputSummary
+	    self 
+	        makeSpecialPayments;
+	        extractEntitlements: anInputSummary;
+	        rationalizeDeductions;
+	        extractDeductions: anInputSummary
+
+If this pattern appears in KentBeck 's book, I can't remember it nor find it in a quick look.  It's probably there though.  -RonJeffries
+
+''An excellent example of this technique (and how to use it) can be found in the DesignPatternsSmalltalkCompanion section on the TemplateMethod pattern - JosephPelrine''
+
+In RefactoringImprovingTheDesignOfExistingCode, FormTemplateMethod (page 345) is a high level PullUpMethod (322) that's used when child classes have slightly different versions of the same method.  To FormTemplateMethod, one refactors the child methods to separate similar and different parts, and then you PullUpMethod (322) to raise the common parts into the common parent class.
+Somehow ExtractMethod (110) seems too general -- like a more specific pattern to cover this case would be appropriate.
+
+---------
+
+That's interesting.  From a functional-language viewpoint, local variables are
+equivalent to creating an anonymous function that has the local
+variable as a formal parameter and its initial value as its argument.  The
+above transformation is giving the anonymous function
+a name.
+
+To recast your example, the original function is
+
+	netPay = (lambda (inputSummary)
+			makeSpecialPayments()
+			extractEntitlements(inputSummary)
+			rationalizeDeductions;
+			extractDeductions(anInputSummary)
+                )(summarizeInputFile())
+
+and it gets transformed into something like
+
+	netPay[0] = netPay[1](summarizeInputFile())
+	
+	netPay[1] = lambda (inputSummary)
+		makeSpecialPayments()
+                extractEntitlements(inputSummary)
+		rationalizeDeductions;
+		extractDeductions(anInputSummary)
+
+(Is this called "LambdaLifting", or am I confused?)
+
+-- BillTrost
+
+This transformation is also useful for testing. In writing a test, it may be easier (or absolutely necessary) to construct an InputSummary, then pass it to #netPay:. The more factored code is easier to write tests for. --KentBeck
+------
+''Moved from MethodsShouldBePublic:''
+
+Maybe I'm just a BadProgrammer.  I did a Report class in C++ that only had one public member: Run().  All of the details of running a report were in protected members.  It felt elegant to me to have such a simple interface.  If you need a report, you construct it and run it.  Why is my approach "bad"? --EddieDeyo
+
+I agree with the above.  It is usually best to keep your interfaces as small as possible (cf NarrowTheInterface).  If you have ever dealt with controls that have a multitude of methods and properties and tried to figure out which does what and in what order they need to be called can appreciate having a very limited set of well defined methods instead.  --WayneMack
+
+''Your interface is all you need if that's the only way you need to access the report, and if keeping everything held together is not getting the way of you understanding the problem you need to solve. Depending on the complexity of what you're doing, maybe all you need is Run(). But if you need to re-use the class in a slightly different way -- say you want to generate parts of the report but not others -- then perhaps a more broken-up approach would be helpful. It all depends on what you're doing with your code.''
+
+If you find a method that you want to reuse, certainly go ahead and make it public at that point.  I usually find, however, that to make a section of code public, it requires some additional rework to get it to the point of being able to use.  I prefer to defer this work until I need to do it, so I keep everything private until it needs to go protected or public.
+
+''Another point to consider is that often breaking up code into smaller methods -- private, public, protected, or whatever -- helps to clarify the intentions of the code. I find that if I write code just for myself that isn't broken up, and then I come back to look at it a few months later, I don't have a very clear sense of what the code does. Method names help quite a bit -- instead of squinting at lines 154 through 175, and asking myself what it does, I can read the method name "calculatePercentages" and see that it calculates percentages. Well factored code is SelfDocumentingCode.''
+
+''In a related point, having code that's well factored makes it quite easier to write UnitTest''''''s. And UnitTest''''''s are a very very good thing.''
+
+----
+Can we have examples of too much refactoring, Is there ever a scenario that  spaghetti code gets refactored so much that it becomes twice as hard to read.
+ if (notThis()) return one;
+ return two;
+ 
+ bool notThis()
+ {
+     return !this();
+ }
+whoever put the above example in ... it's a beautiful piece of obfustication ... but is it refactored? This brings me to my next question. Does all excessive refactoring degenerate into obfustication?
+
+''Great word, '''obfustication'''. Is it an intentional typo for '''obfuscation'''?''
+
+----
+The discussion here and a few other places is often concerned with "how long should a Function be?".  My concern is that I typically write functions ''much'' longer than the norm, and with (I think) sufficient reasons.  Is this a LongFunctionHeresy?
+
+''Depends. :) What are your reasons?''

@@ -1,0 +1,98 @@
+I noticed this idiom every time I try to use an Ejb to represent data at the client side. This is mostly useful when a JSP or any GUIBuilding tool is used to construct your client. In both of these clients you will use JavaBean''''''s to represent the data and to validate them (example FormatChecking, InvalidEntries, etc.). And if you are using an EntityBean or a SessionBeanWrapsEntityBeans to access your data then you will probably need the BusinessMethods on these Ejb's. But you will not have the functions to Validate or the functions to Format the data at the client side.
+
+'''Solution'''
+
+Use a JavaBean to implement the BusinessInterface (this interface represents the Ejb on which this JavaBean is going to operate) add your own formating functions and properties for this bean and also add a function to lookup the Ejb's in the JavaBean(you can add this in the beans constructor but I had problems with it when I tried use the beans in SessionAwareJsp''''''s )
+
+Now you can use this JavaBean in your JSP's and other Bean building tools.
+-----
+'''Example''' : OnlineForum 
+
+''interface ForumAccess'' - this is the BusinessInterface 
+
+''Forum implements ForumAccess'' - this is SessionBean that access other EntityBean''''''s
+
+''ForumMaintainBean implements ForumAccess, java.io.Serilizable'' - this is your VisualBean or the JavaBean
+
+-- SeshKumar
+
+------
+
+VisualAge for Java calls this kind of thing an AccessBean. -- KyleBrown
+------
+I would like to pass few more comments on the AccessBean constructor. I had problems using the lookup and creation of the Ejb in the constructor. These problems mainly arise when you use the AccessBean in a SessionAware Jsp. Since the way the constructor of the AccessBean(when using jsp:useBean) is called is more in hands of the JSPEngine and the pageContext. So I feel a need to separate the lookup and creation.
+-- SeshKumar
+
+------
+
+For a long time (around a year), I was struggling with this concept. Using all sorts of ad hoc mechanisms to handle the UI issues associated with the ejbean. Thanks for articulating this idiom.
+-- Ganapathy
+
+-----
+There is one more improvement in this idom that I need to discuss here. This is about the exceptions. As you can see that both EntityBean and SessionBean throw RemoteExceptions and other server side exceptions we would like to throw. But at the client side you don't want to see remote exceptions being thrown or sometimes you may want a method-specific exception to throw. 
+
+''Solution '': Catch the exceptions at the client side in your AccessBean and rethrow method specific exceptions.
+
+So your final Solution would look like this
+
+'''Example''' : OnlineForum 
+
+''interface ForumAccess'' - this is the BusinessInterface 
+
+''Forum implements ForumAccess'' - this is SessionBean that access other EntityBean''''''s
+
+ ''ForumMaintainBean implements ForumAccess, java.io.Serilizable{'' - this is your VisualBean or the JavaBean
+ '' private Forum _forum=null;''
+ ''  void init() {''
+ '' javax.naming.Context _ctx= new javax.naming.InitialContext();''
+ ''	ForumHome _forumHome=(ForumHome)javax.rmi.PortableRemoteObject.narrow(_ctx.lookup("ejb/forum"),ForumHome.class);''
+ ''	if(_forum!=null)''
+ ''	_forum = _forumHome.create();''
+ ''  }''
+ ''  void businessMethod1() throws ForumSpecificException{''
+ ''	try{''
+ ''	_forum.businessMethod1();''
+ ''	}catch(java.rmi.RemoteExcpetion re){''
+ ''	throw new ForumSpecificException("business method1 failed");''
+ ''	}''
+ ''  }''
+ ''}''
+
+-- SeshKumar
+
+-------------------
+
+Actually, there's one case where I wouldn't want to throw any exceptions -- JavaServer Pages don't have any way to nicely handle exceptions, so JSP's that use beans that throw checked exceptions look really disgusting (try..catch blocks everywhere). Instead, if your bean is to be used in a JSP, consider simply returning null if there's a remote exception.  Or better yet, modify the idiom so that the first call (on creation) gets all of the data from the EJB and "caches" it (what a VisualAge CopyHelperBean does) and then make the accessor methods simply return values from the cache, without throwing exceptions.
+
+-- KyleBrown
+
+---------
+I agree that JSP does not gracefully handle your exceptions and there is no way to tell a JSP page to go to one particular page when one particular kind of exception is thrown unless and otherwise I use try catch blocks with redirection code in it. But what if a method has to throw two different exceptions and you want to inform the user about why that method has failed. Can we still CopyHelperBean
+
+-- SeshKumar
+
+----------
+I think we can, but at a higher cost. Perhaps the idiom here is "Do Business logic before presentation". If you fill up the cache, that's where the exceptions could be thrown. It'd be OK to have a try..catch block around that part. However, the rest of the JSP tags could just be grabbing data from the cache - something that should not throw any exceptions.
+
+Another idiom should be "Don't do business logic in JSP's!". That gets into the whole ModelViewController architecture where your Servlets (Controllers) are the targets of your URL's, then they kick off the business logic in the EJB's (and catch the exceptions) and then determine where to send the CopyHelper beans after they have been loaded.
+
+-- KyleBrown
+---------
+This may be off the topic of ClientViewOfEjb, but since we are talking about exceptions at the server end I want to throw some light on it. I have this problem when I was deploying one of my EJB's. How should I handle exceptions for long transactions, the client has to wait and finally find out that his transaction has been rolled back because of an exception. Shouldn't the client be informed that the transaction failed using some call back mechanism instead of waiting for the transaction to be rolled back and the bean being pooled.
+
+-- SeshKumar
+
+----------
+Well, the problem is that (a) Long transactions violate the "Spirit" if not the letter of the EJB spec and (b) Callbacks violate both the "Spirit" and the letter of the EJB spec in two ways - first of all, it brings up the topic of bean-reentrancy (a no-no) and second, it means the client act as a server - another no-no in EJB-land. I think your best bet is to try to avoid long transactions - look into using an Optimistic concurrency scheme, perhaps with the Command pattern...
+
+-- KyleBrown
+
+----------
+Does this suggest that the AccessBean is instantiated on the client (be it an application, JSP, Servlet, etc.)? If so, it seems like there would be many more remote method calls than were necessary.
+
+-- JimCook
+
+----------
+The way that VisualAge does it (possibly not the best, but a decent way) is that it the AccessBean is instantiated on the client, and it then asks the EJB to return the "cache" as a single network call. It then holds on to the cache as described above.
+
+-- KyleBrown

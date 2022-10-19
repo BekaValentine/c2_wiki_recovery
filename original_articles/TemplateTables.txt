@@ -1,0 +1,92 @@
+This is an SqlPattern.
+
+----
+'''Intent'''
+Create small template tables, that aid you to build the needed result set using SQL. These tables are often included in the ''from'' clause with CartesianProduct and participate in complex additional restrictions in the ''where'' clause.
+
+----
+'''Context'''
+You try to build a nontrivial resultset, involving relationships between records 'near' to each other, or need to generate rows that are not in the database from the exisiting ones using some rules. You seem to need a variable number of SelfJoins. 
+
+----
+'''Forces'''
+	*You can't express a variable number of SelfJoins reasonably in Sql (although a possible approach is to apply SliceResultVertically iteratively)
+	*All the data you need are in the database, but you can't figure out the relational operations that will give the desired results.
+	*Client-side processing is ineffective as you need to work on massive data
+
+----
+'''Solution'''
+
+Create a small additional table (most often containing a single column with some integer numbers) and produce the CartesianProduct with your table. Use the result to compute the needed fields and filter/group as necessary (ThinkSqlAsConstraintSatisfaction).
+
+----
+'''Resulting context'''
+
+The additional columns you get help to make the fields you need in the result. Having several copies of a row from the original table in the result set makes possible grouping of every row with its near ones (the predcessors and/or successors in an ordering), or to 'generate' new rows from a single existing row.
+
+----
+'''Example'''
+
+For example, in order to calculate WeightedMovingAverage over the table ''data_sequence'':
+
+ Idx        Value
+ ----------------------
+ ....
+ 45         234.5
+ 46         245.8
+ 47         251.5
+ 48         250.3
+ 49         231.0
+ 50         252.6
+ .....
+
+you create table ''moving_average_mask'':
+
+ Seq       Weight
+ -----------------------
+ -1        0.25
+  0        0.5
+  1        0.25
+
+and execute SQL statement:
+
+ select (moving_average_mask.Seq + data_sequence.Idx), sum(data_sequence.Value * moving_average_mask.Weight)
+ from data_sequence, moving_average_mask
+ group by (moving_average_mask.Seq + data_sequence.Idx)
+ having sum(moving_average_mask.Weight)=1
+
+The result of the CartesianProduct is every row from ''data_sequence'' replicated three times, each copy paired with a row from ''moving_average_mask'':
+
+ Idx        Value      Seq       Weight
+ ------------------------------------------
+ ...
+ 46         245.8       -1         0.25
+ 46         245.8        0         0.5
+ 46         245.8        1         0.25
+ 47         251.5       -1         0.25
+ 47         251.5        0         0.5
+ 47         251.5        1         0.25
+ 48         250.3       -1         0.25
+ 48         250.3        0         0.5
+ 48         250.3        1         0.25
+ ...
+
+Every row is grouped with its neighbours as defined by ''Idx'' (usually this is a date column):
+
+ Idx        Value      Seq       Weight
+ ------------------------------------------
+ ...
+ 46         245.8       -1         0.25
+ 47         251.5        0         0.5
+ 48         250.3        1         0.25
+ ...
+
+Then the average is easy to calculate. ''Having'' clause strips both ends that do not have preceding or succeeding entries in their groups.
+
+----
+
+Another example is if you have price quotes in time, and want to use a quote for day T for day T-1, T-2, up to T-n if you miss the quotes for these days in the database. You create a table with integers 0..n, make CartesianProduct, use ''dateadd(T_column,num)'' instead of T_column and filter out the extra rows.
+
+-- NikolaToshev
+
+''I have this pattern. I rediscover it every couple of years. Thanks for writing it down.''

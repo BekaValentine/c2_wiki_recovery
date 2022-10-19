@@ -1,0 +1,58 @@
+More commonly known as ResourceAcquisitionIsInitialization.
+----
+An idiom forced by the lack of "finally" clauses in C++. In it resources are typically allocated in a constructor (although they can be allocated at anytime during an object's lifetime) and deallocated in the destructor. Objects that support this idiom are used as local variables in methods that might be exposed to exceptions. When these objects are destroyed (through either normal or abnormal termination of the method) the resources that they represent are freed. Code written using this idiom is easy to read and understand (by the initiated a least), less error prone, and a real nuisance to write. -- PhilGoodwin
+
+Alternatively: an idiom which improves on the fragile "finally" clause which is used in Java to make up for a lack of destructors.  When a class has resources which must be released in a timely manner, the Java approach relies on the client of the class to take account of this every time the class is used.  The RAII approach allows the author of the class to take care of it once and for all.  The fact that "magic" appears to happen behind the programmers back may be disconcerting at first, but that's what abstraction is all about. -- JamesDennett
+
+Also: it's not necessarily that hard to write in this style. ResourceAcquisitionIsInitialization means that you need to wrap resource acquisition in a class whose destructor frees that resource. But such wrapping only needs to be done once for each of the primitive resources (templated smart pointer for memory, then mutexes, mouse pointer state etc). You then use the wrapping classes in other code. You have now removed the need for explicit calls freeing the resource. As another bonus, exceptions rolling back the call stack halfway through an operation will now not cause leaks. Personally I find this makes writing robust code simpler, not harder.
+
+Caveat: this concept is all about exception safety... be mindfull that if a resource acquisition throws an exception while in a ctor, the dtor of the object will never be called, which means that several resources can not be safely acquired in the ctor of an object. A simple example is object with 2 strings, funnily not exception safe. [Not true, see below]
+
+class A {
+A() {_a="hello"; _b="world";}
+std::string _a;
+std::string _b;
+};
+
+-- Sebastien
+
+''Not true.  When talking about the interaction between exceptions, constructors, and destructors the ISO C++ standard says: "An object that is partially constructed or partially destroyed will have destructors executed for all of its fully constructed subobjects, that is, for subobjects for which the constructor has completed execution and the destructor has not yet begun execution."  (Sec 15.2)''
+
+Since the above example is bogus, I'll add an example that actually exhibits the exception safety problem, and show the idiomatic way of solving it:
+
+  struct A
+  {
+    A(int size) : x(new char[size]), y("hello") { }
+    ~A() { delete [] x; } 
+  private: 
+    char* x; 
+    std::string y;
+  };
+
+If the constructor of y throws, the memory pointed to by x will be leaked. There's a simple solution to this: DontWriteDestructors - let the compiler write them for you, and set things up so that the compiler-generated one will be correct, and you will no longer suffer from exception safety issues in this regard. In practice this means wrapping any resources you would have explicitly freed in the destructor in manager objects such as smart pointers. In the below example there is zero overhead for using scoped_array.
+
+  struct A
+  {
+    A(int size) : x(new char[size]), y("hello") { }
+  private:
+    scoped_array<char> x;
+    std::string y;
+  };
+
+If y's constructor throws, x has already been constructed, and x' destructor will be called and will free the memory.
+
+----
+
+Compare also Smalltalk, e.g. VisualWorks:
+
+ file := self openFile.
+ [self processFile: file] valueNowOrOnUnwindDo: [file close]
+
+----
+This idiom is also used in CppUnit to mimic Java's method synchronization.  An object is created at the start of each method that needs to be synchronized.  The object accepts a mutex on construction and acquires it.  On destruction, the object releases it.  
+
+It is cool, but it seems more appropriate as a metalevel thing.  Didn't someone do something with before/after methods in Smalltalk once?  I thought I saw papers by KentBeck and some other guy, and/or RalphJohnson and BrianFoote about this.  -- MichaelFeathers
+
+(Yes, SmalltalkBestPracticePatterns's ExecuteAroundMethod)
+----
+CategoryCpp

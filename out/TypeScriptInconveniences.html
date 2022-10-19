@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Type Script Inconveniences
+      </h1>
+      <p>
+        Microsoft's TypeScript may be providing several exciting ECMAScript 6 features early, but its type system makes a wide array of common <a href="JavaScript.html">JavaScript</a> patterns exceedingly difficult to implement. Here are some examples I ran into while developing a custom business application:
+      </p>
+      <hr/>
+      <p>
+        <strong>Singletons</strong>
+      </p>
+      <p>
+        It's very easy to implement a singleton in <a href="JavaScript.html">JavaScript</a>. Here's how you'd do it in a CommonJS module:
+      </p>
+      <code>
+        function Db() {<br/>
+        // make methods, etc., in here<br/>
+        }<br/>
+        module.exports = new Db();<br/>
+      </code>
+      <code>
+        // then to use it elsewhere in the program:<br/>
+        var db = require('db');<br/>
+      </code>
+      <p>
+        No muss, no fuss, no exposed constructor function that lets you break the singleton abstraction and create more instances of the same "class". Now, the equivalent code in TypeScript looks like this:
+      </p>
+      <code>
+        class Db {<br/>
+        // make methods, etc., in here<br/>
+        }<br/>
+        var db = new Db();<br/>
+        export = db;<br/>
+      </code>
+      <code>
+        // then to use it elsewhere in the program:<br/>
+        import db = require('db');<br/>
+      </code>
+      <p>
+        Slightly less convenient -- TypeScript doesn't let you use arbitrary expressions on "export =" lines -- but who's counting? Now, here's the problem: The type-checker rejects this outright! You won't be allowed to export the singleton, because it's using the "private type" Db. In fact, it's impossible to hide the detail that a class is used to implement the singleton behind-the-scenes, since the type-checker requires you to export the class too. You have to write <em>this</em>:
+      </p>
+      <code>
+        export class Db {<br/>
+        // make methods, etc., in here<br/>
+        }<br/>
+        export var db = new Db();<br/>
+      </code>
+      <code>
+        // then to use it elsewhere in the program:<br/>
+        import Db = require('db');<br/>
+        var db = Db.db;<br/>
+      </code>
+      <p>
+        Only slightly more verbose, sure, but instantly your abstraction is unavoidably broken.
+      </p>
+      <hr/>
+      <p>
+        <strong>Interop with "Extensible" Libraries</strong>
+      </p>
+      <p>
+        It's a very common JS idiom for a library to permit plugins and extensions by adding an object of your own to one of the library's built-in objects. jQuery does it. Knockout does it. I was using both in my app, and TypeScript hates it. Here's what my Knockout extension looks like:
+      </p>
+      <code>
+        var signatureEmpty = "image/jsignature;base30,";<br/>
+        ko.bindingHandlers.signature = {<br/>
+        init: function (el, valueAccessor) {<br/>
+        var value = valueAccessor();<br/>
+        $(el).jSignature({ height: 100, width: 400 });<br/>
+        $("<input type='button' class='btn' value='Clear' />")<br/>
+        .insertAfter(el)<br/>
+        .click(() => $(el).jSignature('clear'));<br/>
+      </code>
+      <code>
+        if (ko.unwrap(value)) {<br/>
+        (<any> ko.bindingHandlers.signature.update)(el, valueAccessor);<br/>
+        }<br/>
+        if (ko.isObservable(value)) {<br/>
+        $(el).bind('change', function (e) {<br/>
+        value($(e.target).jSignature("getData", "base30"));<br/>
+        if (value() === signatureEmpty) value(null);<br/>
+        });<br/>
+        }<br/>
+        },<br/>
+        update: function (el, valueAccessor) {<br/>
+        var value = ko.unwrap(valueAccessor());<br/>
+        if (value && value !== signatureEmpty) {<br/>
+        $(el).jSignature("setData", "data:" + value);<br/>
+        }<br/>
+        }<br/>
+        };<br/>
+      </code>
+      <p>
+        Pretty straightforward, idiomatic use of the library. Note that jSignature is a jQuery plugin, so this handily demonstrates the issue for <em>both</em> libraries. That issue is that TypeScript rejects the above code, both the part assigning to ko.bindingHandlers and the part calling $.fn.jSignature, because its type-checker claims that those objects just don't have those slots (ko.bindingHandlers.signature and $.fn.jSignature respectively).
+      </p>
+      <p>
+        It makes some sense for the jQuery plugin, but absolutely none for the Knockout one: Of <em>course</em> it doesn't have that slot, because I'm defining it right now! The only way to get this stuff accepted is to add another file to your project called a "TypeScript definitions file", which looks like this (I named it whoinventedthistypesystem.d.ts; this stuff had put me in a bad mood):
+      </p>
+      <code>
+        interface JQuery {<br/>
+        jSignature(): void;<br/>
+        jSignature(options: any): void;<br/>
+        jSignature(command: string, ...options: any[]): any;<br/>
+        }<br/>
+        // Definition to permit us to define the 'signature' and 'diagram' custom Knockout bindings (the actual <br/>
+        // definitions are in the file App/viewmodels/ReportEdit.ts).<br/>
+        interface KnockoutBindingHandlers {<br/>
+        signature: KnockoutBindingHandler;<br/>
+        }<br/>
+      </code>
+      <p>
+        With that above definition, TypeScript is placated and accepts the file. <em>But</em> it's still overly restrictive. Notice the signatureEmpty variable? Initially, I tried to encapsulate that inside the binding definition like so:
+      </p>
+      <code>
+        ko.bindingHandlers.signature = {<br/>
+        empty: "image/jsignature;base30,",<br/>
+        // methods using it here<br/>
+        // accessed as ko.bindingHandlers.signature.empty<br/>
+        }<br/>
+      </code>
+      <p>
+        But of course that was rejected, because KnockoutBindingHandler objects <em>obviously</em> don't have a slot called "empty".
+      </p>
+      <p>
+        Basically, TypeScript is seriously inconvenient when it comes to extending libraries.
+      </p>
+      <p>
+        <strong>Bonus</strong>: See that (<any>) thing in my definition of ko.bindingHandlers.signature.init()? That's what it looks like in TypeScript when you cast to any, otherwise known as <em>throw away all type information</em>. Despite the ko.bindingHandlers.signature.update() function, to inspection, clearly having the right type, the type-checker rejected that too until I threw away that information!
+      </p>
+      <hr/>
+      <p>
+        <strong>Promises</strong>
+      </p>
+      <p>
+        TypeScript doesn't understand them. It <em>can't</em>. It's just not expressive enough. Here's an example, taken from the aforementioned Db class:
+      </p>
+      <code>
+        public sync(): Q.Promise<boolean> {<br/>
+        return this.IsAuthenticated().then((result) => {<br/>
+        if (result) return this.doSync();<br/>
+        else return this.doLogin();<br/>
+        });<br/>
+        }<br/>
+        private doSync(): Q.Promise<boolean> {<br/>
+        return this.manager.saveChanges().then(() =><br/>
+        breeze.EntityQuery.from('Report').using(this.manager).execute().then(() => true)<br/>
+        ).fail(this.syncFailure.bind(this));<br/>
+        }<br/>
+        private syncFailure(message): boolean {<br/>
+        return false;<br/>
+        }<br/>
+        private doLogin(): Q.Promise<boolean> {<br/>
+        return this.Login().then((result) => {<br/>
+        if (result) return this.doSync();<br/>
+        else return this.syncFailure('Unable to Login');<br/>
+        });<br/>
+        }<br/>
+      </code>
+      <p>
+        This'll be totally rejected by the type-checker! In particular, TypeScript is incapable of comprehending the "flattening" aspect of promises, that being that a "promise for a promise for a value" is exactly the same thing as "a promise for a value". The only way to get this accepted is to <em>delete the type signatures</em>; if you have to delete the typesigs for standard idioms to work, why have a type-checker?
+      </p>
+      <hr/>
+      <p>
+        I won't speak for <a href="SystemsSoftware.html">SystemsSoftware</a> development. But from an application developer's perspective, you may be expecting/wanting more dynamic abstraction than the industry (typical organizations) wants. But this view repeats the debate in <a href="GreatLispWar.html">GreatLispWar</a>. -t
+      </p>
+      <p>
+        [This is all from a custom business application, all rooted entirely in idiomatic use of <a href="JavaScript.html">JavaScript</a> tools and libraries such as Knockout, jQuery, and Q (providing the promises). How is it "more dynamic abstraction" than would be wanted, considering nothing I present here is outside the recommended scope of the libraries I'm using? -DavidMcLean]
+      </p>
+      <p>
+        VB, Delphi, etc. rarely needed anything like jQuery because it didn't have a fscked-up DOM.
+      </p>
+      <p>
+        [So? In your opinion, the DOM is messed up. Tools like jQuery and Knockout allow us to manage it in a structured, orderly way. -DavidMcLean]
+      </p>
+      <p>
+        "Structured and orderly" compared to prior browser-based techniques, perhaps, but I see it as a band-aid. I'll agree that initial development in the "static OOP" way may be slow, but it usually made maintenance easier because the compiler would tell you what's missing and where it's missing. I'm actually a fan of GUI's as a service rather than app-language-specific API's, but that's kind of another story.
+      </p>
+      <p>
+        [Honestly, I think the DOM itself is pretty usable these days; standard DOM-manipulation methods like document.querySelectorAll() may not be as concise as jQuery, but "vanilla JS" is <em>absolutely</em> an effective means for DOM-manip now the APIs are standardised. None of that is the point, however. The point here is that TypeScript's stricter static type system makes simple and wholly idiomatic forms of expression, easy in <a href="JavaScript.html">JavaScript</a>, completely impossible to use. -DavidMcLean]
+      </p>
+      <p>
+        I question whether the <a href="NetworkDatabase.html">NetworkDatabase</a>-like approach of those is the best way to "do queries". Further, power can sometimes be a dangerous thing. Sometimes its really nice to be able to easily do something to every GUI element, but it also means that sub-app A may clobber what sub-app B is trying to do. The DOM is kind of a <strong>wild-west</strong> with few rules or regulations. It's great that your cattle can roam free, but it also may means somebody may be pooping in your stream (or what you thought was your stream) without your knowledge. Original coders may love it, but maintenance programmers tend to turn grey over cowboy gui engines/designs.
+      </p>
+      <p>
+        [The way to "do queries", as you put it, is appropriate to the domain; the DOM is a tree, so it's suitable to use selectors geared for expressing tree properties (like the descendant and sibling selectors). As for your "wild-west", why would you have two independent "sub-apps" active on exactly the same document? That's not a sensible design. -DavidMcLean]
+      </p>
+      <p>
+        <a href="SeparationOfConcerns.html">SeparationOfConcerns</a>. You may want a fancy song player on the left side, and a fancy slide-show on the right side of the screen/page. If there is no reason why they should be linked, then the wall between them should be tall and strong to avoid cross-fudging of each other.
+      </p>
+      <p>
+        [Then put them in <iframe>s, or design them so they don't operate globally in the first place. It's not complicated. Heck, document.querySelectorAll() is a <em>method</em>; just call it on your widget's container element instead of on the document and you're golden. It's not like earlier graphical environments (VB, Delphi) could force you not to step on widgets in other parts of the window. -DavidMcLean]
+      </p>
+      <p>
+        But you are relying on volunteerism to provide decent scoping. Sometimes you want it to be difficult to do "vast and global" things in code to discourage misuse. Yes, it is a form of "herding", but often that's just want the industry wants. And I realize that desktop VB/Dephi have problem areas, but in general they provided more civilization in the hands of average coders. As far as iframe, they sometimes have odd behavior in browsers that requires fiddling and fudging. They are not always treated like "native" widgets.
+      </p>
+      <p>
+        [I'm full aware that it requires effort on the part of widget designers to scope their widgets. That's why I also suggested <iframe>s, because they inherently provide a new DOM scope; those would be used in cases where a) you aren't writing your own widgets and b) the widgets you're using from other sources do in fact collide. <iframe> is <em>primarily</em> used to hold widgets from remote sites, in fact, and without much messing about as far as I can see; what fiddling do you see as necessary to make use of the tag for that purpose? -DavidMcLean]
+      </p>
+      <p>
+        I cannot recall all the issues I've had with iframes at the moment; I just remember a lot of cussing :-) One I do remember is that they cannot participate in forms like a typical INPUT tag. Sure, one can hand-code such data gathering, but that's reinventing the wheel. 
+      </p>
+      <p>
+        [That's to be expected. Did you want <iframe>s both to isolate their contents and <em>not</em> to isolate their contents, simultaneously? In general, scoping problems with the DOM are rare and of the developer's own doing; even with prefabricated widgets, the usual paradigm is that the dev "activates" the widget using a jQuery plugin call, so the appropriate selector may be provided. If that's insufficient, consider investigating the aforementioned Knockout, which provides a scoping system for associating DOM elements with viewmodel attributes; Angular and Ember provide similar support. -DavidMcLean]
+      </p>
+      <ul>
+        <li>
+           Re: "of the developer's own doing" -- Yes, but tool designs tend to encourage or discourage certain behaviors.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [My point is that the code that needs changing will be yours, the app developer's, and not code belonging to the plugin or widget author. So it's less difficult to get it fixed. -DavidMcLean]
+        </li>
+      </ul>
+      <ul>
+        <li>
+           I'd rather be left with in-shop code that's easier to fix/change than harder to change.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [Obviously. That's what I'm saying you get with most jQuery plugins: Your in-shop code generally boils down to $(selector).pluginName(options), which is extremely straightforward and easy to tweak if you find you have selector collisions when you add more stuff. -DavidMcLean]
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Incrementally-add-then-tweak-if-breaks works decently if the problem is recognized close the to addition time, but often that's not the case. It's a poor fixing pattern to rely on.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [Indeed. It's much cleaner to bind your jQuery plugins to elements using something like Knockout's custom bindings. It's also rare that collisions occur, especially if IDs are used appropriately; automated tests should of course be applied after every addition to ensure no regression issues such as selector collisions have cropped up. -DavidMcLean]
+        </li>
+      </ul>
+      <ul>
+        <li>
+           That's getting to close to a <a href="TechniqueWithManyPrerequisites.html">TechniqueWithManyPrerequisites</a>. 
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [What is? Binding using Knockout? Automated testing? If you mean the use of jQuery plugins in general, first note that using these plugins to build a whole complex app, without some sort of structural framework, is not best practice in the slightest; if an app is so complex that selector collisions are <em>possible</em>, it should be organised through Knockout/Angular/Backbone/Ember/Batman/basically any such MV* framework rather than being solely ad hoc jQuery. That doesn't mean jQuery plugins <em>can't</em> be used, of course: My Knockout example above illustrates that you can still make use of jQuery plugins as much as you'd like, just using Knockout (or another framework) to tie them more cleanly to the DOM. For apps so simple that you don't need any MV* framework -- or for simple adding-a-little-fanciness scripts -- the chances of selector collision occurring at all are greatly reduced, and if one occurs it is generally straightforward to notice, isolate, and repair. In addition, automated tests are a best practice regardless of what your app's using! They're not a prerequisite to any specific techique; they're a prerequisite to <a href="ExtremeProgramming.html">ExtremeProgramming</a>, refactoring, and so on. -DavidMcLean]
+        </li>
+      </ul>
+      <ul>
+        <li>
+           I'm not a believer in <a href="ExtremeProgramming.html">ExtremeProgramming</a>, at least not as-is. As far as automated testing, many shops do not wish developers to spend time on such except for mission-critical apps. It's often the IT manager's call, not individual developers. Whether that's good or bad is moot if one has no practical choice. I judge tools based on the <strong>likely organizational environment, as I typically encounter it</strong>. Your life observations may differ. (Some claim only "junky organizations" hire me, biasing my observations. Gotta love some of those <a href="WikiZens.html">WikiZens</a> :-)
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [Alright, let's presume we're not using <a href="ExtremeProgramming.html">ExtremeProgramming</a> or any form of automated testing. As noted, if our app is complex enough that selectors may collide, it's complex enough to be organised using a structured framework; if it's simple enough not to be organised such, it's simple enough that any collisions will be obvious. -DavidMcLean]
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Static OOP is a structural framework of sorts. Add-on tools and sweepers can always be brought in to assist with side-effects of poor tool choice, but dynamic typing is the wrong tool for the GUI job in my opinion for non-trivial apps/GUI's. I like dynamic languages, but used in the wrong place at the wrong time is a no-no.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [I think my TypeScript gripes are illustrative of the fact that statically-typed OOP is not particularly helpful for these situations -- dynamically-typed OOP is more than sufficient for modeling at that level of abstraction. However, the structure afforded by OOP itself is on the whole very "generic". What's needed to manage interface complexity in JS client-side apps needs to be a little more specific to the domain (the domain being client-side JS GUIs), which is well-served by MV* frameworks; OOP gives you classes (or constructor functions, as the case may be) for structuring your application, while MV* gives you a sense of <em>what</em> classes to build (along with some nice glue between the M and V, of course). -DavidMcLean]
+        </li>
+      </ul>
+      <p>
+        Perhaps the best approach is that specific widgets be required to explicitly "register" to participate in form-ness or other aspects, such as resizing, page-level read access, page-level write-access, etc. With "civilized" GUI kits, scope tends to be <strong>restricted by default</strong>, and one <strong>explicitly "grants" privilege</strong> for each widget to be accessed by other aspects. DOM is mostly the reverse in that it's wide open and relies on voluntary constraint. Yes, this creates "bureaucracy" up front, but reduces surprises in terms of longer-term maintenance. Further, I don't have much control over what an organization wants as its shop standard GUI kit/platform. It would be nice if the default GUI engine of browsers had some taming built in. I may personally like Angular, for instance, (example only) but that doesn't mean my boss does. -t
+      </p>
+      <p>
+        [Well, that's getting into questions of security model, which VB widgets didn't actually cover either. It would certainly be <em>nice</em> to grant specific levels of access to particular areas of the code, but it's not a common feature of GUI kits on the whole and it's unreasonable to diss the DOM for lacking that capability. -DavidMcLean]
+      </p>
+      <p>
+        It's not really a security model in the strict sense. I'd call it a "scoping model" for lack of a better term. And yes, VB had leaky problems, but it also had fewer built-in "mass manipulation" constructs. The <a href="JavaScript.html">JavaScript</a>-related frameworks/tools/kits in general seem to take a <a href="WriteOnlyLanguage.html">WriteOnlyLanguage</a>-like approach to GUI kit designs. They say, "see how easy it does stuff like 'PERFORM insert-an-action-HOF-here WHERE insert-a-filter-HOF-here'?" (The sample cross-butchers SQL and FP for the hell of it). Maintenance is a distant second concern/selling-point. That's a <strong>general problem with the open-source mindset</strong> in my observation. Their goals are out of sync with organization preferences. People still use such tools because they are free and available and allow initial production to go along fairly quickly, but create maintenance headaches in the process as the level of cowboy-code passes a breaking point or too many "clever tricks" pile up on top of each other. -t
+      </p>
+      <p>
+        [Firstly, "run this function for each item that matches this predicate function" is perfectly standard <a href="FunctionalProgramming.html">FunctionalProgramming</a>, not a weird mismatch of FP and SQL. As for the "open-source mindset", open-source tools like Knockout don't count in your assessment of open-source tools because...? -DavidMcLean]
+      </p>
+      <p>
+        I didn't claim such "mapping" was SQL and FP. Perhaps I need to reword that part. You interpreted it different than my intention.
+      </p>
+      <ul>
+        <li>
+           [To what in particular were you referring when you suggested that "The sample cross-butchers SQL and FP for the hell of it"? -DavidMcLean]
+        </li>
+      </ul>
+      <p>
+        And again, I don't claim that a JS-based GUI tool cannot provide some of the features described; it's just that it has to reach a certain critical mass to be <strong>practical</strong> for an organization in the medium or longer run, like Delphi and VB did. I know it's not necessarily a fault of the DOM or JS directly, but it's the lack of an appropriate tool for the industry in terms of both "style" and market/mind share. Builders of JS-related GUI tools are <em>in part</em> at fault because they emphasize initial coding and "clever abstraction" over longer-term maintenance and "team programming". 
+      </p>
+      <p>
+        <strong>Open-source programmers like to hand out nukes to every foot soldier.</strong> -t
+      </p>
+      <p>
+        [jQuery independently might in your view encourage "clever abstraction" and speed of initial coding, but all of the more modern GUI tools (those I've mentioned, plus Backbone and some others) are designed specifically to give structure to your code and simplify maintenance. They're also all <em>very</em> popular. -DavidMcLean]
+      </p>
+      <p>
+        I've barely heard of them. I question your use of "very". If and when they become as well-known as jQuery itself, then we are talking a new ballgame.
+      </p>
+      <p>
+        [You've barely heard of prepared statements. I question your experience. -DavidMcLean]
+      </p>
+      <p>
+        I have reason to question yours also, but it would probably turn into another nasty <a href="FlameWar.html">FlameWar</a>.
+      </p>
+      <p>
+        [I freely admit I have little experience in the domain of custom business applications. It seems you're lacking in experience in the domain of Web applications, however, which is significantly more relevant to this discussion. -DavidMcLean]
+      </p>
+      <p>
+        About 80% of my web experience is intranet-side, which is less concerned about Sql Injection than Internet. I do validate SQL-destined fields, but use a more compact technique.
+      </p>
+      <p>
+        [Regrettably, yes, it's common that intranet app design pays a lot less attention to important issues such as SQL injection. Prepared statements remain the most appropriate technique for passing any and all user input into SQL queries, regardless of query complexity, whenever they are available. -DavidMcLean]
+      </p>
+      <p>
+        This has been debated in other topics. No need to repeat it here. (I'll link when found...if I remember.)
+      </p>
+      <p>
+        [<a href="TopOnPreparedStatements.html">TopOnPreparedStatements</a> would be relevant, I expect. -DavidMcLean]
+      </p>
+      <p>
+        {FYI, for singletons, you can define a public interface in another file and cast your export as that interface, like this:
+      </p>
+      <p>
+        var db: iDb = new Db();
+        export = db;
+      </p>
+      <p>
+        Not saying it's perfect, but it'll preserve your abstraction (or even enhance it, since it's way easier to mock for tests when you have an interface).
+      </p>
+      <p>
+        -Jibz}
+      </p>
+      <p>
+        [Oh, neat, that didn't occur to me. It still doesn't quite match the same semantics as a "real" singleton, but when mocks are considered perhaps it makes more sense not to. It's definite that at least <em>some</em> of my friction with TypeScript arises from the mismatch between typical dynamically-typed design approaches (with <a href="DuckTyping.html">DuckTyping</a>, prototypical flyweight objects, etc.), and TypeScript's Java/<a href="CeeSharp.html">CeeSharp</a>-esque static, defined-up-front approach; I'm a lot more familiar with the former and not all that experienced with the right techniques and strategies for using the latter effectively.
+      </p>
+      <p>
+        Still, the inability to type-check promises properly is just dumb, especially considering they're important enough to be an official part of ES6. -DavidMcLean]
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryJavaScript.html">CategoryJavaScript</a>
+      </p>
+    </div>
+  </body>
+</html>

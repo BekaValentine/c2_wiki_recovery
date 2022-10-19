@@ -1,0 +1,100 @@
+''[Voting on JavaDesignFlaws page.]''
+
+Java's exception hierarchy is very messy.  
+
+	* Exceptions are defined for specific errors and not related by inheritance.  For example IndexOutOfBoundsException is not derived from IllegalArgumentException.
+	* The class Error is used to report errors in the Java runtime, such as memory exhaustion.
+	* The class RuntimeException is used to report ''programming'' errors not run-time errors.
+	* The class Exception is used to report errors that must be handled because they are caused by situations in the program's environment.  Oh, apart for errors in the Java runtime which are reported by exceptions derived from Error.
+	* Exceptions derived from RuntimeException and Throwable are not checked, which is reasonable because there is no sane action that the program can take to recover from them.  Exceptions derived from Exception are checked (by the compiler for non Java programmers).  But RuntimeException is derived from Exception.  This leads to awkward try/catch statements with one catch block to handle Exceptions and the other to catch and rethrow RuntimeExceptions.  And you have to remember to catch RuntimeException ''first'' otherwise the Exception catch-block will catch it.
+	* Some exception classes are used to report both environmental and programming errors.  For example, SQLException is used to report malformed SQL code (a programming error) and the failure of the database connection (an environmental error).
+
+A better hierarchy would be something like:
+
+  Throwable
+  +-U''''''ncheckedThrowable
+  | +-R''''''unTimeError (failure of the JVM or other unrecoverable error)
+  | +-L''''''ogicalError (programmer errors)
+  |	+-N''''''ullPointerError
+  |	+-P''''''reconditionViolatedError
+  |	| +-I''''''llegalArgumentError
+  |	| +-I''''''llegalStateError
+  |	+-P''''''ostconditionViolatedError
+  |	+-I''''''nvariantViolatedError
+  |
+  +-C''''''heckedThrowable (exceptions caused by the program's environment)
+	+-A''''''vailabilityException
+	+-P''''''ermissionException
+	+-R''''''esourceExhaustionException
+	+- ... other generic categories of environmental exception ...
+
+''A "R''''''esourceExhaustionException" can in practice occur at any time and is unrecoverable for the thread in which it occurs, therefore it should be a R''''''unTimeError.''
+----
+
+The Java and C++ exception hierarchies suffer from SpaghettiInheritance and PrematureGeneralization.
+
+Consider blocks of exception handlers.  There are only two kinds:
+
+	* Those that handle ''all'' exceptions
+	* Those that handle a few interesting exceptions
+
+But those 'few interesting exceptions' are very rarely the same as any subclass of exceptions the library provider has included.
+
+--MattRickard
+
+One problem with Java is that it enforces exception handling, which means often you have to catch exceptions where you don't know what to do. Because Java doesn't manage resources well, this also means you have to catch exceptions where you don't want to. Often, you just want to catch all exceptions, rollback the transaction, and then fail quietly. It doesn't matter what the exception is normally. C++ also suffers from this, but less so because you don't have to catch exceptions and you have resource management and you can throw anything (not just subclasses from '''Throwable'''). Perl and some Smalltalks (and apparently some Lisps) do this better by raising untyped exceptions. e.g. '''die''' in Perl, which is catchable by an '''eval{}'''. -- SunirShah
+
+I had the following pointed out to me elsewhere. Apparently, the JTAPI framework is full of methods like this:
+
+   public Connection[] connect(Terminal origterm,
+                               Address origaddr,
+                               java.lang.String dialedDigits)
+                      throws ResourceUnavailableException,
+                             PrivilegeViolationException,
+                             InvalidPartyException,
+                             InvalidArgumentException,
+                             InvalidStateException,
+                             MethodNotSupportedException;
+
+All checked exceptions. All without any common ancestor less general than Exception. Eugh. --CharlesMiller
+
+
+
+----
+
+How about an exception hierarchy is of very dubious value and probably shouldn't
+be there at all?  --SomebodyElse
+
+Although I added this page, I agree with this statement!  Logical errors should be handled by dumping core so that the program can be examined in a post-mortem debugger.  I have never had to write code that reacts to specific types of environmental exception.  Instead code handles all exceptions in the same way by catching the most general exception class that is applicable.  I think this is because exceptions thrown by Java APIs are almost always defined to be derived from a per-package base class (SQLException for java.sql, JMSException for javax.jms, and so on), rather than being derived from base classes that categorise the type of error (missing resource, invalid permissions, communication failure, etc.)
+
+----
+
+This has been a bit of an eye-opener for me. I'm finally realising why I'm doing what I've been doing with my exception handling over the past year.
+
+I've ended up creating an unchecked SystemFailureException to which one can chain other exceptions (lack of a standard method of exception chaining was a frequent complaint about Java, fixed by JDK 1.4 ChainedExceptions), and when I encounter an environmental error (database goes down), I pack up whatever exception I got that indicated this and then use the SystemFailureException to carry it up to the top level, where it gets dealt with (by paging me). For "things that can't happen" I generally just throw an Error.
+
+I disagree with the "dump core on logical fault," at least if it can't be disabled. I'd hate to see my entire website go down because of a logical error in one request. Better to log it and keep running. (Of course, if it's in a frequently occurring piece of code, you're not likely to be doing much other than throwing exceptions.)  --CurtSampson
+
+''If you have a programming error, you cannot just keep running because the logical error will have left the program internals in an unknown state.  Continuing execution may corrupt existing data or cause invalid data to be fed to the rest of the system.  There are techniques that are used to implement ByzantineFault tolerance even in the face of programming errors -- "byzantine generals" consensus algorithms for example -- but catching a logical exception and continuing execution is not one of them.'' --NatPryce
+
+Hm. So what you're saying is that, when due to a programming error my servlet engine fails to generate one page, and aborts on it, the entire VM must shut down because the system is in an "unknown state"? I don't know whether this is "theory is nice but not as useful as reality" (i.e., my users can still use most of the site, even if they can't use that page), or whether I just misunderstand what you're trying to say. --cjs
+
+In the case of an error in a servlet the ''request'' is in an unknown state and is immediately terminated. The servlet engine as a whole is in a known state and so is the page (since pages in general don't even have a state). --AndersBengtsson
+
+This is very probably a ''desirable'' property of a servlet-based application. It isn't a ''necessary'' property of all possible servlet-based applications. -- LaurentBossavit
+
+If you modularise your system into components and properly isolate those components from one another then you can shut down an individual component when it fails due to a programming error, and let the rest of the components keep running.  An example is an operating system using protected memory to ensure that a bug in one program does not bring down other running programs or the entire operating system.
+
+--NatPryce
+
+----
+
+In Java, it's fairly difficult to do transaction management. In C++, by using constructors and destructors judiciously, it was (relatively) easy to create a transaction-based (read: event-driven) soft real-time system. For exceptions to work effectively in Java, they need a better way of rolling back on errors then littering code with '''try{}catch{}'''s. In fact, C++ is the only language I know of that does this well. Can anyone point to others? -- SunirShah
+
+We use a variation of the ResourceReleasesResource idiom to handle failover in a group-oriented distributed system.  The failover protocol calls into the application through an interface that can return successfully or throw a failover exception (which itself is a chained exception).  Implementations of the interface propagate exceptions up to the top level, where they are converted into failover exceptions.  The implementation of the failover protocol implements how to react to the failure. --NatPryce
+
+--------------
+See also: LimitsOfHierarchies / MessyExceptionHierarchyAlwaysHappen
+
+----
+CategoryException | CategoryJava

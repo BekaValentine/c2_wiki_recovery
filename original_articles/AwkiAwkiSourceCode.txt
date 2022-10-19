@@ -1,0 +1,721 @@
+The source is spread over three files and it comes with a conf file (KUDOS!). This is the 0.1 version of awkiawki.
+
+'''Don't be scared!''' The source looks better on the edit page :)
+
+1. awki.cgi - main cgi script
+
+2. awki.conf - setting options for your server and wiki
+
+3. parser.awk - parsing pages you've just created
+
+4. special_parser.awk - parsing diffs if you enabled rcs
+
+-----
+1. awki.cgi - main cgi script
+-----
+	#!/usr/bin/mawk -f
+	################################################################################
+	# awkiawki - wikiwiki clone written in (n|g|m)awk
+	# $Id: awki.cgi,v 1.45 2004/07/13 16:34:45 olt Exp $
+	################################################################################
+	# Copyright (c) 2002 Oliver Tonnhofer (olt@bogosoft.com)
+	# See the file `COPYING' for copyright notice.
+	################################################################################
+
+	BEGIN {
+		#            --- default options ---
+		#    --- use awki.conf to override default settings ---
+		#
+		#       img_tag: HTML img tag  for picture in page header.
+		localconf["img_tag"] = "<img src=\"/awki.png\" width=\"48\" height=\"39\" align=\"left\">"
+		#       datadir: Directory for raw pagedata (must be writeable for the script).
+		localconf["datadir"] = "./data/"
+		#       parser: Parsing script.
+		localconf["parser"] = "./parser.awk"
+		#   special_parser: Parser for special_* functions.
+		localconf["special_parser"] = "./special_parser.awk"
+		#       default_page: Name of the default_page.
+		localconf["default_page"] = "FrontPage"
+		#       show_changes: Number of changes listed by RecentChanges
+		localconf["show_changes"] = 10
+		#       max_post: Bytes accept by POST requests (to avoid DOS).
+		localconf["max_post"] = 100000
+		#       write_protection: Regex for write protected files
+		#       e.g.: "*", "PageOne|PageTwo|^.*NonEditable"
+		#               HINT: to edit these protected pages, upload a .htaccess
+		#                     protected awki.cgi script with write_protection = ""
+		localconf["write_protection"] = ""
+		#   css: HTTP URL for external CSS file.
+		localconf["css"] = ""
+		#   always_convert_spaces: If true, convert runs of 8 spaces to tab automatical.
+		localconf["always_convert_spaces"] = 0
+		#       date_cmd: Command for current date.
+		localconf["date_cmd"] = "date '+%e %b. %G %R:%S %Z'"
+		#       rcs: If true, rcs is used for revisioning.
+		localconf["rcs"] = 0
+		#       path: add path to PATH environment
+		localconf["path"] = ""
+		#            --- default options ---
+
+		scriptname = ENVIRON["SCRIPT_NAME"]
+
+		if (localconf["path"])
+			ENVIRON["PATH"] = localconf["path"] ":" ENVIRON["PATH"]
+
+		#load external configfile
+		load_config(scriptname)
+
+		# PATH_INFO contains page name
+		if (ENVIRON["PATH_INFO"]) {
+			query["page"] = ENVIRON["PATH_INFO"]
+		}
+
+		if (ENVIRON["REQUEST_METHOD"] == "POST") {
+		if (ENVIRON["CONTENT_TYPE"] == "application/x-www-form-urlencoded") {
+				if (ENVIRON["CONTENT_LENGTH"] < localconf["max_post"])
+					bytes = ENVIRON["CONTENT_LENGTH"]
+				else
+					bytes = localconf["max_post"]
+		    cmd = "dd ibs=1 count=" bytes " 2>/dev/null"
+		    cmd | getline query_str
+		    close (cmd)
+			}
+			if (ENVIRON["QUERY_STRING"])
+				query_str = query_str "&" ENVIRON["QUERY_STRING"]
+		} else {
+			if (ENVIRON["QUERY_STRING"])
+				query_str = ENVIRON["QUERY_STRING"]
+		}
+
+		n = split(query_str, querys, "&")
+		for (i=1; i<=n; i++) {
+			split(querys[i], data, "=")
+			query[data[1]] = data[2]
+		}
+
+		# (IMPORTANT for security!)
+		query["page"] = clear_pagename(query["page"])
+		query["revision"] = clear_revision(query["revision"])
+		query["revision2"] = clear_revision(query["revision2"])
+		query["string"] = clear_str(decode(query["string"]))
+
+		if (!localconf["rcs"])
+			query["revision"] = 0
+
+		if (query["page"] == "")
+			query["page"] = localconf["default_page"]
+
+		query["filename"] = localconf["datadir"] query["page"]
+
+		#check if page is editable
+		special_pages = "FullSearch|PageList|RecentChanges"
+
+		if (query["page"] ~ "("special_pages")") {
+			special_page = 1
+		} else if (!localconf["write_protection"] || query["page"] !~ "("localconf["write_protection"]")") {
+			page_editable = 1
+		}
+
+
+		header(query["page"])
+
+		if (query["edit"] && page_editable)
+			edit(query["page"], query["filename"], query["revision"])
+		else if (query["save"] && query["text"] && page_editable)
+			save(query["page"], query["text"], query["string"], query["filename"])
+		else if (query["page"] ~ "PageList")
+			special_index(localconf["datadir"])
+		else if (query["page"] ~ "RecentChanges")
+			special_changes(localconf["datadir"])
+		else if (query["page"] ~ "FullSearch")
+			special_search(query["string"],localconf["datadir"])
+		else if (query["page"] && query["history"])
+			special_history(query["page"], query["filename"])
+		else if (query["page"] && query["diff"] && query["revision"])
+			special_diff(query["page"], query["filename"], query["revision"], query["revision2"])
+		else
+			parse(query["page"], query["filename"], query["revision"])
+
+		footer(query["page"])
+
+	}
+
+	# print header
+	function header(page) {
+		print "Content-type: text/html\n"
+		print "<html>\n<head>\n<title>" page "</title>"
+		if (localconf["css"])
+			print "<link rel=\"stylesheet\" href=\"" localconf["css"] "\">"
+		if (query["save"])
+			print "<meta http-equiv=\"refresh\" content=\"2,URL="scriptname"/"page"\">"
+		print "</head>\n<body>"
+		print "<h1>"localconf["img_tag"]
+		print "<a href=\""scriptname"/FullSearch?string="page"\">"page"</a></h1><hr>"
+	}
+
+	# print footer
+	function footer(page) {
+		print "<hr>"
+		if (page_editable)
+			print "<a href=\""scriptname"?edit=true&amp;page="page"\">Edit "page"</a>"
+		print "<a href=\""scriptname"/"localconf["default_page"]"\">"localconf["default_page"]"</a>"
+		print "<a href=\""scriptname"/PageList\">PageList</a>"
+		print "<a href=\""scriptname"/RecentChanges\">RecentChanges</a>"
+		if (localconf["rcs"] && !special_page)
+			print "<a href=\""scriptname"/"page"?history=true\">PageHistory</a>"
+		print "<form action=\""scriptname"/FullSearch\" method=\"GET\" align=\"right\">"
+		print "<input type=\"text\" name=\"string\">"
+		print "<input type=\"submit\" value=\"search\">"
+		print "</form>\n</body>\n</html>"
+	}
+
+	# send page to parser script
+	function parse(name, filename, revision) {
+		if (system("[ -f "filename" ]") == 0 ) {
+			if (revision) {
+				print "<em>Displaying old version ("revision") of <a href=\""scriptname"/" name "\">"name"</a>.</em>"
+				system("co -q -p'"revision"' " filename " | "localconf["parser"] " -v datadir='"localconf["datadir"] "'")
+			} else
+				system(localconf["parser"] " -v datadir='"localconf["datadir"] "' " filename)
+		}
+	}
+
+	function special_diff(page, filename, revision, revision2,   revisions) {
+		if (system("[ -f "filename" ]") == 0) {
+			print "<em>Displaying diff between "revision
+			if (revision2)
+				print " and "revision2
+			else
+				print " and current version"
+			print " of <a href=\""scriptname"/"page "\">"page"</a>.</em>"
+			if (revision2)
+				revisions = "-r" revision " -r" revision2
+			else
+				revisions = "-r" revision
+			system("rcsdiff "revisions" -u "filename" | " localconf["special_parser"] " -v special_diff='"page"'")         }
+	}
+
+	# print edit form
+	function edit(page, filename, revision,   cmd) {
+		if (revision)
+			print "<p><small><em>If you save previous versions, you'll overwrite the current page.</em></small>"
+		print "<form action=\""scriptname"?save=true&amp;page="page"\" method=\"POST\">"
+		print "<textarea name=\"text\" rows=25 cols=80>"
+		# insert current page into textarea
+		if (revision) {
+			cmd = "co -q -p'"revision"' " filename
+			while ((cmd | getline) >0)
+				print
+			close(cmd)
+		} else {
+			while ((getline < filename) >0)
+				print
+			close(filename)
+		}
+		print "</textarea><br />"
+		print "<input type=\"submit\" value=\"save\">"
+		if (localconf["rcs"])
+			print "Comment: <input type=\"text\" name=\"string\" maxlength=80 size=50>"
+		if (! localconf["always_convert_spaces"])
+			print "<br>Convert runs of 8 spaces to Tab <input type=\"checkbox\" name=\"convertspaces\">"
+		print "</form>"
+		print "<small><strong>Emphases:</strong> ''<em>italic</em>''; '''<strong>bold</strong>'''; '''''<strong><em>bold italic</em></strong>'''''; ''<em>mixed '''<strong>bold</strong>'''and italic</em>''<br><strong>Horizontal Rule:</strong> ----<br><strong>Paragraph:</strong> blank line<br><strong>Headings:</strong> -Title 1 ; --Title 2 ; ---Title 3<br><strong>Preformatted Text:</strong> *space*Text<br><strong>Lists:</strong> tab(s) and one of * bullets; 1 numbered items<br><strong>Links:</strong> JoinCapitalizedWords; url (http, https, ftp, gopher, mailto, news)</small>"
+	}
+
+	# save page
+	function save(page, text, comment, filename,   dtext, date) {
+		dtext = decode(text);
+		if ( localconf["always_convert_spaces"] || query["convertspaces"] == "on")
+			gsub(/        /, "\t", dtext);
+		print dtext > filename
+		if (localconf["rcs"]) {
+			localconf["date_cmd"] | getline date
+			system("ci -q -t-"page" -l -m'"ENVIRON["REMOTE_ADDR"] ";;" date ";;"comment"' " filename)
+		}
+		print "saved <a href=\""scriptname"/"page"\">"page"</a>"
+	}
+
+	# list all pages
+	function special_index(datadir) {
+		system("ls -1 " datadir " | " localconf["special_parser"] " -v special_index=yes")
+
+	}
+
+	# list pages with last modified time (sorted by date)
+	function special_changes(datadir,   date) {
+		localconf["date_cmd"] | getline date
+		print "<p>current date:", date "<p>"
+		system("ls -tlL "datadir" | " localconf["special_parser"] " -v special_changes=" localconf["show_changes"])
+	}
+
+	function special_search(name,datadir) {
+		system("grep -il '"name"' "datadir"* | " localconf["special_parser"] " -v special_search=yes")
+	}
+
+	function special_history(name, filename) {
+		print "<p>last changes on <a href=\""scriptname"/" name "\">"name"</a><p>"
+		system("rlog " filename " | " localconf["special_parser"] " -v special_history="name)
+
+		print "<p>Show diff between:"
+		print "<form action=\""scriptname"/\" method=\"GET\">"
+		print "<input type=\"hidden\" name=\"page\" value=\""name"\">"
+		print "<input type=\"hidden\" name=\"diff\" value=\"true\">"
+		print "<input type=\"text\" name=\"revision\" size=5>"
+		print "<input type=\"text\" name=\"revision2\" size=5>"
+		print "<input type=\"submit\" value=\"diff\">"
+		print "</form></p>"
+	}
+
+	# remove '"` characters from string
+	# *** !Important for Security! ***
+	function clear_str(str) {
+		gsub(/['`"]/, "", str)
+		if (length(str) > 80)
+			return substr(str, 1, 80)
+		else
+			return str
+	}
+
+	# retrun the pagename
+	# *** !Important for Security! ***
+	function clear_pagename(str) {
+		if (match(str, /[A-Z][a-z]+[A-Z][A-Za-z]*/))
+			return substr(str, RSTART, RLENGTH)
+		else
+			return ""
+	}
+
+	# return revision numbers
+	# *** !Important for Security! ***
+	function clear_revision(str) {
+		if (match(str, /[1-9]\.[0-9]+/))
+			return substr(str, RSTART, RLENGTH)
+		else
+			return ""
+	}
+
+	# decode urlencoded string
+	function decode(text,   hex, i, hextab, decoded, len, c, c1, c2, code) {
+
+		split("0 1 2 3 4 5 6 7 8 9 a b c d e f", hex, " ")
+		for (i=0; i<16; i++) hextab[hex[i+1]] = i
+
+		# urldecode function from Heiner Steven
+		# http://www.shelldorado.com/scripts/cmds/urldecode
+
+		# decode %xx to ASCII char
+		decoded = ""
+		i = 1
+		len = length(text)
+
+		while ( i <= len ) {
+		    c = substr (text, i, 1)
+			if ( c == "%" ) {
+				if ( i+2 <= len ) {
+					c1 = tolower(substr(text, i+1, 1))
+					c2 = tolower(substr(text, i+2, 1))
+					if ( hextab [c1] != "" || hextab [c2] != "" ) {
+						if ( (c1 >= 2 && c1 != 7) || (c1 == 7 && c2 != "f") || (c1 == 0 && c2 ~ "[9acd]") ){
+							code = 0 + hextab [c1] * 16 + hextab [c2] + 0
+							c = sprintf ("%c", code)
+						} else {
+							c = " "
+						}
+						i = i + 2
+				   }
+				}
+		    } else if ( c == "+" ) {    # special handling: "+" means " "
+			c = " "
+		    }
+		    decoded = decoded c
+		    ++i
+		}
+
+		# change linebreaks to \n
+		gsub(/\r\n/, "\n", decoded)
+
+		# remove last linebreak
+		sub(/[\n\r]*$/,"",decoded)
+
+		return decoded
+	}
+
+	#load configfile
+	function load_config(script,   configfile,key,value) {
+		configfile = script
+		#remove trailing / ('/awki/awki.cgi/' -> '/awki/awki.cgi')
+		sub(/\/$/, "", configfile)
+		#remove path ('/awki/awki.cgi' -> 'awki.cgi')
+		sub(/^.*\//, "", configfile)
+		#remove suffix ('awki.cgi' -> 'awki')
+		sub(/\.[^.]*$/,"", configfile)
+		# append .conf suffix
+		configfile = configfile ".conf"
+
+		#read configfile
+		while((getline < configfile) >0) {
+			if ($0 ~ /^#/) continue #ignore comments
+
+			if (match($0,/[ \t]*=[ \t]*/)) {
+				key = substr($0, 1, RSTART-1)
+				sub(/^[ \t]*/, "", key)
+				value = substr($0, RSTART+RLENGTH)
+				sub(/[ \t]*$/, "", value)
+				if (sub(/^"/, "", value))
+					sub(/"$/, "", value)
+				#set localconf variables
+				localconf[key] = value
+
+			}
+		}
+	}
+
+----
+2. awki.conf - setting options for your server and wiki
+----
+
+	################################################################################
+	# awki.conf - example configfile for awkiawki
+	# $Id: awki.conf,v 1.2 2003/06/19 10:32:49 olt Exp $
+	################################################################################
+	# Copyright (c) 2002 Oliver Tonnhofer (olt@bogosoft.com)
+	# See the file `COPYING' for copyright notice.
+	################################################################################
+
+	## The first option contains the default value.
+	## Surrounding doubble-quotes are optional.
+
+	## default_page:
+	## Name of the default_page.
+	# default_page = "FrontPage"
+	# default_page = "AwkiAwki"
+
+	## img_tag:
+	## HTML img tag for picture in page header.
+	img_tag = <img src="/brain.png" width="121" height="139" align="left">
+
+	## datadir:
+	## Directory for raw pagedata (must be writeable for the script).
+	datadir = "./data/"
+
+	## css:
+	## HTTP URL for external CSS file
+	css = "/main.css"
+	# css = "http://mysite.domain/mystylesheet.css"
+
+	## rcs:
+	## If true, RCS is used for revisioning.
+	## This will enable PageHistory!
+	## HINT: Add a RCS directory in your datadir to save the
+	##  RCS Files in a separate directory.
+	# rcs = 0
+	rcs = "true"
+
+	## path:
+	## add path to PATH environment
+	## (path is added to the left side of $PATH)
+	#path = ""
+	#path = "/sw/bin:/usr/local"
+
+	## show_changes:
+	## Number of changes listed by RecentChanges.
+	# show_changes = 10
+	show_changes = 25
+
+	## write_protection:
+	## Regex for write protected files.
+	## e.g.: "*", "PageOne|PageTwo|^.*NonEditable"
+	## HINT: To edit these protected pages, upload a .htaccess
+	##  protected awki.cgi script with write_protection = ""
+	# write_protection = ""
+	# write_protection = ^AwkiAwki$|ReadOnly$
+
+	## always_convert_spaces:
+	## If true, convert runs of 8 spaces to tab automatical.
+	# always_convert_spaces = 0
+
+	## date_cmd:
+	## Command for current date.
+	date_cmd = "date '+%e %b. %G %R:%S %Z'"
+
+	## parser:
+	## Parsing script.
+	parser = "./parser.awk"
+
+	## special_parser:
+	## Parser for special_* functions.
+	special_parser = "./special_parser.awk"
+
+	## max_post:
+	## Bytes accepted by POST requests (to avoid DOS).
+	max_post = 500000
+
+----
+3. parser.awk - parsing pages you've just created
+----
+
+	#!/usr/bin/awk -f
+	################################################################################
+	# parser.awk - parsing script for awkiawki
+	# $Id: parser.awk,v 1.6 2002/12/07 13:46:45 olt Exp $
+	################################################################################
+	# Copyright (c) 2002 Oliver Tonnhofer (olt@bogosoft.com)
+	# See the file `COPYING' for copyright notice.
+	################################################################################
+
+	BEGIN {
+		list["ol"] = 0
+		list["ul"] = 0
+		scriptname = ENVIRON["SCRIPT_NAME"]
+		FS = "[ ]"
+
+		cmd = "ls " datadir
+		while ((cmd | getline ls_out) >0)
+			if (match(ls_out, /[A-Z][a-z]+[A-Z][A-Za-z]*/) && substr(ls_out, RSTART + RLENGTH) !~ /,v/) {
+				page = substr(ls_out, RSTART, RLENGTH)
+				pages[page] = 1
+			}
+		close(cmd)
+	}
+
+	# register blanklines
+	/^$/ { blankline = 1; next; }
+
+	# HTML entities for <, > and &
+	/[&<>]/ { gsub(/&/, "\\&amp;"); gsub(/</, "\\&lt;"); gsub(/>/, "\\&gt;"); }
+
+	# generate links
+	/[A-Z][a-z]+[A-Z][A-Za-z]*/ ||
+	/(https?|ftp|gopher|mailto|news):/ {
+		tmpline = ""
+		for(i=1;i<=NF;i++) {
+			field = $i
+			# generate HTML img tag for .jpg,.jpeg,.gif,png URLs
+			if (field ~ /https?:\/\/[^\t]*\.(jpg|jpeg|gif|png)/                         && field !~ /https?:\/\/[^\t]*\.(jpg|jpeg|gif|png)''''''/) {
+				sub(/https?:\/\/[^\t]*\.(jpg|jpeg|gif|png)/, "<img src=\"&\">",field)
+			# links for mailto, news and http, ftp and gopher URLs
+			}else if (field ~ /((https?|ftp|gopher):\/\/|(mailto|news):)[^\t]*/) {
+				sub(/((https?|ftp|gopher):\/\/|(mailto|news):)[^\t]*[^.,?;:'")\t]/, "<a href=\"&\">&</a>",field)
+				# remove mailto: in link description
+				sub(/>mailto:/, ">",field)
+			# links for awkipages
+			}else if (field ~ /(^|[[,.?;:'"\(\t])[A-Z][a-z]+[A-Z][A-Za-z]*/ && field !~ /''''''/) {
+				match(field, /[A-Z][a-z]+[A-Z][A-Za-z]*/)
+				tmp_pagename = substr(field, RSTART, RLENGTH)
+				if (pages[tmp_pagename])
+					sub(/[A-Z][a-z]+[A-Z][A-Za-z]*/, "<a href=\""scriptname"/&\">&</a>",field)
+				else
+					sub(/[A-Z][a-z]+[A-Z][A-Za-z]*/, "&<a href=\""scriptname"/&\">?</a>",field)
+			}
+			tmpline = tmpline field OFS
+		}
+		# return tmpline to $0 and remove last OFS (whitespace)
+		$0 = substr(tmpline, 1, length(tmpline)-1)
+	}
+
+	# remove six single quotes (Wiki''''''Links)
+	{ gsub(/''''''/,""); }
+
+	# emphasize text in single-quotes
+	/'''/ { gsub(/'''('?'?[^'])*'''/, "<strong>&</strong>"); gsub(/'''/,""); }
+	/''/  { gsub(/''('?[^'])*''/, "<em>&</em>"); gsub(/''/,""); }
+
+	#headings
+	/^-[^-]/ { $0 = "<h2>" substr($0, 2) "</h2>"; close_tags(); print; next; }
+	/^--[^-]/ { $0 = "<h3>" substr($0, 3) "</h3>"; close_tags(); print; next; }
+	/^---[^-]/ { $0 = "<h4>" substr($0, 4) "</h4>"; close_tags(); print; next; }
+
+	# horizontal line
+	/^----/ { sub(/^----+/, "<hr>"); blankline = 1; close_tags(); print; next; }
+
+	/^\t+[*]/ { close_tags("list"); parse_list("ul", "ol"); print; next;}
+	/^\t+[1]/ { close_tags("list"); parse_list("ol", "ul"); print; next;}
+
+	/^ / {
+		close_tags("pre");
+		if (pre != 1) {
+			print "<pre>\n" $0; pre = 1
+			blankline = 0
+		} else {
+			if (blankline==1) {
+				print ""; blankline = 0
+			}
+			print;
+		}
+		next;
+	}
+
+	NR == 1 { print "<p>"; }
+	{
+		close_tags();
+
+		# print paragraph when blankline registered
+		if (blankline==1) {
+			print "<p>";
+			blankline=0;
+		}
+
+		#print line
+		print;
+
+	}
+
+	END {
+		$0 = ""
+		close_tags();
+	}
+
+	function close_tags(not) {
+
+		# if list is parsed this line print it
+		if (not !~ "list") {
+			if (list["ol"] > 0) {
+				parse_list("ol", "ul")
+			} else if (list["ul"] > 0) {
+				parse_list("ul", "ol")
+			}
+		}
+		# close monospace
+		if (not !~ "pre") {
+			if (pre == 1) {
+				print "</pre>"
+				pre = 0
+			}
+		}
+
+	}
+	function parse_list(this, other) {
+
+		thislist = list[this]
+		otherlist = list[other]
+		tabcount = 0
+
+		while(/^\t+[1*]/) {
+			sub(/^\t/,"")
+			tabcount++
+		}
+
+		# close foreign tags
+		if (otherlist > 0) {
+			while(otherlist-- > 0) {
+				print "</" other ">"
+			}
+		}
+
+		# if we are needing more tags we open new
+		if (thislist < tabcount) {
+			while(thislist++ < tabcount) {
+				print "<" this ">"
+			}
+		# if we are needing less tags we close some
+		} else if (thislist > tabcount) {
+			while(thislist-- != tabcount) {
+				print "</" this ">"
+			}
+		}
+
+		if (tabcount) {
+			sub(/^[1*]/,"")
+			$0 = "\t<li>" $0
+		}
+
+		list[other] = 0
+		list[this] = tabcount
+
+	}
+
+----
+4. special_parser.awk - parsing diffs if you enabled rcs
+----
+
+	#!/usr/bin/mawk -f
+	################################################################################
+	# special_parser.awk - parsing script for awkiawki
+	# $Id: special_parser.awk,v 1.5 2003/07/07 11:22:55 olt Exp $
+	################################################################################
+	# Copyright (c) 2002 Oliver Tonnhofer (olt@bogosoft.com)
+	# See the file `COPYING' for copyright notice.
+	################################################################################
+
+	BEGIN {
+		scriptname = ENVIRON["SCRIPT_NAME"]
+		if (special_changes)
+			print "<table>"
+		if (special_history) {
+			# use the power of awk to split the information of rlog
+			RS = "----------------------------\n"
+			FS = "\n"
+			print "<table>\n<tr><th>version</th><th>date</th><th>ip</th><th>comment</th>"
+			print "<th>view version</th><th>edit version</th><th>diff to current</th></tr>"
+		}
+		if (special_diff)
+			print "<pre>"
+	}
+
+	special_changes && $9 ~ /^[A-Z][a-z]+[A-Z][A-Za-z]*$/ {
+		filenr++
+		print "<tr><td>" generate_link($9) "</td><td>"$7" "$6" "$8"</td></tr>"
+		if (filenr == special_changes)
+			exit
+	}
+
+	special_index && /^[A-Z][a-z]+[A-Z][A-Za-z]*$/ {
+		print generate_link($0) "<br>"
+	}
+
+	special_search && /[A-Z][a-z]+[A-Z][A-Za-z]*$/ {
+		sub(/^.*[^\/]\//, "")
+		print generate_link($0) "<br>"
+	}
+
+	special_history && NR > 1 {
+		#pick revision number
+		match($1, /[1-9]\.[0-9]+/)
+		revision = substr($1, RSTART, RLENGTH)
+
+		#split the double-semicolon separated information line
+		split($3, sp_array, ";;")
+		ip_address = sp_array[1]
+		date = sp_array[2]
+		comment = sp_array[3]
+
+		if (NR == 2)
+			revision = "current"
+
+		print "<tr align=center><td>"revision"</td><td>"date"</td><td>"ip_address"</td><td>"comment"</td>"
+		print "<td><a href=\""scriptname"/"special_history
+		if (NR > 2)
+			print "?revision="revision
+		print "\">view</a></td>"
+		print "<td><a href=\""scriptname"/?edit=true&amp;"
+		if (NR >2)
+			print "revision="revision"&amp;"
+		print "page="special_history"\">edit</a></td>"
+		if (NR >2)
+			print "<td><a href=\""scriptname"/?diff=true&amp;page="special_history"&amp;revision="revision"\">diff</a></td>"
+		print "</tr>"
+
+	}
+
+	special_diff && (NR >2) {
+		if (/^\+/)
+			print "<span class=\"new\">"$0"</span>"
+		else if (/^\-/)
+			print "<span class=\"old\">"$0"</span>"
+		else
+			print $0
+
+	}
+
+	END {
+		if (special_changes || special_history)
+			print "</table>"
+		if (special_diff)
+			print "</pre>"
+	}
+
+	function generate_link(string) {
+		sub(/[A-Z][a-z]+[A-Z][A-Za-z]*/, "<a href=\""scriptname"/&\">&</a>", string)
+		return(string)
+	}
+

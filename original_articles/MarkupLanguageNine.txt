@@ -1,0 +1,76 @@
+MarkupLanguage from JoeArmstrong
+
+* http://www.sics.se/~joe/ml9/doc.html
+
+An ML9 document is simply a list of tagged records (called 'chunks'). A document looks something like:
+ @foo Data starts here
+ and continues on this line
+ @bar {baz=true, color={r=241, g=165, b=192}} this tag
+ includes meta-data.
+ @tag Hello
+ World
+ @tag {data="Hello\nWorld" }
+ 
+The last two records, here, have the same meaning. The 'data' field is usually an implicit entry in the record, but may be specified explicitly. The meta-data can be rich, structured data, while the data is always a flat string. In the (very unlikely) case you need '@' as the first character in your data, you can use the 'data=' format. 
+
+The meaning of an ML9 document obviously depends on who is looking. You could have tags such as '@para' to mark up a document. You could use records as entries for a relational model database (with tag indicating table name). You could use tags such as '@java' and '@make' and '@erlang' to indicate which tool should process the record.
+
+I like ML9 better than XML for a lot of reasons:
+* ML9 is much less verbose. It also keeps you close to the left-edge of the document, so you aren't wasting as much horizontal whitespace. 
+* ML9 is easy to ''stream'' because the top-level is simply a list of records. E.g. you could have one program producing records and another program consuming them.
+* ML9 has rich metadata fields where XML has flat attributes. In XML, we're forced to pollute the data field or use a separate parser on the attributes if we need complex metadata. In ML9, data is flat, but since meta-data is structured you could always use a 'rich_data' attribute if you need one.
+
+ML9 was written in Erlang, and with Erlang in mind. So the 'rich structure' is basically Erlang symbols, strings, numbers, characters, lists, tuples, and records (but not functions). However, it should be easy to parse from any language.  
+
+XML does have a few advantages over ML9:
+* XML has a standardized schema language. (This wouldn't be difficult to create for ML9, but it doesn't exist today.)
+* XML has richer structure than ML9. ML9 has before/after (one dimension). Once you're inside the toplevel object, XML has before/after and inside/outside (two dimensions). We could attempt to use Pascal style '@if ... @fi', but the parser would be unaware, and the nested records would be butted up against the left edge of the file, which would grow ugly.
+
+I actually believe the simplistic structure of ML9 is mostly to its advantage, for the following reasons:
+* parsers will generally be simpler... faster, too, once they reach the maturity of XML parsers.
+* no competition with alternative mechanisms for expressing rich relationships between records. 
+
+---------------------
+
+'''Logic Structure for ML9'''
+
+The 'alternative mechanisms' I'm imagining are more closely related to LogicProgramming and RelationalModel - i.e. relating records via shared values or keys. Structure is then achieved by ''joins'' between records. One can express very rich relationships multi-dimensional using these alternative models. ML9 is based in Erlang, uses Erlang values in those structured data records. Erlang uses logic variables to associate different parts of the computation. Why not extend that feature into the markup? 
+
+Well, PrincipleOfLeastPower tells us we don't want our markups to turn into full languages. But the limit on how variables are used is really up to the target language. At the very least, they could serve as relational 'keys' within the scope of the ML9 file. More broadly, they could also serve as names for file streams and active objects and so on that cannot be represented as values. Armstrong's page has an example of '@java' and '@erlang' in a single file, but the relationship between them is unclear - i.e. do we want one to talk to the other? or are they just alone in the crowd? Variables in the metadata could allow a tool to build a communications bridge between them.
+
+As an expansion of this idea: we could also use variables in the tag place, such as: @Foo. This would allow us first-class tags/commands/etc. This might be interpreted as syntactic sugar for something like @apply {f=Foo, ... }. (Though, just as easily, you could treat the tag as the syntactic sugar, e.g. {tag=erlang, data="..."}.)
+
+Logical relationships are rich enough that we might reasonably decide to ''ignore'' ML9's before/after relationship as ugly noise from serialization, and treat the records as commutative - i.e. as a multiset. A step more declarative, one might also ensure the records are idempotent, such that duplicates can be dropped. Rather than records as a stream of sequential commands related by position, we use the records as a set of declarations related only by logic - much more declarative than XML.  
+
+''If you treat ML9 as a set of records, rather than a list, could you still do stream processing? Or do you lose that advantage?''
+
+Well, you can stream sets easily enough. But you might not be able to process them right away, due to unknown dependencies on later elements. With a list, you're assuming you can process each element sequentially, which constrains dependencies between elements. We might need to do the same when streaming set - but more explicitly. For example, we could send an explicit '@frame' chunk on the stream to isolate dependencies or to drop old variables. In this case, the order of the @frame chunk would matter, but (unless you violate the framing) only for performance. Our semantics could still be declarative.
+
+-------------------
+
+'''ML9 for Configuration?'''
+
+I'm thinking I'll give ML9 a try as a declarative configuration language for building applications. Each record invokes a service with some parameters. ... After hammering out a bit of design, it seems ML9 is missing something. First, I really need ''two'' sets of structured data per entry - one for the controller (which hooks services together), and one for the service (or service adaptor) so it can receive flexible input. There are various ways to do this in ML9. Consider options:
+ 
+ @foo {id="bob", window={0,0,100,100}, a=1, b=2, c=3} Data here.
+ @foo {id="bob", window={0,0,100,100}, args={a=1,b=2,c=3}} Data here.
+ @foo {meta={id="bob", window={0,0,100,100}}, a=1,b=2,c=3} Data here.
+ 
+The first option is bad due to potential namespace conflicts if I ever need to extend the set of names used by the controller ('id' and 'window' for now, but why not 'a' later?). The second option is bad because 'args' is further away from the data, and it isn't obvious what it would mean if 'args' was something other than a record or had its own field called 'data'. The third option is okay, but feels verbose and ugly because I'll be adding that 'meta' field to a lot of different entries. So I'm thinking I'll modify ML9 with a dose of SyntacticSugar - squishing in '{{' becomes same as '{meta={', such that the third option can be expressed as:
+ 
+ @foo {{id="bob", window={0,0,100,100}}, a=1, b=2, c=3} Data here.
+ 
+For consistency, I may allow this to any number of levels, though it needs to be in the opening braces:
+ 
+ @foo {{{coffee=ok}, tea=better}, cappucino=best} Data here.
+ @foo {meta={meta={coffee=ok}, tea=better}, cappucino=best} Data here.
+
+The second change is much bigger, but I described it above - using variables to relate elements. Using variables is useful because they might represent pipes or protocols rather than simple values. For example, I might use:
+ 
+ @load {{result=F, type=fstream, lazy=true},file="foo.txt"}
+ @bar {data=F}
+
+And this might have a meaning similar to 'bar < foo.txt' in bash. 
+
+Bash certainly wins in tersity for this simplistic example, but I'm aiming to achieve clarity and simplicity for much more complex patterns. It doesn't take much more before I start pulling ahead - i.e. I could duplicate the stream to two consumers by adding '@baz {data=F}'. My aim, though, is configuring multiple windows and protocols and databases and peer-to-peer services to work pluggably and cohesively. Bash simply doesn't scale for that. 
+

@@ -1,0 +1,94 @@
+...in some VirtualMachine''''''s.
+
+''[Voting on JavaDesignFlaws page.]''
+
+In certain virtual machines, the amount of overhead is absurdly large. This is due to a) the type descriptor, b) EveryObjectIsaMonitor, and c) the GarbageCollector tags each object with another word of data, and partially just because (it seems) very little thought went into reducing this cost.
+
+In the KVM (virtual machine for the Palm OS platform), it appears (though I do not have hard data) that this cost is reduced substantially, so it clearly can be done. Just how large is this cost? Some data for the various virtual machines (c1.2.2) can be found at http://www.javaworld.com/javaworld/jw-11-1999/jw-11-performance.html.
+
+Why is this so unacceptable? Consider a simple object, like a Point. This example conceivably contains 8 bytes of data; an integer each for X and Y position. We may expect an array of a million Points to take 8,000,000 bytes, then. On the other hand, if we recognize that all classes in Java must carry around a vtable and that EveryObjectIsaMonitor and that garbage collection needs to store information, this baloons to 20MB for our array. In reality, though, this array may take over 35MB! This is very, very wasteful.
+
+''I ran a test where I put 1 million instances of the java.awt.Point object into an Array''''''List. The actual size of the Array was 22515712 bytes or 21.988 Mb. This is closer to your estimate of 20Mb than 35Mb. What VM did you use for your tests? Did you run several or only one? I have found that Sun's JVM performs well pretty consistently even with arrays of 10 million objects.''
+
+''I also ran a test, with a million instances of a homebrew Point class consisting of two int fields; i measured the memory use at 16 bytes per object, which implies an overhead of 8 bytes. I did this with Sun's 1.4.1_01 client VM on SPARC Solaris. -- TomAnderson''
+
+How can this be fixed? Clearly, this objection is most concerned with small, numerous objects, where the costs accumulate. It seems that what the JavaLanguage needs is something like CeeLanguage's struct type. Basically, a way to define data objects, like Point above, that have no behaviour (methods) associated with them, have all public members, and do not have the unnecessary overheads described above. Because there are no overridable behaviours, a vtable is not needed. Because all variable assignments in Java are atomic, the monitor word is not needed. All that seems to be needed is the tag for the GarbageCollector. ''If you allow user-defined primitive types, then these can have methods (not just members): but no inheritance (well, no interface-polymorphism -- implementation-inheritance would be fine) and no GC. They'd behave like primitives, requiring BoxingConversions, etc., to use them as objects. It would not be possible to make references to them.''
+
+''(EricJablow points out that assignments and references to long and double variables are not guaranteed to be atomic.)''
+
+The problem with this 'obvious' solution is that it goes against the grain of the JavaLanguage. In Java, everything is a class. This is why JavaLostEnumeratedTypes to begin with; having another top level keyword (enum) was considered too confusing. However, it seems that one of the conclusions we can draw from the list of JavaDesignFlaws is that a certain group of programmers feel that at least the following top-level structures must exist to have a 'complete' language:
+
+* class
+* enum
+* struct
+
+''JavaIdioms presents several ways of working around (or ignoring) the lack of support for these keywords...''
+
+Unfortunately, it's far too late to incorporate any of these ideas into the JavaLanguage, and as such, we've all come up with different ways of dealing with these problems. Unfortunately, these are often hackish. For example, instead of having an array of one million Point objects, we might have an array of two million integers (ints being immune from the object overhead, not being objects). What other ways have people found to deal with this, short of buying more memory?
+
+''Declare everything final, and then hope the implementation is clever enough to optimise out all the indirection''
+
+The JavaIdioms CrossSection and EviscerateParameters aim to reduce the overhead of storing many live objects.
+
+''Also, could you use the FlyweightPattern to get around this problem? (I can't speak from personal experience 'cause I don't use Java anymore.) -- francis''
+
+Yes: A common pattern in graphics libraries (which work with large arrays of vectors of unboxed floats, for example) is to have a class which represents a cursor in to the array. The cursor class wraps the array and provides a "current" vector pointer with accessor functions for reading or writing through to the underlying array. This way you never actually allocate a ton of Vector objects.
+
+----
+What about SmalltalkLanguage, where even integers carry this baggage?
+
+''The SmalltalkVirtualMachine has traditionally had an optimization: Integers in the range of +/-16K are represented as their integer value. Values beyond that range are pointers to first-class object instances. The Smalltalk engine automatically promotes 2-byte integers to objects and demotes them back -- behind the scenes, without your knowledge. So, Smalltalk integers are first-class objects, from the programmer's perspective, but are implemented very efficiently in the most common cases. You get 29 bits of Integer (+ 3 bits of tag) in ParcPlace Smalltalk (a.k.a. VisualWorks). LispLanguage implementations that have fixnums and bignums use similar strategies.''
+
+----
+Interestingly enough Microsoft's CommonLanguageRuntime explicitly supports structs. See Also CrossSection.
+
+''Q: Is there data on the space efficiency of the CLR?''
+
+A: CLR reference types have a pointer to a VTable, and an index into a cache of synchronization blocks for locking. So, 8 bytes (on 32 bit platforms) AFAIK.  The Point example above would be best handled by a value type.
+
+----
+'''Conspiracy Theory'''
+
+Intel secretly pushes OO and Java in order to sell beefier machines.
+
+----
+''The problem with this 'obvious' solution is that it goes against the grain of the JavaLanguage. In Java, everything is a class.''
+
+But no. "float" isn't a class, "int" isn't a class. In fact, in Java, references are classes and values are not. The suggested "struct" type explicitly has value-semantics, so it shouldn't be ''that'' confusing.
+
+An issue I might have with it is that it mixes a few orthogonal features together:
+
+* ReferenceSemantics vs. ValueSemantics
+
+If we say that an object has value semantics, we basically mean that it is cloned upon assignment. When cloning is expensive, languages usually provide a way to prevent cloning. In CeePlusPlus, you would use CallByReference (or you'd pass a pointer, but that's ''obviously'' incompatible with TheJavaWay).
+
+When an object has ValueSemantics, it is usually possible to allocate its storage within another object, rather than allocating it storage by itself. This means that the overhead associated with the memory manager doesn't exist for that object. However, if references to value types were permitted, then GarbageCollection would be more complex since the collector would need to be able to take a pointer to a subobject and find its ultimate container.
+
+One approach to giving a type ValueSemantics would be to have it extend a new type which has value semantics.
+
+  class Point extends java.lang.Structure
+Another might be to use a marker interface:
+
+  class Point implements java.lang.Unaliasable
+Or it could not be a feature of the type at all, but the variable:
+
+  value Point p;
+* Polymorphism vs. No polymorphism
+
+All JavaLanguage classes must have a vtable, because they all derive from Object and Object contains non-final member functions.
+
+For a class to be able to lack a vtable, it would have to not derive from Object, or any other class with non-final member functions. One solution could be to have the Point extend a new class which is the superclass of Object, and which contains no non-final member functions:
+
+  class Point extends java.lang.Value
+I don't ''think'' this can be done with an interface.
+
+* Synchronizable vs. Non-synchronizable
+
+Some people think that there should be a Synchronizable interface. Given that there isn't, perhaps an Unsynchronizable interface would serve.
+
+  class Point extends Value implements java.lang.Unsynchronizable
+  {
+    public float x, y;
+  };
+----
+CategoryJava

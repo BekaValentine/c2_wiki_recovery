@@ -1,0 +1,388 @@
+== Introduction ==
+
+This is an overview of the message logging architecture as used by Trantor Standard Systems Inc. It is referenced in another post and I wanted it to be a reasonable sketch to show what I mean when I refer to 'message logging'.
+
+This is the best way for us. However, it is not being held out as *the* best way, if there is such a thing. It is *a* way, not *the* way. 
+
+Note that this is internal documentation from the company's wiki and is updated from time to time. There may be errata, but this describes the core of a system that works well in production.
+
+== Principles ==
+
+=== Compatibility ===
+
+* Logging should *allow* rich function in both sources and sinks, but not require it. 
+
+* Message logging should be compatible with the existing system. It should be a superset with an 'envelope' within which a less elaborate logging system can fit. 
+
+* Logging should allow tracking using tools which scan the input looking for strings which match selection criteria. 
+
+* Logging should be 'agnostic' with respect to language, development environment, operating systems, etc. Virtually all systems should be able to act as both 'source' (emitter) and 'sink' (logger, storage, filter, agent, etc.). This should include, to some extent, human beings as agents able to examine and act upon 'raw' logs. In practice, many logs are still viewed in simple text editors and a real-world production logging system should be capable of working that way. 
+
+* Logging should be 'generic' in that it does not rely upon any but the most basic language features (for instance, serialization of objects as a specification would rule out many languages in production). It is anticipated that the character set would be ASCII 7-bit characters capable of traversing mail systems. However, it should be compatible with operating system still using other character sets such as EBCDIC. Unicode presents challenges in that it requires that participants that are 'sinks' be able to deal with wide characters. Since this is relatively low-level, ASCII is encouraged. However, in principle, sources could emit wide characters. Sinks that cannot deal with wide characters would suffer, but in some instances this may be a non-issue. 
+
+* Logging should be extensible and allow great detail, but also allow simple messages to be emitted.
+
+=== Extensibility ===
+
+Logging should allow the applications to give meaningful messages of all types. This should be such that placeholders exist for most common requirements but that not all such information is required. Message structure should be compatible with the following types of messages: 
+
+* debug
+* tracing
+* profiling
+* information
+* warning
+* error
+* fatal diagnostics
+
+Logging messages should allow parsing into a database table.  Their APIs should be ‘wrappable’ such that direct API substitutions should allow logging calls to go into database tables or other APIs downstream.
+
+Logging messages should allow subsequent implementation of a data model which allows trouble-shooting of systems, applications, libraries etc.  It should also allow problem reporting and problem tracking to be assigned to the appropriate places.  It should not be incompatible with automating some types of trouble-shooting.
+
+=== Appropriate use of space ===
+
+Log messages should allow applications to log as much or as little information as they require, but limit disk space usage to the amount required by the message.  For instance, some applications may require frequent small messages for tracing or performance profiling.  Other applications may require infrequent but very detailed information as to the state of the system (for instance for fatal error messages).  For this reason, our message structure uses delimited fields rather than fixed length fields.
+
+== Phasing in our message formatting ==
+
+In the real world, most non-trivial systems will implement some level of logging. Even simple messages to a console are arguably 'logging'. Our message structure allows for systems to continue emitting old style messages as a sub-set of the new message structure.  
+
+Old style messages must be 'wrapped' to emit the syntactic structure of the message logging system so that it can take advantage of standard tools, participate in aggregated logs and hopefully move forward to using the logging proper. 
+
+For instance, the well-known Unix utility 'grep', emits the following message if it is asked to scan a non-existent file: 
+
+ grep: t:\BogusMissingExampleFile: No such file or directory
+
+This is reasonable on its face, but with surrounding information we could find out if it is a permission error (and why),  or if it has been passed a bad file name (well, it has) and why. In this particular instance, this is real output from a real run and the offending cause is a permission error that does not allow the running process to connect to a network device and hence the entire device does not exist. Grep is pretty good as utilities go, but it can't help much with an error like this. It does not know the genesis of the error itself. More information is needed. Were it to participate in a logging regime with its caller, its log record would sit within the context of the permission failure, we would know the resource being requested, the requesting enitity(ies) and the context within which it was done. In some instances, it might require a fix to raise permissions. In others, it might require a fix to prevent that user from accessing that function to begin with. 
+
+If that message is wrapped to dovetail into the existing system, surrounding log information could help isolate the precise problem with a minimum of fuss.
+
+== High Level Structure ==
+At a high level, the new message structure is a super-set of older existing message structures.  The new message structure contains information as to the time the message was logged, the source of the message, the environment surrounding the sender and the message itself.
+
+=== Legacy Message Structure ===
+
+Legacy message structure might be free form text.
+
+=== New Message Structure ===
+
+Our logging message structure is as follows:
+[Date Time][Source][Environment][Msg]
+
+== Structure Detail ==
+
+The portions of the messages are grouped with square brackets and sub-structure is delimited by the pipe character '|'.  A parser can thus be built with logic similar to:
+
+ if like "[%][%][%][%]" then
+     (new-style)
+ else
+     (old-style)
+ end if
+
+Individual sub-structures can be simply parsed by scanning for the pipe symbol.  An escape character '\' is used to suppress parsing of literal values for '|', '[' and ']'.
+
+=== [Date Time] ===
+
+The Date/Time format should be consistent across environments: [yyyy-mm-dd hh:mm:ss].  This should be relatively easy to emit in most languages. 
+
+If sub-second information is required, it should be placed in the message field. It is out of scope for this document, but for high-speed, real-time, time-critical operations, message prep should fall outside the call and the only things in the call should be to supply pointers to relevant information and timing information. In theory, it could look like this: 
+
+ /* Time Critical Call */
+ /* Prep serialized message with call tag and sequence: */
+
+ PrepMessageWithAllCurrentInfo();
+ SendAsynchMessage( tagStart, 0 );
+ SendAsynchMessage( tagStatusA, 1 ); 
+ SendAsynchMessage( tagStatusB, 2 );
+ SendAsynchMessage( tagEnd, 1 );
+ FlushMessage();
+
+Time in the above would be limited to call overhead (it would return instantly while another thread dealt with getting time stamps and forming log messages). Call overhead could be eliminated by reducing the 'call' to an update to a write-only queue that is processed on a separate thread. This would allow time measures whose thresholds fall below the time it takes to form log messages. 
+
+The point being made here is that whenever possible, logging should be used and it is almost always possible.
+
+=== [Source] ===
+
+The source portion of the message includes information which identifies the message sender.  It can include System, Application, Component, SubComponent, UnitRef, StateRef as described in the sections below.  Sample source string:
+
+[CTPRODS:DSERVERS:TDATSRV|connector|commlib|comq::htget()|/src/dserver/commlib/comq.c|221,RemoteHost=MyPrivateProxy.net,PortNum=8080,URL="http://SuspectHost.com/index.html",phErrCode=404]
+
+The above has: 
+
+* System -- CTPRODS:DSERVERS:TDATSRV -- Client Products, Data Servers, Transfer Data Server
+* Application -- connector -- Connector service daemon
+* Component -- commlib -- Communications Libarry
+* SubComponent -- comq::htget() -- Class comq's htget method
+* UnitRef --/src/dserver/commlib/comq.c -- source file 'comq.c
+* StateRef:
+** 221 -- at line 221 of the source file
+** RemoteHost=MyPrivateProxy.net -- state info specific to that context
+** PortNum=8080 -- state info specific to that context
+** URL="http://SuspectHost.com/index.html" -- state info specific to that context
+** phErrCode=404 -- state info specific to that context
+ 
+* Note that StateRef reference information is specific to the context. In code, you can provide any information required to establish the 'pertinent state' of the message sender. 
+* Note that 'System' means the product, or product group, not the actual machine sending the message. 
+
+==== System ====
+
+This is the running system and/or sub-system of which the sender is a part.  For instance, the User interface might be called ‘TTR’, middle-tier components might be called ‘TTR_MTR’ and the server system might be called ‘TDATSRV’.
+
+For related programs built on our systems, 'SYSTEM' often includes the 'project group'. For instance, some things are internal tools, some related to company pursuits such as charity, etc. In each case, the system reveals that part of its identity. 
+
+This is the top level of the 'Source' information and it must be sufficient to broadly identify the area within which the other source information can be found.
+
+==== Application ====
+
+This is the specific application that sent the message.  In the case of batch programs or middle-tier servers it might be the actual name of the executable file.
+
+==== Component ====
+
+This is the portion of the sender which corresponds to major sub-systems of executable files such as libraries or dlls.
+
+==== SubComponent ====
+
+This is the portion of a program which would correspond to a function call or an instance of an object or both (i.e. myclass::localmethod()).
+
+==== UnitRef ====
+
+This is the portion of the sender which corresponds to it’s source code.  In the case of a C program, it would be the name of the source file. Should the message indicate a need to change the software, this helps to locate and identify the source entity that is used to build that part of the system. 
+
+==== StateRef ====
+
+This is specific information related to the UnitRef above.  In the case of a source file, it might correspond to the line number of the file and supporting diagnostic information. Supporting diagnostic information could be complete state information, a stack dump, variable values, etc.
+
+=== [Environment] ===
+
+The environment section is a place-holder for information about the running environment.  Two elements are generally used on most of our systems: Host and user.  Sample environment string:
+[subdom.somedom.com|tssopid1]
+
+==== Host ====
+
+Host is the current host environment.  It might be a server name, domain name or similar information. In the above example it is an Internet domain name (fake as of this writing). However, it could be Domain/Host in a Windows environment (MYDOMAIN:\\MYHOST86). It could be include cluster information, IP info, etc. The purpose of this field is to narrow down the physical locale from which the message was issued. From the cloud, this would be a 'virtual' locale in a sense, but this information should still help to locate the issuing device(s). 
+
+==== User ====
+
+User is the user name under which the application is running.  In the case of back-end and middle-tier components these should be client thread IDs (if available), rather than role-IDs. As above, there are a number of things that could go here, including multiple logins if more than one was involved in getting to the process and they are known. 
+
+=== [Message] ===
+
+The message section contains the message itself.  It is composed of the fields described below.  
+
+* Msg – Severity/SrcType/MsgType/Num/MsgBuf
+
+Sample message string:
+
+* [ERR|ARC|DBG|10001|Test Error Message]
+
+==== Severity ====
+
+The severity of the message indicates the type of actions which the message implies.  Currently four levels are defined:
+
+* Information - nothing is wrong, the system is just reporting status
+* Warning - something unexpected has happened or something requires attention eventually
+* Error - an error has occurred, but the system is attempting to recover.
+* Fatal - an error has occurred which necessitates program termination.
+
+Larger systems might require a finer granularity of message due to the volume of log records, but the above should suffice for most systems of 'reasonable' size (less than 1 million lines of code, say). 
+
+==== SrcType ====
+
+Source type indicates the nature of the reporting system source type could be (for instance):
+
+* Language – native language calls. In practice, these should not be required because they should be 'wrapped' by code in your system.  
+* Vendor – third party libraries. As above, these should generally be 'wrapped' by your code.  
+* Architecture – libraries which are part of over-all system architecture 
+* Library – application libraries built by individual teams
+* Application – application code
+
+==== MsgType ====
+
+Message type indicates the nature or normal usage of the message.  These might be:
+
+* Trace – code which can be turned on to trace problems (intended for production code, but usually turned off).
+* Debug – code which is only used for debugging (may be temporary).
+* Profile – code used to provide timing and resource usage for optimization.
+* Log – ordinary logged message intended for production code.
+
+Due to the different nature of the above messages, especially the propensity of some to create very large log files quickly, output code might well split them off into different target 'sinks'. Only 'Log' messages are intended for normal logging. The others are diagnostic in nature. However, in some instances, the system itself will turn on, say, 'Trace' code once it encounters an error condition. It is out of scope for this document, but our architecture calls for systems to practice what we call 'divination' and that would detect, for instance, a repetitive condition (infinite recursion, excessive polling, etc) and 'elevate' the level of logging. 
+
+==== MsgNum ====
+
+Message Number is intended to provide (along with source information) a unique key for lookup in an external description table.  This allows longer messages than those contained in the message buffer to be stored elsewhere.  It also allows for linking problem messages with solutions in a problem reporting database.
+
+==== MsgBuf ====
+
+Free form message text which normally would be the human-readable version of a message. Diagnostic information can vary radically depending upon the condition that caused the log message to be raised. It is in this buffer that particular information needed to assess the state of the system should go, if it was not included in the StatRef element above.  
+
+Example Message Buffers:
+
+* Start Logging -- Simple status message
+* System was not shutdown normally -- Routine warning
+* Roll Journal forward:"/std/hme/tss/app/dvl/tst/MyAppJ1.dat" -- Routine warning
+* Unable to create file: "/tmp/needthis.tmp": "Access Denied" -- Error or warning depending upon how unexpected it is and how well the system can recover. 
+* System Service 'SvcClientExtendedInfo' Not Available\nOperator Intervention Required\nOperator Notified:"mailto:SysOp086@LocOpCtr.net?cc=SecLineSupport@CentralOps.OurDomain.com&subject=LogSvcErr:($MsgNum):SvcClientExtendedInfo%20Not%20found&body=($LookupServer)($SupportSystem)SvcClientExtendedInfo%20is%20down.%0A%0ATo%20investigate%20and%20restart,%20Refer%20to:%0A%0Ahttp://HelpDesk.OurDomain.com/rgn/sys/hlp/svc/arc/kbc.php?MsgNum=($MsgNum)&TimeStamp=($DateTime)&Source=($Source)&Env=($Environment)&MsgNum=($MsgNum).%0A%0A" -- Error, possibly fatal.
+
+Note how messages can go from small routine auditing messages on up to highly complex messages with their own substructure. Logging handlers could be built to recognize and act upon logging messages.
+
+== Implementation ==
+
+Implementation is out of scope for this document.  However, these notes are provided for guidance coordinating and implementing a compatible message structure.
+
+=== Suggested Values for Implementation ===
+
+==== Severity ====
+
+* INF -- Information
+* WRN -- Warning
+* ERR -- Error recover.
+* FTL -- Error Fatal
+
+==== SrcType ====
+
+* SRC –- Language library
+* VDR –- Vendor supplied component
+* ARC -- Architecture
+* LIB –- Application Library
+* APP –- Application
+
+==== MsgType ====
+
+* TRC – Tracing code
+* DBG – Debugging code
+* PRF – Profiling code
+* LOG – Normal Logging
+
+==== MsgNum ====
+
+Message Numbers should be unique within an application or library.  It is unlikely that message numbers could be made unique across the system, since some message numbers will be assigned outside of our control.  The unique key for a message meaning should be ApplicationName + MsgNum.   For our own code, it might be helpful to adopt ranges of numbers for architecture, common and application specific messages.  This would allow internally developed applications to share common message descriptions.  
+
+Suggested values:
+
+* 0-9999 – Application specific messages
+* 10000-19999 – Architecture code
+* 20000-29999 – Common messages (i.e. ‘File missing’ )
+
+Real-world implementation considerations include: 
+
+* Numbers are chosen to fit within the range of a signed 16 bit integer. All things being equal, it is better to remain within ranges that will not cause less capable systems to break. However, there is no requirement to stay withing these boundaries. Because logs are ASCII text, numbers could be arbitrarily large and still work with conforming log readers. 
+* Depending upon the implementation environment, some number ranges may already be reserved for other components. Message numbers, even though they are not required to be globally unique, should still be as unique as possible. 
+* 'Common messages' means ones that are likely to occur within many different subsystems. There is little reason (though arguably some) to duplicate 'File not found' for every system that might emit such a message.
+
+=== Minimum for Compliance ===
+
+The minimum requirement for compliance is to simply make sure that your code emits a string which is syntactically compatible with the logging structure.  For instance, if old logging was a simple string such as “working…”, the following message would comply with the new structure:
+
+* [01/07/98 09:53:39] [|||||] [|] [INF|APP|LOG|1|working…]
+
+==== Sample implementation code for minimum compliance ====
+
+The following program demonstrates a way to patch existing log messages to conform with the new structure.   
+
+ #include <stdio.h>
+ 
+ #define SysDateTimeStr() "2009-01-20 12:34:56" /* Dummy value for demonstration display */
+ 
+ // Old Message Logging Code
+ static void LogMsg( char *msg )
+ {
+     (void) printf(  "[%s] - %s\n", SysDateTimeStr(), msg );
+ }
+ 
+ // New Message Logging Code
+ 
+ #define SysLogLevel() 1
+ #define SourceFld() "TTR|ThisProg|main|(Wrapper)||" // use your values
+ #define EnvFld() "|" // environment, use your values if possible
+ 
+ static void WrapLogMsg( int LogLevel, char *msg, FILE *LogFile )
+ {
+     if( SysLogLevel() > LogLevel ) {
+         fprintf( LogFile, "[%s]", SysDateTimeStr() );
+         fprintf( LogFile, "[%s][%s]", SourceFld(), EnvFld() );
+         fprintf( LogFile, "[INF|APP|LOG||%s]\n", msg );
+     }
+ }
+ 
+ int main(void)
+ {
+     LogMsg( "Old message format." );
+ #define LogMsg(m) WrapLogMsg(0,m,stdout)  // redefine forward code to new interface
+     LogMsg( "New message format." );
+     
+     return( 0 );
+ }
+ 
+The program above will compile with a vanilla ANSI C compiler. It emits the following: 
+ 
+* Old message format.
+* [2009-01-20 12:34:56][TTR|ThisProg|main|(Wrapper)||][|][INF|APP|LOG||New message format.]
+
+Even programs for which we do not have source could have their output piped through a small program to add the syntactic structure necessary to allow them to merge their messages into the logging 'sinks' such as viewers, filters, etc.
+
+=== Log level ===
+
+Note that in the code above that a ‘log level’ is implemented. This allows code to vary in it’s output according to environment variables or other indications in the environment. For instance, during a normal run only log levels < 3 might display, but when the system logs an error message it might adjust the limit to a higher value to allow additional messages to be available for trouble-shooting.
+
+Log Level is not a part of this specification because it is anticipated that there are numerous ways to control thresholds that cause existing logging messages to fire. For our own purposes, simple log levels are sometimes implemented and sometimes not. Our long term direction is to allow the logging subsystem to work with automated testing such that rather than coarse-grained 'log levels', we use fine-grained control over thresholds within call-stacks, allow other systems to 'boost' (or attenuate) the logging thresholds, allow configurable logging 'sinks', etc. A simple log-level does not suffice for this.
+
+=== Log location ===
+
+Implementation should not be incompatible with an application having a ‘log location’.  For instance, it might be desirable during development and testing to have logs written to a local disk file, whereas for production it might be preferred to write log messages to a database or to a logging service.
+
+=== Considerations for building a ‘parse-able’ message ===
+
+Note that the escape character (‘\’) is being used to suppress interpretation of literal values.  This means that outbound strings need to be re-formatted prior to being emitted.  The following is required:
+
+* 1) 	Replace instances of “|” with “\|”
+* 2) 	Replace instances of “[“ with “\[” 
+* 3) 	Replace instances of “]“ with “\]”
+* 4) 	Replace instances of “\” with “\\”
+
+To be complete, a log file reader should reverse the process prior to forwarding messages.
+
+------------------------------
+
+'''SOLUTION:''' DataDistributionService. 
+
+Presto. Done. 
+
+Well, that might be a tad optimistic. You'll still need to write up a message format for the logging messages, define some standard channels for application groups and security domains, and write a few small helper libraries to format and forward logging to the DDS libraries or to subscribe and filter messages on the DDS services. 
+
+But, seriously, this TrantorMessageLoggingArchitecture sounds like a specialization case of PublishSubscribeModel, and PublishSubscribeModel already has efficient, scalable, multi-process, distributed, RealTime implementations and standards (of which DDS is a very excellent example) that allow hooking in databases and files and even applications supporting data-fusion (e.g. add alert-message A to stream S if two messages come in within ten minutes of one another having patterns X and Y respectively).
+
+----
+
+Thanks for commenting. 
+
+Re: "You'll still need to write up a message format for the logging messages, define some standard channels for application groups and security domains, and write a ..."
+
+I am not sure if we are talking at cross-purpose here. Almost everything specified here *is* the part you say would be needed to complete a useful invocation of the PublishSubscribeModel. The above is a description of the actual formatting we use. I have, for instance, a reader for the log format built right into the system I am working on right now. It does not matter where the message originated from, as long as the reader can read it in, it can display and filter the log as appropriate. The facilities you describe are fine. However, they overspecify things. This message logging architecture is just high-level design, not detailed design or implementation. The code given is a valid minimalist implementation, but how that is hooked into a larger system depends on the system. It describes how it should behave, but not how that should be accomplished. How it is accomplished in one place need have no effect on how it is accomplished elsewhere. The architecture specifies generic sources and generic sinks and message formatting. This is a message format, from working production systems, that lends itself to useful manipulation and use of logs. A very small program of a few thousand bytes should be able to issue a logging message and be 100% compliant with this architecture. What you describe may well be the perfect thing in an environment where one is starting from scratch on a big system or PublishSubscribeModel exists as infrastructure and all your languages are capable of dealing with it. However, what is described here should be workable with just about everything from a small script to an entire distributed enterprise system. 
+
+The real point of this is to show what things should actually be logged in a working log source so that a generic 'sink' can accept the message and the message can play well with compatible log messages from others. 
+
+As long as one adheres to a message archetype like this, logs emitted from, say, a chron-spawned script could be should be able to be redirected (without the emitter caring) and collated with a larger overall logging system. 
+
+Re: few small helper libraries to format and forward logging
+
+Yes. You would need that if, say, one of the emitters (like a Windows batch file) cannot emit the exact syntax because of interpretation of special characters like the pipe (|) symbol. You would also need that, if say, you had a command line program spawned from a chron file for more than one system and need to direct the output for that invocation to the appropriate 'sink'. 
+
+Going forward, this is the logging architecture used by my company, so we have readers already. However, there are many other tools one might use that have not been built. Were everyone to follow the same convention, everyone could use that same tools. 
+
+Again, thanks for commenting. I have never encountered what you mention here in production, but I will take a quick look to make sure the current system is not incompatible. 
+
+-- BobTrower
+
+----
+
+OMG -- no! -- the domain name is apropos. http://www.omg.org
+
+Has anyone attempted to build a system using CORBA? It is not pretty. I worked on a project with Sybase Consulting years ago and it was the biggest source of difficulty we had. It was awful. Once it was finally stabilized and debugged (or they ripped it out, I can't remember), our system was fine. However, this was by far the largest source of problems and it was anticipated that it would continue to be a source of difficulty in production. Any time somebody broke an interface (that happens a lot in development and even in maintenance), that whole section of the team ground to a halt. I remember myself and another guy having to put off a round of our own testing (and I was way over at the database and report generating end of the system) for a day while they worked feverishly to get the broken system to work again after a simple recompile. OMG indeed. 
+
+I can't speak directly to the PublishSubscribeModel, but if it needs CORBA or any of the other 'design-by-committee' ware associated with it, or it is similarly flawed, I strongly recommend against using it. I am not aware of any great success with this anywhere I have been and I am aware of more than one horror story. 
+
+-- BobTrower
+
+DDS is an independent development from CORBA. No need to involve yourself with that nightmare.
+
+----
+CategoryLogging

@@ -1,0 +1,97 @@
+AnswerMe: Anybody got any advice on combining the NullObject pattern and ObjectRelationalMapping frameworks like HiberNate?
+
+''It is interesting question; I am of the view that we should consider NullObject as a normal entity object and reserve a special object id for the NullObject of a particular class. The disadvantage of this method is we should create and persist NullObject of all classes in the database before we can run our application -- huy.''
+
+* ''If I correctly understand your proposal, then if you have classes Foo and Bar, you will also have NullObject instances nullFoo and nullBar. How shall the contemplated approach answer the following predicates?''
+
+   (nullFoo isNull)
+   (nullBar isNull)
+   (nullFoo == nullBar)
+''-- TomStambaugh''
+
+* As I understand, NullObject is an instance of NullClass, which is subclass of normal Class and overwrite its methods including well-known isNull(). Depending on your mapping strategy, you may have map instance of NullClass and normal Class to the same table or different tables. If the second approach is selected, then NullClass table often have only one or few rows depending on how many special cases you have (e.g. MissingCustomer and UnknownCustomer). If the first approach is a choice, you need to add a column indicating which class a particular instance belongs to. -- huy
+* back to your question, you will need for Foo class a NullFoo as subclass and for Bar, NullBar class. Foo.isNull will return false and NullFoo.isNull return true. -- huy
+
+** ''You wrote, above, that you propose to "reserve a special object id for the NullObject of a particular class". I read that to mean that nullFoo and nullBar are each instances of Null''''''Class. Each of nullFoo and nullBar should answer "true" in response to "isNull". What answer shall your approach return to the third question (following)?''
+
+   (nullFoo == nullBar)
+
+''-- TomStambaugh''
+* There is misunderstanding here; for each class Foo, if we want use NullObject pattern, we shall create a subclass NullFoo and one instance nullFoo. The nullFoo shall have fixed id (we reserve one fixed predetermined id for this instance). If nullFoo and nullBar are instances of two different classes, I find no place where we need nullFoo == nullBar. But if you mean nullFoo and nullBar are instances of the same class NullClass, then you can avoid it by maintaining nullFoo as a singleton of NullFoo class or instead of writing (nullFoo==nullBar) you can use nullFoo.getId()==nullBar.getId(). -- huy
+* For illustration of nullFoo as singleton, look at example in java below
+ class Foo {
+     public static NULL_FOO_ID = -1;
+
+     public static Foo NULL = DB.find(Foo.class, NULL_FOO_ID);
+
+     public static Foo find(long id) {
+           Foo result = DB.find(Foo.class, id);
+           if( result == null )
+               result = NULL;
+           return result;
+     }
+
+     private long id;
+     
+     public long getId() {return id}
+
+     public boolean isNull(){ return false}
+
+     ... // normal behavior
+ }
+
+ class NullFoo extends Foo {
+     public boolean isNull(){ return true}
+
+     ... // special behavior
+ }
+
+''If nullFoo and nullBar are instances of two different classes, I find no place where we need nullFoo == nullBar. But if you mean nullFoo and nullBar are instances of the same class NullClass, then you can avoid it by maintaining nullFoo as singleton of NullFoo class or instead of writing (nullFoo==nullBar) you can use nullFoo.getId()==nullBar.getId().''
+
+If we agree that an object can be an instance of one and only one class, the id that denotes nullFoo must be different from the id that denotes nullBar. I think we already said that nullFoo is a singleton instance of class Null''''''Foo and nullBar is a singleton instance of Null''''''Bar. They therefore cannot also be instances of Null''''''Class. If there is only Null''''''Class, that class may have only one singleton instance Null. The effort to define nullFoo and nullBar thus rubs up against a singularity in the type system - an object that MUST be unique (because in practical terms there can be only one null) and yet cannot be unique because it must also be a value within class Foo''''''Or''''''Null or Bar''''''Or''''''Null.
+
+An example of the reason we need "nullFoo == nullBar" is in, for example, any collection that might return instances of both Foo and Bar. If that collection is empty, which null object shall it return, nullFoo or nullBar? It cannot return both, so it must return one or the other. If the two are identical, then we should not have created them in the first place - a Null''''''Foo cannot be a Null''''''Bar and vice-versa. So the two must be different, and yet cannot be compared? What should the system do if nullFoo is compared to nullBar?
+
+-- TomStambaugh
+
+I think the source of the problem is inheritance. Where else would you get "Function X returns an object of type Foo or type Bar"? Otherwise, the answer to the question of "any collection that might return instances of both Foo and Bar" is MuAnswer. That shouldn't happen. In cases where you're doing ORM Inheritance (generally done using 0-1 relations of the subclasses to the table containing the superclass) then only the superclass would have the NullObject - while the subclasses would have a NullObject, their database primary key ID would be the same as the that of the superclass. So if Foo : Bar, then FooNull.Id = BarNull.Id, because really they're different views on the same (all null) data.
+
+This is, of course, within the context of using the null object in ObjectRelationalMapping. The issues may become more complex in pure-object paradigms (particularly outside of C++) where you may have very elaborate inheritance trees and your collections can easily hold any object in the whole tree.
+-- MartinZarate
+
+''In my view, the problem is much deeper than inheritance. Suppose you are asked to model a fruit basket. For the sake of discussion, we have classes "Orange", "Apple" and "Basket" and functions "addFruit_" (or, if you prefer, "addOrange_" and "addApple_") and "removeFruit_". What shall the "removeFruit_" function answer when the basket is empty? With your permission, I'd like rename your "MuAnswer" to be class "UndefinedObject", such that it has a single distinguished instance "Nil". Please resist the temptation to talk about "0-1 relations", "primary key ID", and similar jargon. What OBJECT should removeFruit_ answer when it is called on an empty fruit basket? -- TomStambaugh''
+
+That's a problem of your class structure - not of the nullObject. What is the return type of removeFruit? Is it an abstract type Fruit? Is it the root type Object? If you're using Object, then forget about the whole typed NullObject concept. NullObject is obviously for use in cases where everything is very strongly typed. If it's type Fruit, then you have an object nullFruit, which is equivalent to appleFruit and orangeFruit. -- MartinZarate
+
+''I'm having deja-vu all over again, I think we've gone over this in TheNilObject and NullObject families. I'd prefer not to repeat those discussions here. If your Null''''''Fruit class descends from Fruit, then you've only moved the problem somewhere else. If each class that allows a null value has a (singleton) Null<something> descendant that holds that descendant, then you have as many Null<something> instances as classes that allow a null value. In a single-inheritance system, that Null<something> collection of classes surely shares at least some behavior - such as the "isNull" and "isNotNull" methods, if nothing more - and such behavior must be replicated across all those Null<something> classes. Yet this is just the beginning of the problems that emerge from opening this particular Pandora's Box. I suggest that if we want to continue this discussion, we do so on one of the pages where it has already been explored so that we don't reinvent the rather extensive material that's already there. -- TomStambaugh''
+
+'' After study about NullPattern, I recognized that this may be un-neccesary to persists NullObject to the database,
+ class Foo {
+     public static NULL_FOO_ID = -1;
+
+     public static Foo NULL = new NullFoo() ;
+
+     public static Foo find(long id) {
+           Foo result = DB.find(Foo.class, id);
+           if( result == null )
+               result = NULL;
+           return result;
+     }
+
+     private long id;
+     
+     public long getId() {return id}
+
+     public boolean isNull(){ return false}
+
+     ... // normal behavior
+ }
+
+ class NullFoo extends Foo {
+     public boolean isNull(){ return true}
+
+     public long getId() {return NULL_FOO_ID}
+
+     ... // other special behavior
+ }
+-- huy.''

@@ -1,0 +1,180 @@
+SmalltalkLanguage has no SwitchStatement, but you can roll your own:
+* Someone deleted half this page 2 months, claiming that it was useless confusing text, and they couldn't figure out if the discussion was a proposal for a new standard or talking about non-Smalltalk CaseStatement or what. I strongly disagree that the text is confusing or that it should be deleted. It says right there above on line 1 that "you can roll your own". The discussion is all about how to add your own CaseStatement to Smalltalk (and concludes with the popular sentiment that Smalltalk actually doesn't need one). It's interesting. -- DougMerritt
+
+Originally from http://wiki.cs.uiuc.edu/CampSmalltalk/Smalltalk+case-statement (now gone).
+
+When the tutor said that Smalltalk has no case-statement, he meant it has no case-statement in the base class library. Smalltalk is infinitely extensible and several people have written case-statement add-ons. None of these have ever been made part of the base class library because Smalltalkers find the above three approaches adequate for all cases. (Thus, unlike Smalltalk's if-statement, no case statement has ever been optimized in commercial Smalltalk compilers and so they are not quite as fast as in other languages.) However, if Bob really wants a case-statement, he can have one that is more flexible than Java's and fully fast enough in most situations.
+It's instructive to see how easy it is to write. (I shall present Paul Baumann's case-statement construct as it is, I think, hard to find on the web. Other case-statement utilities for Smalltalk have been written by Peter van Rooijen and by a Squeaker.) We know that curly-bracket-language:
+
+    if (aBoolean)
+	then {some_code}
+	else {other_code}
+becomes
+
+    aBoolean
+	ifTrue: [someCode]
+	ifFalse: [otherCode]
+in Smalltalk. It's fairly obvious, therefore, that curly-bracket language:
+
+    switch (aValue)
+	case {match_code1} : {action_code1; break;}
+	case {match_code2} : {action_code2; break;}
+	...
+	default {other_code;}
+needs to become something like
+
+    aValue switch
+	case: [matchCode1] then: [actionCode1]
+	case: [matchCode2] then: [actionCode2]
+	...
+	default: [otherCode].
+in Smalltalk. This won't quite work as it stands since, unlike the Java-like version, ours has to be built out of existing program elements, not reserved words, so needs to separate the arbitrarily repeated case:then: elements in some standard way. Full-stops are no use:
+
+    aValue switch case: [matchCode1] then: [^actionCode1].
+    aValue switch case: [matchCode2] then: [^actionCode2].
+    ...
+    aValue switch default: [otherCode].
+has no benefit over if-statement lists. Nested brackets are no use:
+
+    ((((...((((aValue switch
+	case: [matchCode1] then: [actionCode1])
+	case: [matchCode2] then: [actionCode2])
+	...
+	default: [otherCode]
+would send each case:then: to the result of the previous one but it's already obvious that we can write a case-statement as nested ifTrue:IfFalse: statements
+
+    matchValueCode1 ifTrue: [actionCode1] ifFalse: [
+    matchValueCode2 ifTrue: [actionCode2] ifFalse: [
+    ...
+    ifFalse: [otherCode]]]]...]]]]].
+and the above gives us just as many brackets to nest. What we need is to send each case:then: in turn to the result of the switch method in a way that needs no brackets. In Smalltalk, that is done by a cascade:
+
+    aValue switch
+	case: [matchCode1] then: [actionCode1];
+	case: [matchCode2] then: [actionCode2];
+	...
+	default: [otherCode].
+Now we have worked out the case:then: protocol, we can write a simple test. The test falls over because the switch method does not yet exist. It must be understood by any value, i.e. by any object, and must return something that responds to repeated case:then: messages; sounds like switch had better return an instance of a new class, which we may as well call Case.
+
+    Object
+	subclass: #Case
+	instVars: 'criterion satisfied response'
+
+    Case>>for: anObject
+	^self new criterion: anObject
+
+    Object>>switch
+	^Case for: self
+This makes switch return an instance of class Case that knows:
+
+* what object it's trying to switch on: the object held in criterion,
+* whether it has been satisfied yet: the Boolean held in satisfied (must initialize satisfied to false, not shown for simplicity),
+* what the result of running the selected action block was: the value held in response (so the overall construct can return it).
+Our test drives us to give Case these instVars while writing first versions of the case:then: and default methods:
+    Case>>case: oneArgTestBlock then: execBlock
+	"The oneArgTestBlock must return a Boolean value when passed the criterion of the receiver."
+
+	satisfied ifFalse:
+	    [(oneArgTestBlock value: criterion) ifTrue:
+		[response := execBlock value.
+		satisfied := true]].
+
+    Case>>default: execBlock
+	satisfied ifFalse: [response := execBlock value].
+	^response
+This works and offers possibilities for further development.
+
+We could wrap case:then: in more protocol, e.g.
+	Case>>caseIs: testObject then: execBlock
+	    case: [:caseCriterion | testObject = caseCriterion] then: execBlock.
+
+	Case>>caseIsAny: testCollection then: execBlock
+	    case: [:caseCriterion | testCollection includes: caseCriterion] then: execBlock.
+At the cost of making it a little slower, we could
+* replace instVars with accessor (getter and setter) methods (good practice?)
+* return the response in case:then:, so eliminating the need to send default: whenever the case' result is needed.
+Adding protocol for drop-through behaviour (i.e. equivalent to omitting break at the end of a case' action code in a curly-brackets language) is a more extensive change. We can do this by adding a case:process: method, implemented like case:then: except it sets satisfied to false, not true, if its condition is met. To make this work, we refrain from initializing satisfied to false (so the system sets its initial value to nil), instead using a
+
+    Case>>isSatisfied
+	^satisfied == true
+accessor in the case:then: and case:process: methods, and checking satisfied isNil ifTrue: instead of satisfied ifFalse: in the default method.
+
+And there you have it; a case-statement that allows arbitrary matching code and is easy to extend. It runs in any dialect of Smalltalk. See Paul Baumann's article in The Smalltalk Report (August 1997, Vol 6 No 9) for a fuller description.
+
+----
+
+'''However''' I recommend using the other approaches:
+* use PolyMorphism instead of a case statement
+* use a dictionary look-up
+* use return as break in an if-statement list
+in almost all cases and never to load this utility without a specific requirement. Here are some relevant remarks on why not by AndyBower.
+
+''When I first came to Smalltalk from C++, I couldn't understand how a supposedly fully fledged language didn't support a switch/case construct. After all when I first moved up to "structured programming" from BASIC I thought that switch was one of the best things since sliced bread. However, because Smalltalk didn't support a switch I had to look for, and understand, how to overcome this deficiency. The correct answer is, of course, to use polymorphism and to make the objects themselves dispatch to the correct piece of code. Then I realized that it wasn't a "deficiency" at all but Smalltalk was forcing me into much finer grained OOP design than I had got(ten) used to in C++. If there had been a switch statement available it would have taken me a lot longer to learn this or, worse, I might still be programming C++/Java pseudo-object style in Smalltalk.''
+
+''I would contend that in normal OOP there is no real need for a switch statement. Sometimes, when interfacing to a non-OOP world (like receiving and dispatching WM_XXXX Windows messages that are not objects but just integers), then a switch statement would be useful. In these situations there are alternatives (like dispatching from a Dictionary) and the number of times they crop up doesn't warrant the inclusion of additional syntax.''
+
+''(The same goes for breaking out of a loop without returning. You just don't need it that much; in my 8 years of programming Smalltalk I can recall having wanted a non-returning break statement construct about twice!) -- AndyBower''
+
+I agree with Andy. Except in very rare cases (e.g. complex parsing applications) and even then mostly just to make the code a little neater, you never need to use the above utility.
+I think that it would do more to convince the Java programmers if it were accepted that those cases are not that rare.
+There are two common situations which break the alternatives: (i) Where there are only a few (say 3-5) cases to switch on. (ii) Where the action of the case statement requires local scope (e.g. some cases return and some don't).
+
+All of the alternatives are overkill for (i), and while the dictionary approach can cover (ii), it's limited and it ruins the flow of the code.
+
+I can't find any way of formatting ifTrue:ifFalse: that looks neat for more than one or two levels of nesting, so that leaves a case construct.
+
+-- Mike Anderson Disclaimers: (a) I am not a Java programmer; (b) I have not, to date, ever used a Case-style object.
+
+(Written by Niall Ross as part of Smalltalk for Java Programmers.)
+----
+WARNING: Polymorphism Purists may lock you up and toss the key if you engage in some of these practices :-)
+----
+
+What about building it as data? Make a list of ([check condition][do action]) pairs, and then iterate through it. If the condition is satisfied, after you do the action you just stop looping through it.
+
+Seem about as easy to put the code in data as it is to type it in as code. And acts just like a case statement in one step.
+----
+
+This inspired me some idea:
+
+1:'''Defer''' the application of the switch until it's fully defined.
+
+ Switch new    "-->make a new empty switch"
+   case: [:a| a<0] do: [-1]; "-> add some cases"
+   case: [:a| a>0] do: [1];
+   caseDefault: [0]; "-> an *optional* default case"
+
+   value: 77.
+
+This way you can pass around switch objects, and (polymorphicly with blocks) send value when you feel like using them.
+
+This enables ''functional idioms'', like Lisp's cond as expression, plus lambda powers.
+
+You don't '''need''' a ''default'' case (sometimes you cover all possible cases explicitly).
+
+You can reuse them (comes from the lambda powers).
+
+2: Allow for the ''do blocks'' to '''receive an (optinal)argument''' from the ''condition block'' return value. ie:
+ 
+ |mySwitch|
+ mySwitch := Switch new
+    case: [:a| a isNumber and: [a+1]]
+     do: [:a :condResult| result asString]; "With a conventional order of arguments, here optional result comes last"
+    caseDefault: [:a| a asString,'+1'].
+
+ mySwitch value: 1. "=> '2'"
+ mySwitch value: 'hi'. "=> 'hi+1'"
+
+3: Allow for '''multiple values''':
+
+ Switch new    "-->make a new empty switch"
+   case: [:a :b| a+b<0] do: [-1]; "-> add some cases"
+   case: [:a :b| a+b>0] do: [1];
+   caseDefault: [0]; "-> an *optional* default case"
+
+   value: 77 value: -79. "=> -1"
+
+This is all fairly easy to implement, but maybe I should rather be using SchemeLanguage? ;)
+
+----
+CategorySmalltalk

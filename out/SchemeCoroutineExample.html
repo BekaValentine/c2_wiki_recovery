@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Scheme Coroutine Example
+      </h1>
+      <p>
+        [From <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a>]
+      </p>
+      <p>
+        Today's programs typically are objects; they have a member function which the <a href="OperatingSystem.html">OperatingSystem</a> calls when a key is pressed. Old programs used to be able to call a "get key" function to get a key from the OS.
+      </p>
+      <p>
+        You can write a "get key" function using co-routines. Co-routines can be set up with multiple threads (see <a href="WindowThreadControlThread.html">WindowThreadControlThread</a>), with some kind of virtual machine (see <a href="RunAndReturnSuccessor.html">RunAndReturnSuccessor</a>), or with <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a>.
+      </p>
+      <p>
+        Here's an example of how you would do it in the <a href="SchemeLanguage.html">SchemeLanguage</a>.
+      </p>
+      <p>
+        First, you have the analogous function to "get-key." Here I will allow it to call Scheme's (read) function and get an entire value.
+      </p>
+      <code>
+        (define get-value <br/>
+        (lambda (prompt)<br/>
+        (display prompt) (newline) (read)))<br/>
+      </code>
+      <p>
+        Then you can create windows that take their "get-value" function as a parameter. Here's a way to create such windows:
+      </p>
+      <code>
+        (define create-window-for-function<br/>
+        (lambda (function name)<br/>
+        (lambda (get-value)<br/>
+        (let ((first (get-value (string-append "Type first number for " name)))<br/>
+        (second (get-value (string-append "Type second number for " name))))<br/>
+        (function first second)))))<br/>
+      </code>
+      <p>
+        Now you can have conversations with the interpreter like this (where OK is the "unspecified" value):
+      </p>
+      <code>
+        > <em>(define win (create-window-for-function + "plus"))</em><br/>
+        OK<br/>
+        > <em>(win get-value)</em><br/>
+        Type first number for plus<br/>
+        <em>4</em><br/>
+        Type second number for plus<br/>
+        <em>8</em><br/>
+      </code>
+      <ol>
+        <li>
+          2
+        </li>
+      </ol>
+      <code>
+        ><br/>
+      </code>
+      <p>
+        So far this has nothing to do with continuation passing: it's just ordinary <a href="FunctionalProgramming.html">FunctionalProgramming</a>.
+      </p>
+      <p>
+        Now, wouldn't it be neat if you could "invert" one of these windows? If you could make it so that, instead of being a function that stops and calls get-value to get an answer from you, it waits like an object for you to provide a value to it, and provides a member function you can use to provide that value? You can. Watch this:
+      </p>
+      <code>
+        (define invert-window<br/>
+        (lambda (window)<br/>
+        (call-with-current-continuation<br/>
+        (lambda (first-return)<br/>
+        (let* ((return first-return)<br/>
+        (windowval (window<br/>
+        (lambda (prompt)<br/>
+        (call-with-current-continuation<br/>
+        (lambda (send)<br/>
+        (return (list prompt<br/>
+        (lambda (value)<br/>
+        (call-with-current-continuation<br/>
+        (lambda (new-return)<br/>
+        (set! return new-return)<br/>
+        (send value))))))))))))<br/>
+        (return windowval))))))<br/>
+      </code>
+      <p>
+        Now you can have a conversation like this:
+      </p>
+      <code>
+        > <em>(define iwin (invert-window win))</em><br/>
+        OK<br/>
+        > <em>(define give (lambda (iwin value) ((cadr iwin) value)))</em><br/>
+        OK<br/>
+        > <em>iwin</em><br/>
+        ("Type first number for plus" #<procedure #x21525F>)<br/>
+        > <em>(set! iwin (give iwin 12))</em><br/>
+        OK<br/>
+        > <em>iwin</em><br/>
+        ("Type second number for plus" #<procedure #x2153C3>)<br/>
+        > <em>(set! iwin (give iwin 24))</em><br/>
+        OK<br/>
+        > <em>iwin</em><br/>
+      </code>
+      <ol>
+        <li>
+          6
+        </li>
+      </ol>
+      <p>
+        As you can see, the window basically presented itself as an object. Its latest prompt was part of its state, and it provided a function by which I could send in an answer. I have turned it into a co-routine!
+      </p>
+      <p>
+        The same kind of thing can be done under program control. This can solve all kinds of <a href="HollywoodProblem.html">HollywoodProblem</a>s.
+      </p>
+      <p>
+        The important thing is that, rather than having to design a state machine for an object, you can write an ordinary routine which has a call to "get" for every state and which moves from one "get" to another using the ordinary conditional and looping constructions of the language.
+      </p>
+      <p>
+        -- <a href="EdwardKiser.html">EdwardKiser</a>
+      </p>
+      <p>
+        Instead of rewriting that unreadable mess of CALL-WITH-CURRENT-CONTINUATIONs and LAMBDAs every time we want a coroutine, we can create a general function COROUTINE that creates a coroutine out of its argument.
+      </p>
+      <p>
+        <em>Huh? I created a general function called </em><strong>invert-window</strong><em>, once you have it you can convert any routine into a coroutine. There is no need to rewrite anything. Isn't </em><strong>invert-window</strong><em> essentially the same as what you are proposing?</em>
+      </p>
+      <p>
+        Anyway here's the COROUTINE function:
+      </p>
+      <code>
+        (define (coroutine routine)<br/>
+        (let ((current routine)<br/>
+        (status 'suspended))<br/>
+        (lambda args<br/>
+        (cond ((null? args) <br/>
+        (if (eq? status 'dead)<br/>
+        (error 'dead-coroutine)<br/>
+        (let ((continuation-and-value<br/>
+        (call/cc (lambda (return)<br/>
+        (let ((returner<br/>
+        (lambda (value)<br/>
+        (call/cc (lambda (next)<br/>
+        (return (cons next value)))))))<br/>
+        (current returner)<br/>
+        (set! status 'dead))))))<br/>
+        (if (pair? continuation-and-value)<br/>
+        (begin (set! current (car continuation-and-value))<br/>
+        (cdr continuation-and-value))<br/>
+        continuation-and-value))))<br/>
+        ((eq? (car args) 'status?) status)<br/>
+        ((eq? (car args) 'dead?) (eq? status 'dead))<br/>
+        ((eq? (car args) 'alive?) (not (eq? status 'dead)))<br/>
+        ((eq? (car args) 'kill!) (set! status 'dead))<br/>
+        (true nil)))))<br/>
+      </code>
+      <p>
+        I also took the liberty of adding some useful functionality that I'll show in this demonstration:
+      </p>
+      <code>
+        > (define test-coroutine-1<br/>
+        (coroutine (lambda (yield)<br/>
+        (print "HELLO!")<br/>
+        (yield 1)<br/>
+        (print "WORLD!")<br/>
+        (yield 2)<br/>
+        (print "SORRY, I'M OUT"))))<br/>
+        > (test-coroutine-1 'status?)<br/>
+        suspended<br/>
+        > (test-coroutine-1 'dead?)<br/>
+        #f<br/>
+        > (test-coroutine-1 'alive?)<br/>
+        #t<br/>
+        > (test-coroutine-1)<br/>
+        "HELLO!"<br/>
+        1<br/>
+        > (test-coroutine-1)<br/>
+        "WORLD!"<br/>
+        2<br/>
+        > (test-coroutine-1)<br/>
+        "SORRY, I'M OUT"<br/>
+        > (test-coroutine-1 'status?)<br/>
+        dead<br/>
+        > (test-coroutine-1 'dead?)<br/>
+        #t<br/>
+        > (test-coroutine-1)<br/>
+        . error: dead-coroutine<br/>
+      </code>
+      <p>
+        A more useful example:
+      </p>
+      <code>
+        > (define (make-iterator list)<br/>
+        (coroutine (lambda (yield)<br/>
+        (for-each yield list))))<br/>
+        > (define (iterator-empty? iterator)<br/>
+        (iterator 'dead?))<br/>
+        > (define my-iterator (make-iterator (list 1 2 3)))<br/>
+        > (my-iterator)<br/>
+        1<br/>
+        > (my-iterator)<br/>
+        2<br/>
+        > (my-iterator)<br/>
+        3<br/>
+        > (iterator-empty? my-iterator)<br/>
+        #f<br/>
+        > (my-iterator)<br/>
+        > (iterator-empty? my-iterator)<br/>
+        #t<br/>
+      </code>
+      <p>
+        The following page gives a rather detailed explanation.
+      </p>
+      <p>
+        <a href="http://www.eleves.ens.fr:8080/home/madore/computers/callcc.html">http://www.eleves.ens.fr:8080/home/madore/computers/callcc.html</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryScheme.html">CategoryScheme</a> <a href="CategoryContinuation.html">CategoryContinuation</a>
+      </p>
+    </div>
+  </body>
+</html>

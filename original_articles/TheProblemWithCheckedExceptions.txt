@@ -1,0 +1,152 @@
+People dutifully protest CheckedException''''''s (especially as implemented in the JavaLanguage, but maybe Java is the only language with checked exception), indeed claiming even that CheckedExceptionsAreOfDubiousValue or straight that Java exceptions are evil. 
+
+On the contrary, I believe that checked exception have an '''intrinsic''' value, at least as far as the StaticTyping philosophy in language design is concerned: checked exceptions are an intrinsic part of DesignByContract (exceptions are part of the contract !!!) and if static typing philosophy is to make as much of the contracts as possible '''explicit in the language design'''. Of course the argument has no weight for DynamicTyping advocates, so if you prefer dynamic typing skip this page altogether.
+
+There's two relevant quotes from TonyHoare here:
+* TwoWaysToDesign
+* I was eventually persuaded of the need to design programming notations so as to maximise the number of errors which cannot be made, or if made, can be reliably detected at compile time.
+
+C++ experience has proven that unchecked exceptions give birth to deficiencies from the non-obvious category.
+
+But other than making a part of the contract explicit, CheckedException''''''s give birth to a lot of annoyance, and I've just had enough of it lately. Hence this article. In large, JamesGosling is right to defend his design in this interview http://www.artima.com/intv/solid.html : don't be lazy about exceptions declare them or catch them.
+
+However he got it very wrong in one important case: the design of CheckedException in Java stand in the way of two fundamental features of any language: '''abstraction''' (procedural abstraction that is) and '''composition'''. Let's start with a running example say we have this EssExpressions (or XML processing, if you will) library in java and one of the useful algorithms would be to iterate over all the leafs in the s-expression tree (CheckedExceptionsAreIncompatibleWithVisitorPattern):
+ 
+ interface SProcedure { public void call(SExpr arg); }
+
+ SExpressions // all kinds of algorithmic goodies with EssExpressions
+ {
+ ...
+  public static forAllLeafsDo(SExpr tree, SProcedure proc);
+ ...
+ }
+
+There are countless of such designs in Java. All is nice and good, except they suffer from TheProblemWithCheckedExceptions that is now on the client:
+
+  SExpr myTree= // ... get some S-Expression
+  final OutputStream os = // ... get an output stream
+  SExpressions.forAllLeafsDo( tree,      new SProcedure () { public void call( SExpr arg) {
+     arg.prettyPrintTo(os);
+     os.write('\n');
+     }});
+
+Oops, the client code does not compile, because the outputstream can throw us IOException which breaks the contract required of SProcedure. Now there are a bunch of solutions within the confines of Java language, all of them unsatisfactory. --CostinCozianu
+----
+One solution would be DeclareThrowsExceptionByDefault, which in this case would be
+
+   interface SProcedure { public void call(SExpr arg) '''throws Exception''' }
+
+This is a non-solution and a non-defense to the failure of Java's CheckedException. If we do this any method whatsoever that uses generic algorithms like fold, forAllLeafsDo etc, would then be forced to declare '''throws Exception''', and the code that calls that code as well. In the end we can just throw any Exception hierarchy out the window and for large parts of the body of code you just declare '''throws Exception'''. Which is in fact lying. This is only a good enough solution for small projects where the effects of this maneuver can be controlled.
+----
+Another "solution" would be to swallow exceptions:
+ new SProcedure () { public void call( SExpr arg) {
+     '''try {'''
+     arg.prettyPrintTo(os);
+     os.write('\n');
+     '''} catch(IOException ex) {'''
+          '''logger.exception(ex); '''
+          // and some other exception cleanup
+     '''}'''
+     }});
+
+This solution may work some times, but other than making code much more verbose than it already is (some consider it obscenely verbose to work with procedural abstraction through Java's InnerClass''''''es), it also forces to take the decision handling exception in probably the wrong place -- very deep in the call tree. Most exceptions should be handled somehwre close to the root. For example an App Server framework may catch all exceptions, roll back transactions, fee additional resources and so on.
+----
+And yet another solution is ExceptionTunneling that just got a lot easier in Java 1.4. I think it was a design cop-out from inside Sun, their people find TheProblemWithCheckedExceptions too hard to swallow so they took the easy way out : if they force us to use checked exceptions, we'll force unchecked exceptions back down their throat.
+ new SProcedure () { public void call( SExpr arg) {
+     try {
+     arg.prettyPrintTo(os);
+     os.write('\n');
+     } catch(IOException ex) {
+          throw new RuntimeException(ex);
+     }
+     }});
+
+Although this idiom is the most widely used, it has its deficiencies:
+*It defeats the purpose of good language design. If CheckedException are there for a reason and the first use of a higher order algorithm forces us to switch to unchecked exception, clearly the design of the language has a problem. 
+*In certain circumstances may lead to logical bugs as the code upwards of the ExceptionTuneling is trying to catch a specific CheckedException like IOException in order to perform specific recovery actions. Now ExceptionTunneling has just hidden the real type of the exception:
+  //use a server connection
+ try { 
+ //call the user defined logic
+ }
+ catch(SocketClosedException ex) {
+  // remove the connection from connection pooling
+  // try to reconnect to the server and mark the server unavailable
+ }
+*The above problems can be worked around with enough care. If it's a one man project, I know where I'm using ExceptionTuneling and I know where this can bite me and take the appropriate measures, but if it's many people's working on the project this creates extra '''implicit''' dependencies between modules that can fall through the cracks (limited communication, not enough time, exceptional conditions are more likely not to be tested just as thoroughly) -- these are exact the kinds of problems where StaticTyping and CheckedExceptions were supposed to help by making inter-module dependencies '''explicit'''.
+----
+
+The bottom line is the following: generic algorithms, (higher order functions and procedure) cannot abstract over the type of CheckedException thrown by the client code. Wait a second, but don't we have JavaGenerics ? Well, they're a half solutions. First they don't apply to static methods and classes (who can't refer to generic types) and then they get stucked into one exception type only:
+
+ class SExpressions < ExceptionType extends Exception > {
+ public abstract class  SProcedure {
+   public abstract void call(SExpr arg) throws ExceptionType;
+ }
+ public void forAllLeafsDo(SExpr tree, SProcedure p) '''throws ExceptionType ''' { 
+  //...
+ }
+ }
+
+In the above you note that SProcedure is no longer an interface but an abstract class (generally less desirable) and it's no longer static, the forEachLeafDo is no longer static. The client code becomes more verbose. Also the generic algorithms cannot use a catch clause with the parameterized ExceptionType because of the TypeErasure at runtime. However let's consider the client code now:
+  SExpressions<IOException> alg = new SExpressions<IOException>;
+  alg.forEachDo(tree,
+                alg.new SProcedure() { public void call() {
+                 // do the stuff here
+                }});
+Now the above Java generics code compiles with the compiler from Sun, but is enough to get EclipseIde 's internal compiler dizzy. However the fun stuff is when the meat of the code inside the passed procedure can throw two distinct types of Exception cause we've just abstracted over exactly one type of exception, but not two of them. Then you're truly stucked, back to ExceptionTuneling.
+----
+ 
+Now the 64k$ question: can this design problem be fixed
+
+	1. with a DesignPattern 
+	2. with a framework (throw in a few more wrapper classes)
+	3. with a little bit of AspectOrientedProgramming glue 
+	4. with a proposal to change Java language that has a reasonable chance to be accepted (be backwards compatible, work with existing VM technology, be isolated to the compiler, etc)
+
+Any language weenies out there wanna pick up from here  ?
+
+There is no suitable approach short of changing the Java language. Early versions of AspectOrientedJava had lots of checked exception leaks; these were fixed in later versions. However, since Java is now open source, we may patch checked exceptions right out of the compiler should we choose. http://coffeecokeandcode.blogspot.com/2009/08/tweaking-javac-leniency.html
+----
+
+Of course there had to be somebody else who thought out these issues: ''François Pessaux, Xavier Leroy: Type-Based Analysis of Uncaught Exceptions (1999) , ACM Symposium on Principles of Programming Languages'' http://citeseer.ist.psu.edu/pessaux99typebased.html
+
+Some interesting bits from there:
+
+''The downside of using exceptions for error reporting and as a general nonlocal control structure is that it is very easy to forget to catch an exception at the right place, i.e., to handle an error condition. ML compilers generate no errors
+or warnings in this case, and the programming mistake will only show up during testing. Exhaustive testing of applications is difficult and even more so in the case  of error conditions that are infrequent or hard to reproduce. '''Our experience with large ML applications is that uncaught exceptions are the most frequent mode of failure'''.''
+
+So the designer of a very popular statically typed language (ObjectiveCaml) who doesn't support checked exceptions, is acknowledging that lack of such support is a major source of problems. So the thesis that CheckedExceptionsAreOfDubiousValue loses credibility big time.
+
+''Declaring escaping exceptions in functions and method signatures works well in first-order, monomorphic programs, but is not adequate for the kind of higher order, polymorphic programming that ML promotes.''
+
+Exactly the kind of problems described on this page.
+
+----
+
+Here is an example of an argument coming from the support checked exceptions crowd:
+
+   For example, consider a Dictionary interface. A Dictionary could have a number of implemenations: a hashtable, an array, 
+   a file, a database, etc. Each of these implementations could encounter different errors and so would throw different types 
+   of exceptions. It would be silly to declare all these exceptions in the Dictionary interface. Instead the Dictionary could 
+   declare its own exception type: DictionaryException.
+
+   Different implemenations of Dictionary would then catch their own exceptions and wrap them in a DictionaryException. This 
+   makes it much simpler for users of the Dictionary interface. It also removes the need to alter the interface when a new 
+   implementation (with different types of exceptions) is written.
+
+The problems with the above are numerous. But it should be obvious from the very argument it runs counter to the idea of checked exceptions. Let me begin by stating that I would have no idea what to do with a DictionaryException. What would you do? Without knowing what the exceptions meant I could do nothing. So why are you making me handle them?
+
+Lets assume for a second that we had a File based implementation of the Dictionary interface. And something went wrong and a FileNotFoundException was thrown. The dictionary implementation might be able to do something about that. But if it couldn't the only thing it could do is wrap it and pass it back in a wrapped exception exactly as the original author stated. But here is the problem. how do I know that's what is happening? I being the caller? So much for checked exceptions ehh? The only thing I can do is log the sucker and maybe once one is thrown I can discover that it wraps a FileNotFoundException. So what is the difference between the checked exception DictionaryException and a non-checked variant of FileNotFoundException which wasn't documented?
+
+The difference is that once I know thats what is being thrown I can actually catch the FileNotFoundException and handle it while the DictionaryException I have to catch then pull the cause then do an instanceof on it to ensure it was I was expecting and then I can do something about it.
+
+Seems kinda pointless to me.
+
+Now that I have discovered the problem and added my FileNotFoundException handler (be it directly or via is instance of) I change out the implementation to use a database instead. Does the compiler tell me I need to fix my code when I recompile using the checked exception model? Nope!! Does the API in anyway let me know that the DictionaryException may contain an SQLException? Nope! Whether it is a checked exception or a non-checked exception the compiler is as clueless as I am.
+
+Now lets use one more example to help drive home the point. Lets say I swap out the file and database implementations for a HashMap implementation. A hashmap does not have any network or filesystem dependencies. One might say that it is unlikely to throw any exceptions at all. (Of course null pointers and memory exceptions can happen anywhere, not that they are likely to be captured and returned as DictionaryExceptions in the first place). In this case I the caller am forced to wrap code all over the place with exception handlers even though DictionaryException is not likely to ever be thrown and if it was I wouldn't know what to do with it until after the the fact anyway.
+
+So what exactly did I gain by using CheckedExceptions?
+
+That all being said I would find it interesting for one of the "you must have good programmers using well designed APIs" to show us how you would change the API to take advantage of checked exceptions.
+
+I would argue that wrapping exceptions (in checked or unchecked exceptions) is not a best practice but rather a solution to a problem that shouldn't exist in the first place.

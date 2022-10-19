@@ -1,0 +1,170 @@
+The SchemeLanguage deliberately provides only a single namespace for both function and non-function bindings (together with a single family of binding constructs). Proponents of this language argue that this provides for simpler and cleaner semantics. [From LispSchemeDifferences]
+
+Scheme (single namespace):
+    (define (square x) (* x x))
+
+    (define (g f x)
+       (+ (f x) (f x)))
+
+    > (g square 5)
+    50
+Common Lisp (two namespaces, so we use ''(function square)'' to get the function-value of ''square'', and ''(funcall f ...)'' to use this value, rather just saying ''(f ...)''):
+    (defun square (x) (* x x))
+
+    (defun g (f x)
+       (+ (funcall f x) (funcall f x)))
+
+    > (g (function square) 5)
+    50
+Note that ''(function square)'' is usually written as the abbreviation ''#'square'' (SharpQuote is a ReadMacro which expands at read-time to the longer version).
+
+----
+Canonical arguments in favor of a single namespace [quotes are from http://www.dreamsongs.com/Separation.html]:
+* "Many believe that having the evaluation rules for expressions treat the function position and the argument positions differently is inelegant.. To some programmers, a basic 'rule' of Lisp style is that code is clearest when the least amount of context is necessary to determine the meaning of an expression." [referential clarity]
+* Keeping track of multiple namespaces is hard. In ''(defun g (f)(f 3))'' "..it is probably obvious that the programmer meant to call the function named by the formal parameter F ..however, this function will ignore its argument named F and simply invoke the globally defined function named F on 3."
+* The more frequently you use higher-order functions, the more overhead the funcall keyword causes. "The more cumbersome [funcall] notation.. may even discourage the writing of such [higher-order] functions."
+
+..and against a single namespace:
+* "Common Lisp was the result of a compromise between a number of dialects of Lisp, most of which had separate namespaces.. [transitioning to a single namespace] would introduce a considerable amount of incompatibility.." There are really more than two namespaces, reducing either the benefit of collapsing these two or the cost of collapsing them all.
+* "..writers of macros often work on the hypothesis that additional functional variables may be referenced in macros as if they were globally constant.. [bugs due to this assumption] are more likely to occur with a single namespace.. Most programmers simply do not experience name collision problems.. largely because of the existence of a function namespace. ..programmers treat function names more carefully than nonfunction names."
+**"There are two ways to look at the arguments regarding macros and namespaces. The first is that a single namespace is of fundamental importance, and therefore macros are problematic. The second is that macros are fundamental, and therefore a single namespace is problematic."
+
+Fallacious non-arguments [quotes are anecdotal]:
+* "A single namespace would simplify common lisp implementations." It might even complicate things by adding to the compiler's type-inference burden.
+* "Have a function named LIST? Oh too bad, you can't have a variable called LIST." Duh, avoiding ambiguity is the '''point''' of a single namespace.
+* "Stop trying to control/restrict how I write my programs. If you don't want to program with multiple namespaces, then just don't do that!" Programming is a social process and we are all exposed to code that others write. There's nothing wrong with arguing about what conventions (that's what all languages are) should be followed. Note the difference in connotation between 'seeking to control what others can write' and seeking to influence the evolution of language by rational argument and voting-by-use (which is how all languages evolve).
+
+-- KartikAgaram
+
+----
+
+ChristianQueinnec's book LispInSmallPieces contains a chapter discussing the relative merits of single and multiple namespaces for LispLanguage''''''s.
+
+----
+
+A single namespace looks more attractive to people who favor FunctionalProgramming over other programming paradigms. Separating the function namespace seems to be preferred by people who are more open to freely mix programming paradigms.
+
+----
+
+Also here is something to consider: in Lisp you actually have two choices, instead of SharpQuote you can use an ordinary quote on the symbol:
+  (g 'f 5)
+This is different, because it passes the '''symbol''' f rather than pulling out its function-binding and passing the function object. The semantics difference becomes obvious when you dynamically replace functions. If you replace the implementation of function F in a running Lisp image, any retained results of previous evaluations of #'F do not change; they continue to be the old function objects. FUNCALL on these objects gets the old implementation of the function. But FUNCALL on the symbol always calls the latest implementation; the function object is extracted each time. Example time:
+
+  (defvar *stored-function-a* 'foo)
+  (defvar *stored-function-b* #'foo)
+
+  ;; ...
+
+    (funcall *stored-function-a* 5) ;; always calls latest foo
+
+    (funcall *stored-function-b* 5) ;; always calls original foo
+Unlike Scheme, Lisp defines how a program can be made up of separate modules, and how functions can be dynamically replaced, so these subtleties are important. In Scheme, how do you express the difference between the above two funcalls? If you want (stored-function 5) to always call the latest foo, then if you redefine foo, you also have to take care to redefine stored-function. But stored-function can just be a lexical variable in some closure somewhere; and there could be lots of such variables; you can't hunt down all of them and update them! So how '''do''' you indirect upon a function in Scheme such that your indirections update themselves when you redefine the function? Ah, but grasshopper, redefining program at run time pure functional not be! That for practical programmer, who write server application from zero to deployment and have beta users without ever stop and restart!
+
+The answer is: the run-time tracks dependencies and recompiles whatever is dependent on these changes. I think ChezScheme and MITScheme are the only Schemes likely to do this.  This is the same strategy taken by the SmalltalkLanguage/SelfLanguage implementations. 
+
+''But in Lisp there is no requirement that anything in the image be recompile-able. You can deliver fully compiled software to the customer without a shred of source code anywhere in it; yet pieces of it can be redefined. I can give you a compiled piece of Lisp code which retains functions that you specify to it. And you have the freedom to specify them in such a way that their definition can change. How? By giving me a symbol instead of a function object. Because I use the FUNCALL operator (or its cousins), I don't care which one you give me.''
+
+But how does recompiling fix up the references to the old functions so they refer to the new ones? Say I have some function created by (define x ...) then later I copy x to y. Then I redefine x, so that variable now refers to a new function object. But y points to the old object. How will y notice the change? In CommonLisp, the answer is simple: if you want this kind of updating, then manipulate the function as a symbol, rather than as a direct reference to the closure. You store the symbol x in variable y, rather than #'x. The dreaded (funcall y) operator works nicely with either a symbol parameter or a function object, as do the other applicators like apply, mapcar and so on. To retain this ability in a Lisp1, you would have to introduce the funcall operator for calling through symbols, or otherwise support symbols in the CAR of a list, e.g. (let ((x 'y)) (x 1 2 3))  to call (y 1 2 3) and similarly ('y 1 2 3) as a synonym for (y 1 2 3). This leads to dereferencing chains. What if x stores the symbol y, symbol y is not bound to a function but has a value binding to symbol z, which has a value binding to a function? Should (x 1 2 3) become (y 1 2 3) become (z 1 2 3) become (<function> 1 2 3) which then does the call? Or do you allow just one level of dereferencing so that the CAR expression must evaluate to a function, or to a symbol which has a binding to a function? How do Lisp-1 dialects support symbolic function indirection?
+
+This has nothing to do with compilation dependencies, which don't normally even exist in Lisp. The exception is that when you change a macro, or other read- or compile-time construct, code which depends on it has to be recompiled. Even that can be avoided if you do proper versioning so that the existing expansions of that construct continue to be supported side by side with the new expansions. In any case we are not talking about macros.
+
+''There is no difference between Scheme and Lisp in this respect. In both languages, one can transparently redefine functions. The simplest implementation strategy is to compile an indirect jump/call rather than a direct one.''
+
+How do you tell the implementation which one to use? Through reference x, I want this function always. Through reference y, I want the latest. Where in the Scheme report is this covered? For that matter, where in the Scheme report is it stated that you can transparently redefine functions, and that all existing calls, even indirect ones, are magically updated?
+
+In Lisp you request an indirect call by funcalling through a symbol. You request a direct call by funcalling on a reference to a function object. The effects of redefining a function are well-specified, as is the consequent behavior with respect to these two different ways of accessing the function.
+
+''In Scheme, something like (cons x y) invokes whatever procedure happens to be the value of the variable "cons" at the moment of invocation. Redefining "cons" therefore updates all call sites, but of course it is possible to capture the original value of "cons" in another variable prior to the redefinition. This behaviour is mandated by the formal semantics in Chapter 7 of R5RS.''
+
+Suppose I want to write a graphical interface toolkit in which users can define a BUTTON object. A button can have a callback, which is specified through the constructor, say (MAKE-BUTTON :CALLBACK 'MY-FUNCTION). Moreover, I want to give you a compiled version of this GUI toolkit, containing no source code whatsoever. How do I do this such that you can instantiate a button on the screen, and without destroying and re-creating it, you can redefine the callback function such that clicking on the button calls the new one?
+
+In Common Lisp this is achieved easily; I write my toolkit without caring whether you pass me a function object or a function symbol. I just use FUNCALL (or any of its cousins) everywhere, and they work properly with either one. So I delegate the choice to you; you can use :CALLBACK #'MY-FUNCTION to give me the object, or :CALLBACK 'MY-FUNCTION to give me a symbol to achieve the level of indirection for dynamic redefining. ItJustWorks because I wrote the code in the most obvious way, guided by the design of the language, not because I had put in any extra effort. My toolkit code doesn't have to be recompiled. Moreover, it *cannot* be, because the source code is not even available; I distribute it in compiled form.
+
+So you see there is a disadvantage to being able to use the "obvious" notation, and its associated semantics (MAKE-BUTTON :CALLBACK MY-FUNCTION). MY-FUNCTION is evaluated down to an object; that object is recorded in the button, and will not change for the lifetime of that button, unless an explicit assignment is performed like (SETF (GET-CALLBACK BUTTON) NEW). If a whole lot of buttons share the callback, you have to hunt them down and repeat for each one.
+
+''I can do the same in Scheme by passing either MY-FUNCTION or (LAMBDA ARGS (APPLY MY-FUNCTION ARGS)).''
+
+Aha! With a suitable macro, you can reduce that LAMBDA trampoline to something like (WRAP MYFUNCTION) and it's almost as convenient as the 'MYFUNCTION read syntax.
+
+''In scheme, how about:''
+ (define (funcall proc . args)
+   (if (procedure? proc)
+       (apply proc args) ; else
+       (apply (eval proc) args))))
+
+ (define (make-button proc)
+   (lambda ()
+     (display "this is a button\n")
+     (funcall proc)
+     (display "\nbye\n")))
+
+ (define foo (lambda () (display "hello")))
+ (define static-button (make-button foo))
+ (define mutable-button (make-button 'foo))
+ (define foo (lambda () (display "goodbye")))
+ (static-button)
+ (mutable-button)
+
+''eval and apply are expensive in many schemes, so the lambda trampoline thing is probably a better solution.''
+
+Note that if you know the number of arguments the callback takes, you can use cut from srfi-26 instead of "wrap" above, it's much cheaper than apply (no argument list consing).
+----
+
+While not directly relevant to Lisp, it's interesting to note a similar change in C/C++.
+
+CeeLanguage has two (maybe more, I cannot remember) separate namespaces--one for structure and union definitions, the other for everything else (variables, function names, typedef declarations.  We're ignoring the preprocessor here, BTW...which is it's own issue).  In other words, the following code is legal in CeeLanguage.
+
+ struct foo {
+     int x;
+     int y;
+ }
+
+ void function (int x, int y)
+ {
+      struct foo foo[2];
+      foo[0].x = x;
+      foo[0].y = y;
+      foo[1].x = y;
+      foo[2].x = x;
+      printf ("%d %d\n", sizeof (foo), sizeof (struct foo)); 
+        /* prints 16 8, assuming 4-byte ints */
+ }
+The keyword "struct" is used to access the structure namespace.  "foo" by itself does not refer to the structure definition.  However, you can promote it into the "main" namespace with a typedef.
+ typedef struct foo foo;
+Now, "foo" refers to the structure.
+
+In CeePlusPlus, this was eliminated; the definition
+ struct foo {
+     int x;
+     int y;
+ }
+now creates a global symbol called foo automatically.  (It still creates an entry in the "struct" namespace, which is retained for backwards compatibilty; but use of "struct" outside a structure definition is generally considered to be deprecated).  Typing
+ typedef struct foo foo;
+into a C++ compiler is an error.
+
+This is one of the more annoying aspects of writing header files that are both C and C++ compatible.  I include this to point out that after numerous years of experience with a dual namespace, C++ decided to break compatibility with C on this point and move to a single namespace for all symbols.  (Later, of course, C++ added user-definiable hierarchial namespaces, which is a different kettle of fish altogether).
+----
+When I first learned Scheme, I was taught that it was a Lisp-1 & thus, you couldn't use ''list'' as an formal parameter name or variable name since it was a function. I've been playing with Scheme again lately & noticing a ''lot'' of code that uses ''list'' as a formal parameter name. e.g.
+
+ (define (filter pred list)
+   ...)
+
+What's up with that?
+
+''Name bindings have LexicalScoping.  So, in the example above, "list" refers to the list function when used in the global scope and to the argument passed to filter when used within the scope of the filter function.''
+
+Doh! Of course. You only have a problem if you want to use the list function within the same scope. Thank you very much.
+----
+
+I question the statement that Scheme is necessarily a Lisp-1. If Common Lisp is a Lisp-n, I would call Scheme a Lisp-(n-1) (or rather a Lisp-(1- n)).
+
+Please let me explain. In Common Lisp, there are certainly more than two namespaces by default. A given symbol can refer to a function, a variable, a class, a special operator or a macro. Of these, special operators, macros and functions share a single namespace. You could certainly create a Lisp dialect which uses three separate namespaces for them, though! Classes and variables have got their own namespaces.
+
+It doesn't stop here. If you want, you can define new namespaces quite easily. As an example, take the standard Common Lisp LOOP macro, which uses symbols that don't refer to any of the aforementioned object types. If you were to implement, say, some new kind of object system based on prototypes, you might want to create a new namespace for prototypes along the way, too, so that there can be no ambiguity between CLOS classes and prototypes.
+
+All of this is possible in Scheme, too. You can make Scheme behave largely as Common Lisp does by redefining DEFINE, for instance. Doing this wouldn't make a lot of sense, of course, but it's good to be aware of the fact that it is possible.
+
+This still doesn't change the fact that Scheme really is a Lisp-1 by default, of course. --MatthiasBenkard
+
+----
+CategoryLisp CategoryScheme CategoryLanguageFeature

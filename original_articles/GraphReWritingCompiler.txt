@@ -1,0 +1,68 @@
+A compiler implemented by TermRewriting of an initial graph constituting the input program, into some lower level language (ultimately into MachineCode).
+
+----
+[See RethinkingCompilerDesign for additional context.]
+
+Rules are written `<pattern>`-><replacement> where replacement must result in a new pattern, but may contain guards etc. (everything, that has been defined up to that point). Placeholder use the prefix ^. 
+
+Is parsing not a special case of this?  How would some BackusNaurForm grammar rules look in this format?  For example does
+
+  function_declaration := type function_name ( arglist )
+become
+
+  `^type ^function_name "(" ^arglist ")"` -> `function_declaration( ^type, ^function_name, ^arglist )`
+
+''No: The <pattern> can be only well-formed (sub-)expressions (=terms). But the syntax used in these examples may look quite unstructured. See MinimalParsing for details.''
+
+
+Examples:
+ `assignType(int)` -> `type:int`;
+ `int+int` -> `int`;
+ `assignType(^a+^b)` -> `^(a.type+b.type):(assignType(^a)+assignType(^b))`;
+ `assignType(^t:^(var:a))` -> a.name.type=t, `^(a.type):^a`;
+ `assignType(^(var:a))` -> `^(a.name.type):^a`;
+ `assignType(^a((^p:^b))<-(^r:^x))` -> `^(func(x,b,p,r)):^a`;
+ `assignType((type:^a):^b)` -> `(^a:assignType(^b))`;
+ `(type:^a):^b` -> b.type=a, `(^a:^b)`;
+ `compile(((func(^x,^f,^p,^r):^a)(^p:^b))` -> `^r:compile(replace(^x,^f,^b))`;
+ `replace(^a,^a,^b)` -> `^b`;
+ `replace(^a,^b,^c)` -> `^a`;
+ `compile(^a;^b)` -> `compile(^a),compile(^b)`;
+ `compile(^(var:a))` -> `asmLoad(a.name.address, a.name.reg)`;
+ `asmLoad(^addr,^reg)` -> `^(0x800|addr<<10|reg)`
+
+''These are just some sketches for possible rules copied out of my notebook. Some further explanations:
+* There are no futher special literals. But there must be a special notation to match any identifier or any number. This is here done with a token name (as used in '^(var:a)'). Oh, it might be possible to represent identifier, strings and number as tokens of bytes and then bits. This would be crude at first, but once appropriate rules are present could be the cleanest way.
+* 'a:b' declares 'b' to be of type 'a' (binary operator with strong precedence).
+* 'a,b' and 'a;b' evaluate a and then b, return the latter, ',' with moderate precedence, ';' with low (therefore used between rules). There is no such thing as an end-of-statement. Everything is just one large expression.
+* 'a(b)' a binary operator, used to denote function call in the above example, that uses mandatory brackets around the second operand.
+* 'a=b' assignment operator. This is used as a primitive operator e.g. in 'a.name.type=t' to assign an attribute of the variable 'a'.
+
+I will explain one example in some detail:''
+ `assignType(^t:^(var:a))` -> a.name.type=t, `^(a.type):^a`
+I assume, that the expression representing the whole program (after MinimalParsing) fed to the rewrite engine is implicitly sorrounded by one extra operator 'doItAll(<expr>)', which is then rewritten to e.g. 'postprocess(compile(assignTypes(preproc(<expr>))))'. 'assignType' is one of these stages, which is reponsible for assigning types to partial expressions.
+
+The rule `assignType(^t:^(var:a))` matches any sub-term, that has the binary operator 'a(b)' as the top opertor with a being the constant 'assignType' and a being the term with the binary operator ':' with any term designated 't' as its left operand and any programm identifier (captured with the special notation 'var') designated 'a' as its right operand.
+
+If this rule matches AND the right hand side succeeds (i.e. evaluates to a pattern), then it is fully replaced with that pattern (with placeholders replaced with the corresponding sub-terms.
+
+In this case the right hand side consists of an assignment and a pattern. The pattern just discared the 'assignType' and completes this stage on this sub-term. The assignment is just a sketch of what should be done to attach the type not to the sub-term/graph, but to the actual 'variable'. In this case 'a.name' should indicate, that we fetch the actual name of the term (which is already known to be an identifier). And 'a.name.type' refers to the type of this name. This glosses of details of LexicalScoping and incompatible assignments of types to variables. An other example might have read 
+  'symbolTable.lookup(a, a.name).bind(type)'
+but that implies just too much about an implementation and could be done any other way anyway.
+
+----
+I am not quite clear that this ad-hoc syntax is really well-suited for the task of defining rewrite rules for the kind of compiler described in RethinkingCompilerDesign. But it fulfills the following requirements:
+* Can be represented with the given expression language (which requires MinimalParsing)
+* Powerful enough for typed GraphRewriting and guards.
+
+----
+The LanguageMachine relates quite closely to this approach - it applies grammatical rewriting rules which can recognise and substitute arbitrary grammatical patterns that include variable bindings - you can see how it works by looking at the LmDiagram. The central algorithm is an online algorithm which operates symbol by symbol, and the LmDiagram can be read as showing what happens as successive symbols are dealt with, and (for a completed analysis) as showing how the substituted material relates to the material that was recognised and to the nesting of recognition phases (the 'ghost of the Parse Tree'). The Parse Tree  is sometimes referred to as the AbstractSyntaxTree. See also VisitTheParseTree to see what happens if you have to deal with the tree itself instead of a nice helpful ghost.
+----
+Relevant papers:
+* Graph Rewrite Systems for Program Optimization (2000) http://www.inria.fr/rrrt/rr-2955.html
+* A number of papers written by the Clean team are at http://www.cs.ru.nl/st/Onderzoek/Publicaties/publicaties.html
+----
+The CleanLanguage is a "term graph rewriting" language; also pure, lazy, strongly-typed (Milner / Hindley / Mycroft), etc.
+
+----
+CategoryCompilers

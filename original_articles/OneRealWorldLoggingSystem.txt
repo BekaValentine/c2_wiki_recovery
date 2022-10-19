@@ -1,0 +1,288 @@
+In YagniAndLogging RobertDiFalco uses a hypothetical logging system as a device for examining the XP principle of YouArentGonnaNeedIt.
+
+The system he describes has some definite similarities to a system I have been developing off and on over the last year.  I think a real world example might be beneficial to the discussion, especially since my (armchair) familiarity with XP had some influence on the way I developed the system.
+
+Disclaimer: The following account suffers from both my hazy memory and the demands of expediency, so the best I can say about it is that it is mostly accurate.
+
+-- CurtisBartley
+
+'''***** Logging Project I *****'''
+
+Around August of 1999 my team started work on a distributed application.  The bulk of the system was being written by a team in another city, but my team was responsible for a major subsystem.
+
+My job was to implement a number of services that would make up part of a distributed application.  I knew from the beginning that we were going to need some sort of logging system.  This wasn't because the customers requested it (they didn't) or because the official architecture called for it (it didn't).  What I knew for sure was that ''I'' was going to need it, first as an aid in debugging my own components during development and second because I knew yours truly was going to be expected to troubleshoot the production system.
+
+'' It's worth noting that Project I was going to be operated by my company but sold through resellers who were going to resell it to the ultimate end-customers.  To make it more complicated, the end-customers (who would pay for the service) were buying it to service their own clients.  We attempted to identify all the different roles involved in the usage of the system, giving us (at least), clients, two kinds of end-customers, customer-support people at the re-sellers, and customer-support people working for my company.  However, we failed to identify operations at my company as an important role, and we didn't attempt to interview the operations people we had working on other projects, although in hind-sight that would have been a good idea.  It's also worth pointing out that although we got some money from our resellers, most of the development effort was funded with my company's money.  So even if we'd been doing the entire project at one site, it still would have been impossible to use the standard ExtremeProgramming process. ''
+
+'''I Envision the Logging System'''
+
+From the very beginning I was convinced that we would ultimately need a network logging system that could aggregate logs from many different processes running on many different machines, and we needed some form of filtering that would allow us to view specific subsets of the aggregated logs.  And clearly we were going to want to monitor for errors in real-time so that operations could deal with them as quickly as possible.
+
+In fact I imagined a very sophisticated and complete logging system:
+
+	* A class which could be used to write log messages.
+	* A scheme for identifying the source of a log message -- the name of the originating service, perhaps the port number it was listening on, the name of the job it was working on when the message was issued, etc.
+	* A way to copy a log message to different destinations, and even to different destinations at the same time (to the console for development, to both the disk and the network for operational usage).
+	* A way that my test drivers could "listen" to the log to see if the asynchronous operations they had launched had completed successfully or had failed.
+	* A scheme for formatting log messages for human readability.
+	* A network log aggregator service and a "network logger" which could be used by client processes to send their messages to a centralized logging service.
+	* A way for the log service to copy log messages to multiple destinations, including to disk, to a "log viewer" which would display messages on the console on a remote machine, or even possibly to a database for doing complex queries.
+	* A "log filtering" mechanism, where log filters could be installed at a variety of places in the system -- for example a "log viewer" could be set up to only display errors and warnings; A source service might be set up to log lots of messages to local disk but only high priority messages to the network logger to conserve bandwidth.
+
+'''Reality Imposes Restrictions'''
+
+We were under apparently onerous time constraints to get the project completed.  I had several important services that I was responsible for plus more general responsibilities for setting up the project, making sure it could build the outputs we needed, etc.  My hypothetical logging system had no official sanction, so I could only do what I could piggyback on top of my official responsibilities.  There were some other reasons I wanted to limit the scope as well.
+
+My major reasons for limiting the scope:
+
+1. I had a limited amount of time.
+2. Logging had no official sanction; I was implementing it as a part of my assigned features, therefore it wouldn't do to have most of my time go to logging rather than my officially assigned features.
+3. My full vision was just too big for me to tackle all at once, and I know from past experience that if I tried I'd lose enthusiasm for working on it well before I was done.
+4. Last, and not least, the logging system would have no value in and of itself -- it was pointless without real code that needed to use it.
+
+''My Response''
+
+I expected that much of my vision could be implemented before the project was done, but that I would have to start out with a limited subset.  Therefore I wanted to choose the subset carefully.  I had a couple of guiding tenets to help me choose what to do immediately and what to defer (perhaps indefinitely).
+
+These were:
+
+	* The hardest part wasn't going to be building the logging system but rather using it thoroughly and effectively in the client code.
+	* I already knew from prior experience that it was far easier to implement error handling as I went along than it was to retrofit it after the fact.  I strongly suspected that the same applied to logging, since it was often tied to error handling.
+	* If I was going to have to modify the client logging code after the fact, making it simpler was going to be way easier than making it more complicated.
+	* It would be easy to transparently flesh out the back end of the logging system later, since that wouldn't directly affect the client code.
+
+''My Short List of Features''
+
+Therefore I chose the following subset of features from my original list:
+
+	* A class which could be used to write log messages.
+	* A scheme for identifying the source of a log message -- the name of the originating service, perhaps the port number it was listening on, the machine the service was running on, the name of the job it was working on when the message was issued, etc.
+	* A way that my test drivers could "listen" to the log to see if the asynchronous operations they had launched had completed successfully or had failed.
+	* A scheme for formatting log messages for human readability.
+
+'''I Begin the Initial Implementation'''
+
+I did not begin the initial implementation until the service I was working on started to look more like real code than prototype code.  Shortly after I started writing "production" code I ran into a condition I felt I ought to log.  Then I started working on the logging system. One reason for this was simple priority -- writing the service was my official task, and it made sense that I should make progress on it before working on anything else.  However the main reason was simply that I would not be able to see exactly what my client API into the logging system should be until I actually needed it in anger.
+
+'''I was pretty clear on a number of things when I started.'''
+
+1. I wanted my log methods to be static (I was coding in Java), because this was natural and convenient.  The way I imagined logging should work is log messages from all over the system would get routed to one big pile, and if someone wanted to look at only some of the log messages then they would use filtering to pick out those messages.
+
+2. I wanted some way of clearly identifying the source of a log message (which would include not only some way of identifying the source service but also the machine on which it was running) and I wanted an interface that discouraged ad hoc source identifiers that were inconsistent for the same source.  This indicated that a LogID class (more precisely a "LogMessageSourceID" but brevity won out) was needed.
+
+3. I knew I had a distinction between errors and "informative messages" and past experience suggested I ought to throw in "warnings" as a category as well.
+
+4. I wanted a scheme for categorizing messages from a filtering standpoint.  Filtering itself was way down on my deferred list, but making sure that the desired context was being supplied by calls to the logging system was ''high'' because I didn't want to go back and retrofit that if I could avoid it.
+
+''The Initial Logging API''
+
+It took me several days to figure out what my Log API methods should look like.  I ended up with a Log class which contained a bunch of public static void methods like so:
+
+	Log.logServiceMessage(ServiceID, String msg)
+	Log.logServiceWarning(ServiceID, String msg, Throwable optionalException)
+	Log.logServiceError(ServiceID, String msg, Throwable optionalException)
+
+	Log.logServiceStarted(ServiceID)
+	Log.logServiceTerminated(ServiceID, Throwable optionalException)
+
+	Log.logTaskMessage(TaskID, String msg)
+	Log.logTaskWarning(TaskID, String msg, Throwable optionalException)
+	Log.logTaskError(TaskID, String msg, Throwable optionalException)
+
+	Log.logTaskStarted(TaskID)
+	Log.logTaskCheckPoint(TaskID, String checkPointName)
+	Log.logTaskCompleted(TaskID)
+	Log.logTaskAborted(TaskID, Throwable optionalExeception)
+
+A task was a logical unit of work carried out by a service, often associated with a single RPC.  This notion of "services" and tasks meshed closely with my main developement tasks.
+
+''Internal Implementation''
+
+There was a private generic log method that these methods called internally, which looked something like:
+
+	private static void 
+	logMessage(LogID, MsgType, String msg, Throwable optionalException)
+
+LogID was the abstract base class for ServiceID and TaskID.  MsgType was a way essentially to encode what public log method was used and was intended to support filtering along those lines, and it probably deserves some further explanation:
+
+MsgType was an "enumeration" class, and there was a different MsgType object for each public log method.  For example:
+
+	public static logTaskMessage(TaskID taskID, String msg)
+	{
+		logMessage(taskID, MsgType.TASK_MSG, msg, null);
+	}
+
+Now, just to make it more interesting, each MsgType had a name, a category (error, warning, etc.), and a scope (service, task).  The category was designated by a MsgCategory object and the scope by a MsgScope object.  Both MsgCategory and MsgScope were also enumeration types.  There could also be more than one MsgType with the same scope and category.
+
+It took me a couple of days to sort out both the standard public Log methods and the MsgType/MsgScope/MsgCategory stuff.  In hindsight, I think the MsgType stuff was overkill, but I was fairly happy with the variety of log methods I'd introduced.
+
+
+''Log Formatting''
+
+I intentionally put quite a bit of effort into the formatting of my log messages, and this took several days to implement -- probably as long as the initial logging API.  The two major pieces of functionality were a generic format routine which would format a list of string-value pairs (where the values would sometimes be many lines), and a routine for linewrapping long lines hanging-paragraph style.  The latter, although generic, was intended specifically for displaying Java stack traces too long for the display.
+
+''Test Drivers and Multiple LogListeners''
+
+The initial logging implementation could log to a Java PrintStream, which might be either System.out or a file, depending on whether the program was running in the IDE or as a Windows NT service.  There was (as I remember) initially no facility for having multiple destinations.
+
+On returning to my main responsibilities, however, one of the first things I did was to write a test driver that would start a service and monitor the log for messages originating from the "task" it had initiated.  This required a generic LogListener mechanism to be defined.  This probably only took a few hours -- if that -- to implement, and certainly took far less time than designing the Log API and the log formatting capability.  And interestingly, I didn't implement it until I actually needed it.
+
+''Network Logging''
+
+I worked for several weeks on my main tasks, and only after I had made good progress on them did I return to the logging system.  I had believed all along that I would need network logging, and I was expecting to be able to make use of it in short order.
+
+Again, I didn't feel I could justify a lot of time on it, so I just created a simple system which consisted of two components: a NetworkLogger object, and a LogViewer program which could receive log messages over the network and display them to the console.  This only took a couple of days.
+
+We did try to use the system once or twice, but real need for it never materialized.  Or more precisely, real need for a network logging system didn't materialize for something like 8 months, after we were already effectively in code freeze, on a project that was by then regarded as kind of a dead end.
+
+
+'''***** Logging Project II *****'''
+
+Along about June or August of 2000 part of my team started on a second project.  I wasn't assigned to this project and the project that I did expect to start working on never quite got going.  So I was in an interesting position where I could work on Project II more or less at my leisure.
+
+The nucleus for Project II was one of my services from Project I plus supporting code, including my logging system.  During Project II start-up a lot of code got reorganized.  I used this opportunity to fix nagging problems in the logging system from Project I but which had never been important enough to fix at the time.
+
+'''A New Messaging Scheme'''
+
+Project I had used a home grown messaging scheme implemented at another site.  Frankly this messaging scheme sucked rocks.  Project II was planning to use SOAP to send messages across the network, but it took a while for the SOAP support to arrive.  In the meantime I implemented a really simple messaging system using raw sockets and Java serialization that the lead developer on Project II could use as a stop-gap.
+
+He then asked me to re-enable the network logging functionality from Project I using the new stop-gap messaging scheme.  This only took a few hours, but it would have some nice benefits later.
+
+'''I Simplify and Generalize the Logging API'''
+
+One of the deficiencies of the Project I logging API was that it required you to know whether you were working in the context of a service or a task.  In higher level code this was obvious.  However, this was a problem in utility code which might be working in a service context sometimes and in a task context in other times.
+
+So I both simplified and generalized the logging API, replacing these 6 methods:
+
+
+	Log.logServiceMessage(ServiceID, String msg)
+	Log.logServiceWarning(ServiceID, String msg, Throwable optionalException)
+	Log.logServiceError(ServiceID, String msg, Throwable optionalException)
+
+	Log.logTaskMessage(TaskID, String msg)
+	Log.logTaskWarning(TaskID, String msg, Throwable optionalException)
+	Log.logTaskError(TaskID, String msg, Throwable optionalException)
+
+with 3 new ones:
+
+	Log.logMessage(LogID, String msg)
+	Log.logWarning(LogID, String msg, Throwable optionalException)
+	Log.logError(LogID, String msg, Throwable optionalException)
+	
+With the new API, it became possible for library methods to take a passed in LogID without any knowledge of exactly what kind of LogID it was.
+
+This external change required me to change the MsgType.  In the end, I eliminated the MsgCategory and MsgScope classes, choosing to designate category and scope with simple strings, although I preserved the original constant definitions for predefined scopes and categories, now using string values.  Then I made MsgType a normal class and not an "enumeration" type.  This required replacing comparisons on identity with comparisons on equality using .equals(), but this was not a big deal.  This not only eliminated two classes, but also made MsgType both simpler and extensible.
+
+All this was really to facilitate the generic methods above.  For example,
+
+public static void logMessage(LogID logID, String msg) 
+{
+	MsgType msgType = 	// Can no longer use a MsgType constant!
+		new MsgType(logID.getScope(), MsgType.CATEGORY_INFORMATIVE);
+	logMessage(logID, msgType, msg, null);
+}
+
+''I Make the Log Messages Less Verbose''
+
+The lead developer for the new project complained that the log messages were too verbose, so I decided to shorten up the format.  In this process, I discovered that I had duplicated the top level formatting code (maybe about 20 lines of code) in three different places.
+
+I messed around for a while trying to find a clean way to eliminate the duplication while preserving the slight formatting difference between the different modes of output (which is why I had duplicated the code in the first place).
+
+The first try didn't work very well, so returning to it several days later, I just broke down and implemented a first class LogMessage class, and moved all the formatting into there.  Then I made the LogMessage class itself responsible for minor variations in formatting.
+
+''The Remote Log Server Should Write Messages to Disk''
+
+Next, I got the request to support logging to a file from the Log Server (or "Log Aggregator" as the Project II lead called it).  I already had the capability to write logs to disk, but I couldn't use it in the LogServer because LogMessage objects were translated to a key-value format for network transmission (this was a consequence of the Project I messaging system).  With the new messaging system, this was easy to fix.  I modified the network message to simply contain a LogMessage object instead of a list of key-value pairs.  Then I took the log listener capability in the Log class and factored it out into a LogMultiCaster class.  I modified the LogServer class to add a FileLogger object to its LogMultiCaster, and then broadcast incoming LogMessage objects to the multicaster instead of printing them directly.
+
+Later, I removed the LogViewer class and replaced it with a special usage of LogServer.  This opened up the LogMultiCaster/LogListener functionality to the LogViewer as well.
+
+''I Optimize Network Logging''
+
+While I was making the LogServer use the new LogMultiCaster, I also modified the debug start-up code to run the LogServer and a LogViewer instance in loopback mode.  I also wrote some code to automatically generate a log messages on a number of threads so I could test the multi-threading capability.
+
+This test indicated that multi-threading was fine but that I had a horrendous performance problem.  After finishing the LogMultiCaster and LogServer file logging, I took a look at this problem.
+
+In loopback mode, each log message is sent over a socket twice, even though all three communicating services are running in the same process.  Each log message was about 900 bytes in size (Java serialization isn't terribly bandwidth friendly).  However I was only displaying about 8 messages a second (16 messages per second over a socket).  I'm not an expert network programmer by any means, but this seemed pretty serious.
+
+I found a possible bug in the code and fixed it, but there wasn't much if any performance improvement.  After examing some possible problems like message size (900 bytes is big, but hardly gigantic) and multi-threading, I experimented with maintaining and re-using a single socket rather than opening and closing them for each method.  This made a huge improvement.  So I replaced my ad hoc single socket code with a Connection class, and rewrote the Network logger to use it.
+
+I also discoverd that outputting formatted messages to file and console was very expensive (in loop-back mode, each messages was written to a file twice and the console once).  With all human readable output turned off, my message througput approached 500 messages per second.  I deemed this sufficient for current needs, although I'd like to revisit the issue sometime in the future for education reasons.
+
+Then I did a quick optimizing pass to speed up formatting.  I replaced a few abusive string concatenations (always expensive in Java) with StringBuffer appends().  This sped up formatting immensely.  There didn't appear to be any more low lying fruit, and some poor man's profiling indicated that I could write two log messages to disk in much less time than writing one message to the Java console, even though both code paths use the same formatting code.  Consequently, I declared the optimization pass to be complete.
+
+''I Finally Implement Filtering''
+
+My most recent feature request was some basic filtering capability, which, of course, had been a key goal from the beginning.
+
+I spent a day or so playing around with a generic filter expression mechanism before abandoning it as being way too complex.  Ultimately I wrote a single LogFilter class with some static methods.  I still have not had time to expose this support in the log viewer application.
+
+'' I Fix a Stupid Bug: Logging From the NetworkLogger Causes Run-away Recursion''
+
+Logging errors from inside a Logger object (especially a NetworkLogger) is problematic.  I planned for this eventuality by using a method called LogErrorToEveryoneElse(), which would save the current status flag, set a suspended flag, log the error, then restore the current status flag.  Since logging is currently synchronous, this would work fine.
+
+At least it would work fine if I'd actually set the suspended flag, which apparently I hadn't.  Interestingly, I had planned to rewrite the way "logging to everyone else" worked, anyway, in order to get away from the synchronous requirement.  That plan involved creating a unique LogID for the NetworkLogger, and making its logMessage() method ignore any messages with that LogID.  This seemed simpler and would work just as well if I later made the NetworkLogger asynchronous.  Once the bug was discovered, I went ahead and made the change just described, which fixed it.  It maybe took 15 minutes between discovery of the bug and fixing it.
+
+'' I Implement HTML Logging ''
+
+The Project II Lead developer really wanted some sort of UI for displaying and filtering log messages.  A classical GUI log viewer would be really cool, but it would not only violate DoTheSimplestThingThatCouldPossiblyWork, it would also violate the less stringent ''Keep It Simple, Stupid'' principle (and I usually try to adhere to the latter, even though I rarely adhere to the former).
+
+My approach was to create an "HTMLLogger" which formats and writes log messages as HTML rather than plain text.  Then I added a "-html" command-line option to the console based LogViewer application.  When this option is provided, not only does the LogViewer display messages to the console, it also writes them to an HTML file ''and'' it automatically opens that file in Internet Explorer.
+
+By generating DHTML and a little bit of JavaScript, it was possible to display messages in one line collapsed form.  A double click would expand the message, displaying the full ASCII formatted message.  A little more work made it possible to filter messages on source component or source machine, just by double clicking on those columns.  Total time, maybe two days.
+
+After requesting this kind of functionality, the Project II Lead complained that he couldn't watch the HTMLLog from across the room to see if a test was working.  He'd gotten into the habit of running the console logger at one desk while working at another one.  When he started a test, he could see if messages were getting dumped to the console, even if he couldn't tell what they were.  Since the HTMLLog file wasn't live, you couldn't see anything happen.  Of course, the console logging functionality was still available in the LogViewer.
+
+It's interesting to note that the filtering in the HTMLLog uses a completely different mechanism than the filtering I had previously implemented.  I think the previous filtering mechanism will still eventually be useful, but in hindsight I should have implemented the HTML-based scheme first.
+
+-----
+
+If anyone gets this far and thinks their time wasn't completely wasted, leave a short message.  It takes a lot of work to do a write up like this, and I'd like to know if somebody besides me is getting something out of it! -- CB
+
+Facinating. It's fun to see how someone else's thought processes worked,
+and in a real-life example. It's even ''more'' interesting to me, because
+I implemented a logging system (with similar requirements) myself. My
+development arc was far less elegant (it consisted mostly of arguing with
+other team members about how the thing ought to work), and this makes a
+wonderful read. -- MichaelChermside
+
+Very interesting. I usually have two logging systems, one for software developpers, one for end users. Different audiences.
+End users are usually interested on the status of things, what is currently working/up versus what is broken/down and
+whether this is known/acceptable or not. As a result I end up associating an administrative status to things, that
+tells what the expected status should be; and an operationnal status that tells what is actually happening.
+-- JeanHuguesRobert
+
+
+Very interesting.  I always love reading about other peoples' real-world experiences.  Thanks!  --JimLittle
+
+----
+'''Lessons learned'''
+
+Please fill this in. ;)
+
+----
+'''Any questions ?'''
+
+Yeah, a few.
+
+''It took me several days to figure out what my Log API methods should look like.'' ... ''It took me a couple of days to sort out both the standard public Log methods and the MsgType/MsgScope/MsgCategory stuff.''
+
+Full-time days, or in parallel with other tasks ?
+
+''' ''Full time days.  From an XP standpoint, this may seem like a lot of time, but on this particular project, a couple of days was a pretty short amount of time.  In fact most of the individual tasks were done in not more than a couple of days, which is in fact something I believe I did right. -- cb '' '''
+
+''...more precisely, real need for a network logging system didn't materialize for something like 8 months, after we were already effectively in code freeze, on a project that was by then regarded as kind of a dead end.''
+
+How did you feel about that ?
+
+''' ''Well, it was nice that my original assumption about the need for network logging was validated.  On the other hand, it kind of sucked that the network logging capability that I implemented for Project I was too limited to be useful, and it especially sucked that at this point I *did* have a solid network logging system for Project II but I couldn't use it, because it would require to much upheaval to backport it to Project I. -- cb '' '''
+
+''The nucleus for Project II was one of my services from Project I plus supporting code, including my logging system.''
+Was the logging part, then, an "official" requirement of PII ?
+
+''' ''I suppose it depends on how you look at it.  There was never any "paper" requirement for logging in Project II.  However, the lead developer wanted me to work on it, and he wrote all the actual paper requirements for the project.  Interestingly, his reasoning for requesting it was the same as mine on Project I -- it wasn't so much that operations would need this functionality as that the developers would.  -- cb '' '''
+
+----
+
+'' After requesting this kind of functionality, the Project II Lead complained that he couldn't watch the HTMLLog from across the room to see if a test was working.'' <<snip>> ''Since the HTMLLog file wasn't live, you couldn't see anything happen.  Of course, the console logging functionality was still available in the LogViewer.''
+
+Did the Project II Lead simply not want to fire up a second LogViewer on the console he '''was''' working on, or was there no capability for multiple viewers built into the server?  By this I mean an arbitrary number of readers for an output stream ''vs'' an arbitrary number of output streams.

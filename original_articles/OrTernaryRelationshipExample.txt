@@ -1,0 +1,310 @@
+In EjbTernaryRelationshipExample, CostinCozianu tells us what a bad idea using an ObjectOriented view of data is and provides an example. While it may be bad in EJB, it's simple using an O/R tool. Here's his example implemented using PlainOldJavaObject with Hibernate providing the O/R mapping.
+
+1) Create a base domain object. It contains an object id to establish identity.
+
+ public abstract class DomainObject implements Serializable {
+  protected Serializable id;
+  public DomainObject() {
+    super();
+  }
+  public DomainObject(Serializable id) {
+    super();
+    setId(id);
+  }
+  public Serializable getId() {
+    return id;
+  }
+  protected void setId(Serializable id) {
+    this.id = id;
+  }
+  public boolean equals(Object obj) {
+    if (obj == this) return true;
+    if (!getClass().isInstance(obj)) return false;
+    if (id == null || ((DomainObject) obj).getId() == null) return false;
+    return id.equals(((DomainObject) obj).getId());
+  }
+  public int hashCode() {
+    if (id == null) return super.hashCode();
+    return id.hashCode();
+  }
+ }
+2) Create the domain objects for Part, Supplier and Project. The relationships from Project to Part and Supplier to Part are implemented as Collections. The ternary relationship is implemented as a Map.
+
+ public class Part extends DomainObject {
+  private String description;
+  public Part(String partCode) {
+    super(partCode);
+  }
+  private Part() {
+    super();
+  }
+  public String getPartCode() {
+    return (String) getId();
+  }
+  public String getDescription() {
+    return description;
+  }
+  public String toString() {
+    return getPartCode() + " " + getDescription();
+  }
+ }
+
+ public class Supplier extends DomainObject {
+  private Set parts = new Hash''''''Set();
+  public Supplier(String name) {
+    super(name);
+  }
+  private Supplier() {
+    super();
+  }
+  public String getName() {
+    return (String) getId();    
+  }
+  public Set getParts() {
+    return Collections.unmodifiableSet(parts);
+  }
+  public String toString() {
+    return getName();
+  }
+ }
+
+ public class PartSupplier implements Serializable {
+   private Part part;
+   private Supplier supplier;
+   public PartSupplier(Part part, Supplier supplier) {
+     super();
+     this.part = part;
+     this.supplier = supplier;
+   }
+   private PartSupplier() {
+     super();
+   }
+   public Part getPart() {
+     return part;
+   }
+   public Supplier getSupplier() {
+     return supplier;
+   }
+   public int hashCode() {
+     int hashCode = HashCodeHelper.hashCode(0, part);
+     return HashCodeHelper.hashCode(hashCode, supplier);	
+   }
+   public boolean equals(Object obj) {
+     if (obj == this) return true;
+     if (!(obj instanceof PartSupplier)) return false;
+     return part.equals(((PartSupplier) obj).part)
+	    && supplier.equals(((PartSupplier) obj).supplier);
+   }
+   public String toString() {
+     return part + " " + supplier;
+   }
+ }
+
+ public class Project extends DomainObject {
+  private Set requiredParts = new Hash''''''Set();
+  private Set partSuppliers = new Hash''''''Set();
+  public Project(String name) {
+    super(name);
+  }
+  private Project() {
+    super();
+  }
+  public String getName() {
+    return (String) getId();
+  }
+  public Set getRequiredParts() {
+    return Collections.unmodifiableSet(requiredParts);
+  }
+  public Collection getSuppliersFor(final Part part) {
+    return CollectionUtils.collect(partSuppliers, new Transformer() {
+      public Object transform(Object obj) {
+        if (((PartSupplier) obj).getPart().equals(part)) {
+	  return ((PartSupplier) obj).getSupplier();
+	}
+	return null;
+      }
+    });
+  }
+  public Collection getPartsSuppliedBy(final Supplier supplier) {
+    return CollectionUtils.collect(partSuppliers, new Transformer() {
+      public Object transform(Object obj) {
+        if (((PartSupplier) obj).getSupplier().equals(supplier)) {
+	  return ((PartSupplier) obj).getPart();
+	}
+	return null;
+      }
+    });
+  }
+  private Set getPartSuppliers() {
+    return partSuppliers;
+  }
+  private void setPartSuppliers(Set partSuppliers) {
+    this.partSuppliers = partSuppliers;
+  }
+  public String toString() {
+    return getName();
+  }
+ }
+
+3) Create an interface to access the ProjectRepository. Include a method to meet the challenge of '' "For some particular projects the project manager can decide that only those suppliers can qualify that can offer all the parts needed for that project. Therefore we need a screen where the project manager can see which suppliers qualify." ''
+
+ public interface ProjectRepository {
+  Project getProject(String name) throws Exception;
+  List getSuppliersSupplyingAllPartsFor(Project project) throws Exception;
+ }
+
+4) Supply the XML mappings for Hibernate.
+
+ <class name="example.ternary.Part" table="Parts">
+  <id column="part_code" name="id" type="string">
+    <generator class="native"/>
+  </id>
+  <property name="description" column="part_description" access="field"/>
+ </class>
+
+ <class name="example.ternary.Supplier" table="Suppliers">
+  <id column="Supplier_Name" name="id" type="string">
+    <generator class="native"/>
+  </id>
+  <set name="parts" table="R_SuppliersParts" lazy="true" access="field">
+    <key column="Supplier_Name"/>
+    <many-to-many column="Part_Code" class="example.ternary.Part"/>
+  </set>
+ </class>
+
+ <class name="example.ternary.Project" table="Projects">
+  <id column="Project_Name" name="id" type="string">
+    <generator class="native"/>
+  </id>
+  <set name="requiredParts" table="R_ProjectsParts" lazy="true" access="field">
+    <key column="Project_Name"/>
+    <many-to-many column="Part_Code" class="example.ternary.Part"/>
+  </set>
+  <set name="partSuppliers" table="R_SuppliersPartsProjects" lazy="true" access="field">
+    <key column="Project_Name"/>
+    <composite-element class="example.ternary.PartSupplier">
+		<many-to-one name="supplier" column="Supplier_Name" 
+				class="example.ternary.Supplier" access="field"/>
+		<many-to-one name="part" column="Part_Code" 
+				class="example.ternary.Part" access="field"/>
+    </composite-element>
+   </set>
+ </class>
+
+5) Implement the Repository using Hibernate's API:
+
+ public class ProjectRepositoryImpl implements ProjectRepository {
+  private Session session;
+  public ProjectRepositoryImpl(Session session) {
+    super();
+    this.session = session;
+  }
+  public Project getProject(String name) throws Exception {
+    return (Project) session.load(Project.class, name);
+  }
+  public List getSuppliersSupplyingAllPartsFor(Project project) throws Exception {
+    String sql = 
+	"select {supplier.*} " +
+    	"  from Suppliers {supplier} where {supplier}.Supplier_Name in " +
+    	"  (select distinct Supplier_Name " +
+    	"     from R_SuppliersParts spx " +
+    	"    where not exists " +
+    	"         (select * " +
+    	"            from R_ProjectsParts, R_SuppliersParts " +
+    	"            where R_ProjectsParts.Project_Name = :projectName " +
+    	"              and R_ProjectsParts.Part_Code = R_SuppliersParts.Part_Code " +
+    	"              and not exists " +
+    	"                  (select * from R_SuppliersParts spy " +
+    	"                     where spy.Supplier_Name = spx.Supplier_Name " +
+    	"                       and spy.Part_Code = R_ProjectsParts.Part_Code))) ";
+    return session.createSQLQuery(sql, "supplier", Supplier.class)
+	               .setString("projectName", project.getName())
+        		   .list();
+  }
+ }
+
+And that's all there is to it. -- JohnUrberg
+
+''Is criticism of your solution allowed ?'' --CostinCozianu
+
+Constructive criticism is always appreciated.
+
+''That's why I'd appreciate, in the spirit of CriticalSpiritInSoftwareDevelopment, if the author would present both the advantages and the drawbacks of the proposed solution, especially since he knows Hybernate so much better than I do, and since it is non-trivial for me to validate the solution at a cursory look over the code. It looks like it doesn't reflect precisely the schema constraints as defined in EjbTernaryRelationshipExample, and I can't tell whether it's an oversight, limitation of Hybernate or both, etc, etc. So a brief explanation would be nice. But the main question, why do we go through the trouble of writing this much code which is anything but simple, so that in the end, we escape to SQL? Of course simplicity is to some extent in the eye of the beholder, but still... some explanations would be nice. -- CostinCozianu''
+
+I'm making the assumption here that this is all part of a larger system. If the whole system consists of keeping track of lists of data and running the one query, then a copy of MS Access, your tables and a SQL would be just fine, but in a large complex system, having the DomainModel implemented in the code makes the system easier to understand and change. So I took your example tables and inferred a DomainModel. I came up with a model that consisted of Parts, Suppliers which supply Parts and Projects which require Parts. A Project also tracks the Suppliers which supply the Parts it requires. That model is clearly defined in the three domain classes. I included a simple base DomainObject class and an interface for accessing the data. Most of the work of accessing the data is easily done by allowing Hibernate to generate the SQL once I've provided the mapping information. The query to implement your UserStory is more complex and I just used SQL and let Hibernate load the results into objects automatically for me. If I inferred the DomainModel incorrectly, please let me know.
+
+''It looks to me that the map implies that for one project, a part can be supplied by exactly one supplier, which corresponds to PRIMARY KEY (PROJECT_NAME, PART_CODE). Back to EjbTernaryRelationshipExample we have PRIMARY KEY (PROJECT_NAME, PART_CODE, SUPPLIER_NAME).''
+
+''Now your claim is that these DomainObject''''''s maskes the system much easier to understand and change, however, it is kind of self-evident that it is much easier to parse the CREATE TABLE statements over at EjbTernaryRelationshipExample than it is to parse the classes and the XML mapping and figure out whether they reflect the model correctly or not. That is partly because Hybernate, following the long established tradition of many O/R approaches, does not operate with an unifying concept, but with implementation details: links, collections, maps, binary relationships.''
+
+Ooopps! I was too busy playing with Hibernate's ternary mapping and not paying attention to the problem. I added PartSupplier to the domain and updated the mapping.
+
+''Ooops! So now we've objectified a relation and introduced an unnecessary entity. Well, that much you can do with stock EjbFlaws. I suspect that if I were to give you a quaternary relationship or a relationship of degree 5 (before you jump in, those are real world application), you'd be going through a similar exercise, polluting my IDE and the XML mapping file with more unnecessary details that merely serve the purpose of shoe-horning relations into object binary relationships. It's true that Hybernate is better because it lets you "escape" to SQL.''
+
+Keep in mind the domain is step 1 thru 3. The Hibernate stuff is the database access the details. You had no problem understanding the domain model looking at the 3 main domain objects and catching an error in the model.
+
+''Now, really :) I sometimes take pride in being a very astute code reader, but the code above is as clear as mud, compared to SQL declarative model. The later is considerable less lines of '''declarative''' code, and much easier to figure out what's all about.''
+
+Now extend that to a large complex system. Which will be easier to see the model in the code; a system that passes around result sets or a system that passes around Parts and Suppliers and Projects?
+
+''A system that is built around relational algebra, no doubt about that! It is as simple as that: fewer lines of code means fewer things to worry about, less complexity to understand and break. Again, Hhybernate like most other ObjectRelationalMapping tools out there is built around implementation artifacts like binary relationships and their collection of pointers, and that's where you've got your troubles coming up with the object model. This is a good hack for many application, but it lacks the unifying power that you get from a very simple concept: '''relation'''. If Hybernate supported relations as opposed to all those hacks with many-to-one, sets, maps and so on, so forth, the above code would look better.''
+----
+It seems like an awful lot of bother to hide the database. Why not just do a SQL query, copy the result set into temporary objects and use them to manipulate the data? When you're done, copy the contents back to a SQL statement and execute the updates, inserts and/or deletes? It's no worse than loading them into strings and ints, and it lets you treat them as objects in your large, complex system. -- EricHodges
+
+''That's the problem with examples. You need to make them small enough to understand but then it ends up looking like unneeded complexity. Imagine for a moment all the SQLs required to implement all the queries for Part, Supplier and Project as well as all the insert, updates and deletes with all the code to load and unload data from the object. Compare that to the 30 lines of XML mapping plus some calls to the Hibernate API to load(), update(), save() and delete().''
+
+I'm trying to, but I imagine that the SQL statements are smaller and more easily understood. The code to load/unload the objects might be lengthy, but still very easy to understand and maintain. I've worked on code that took both of these approaches, by the way. In the end, hiding SQL and the relational database has never made my life easier. I've come to see relational databases like any other external service, like a printer or a messaging service. It can be nice to provide an OO facade around them, but it's still useful to understand and speak their language. LeastFlexibleProtocolWins. -- EricHodges
+
+-----
+Wait a second, the least flexible protocol here is by far the "object oriented view of data", or so they call it. A simple proof of that is that John had to escape to SQL to resolve the query issue, he also modelled something that doesn't exist in the domain namely the PartSupplier'''''' "object". Of course there's a StrawMan that supposedly the alternative: to scatter SQL updates/deletes/inserts all over the place, frankly I don't understand why those things can't be grouped in three procedures and then called from the few use-cases that need them, the same rules of good coding apply to procedural code as to OO code. Those 30 lines of XML mapping is what breaks it: they are ugly and mostly do not help. For example, as far as I can tell, in the above object model if we get an extra requirement to a list of suppliers that supply a specific part we can:
+
+* write 1 line of SQL
+* write a few lines in the Part object and a few lines in the XML file
+
+Even the syntax for getting the suppliers that supply a part to a specific project goes like this:
+
+  // part of the Project class
+   return CollectionUtils.collect(partSuppliers, new Transformer() {
+      public Object transform(Object obj) {
+        if (((PartSupplier) obj).getPart().equals(part)) {
+	  return ((PartSupplier) obj).getSupplier();
+	}
+	return null;
+      }
+    });
+Now excuse me, while I shake my head in disbelief, but how does that compare with 
+ SELECT DISTINCT Suppliers.* FROM Suppliers INNER JOIN R_SuppliersPartsProjects AS R
+        WHERE R.project_name = :1 AND R.part_code= :2
+??
+
+Then there's the extra problem of having to learn the behaviour and the semantics of Hybernate mechanism for generating queries and loading objects, just to make sure that I don't do something stupid, like loading 20 suppliers and 20 parts and 400 "partsuppliers objects" when I only needed a few pieces of information. With the SQL approach I can smell from a distance if something is good or bad, with Hybernate, I'd probably have to turn on the SQL logs before I do anything else, just to make sure. -- CostinCozianu
+
+''I consider SQL a less flexible protocol than Java because I can implement or emulate SQL in Java, but I can't implement or emulate Java in SQL. John could, if he wanted to, replace all of the SQL (and all of the relational database) with equivalent Java code. That doesn't mean he should. -- EricHodges''
+
+No kidding, by your measure we should consider assembly a more flexible protocol than Java.
+
+''Absolutely. Assembly can do things Java can't (like read and write to specific memory addresses). "More flexible" doesn't imply "better suited to the task at hand". -- EricHodges''
+-----
+I'm realizing we are not comparing the same thing here. Costin and I are both using the same physical data model to persist the data. The difference is Costin's solution stops there while my solution builds a model for organizing behavior around the data and working with it in memory. There's really no point in comparing a single SQL to a select over a Collection. It would be better to compare a real world example such as a GUI to edit a Project that requires you to load the complete Project with all it's Parts and Suppliers into memory, allows the user to change the Project while taking into account any busines rules and then saves the entire Project back to the database. -- JohnUrberg
+
+''Now you've let your prejudices shine. First, I'm not using any physical data model, I'm using a logical model, or better said a '''relational schema'''. A relational schema is never a physical data model. Second, I've never seen any behaviour in the above quite impressive setup. Those are just lines of code dealing with O/R mechanics and it contains no business rules and pretty much nothing else than the mapping mechanics.''
+
+''Now, how about a real world example ? You seem to have a pretty strong assumption that if you put a GUI and an editor around your classes, than your solution will look better. I see such assumption as unwarranted. First of all, just for editing the project, I can use a screen editor and bind the screen fields directly to data object using something like DelphiLanguage, for example (VisualBasic or VisualStudioDotNet would work equally well). Whereas you'd be writing quite a few lines like this:''
+   fieldProjectName.setValue(project.getName());
+''And on reverse, you'd have to call: ''
+ if (fieldProjectName.hasChanged()) project.setName(fieldForProjectName.getValue()) //...
+''This alone means yet more lines of code dealing with the mechanics of moving bytes around. The pattern is well documented in the ThePetStoreFiasco. So, no there's no reasonable way to predict that while you start on the wrong foot (more lines of code, more complexity), you can recover the upfront costs on the road (by the way, where's DoTheSimplestThingThatCouldPossiblyWork in the above setup ?). --CostinCozianu''
+
+* I'm assuming your '''relational schema''' contained many to many relations between Part and Supplier, Part and Project, and the ternary relationship between Part, Supplier and Project. Since your DDL contained tables to resolve those relations, you created a physical data model to realize your '''relational schema''' in an RDBMS. (Notice how the OO model is closer to your relational schema than your RDBMS implementation. The many to many relationships don't need a table to implement them. I also could have implemented the ternary relationship without the extra convenience object).
+** At best you can interpet that it has a default implicit physical model provided by the underlying DBMS (Oracle, SQl Server, or whatever) and it will be different with different DBMSes. A physical model would have been for me to specify storage characteristics (tablespace, partitioning, minextent, maxextent, the physical indexing characteristics for the primary key, and all the other physical options available in CREATE TABLE command). I didn't so you may consider the relational schema as a '''logical level''' only. Now you may be confused with relational terms versus EntityRelationship terms. A '''relational schema''' contains only relations (more precisely relvars ad per ChrisDate terminology, or in common parliance tables). Tables are the logical level and that's all there is to it. Now if we were discussing an '''E/R schema''' it would have been a very different ball game.
+* There are many libraries available to bind object properties to screen widgets (including the one built into DotNet). It's not any harder to bind an object property to a widget than it is to bind a result set column.
+** I'm not so sure. And those binding libraries, would they be integrated with the identity mapping of your Hybernate framework ? In order to map to some objects they have to know those objects.
+* Since it seems the extent of this system will never go beyond a few queries to the database, an OO model is not appropriate. We can discuss an OO model when an example with behavior makes itself available.
+** How about considering a significant software system. In your practical experience how much (what percentage) of the '''relational schema''' is business rule heavy to make the OO model appropriate, and how much looks more like the EjbTernaryRelationshipExample ? Wouldn't it be generally better to start off with the simple approach, and introduce ObjectRelationalMapping only when the cost may 
+
+I would like to suggest the book Domain-Driven Design by Eric Evans [ISBN 0-321-12521-5]. It has some excellent examples of domain models complete with behavior. -- JohnUrberg
+
+''I'm very sorry to disappoint you, but I've browsed that book when it was available in draft. As many other books on these topics it's a lot of talk, very little mathematics, and a lot of anti-relational prejudice, so I wouldn't waste my time on it again (for me ProgrammingIsMath). As far as I remember the domain examples were not to the level where a DelphiLanguage - like approach would not have been feasible or even significantly better by objective measures (lines of code, complexity, time to write) than the recommended "domain modelling" approach. I think it is difficult to avoid for most printed books on such a subject. --CostinCozianu''
+
+----
+Refactored the continued discussion to SoftwareDesignApproachesDiscussion.

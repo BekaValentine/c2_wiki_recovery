@@ -1,0 +1,1014 @@
+A few initial working definitions for this page:
+* '''"Dynamic String"''' describes a string that can be evaluated (or executed) in a dynamic context, as with an 'evaluate(dynamic_string)' or 'execute(dynamic_string)' operations (note that some languages won't separate these).  It may actually refer to something higher-level than a string; what is most relevant in separating it from operations over normal strings or data is the potential to utilize the dynamic context.
+** ''The string is a stark data structure and everywhere it is passed there is much duplication of process. It is a perfect vehicle for hiding information.'' - Alan J. Perlis, ''Epigrams on Programming'' (#34)
+* '''"Functional"''' references primarily the HigherOrderFunction capabilities - in particular, the ability to return one function from another.  One might be discussing "impure" functional, where the evaluation of a function can (intentionally) have non-computational side-effects.  
+
+It should be noted that, ignoring issues of efficiency and computation cost, the primary differences between these have to do with (a) scoping of variables, and (b) flexibility of construction and decomposition.  When a new function is created in Functional, it typically captures the scope of the creator (LexicalScoping).  This property is somewhat necessary for Currying of inputs.  For example:
+   \y -> \x -> (x + y)  (Function)
+This is a function that returns a function.  If you pass '4' to this function, you get back another function that adds '4' to its input.  If you passed 'z' to this function, you get a new function that adds 'z' to its input:
+   (\y -> \x -> (x + y)) 4 =>  \x -> (x + 4)
+   (\y -> \x -> (x + y)) z =>  \x -> (x + z)
+I.e., one has essentially bound the 'y' to '4' or 'z'.  Of course, excepting the possible advantages regarding LazyEvaluation and Futures/Promises, there isn't much reason to keep 'y' around... at least not in a "pure" functional language where one can always pass-by-value.  However, in an "impure" functional language, the binding structure matters a great deal more.  Consider a 'setf' function that takes a variable and a value and mutates the variable to have the value:
+   \y -> \x -> (setf y (x + y))  (Function with Side-Effects)
+   (\y -> \x -> (setf y (x + y))) z => \x -> (setf z (x + z))
+Here, the binding must really refer to the variable 'z', not to anything else.  This would allow one to, for example, map this impure function across a list of numbers and have, as a consequence, the resulting sum stored in 'z'.
+
+In traditional functional programming languages, there is no means to '''decompose''' functions in order to access their innards and modify them (or create new functions based upon them).  This can be considered a significant weakness in some cases; it can make many forms of aspect-oriented programming difficult to impossible, and it can make optimizations based on context of usage a great deal more difficult.   E.g. suppose you had a function to apply to a collection that will return all tuples starting with ("Bob",x,y).  If function decomposition was possible, the collection to which you pass this function could peek inside and say: "Oh! I have everything indexed by that first parameter in each tuple!  Lemme go grab all the 'Bob's." then do so without iterating over the collection... as might have originally been specified by the function.  Fortunately, the lack of decomposition is not intrinsic to functional.  There is no '''fundamental''' reason that functions cannot be decomposed as well as composed.  In practice, the cost would be memory and database/filesystem space... which will be significantly greater if functions are stored twice (once in compiled form and once in decomposable form).
+
+Dynamic strings are a bit different in both usage and properties.  One can construct dynamic strings in some incredibly arbitrary manners...  e.g. "y)" and "(x +" - neither of which are syntactically acceptable by themselves - can together form the string "(x + y)" - which might then be evaluated.  Indeed, one can perform arbitrary transformations over strings (both composition AND decomposition) prior to evaluating or executing them.  
+
+It should be noted that dynamic strings accept inputs via the naming of free variables; thus dynamic strings are, essentially, dynamically scoped.  They may also describe complete anonymous functions (if the language supports those, too), so not all variables need to be free.  It should be noted that if there are '''never''' any free variables, there is no reason to use dynamic strings over the various alternatives.
+
+  global x := 1
+  global y := 2
+  global z := 3
+
+  function myFunc(string)
+    let x = 4
+    let y = 5 
+    return evaluate(string)
+
+  procedure myOp(string)
+    static local x := 3
+    execute(string)
+
+  assert(9 = myFunc("(x + y)"))
+  myOp("x := 8")
+  assert(1 = x)
+  myOp("z := x + z")
+  assert(11 = z)
+  myOp("z := z - myFunc(""x"")")
+  assert(7 = z)
+  assert(16 = myFunc("(x + y + z)")
+  assert(10 = (x + y + z))
+
+  procedure test(string)
+     local z := 10
+     assert(19 = myFunc("(x + y + z)"))
+     assert(13 = (x + y + z))            
+
+  assert(49 = (evaluate("\x -> (x + z)") 42))  (string evals to function, hybrid language)
+  
+The cost of DynamicScope is the same here as it is in any other language that supports it: variable names must be kept around, runtime lookups will occur where the variable choice can't be determined statically, there are potential type-issues if you don't know every place a procedure with free variables might be applied, and it makes variable-usage non-obvious such that massive confusion can occur when a programmer decides to refactor or modify a program and eliminates, introduces, and renames various variables.  These aren't issues unique to dynamic strings, though it should be said that "functions whose scope can inherit caller's scope" have more in common with dynamic strings than they do with prototypical "functional".  One might reasonably argue that half the DynamicStringsVsFunctional debate should be moved over to S''''''taticVsLexicalScoping.
+
+One can conceivably have 'higher order dynamic strings': dynamic strings that, when evaluated, return dynamic strings.
+
+Unlike impure functional, it is incredibly... I will call it "inelegant"... to bind '''particular''' variables into a dynamic string.  E.g. instead of "(setf z (x + z))" for a particular 'z', you'll need something more akin to "(setf var@0x5551212 (x + var@0x5551212))".  It can be done; you just need some canonical means of referencing variables in the system.  Of course, those of you who are security-conscious or who concern yourselves with garbage-collection are probably cringing just looking at that.  I am, too... though security is a problem for dynamic strings for various other reasons.
+
+This flexibility of Dynamic Strings can be powerful, and (like many powerful things) it can be abused.  Unfortunately, the power of Dynamic Strings is also '''difficult to control'''.  To start, their flexibility of creation and dynamic scoping diminish the effectiveness of various forms of static code analysis, including type checking - something programmers often utilize to help control and verify correctness of their code.  Dynamic scoping also introduces its own set of gotcha's: unless the set of legal "free variables" is very well documented and enforced, a vector exists to organically increase coupling with neither oversight nor locality of reference (e.g. where one piece of 'dynamic string' is relying upon variable names supposedly "hidden" deep in the implementation code), which breaks principles of encapsulation and makes refactoring more difficult (both encapsulation and refactoring are mechanisms utilized by programmers to help control code complexity).  Finally, while the ability to construct and transform strings is quite powerful, it also creates a gaping security hole for various forms of code-injection attacks... which can be wholly eliminated only by magnificent efforts at code-sanitization or by abstaining from external sources of dynamic strings.
+
+Unfortunately, those few places where dynamic strings display an objective feature-advantage over a combination of functional & macros are also those places where they become ''most'' difficult to control: access to arbitrary free variables and rather arbitrary construction utilizing strings from external sources.  For example, if you DO choose to enforce discipline regarding the "free variables" accessible with dynamic scoping, you lose the feature-advantage over using one function and passing to it every legal variable (or an object containing them).  Similarly, if you DO choose to eliminate external sources of code, you lose the feature advantage of wholly arbitrary construction of expressions - anything you might choose to do would be doable with function composition.  And, while you might progress with code-sanitization, it will be a non-trivial effort to simultaneously make it happen and maintain any real feature-advantage over functional.
+
+The above discussed mostly feature differences.  If one chooses to focus, instead, upon efficiency and computation issues, functional comes out clearly ahead of dynamic strings.  Dynamic strings make difficult the sort of static code-analysis necessary for many compile-time optimizations, the dynamic scoping requires extra code-space and execution costs to track and lookup variable-names, there is parsing overhead, and there may be significant construction overhead (especially if one decides to leverage 'higher-order dynamic strings' or starts trying to do variable binding and injecting stuff like "var@0x5551212" into strings).  Comparatively, functional offers far greater opportunities for optimization. 
+
+Note, also, that macros were listed in combination with functional.  Anyone can look up and see this topic isn't named: "D''''''ynamicStringsVsFunctionalWithMacros".  However, it was mentioned below that dynamic strings offer some opportunity to introduce new control-structures.  E.g. one can create a function called "until", offer strings to it for a body and condition, and implement it using evaluate, execute, and a while-loop.  Given a little precision regarding control of the evaluation context (e.g. 'uplevel'), one can even go about introducing some control variables that don't interfere with the 'free variable' set utilized by 'evaluate'.  That sort of feature can also be implemented in many functional programming languages, but relies upon either laziness or syntax extension.  Macros are the most common example of syntax extension.  Depending on how well the language performs partial-evaluation and optimization of '''static''' strings (as are available in the "until" example), macros might be of greater or equal efficiency than use of dynamic strings to obtain the same results.  
+
+My own tendency would be to reject support for dynamic strings in a future programming language in favor of support for functional and syntax extension.  These have much better properties for optimizations and static code analysis, has better security properties for distributed code involving participants with fractured trust, and still possesses the vast majority of the usable power of dynamic strings. However, I would add one more component: make part of a standard library a 'language' component that can parse strings into a common construct and evaluate them (within a limited and specified context) into usable values.  Also make every first-class object in the language 'showable' as a cross-platform compatible unicode string - even functions and procedures.  This isn't quite true to 'dynamic strings', but it does suffice for the purpose of making it easy to save and restore even complex functions, and is of value as a default encodec/decodec for code transmission in a distributed system.
+
+''This sounds like the typical and expected response of a strong-typing/compiler proponent, of which I am not. I am a type-free/scripty/dynamic fan (it may also depend on the environment/domain of the software). However, some kind of limited expression evaluation system may be sufficient for most uses, such as in the PayrollExample (where formulas are stored in the DB, something HOF's have a hard time with). But having a language parser for a different language in a language kind of seems redundant and feature-happy, sort of an AbstractionInversion. If security is really the problem, there are potential ways to allow "Eval" to manage/control them without adding a language to a language.'' -- top
+
+I like provable correctness, high scalability languages (HW drivers to Web services and AI scripting), distributed systems, distributed programming, and security. The desire for correct and secure code that can be safely distributed causes me to especially shy away from 'scripty/dynamic' stuff.  High-scalability also demands compilation-capability, but I'd favor a language that is also readily utilized in an REP loop.  It should be noted that 'limited expression evaluation' is something for which I have stated my support.  A language that comes with excellent support for parsing strings into expression-structures and functionally evaluating these structures in a programmer-defined environment would receive a thumbs-up from me.  One might even call the evaluator "eval".  Ultimately, however, such an "eval" is just a P''''''lainOldFunction if it lacks access to a dynamic environment.  
+
+Having builtin parsers for different languages within a language standard library would be a rather poor abstraction.  Better would be to add language-support that allows you to "build-a-parser with-this-syntax" to produce a full parser for any language for which you can define the syntax.  I.e. Regular Expressions on Steroids.  I like syntax extension, and I like more than just macros and operator overloading.  It probably wouldn't be possible to define just one static parser for MyFavoriteLanguage, and it really would be redundant to define a bunch of different parsers for the same language. 
+
+----
+RE: "I like provable correctness, high scalability languages (HW drivers to Web services and AI scripting), distributed systems, distributed programming, and security."
+
+''I will concur with security, but not the others. I would like more justification and scenarios.'' -- top
+
+I feel no need to justify my stated preferences.
+
+''It is a wiki tradition to rank anecdotal evidence low on the EvidenceTotemPole.'' -- top
+
+Oh? Then when you said "I am a type-free/scripty/dynamic fan", should I have said: "I don't concur with the type-free, scripty, and dynamic. I demand justification and scenarios."?  I appreciate neither your hypocrisy nor your absurdity.
+
+''Your implications came first. Anyhow, let's consider both approaches equal or unknown in value until further evidence.'' -- top
+
+My "implications" were stated after eleven paragraphs of analysis, complete with examples.  As to "value" - that's a different question entirely.  On this page, any explanation as to why I value a combination of security, scalability, distribution, and provable correctness would be an off-topic digression.  I need only judge whether functional vs. dynamic strings is of greater use to me given that set of values.  Hence, said analysis.  When I initially stated I'd reject dynamic strings, I provided reasons based upon this analysis.  Now, I frankly don't care whether you choose to utilize dynamic strings because they are better for ''your'' purposes... but, if you wish to claim our approaches "equal", you still need to use analysis and provide reasons to argue that dynamic strings actually ''are'' better for your purpose.  Is it not possible that higher order functions could not by sufficiently "type-free/scripty/dynamic"?  If not, why not?
+
+''Let's focus on "scalability". I saw very weak evidence for such. Do you mean run-time speed? I will concure with that because of the time to parse strings, but that is not necessarily the same as scalability.'' -- top
+
+Since you asked so nicely (*cough, cough*) I'll explain a little more: downwards scalability on the abstraction axis is the ability to utilize the language effectively for low abstraction tasks, for example, hardware drivers.  Upwards scalability on the same axis is the ability to utilize the language effectively (that is: without getting stuck on details) for highly abstract tasks, like AI. 'Scalability' is the extent between upwards and downwards scalability, and 'high scalability' indicates that the language can be used ''effectively'' for both sorts of tasks.  (There is also scalability for program size: big tasks and small tasks.  Other axes can be created.)  It is, perhaps unfortunately, quite difficult to measure scalability because it is difficult to measure "effectiveness", but sometimes it is obvious that a language isn't effective for a particular task.  (E.g. writing AI in C++ is painful, and writing HW drivers in Prolog is also quite difficult).  You mention "runtime speed", which is often necessary for low-level tasks... especially those (like network cards and graphics drivers) with real-time constraints.  But there is more to downwards abstractive scalability than just runtime speed... for example, low-level abstraction also has implications on one's ability to specify exact data representations in memory (e.g. exact order of bits in a particular message).  If you're interested in a conversation on the subject, this page is not the place for it.  For here, it is sufficient to note that "high scalability" requires "downwards scalability", and "downwards scalability", in practice, requires compilation capability.
+
+----
+
+http://imgs.xkcd.com/comics/exploits_of_a_mom.png
+
+Security risks in using dynamic strings: There would be no security issue here if the SQL string wasn't constructed dynamically.  This isn't an issue for just SQL, but SQL is a canonical example of dynamically constructed strings. Ultimately, code-injection is a security issue ALL 'dynamic string' systems must handle if they are to accept outside inputs from potentially malicious sources... and the problem becomes far less trivial when accepting real code, not just stuff that should be escaped to strings. (More availaible in SqlInjection, SqlStringsAndSecurity)
+
+''I disagree it is directly related because one of the advantages of SQL is that multiple different application languages can readily use it. In other words, we have to consider '''cross-language''' or cross-system interaction issues when dealing with query languages. I agree that SQL needs an overhaul, but the fundimental issues of a query language that is not tied to a specific app language are still there. You almost sound anti-query-language. This is generally a different issue than intra-language strings. --top''
+
+I'm quite unconvinced by your argument.  (1) Application languages don't "readily use" SQL. They construct SQL strings with the same ease/difficulty with which they'd construct Python or Ruby strings, and likely somewhat more difficulty than they'd use to construct Lisp strings.  Further, the vast majority of languages can't utilize SQL strings any more easily than they could use Python or Ruby strings.  To the contrary, they'll either need a specialized library to handle the strings, or they'll need to communicate them to an external process.  (2) The moment you start talking about "outside inputs from potentially malicious sources", you're already talking about "cross-system interaction issues".  Here's a question: If you don't accept any outside inputs when constructing these dynamic strings, are they really "dynamic"?  If the whole set of strings is available in the static code, I can prove that dynamic strings are no more expressively powerful than a good turing-complete macro system.  (3) You say '''cross-language''', but it's worth noting that the problem here didn't occur until the dynamically constructed SQL string reached its destination - the DBMS - wherein SQL is essentially the natively supported language.  (4) The issues here are not unique to query languages.  Even if you were sending a ruby-string to a system written in ruby... or even just a value used in the ''eventual construction'' of a ruby string (like the name for Little Bobby Tables is used in the ''eventual construction'' of an SQL string), you'll suffer the same set of issues.  
+
+''Your text is just not clear to me. I'll have to read it several times to parse out what you are really saying. My point is that inter-tool strings are a different issue than intra-tool strings, and this topic is mainly only about intra-tool strings.'' 
+
+IIRC, this is about ''dynamic'' strings vs. functional.  If no input from outside the tool goes into creation of the strings, then the set of strings that will ever be evaluated is necessarily ''static''.  Therefore, since we are talking about ''dynamic'' strings, we must be talking about strings that are constructed using input from outside the tool.  Therefore, I conclude, we ''are'' talking about inter-tool strings.
+
+''The "outside influence" can be on a continuum. For example, on the "simple influence" side of the spectrum may be a simple "run" command from a batch-job calendar. This is an "outside influence". Or, a simple on/off flag that tells it whether or not to create a log file of activity.''
+
+----
+EditHint: This page is TooLargeToGrasp.
+
+There seems to be a HolyWar brewing between dynamic use of strings for "meta abilities" and functional programming concepts such as closures and HigherOrderFunctions. Dynamic string concepts include such things as:
+* Dynamic evaluation of code (such as Eval() or Execute() functions)
+* Dynamic evaluation that can take place in surrounding scope (inherits surrounding scope).
+* Dynamic evaluation that can access or "be in" scope higher up the execution stack.
+* Functions whose scope can inherit caller's scope.
+
+''Where is this HolyWar?'' Anonymous Donor
+
+----
+
+Is this page really about strings? It seems to be about Blocks, implemented as strings (see BlocksInManyLanguages).
+
+''It is. Or it is about closures implemented as strings, if you prefer that terminology. The only problem is some contributors don't seem to notice that strings & eval are insufficient to implement lexical closures; hence the ranting.''
+----
+
+This is silly, of course, as the concepts are orthogonal (and the above statement is incorrect in several ways). Many functional programming (or functional-capable languages) languages support EvalFeature; including ToolCommandLanguage, any modern version of LispLanguage, and JavaScript. Eval, of course, can be broken into two parts - ''reading'' (compiling) a function specified in textual or abstract-syntax form and turning it into instructions suitable for the execution machine (whether the underlying CPU or a VirtualMachine of some sort), and execution of those instructions. Once the first part is done, there is little difference between execution of a dynamically-generated function via EvalFeature, and execution of a "static" function which is pre-compiled before program execution starts.
+
+(One difference that ''does'' need to be taken into account between "dynamic" and static functions is that static functions - known to the compiler - is amenable to TypeInference and other compile-time program analyses and transformations. TypeInference in the presence of EvalFeature is, in general, undecidable).
+
+Of course, once you have a function (in whatever form) ready to execute, and if said function contains FreeVariable''''''s, then an execution environment that such variable may bind to needs to be provided. LexicalScoping is a common way to do it; a LexicalClosure is little more than a function bound to an environment. Dynamically-generated functions, if they are to contain free variables, also need environments to execute in, though the scoping rules are more complicated.
+ 
+Functions implemented via EvalFeature, of course, can be HigherOrderFunction''''''s; they can also be passed to or returned from other HigherOrderFunction'''''''s.
+
+In short, utterly nothing about "dynamic strings" comes in conflict with FunctionalProgramming. Much of it comes in conflict with the static type analyses performed by languages such as HaskellLanguage or MlLanguage; but that's another manifestation of the static-vs-dynamic typing debate, and has nothing to do with functional languages per se. (Though sometimes the FunctionalWeenie''''''s tend to get confused about this point, and act as though advanced type systems are a prerequisite for a functional language... :)) 
+
+----
+
+Pros:
+
+* Conceptually simpler - ''Unless you're even slightly educated about functional programming.''
+* Syntactically simpler - ''Hardly''
+* Can easily use code from outside sources, such as files or databases (critique moved below)
+
+Cons:
+
+* Slower
+* Potentially less secure if one is not careful
+* Less compile-time syntax checking 
+
+----
+
+Here is an example roughly based on a pseudocode hybrid between TclLanguage and JavaScript. It illustrates how one can use dynamic strings to create a control structure from scratch, in this case an "until" loop.
+
+  x = 1;
+  until {x > 10} {
+	x = x + 1;
+	foo(x);	
+  }
+ 
+  function until(condition, loopBody) {  // define Until loop
+     var reloop = true;
+     while {reloop} {
+	execute(1, loopBody);
+	if {eval(1, condition)} {
+	  reloop = false;
+	}
+     }
+  }
+Here, curly braces more or less quote strings that are passed to functions (a TCL convention). Control structures are simply functions which process strings as blocks. The "1" parameter in Eval and Execute tell it to execute in the variable scope one level "up" the scope (call) stack. One can see that the Until loop in the first part has the following structure:
+
+  until {condition} {loopBody}
+This is just a function call that matches the function definition signature. (Some languages don't need to make a distinction between Eval and Execute.)
+
+-- top
+
+Performance: If eval has to fully parse and interpret loopBody and condition each iteration, then this will likely be unsuitable for any non-trivial looping.
+
+Flexibility: The hypothetical "1" argument to eval is very inflexible. Consider a case where the loopBody and condition are specified as arguments to an intermediate routine. Now the number should be "2", not one. There is no binding between the context that creates the strings, and the strings themselves, so this sort of problem is endemic and difficult to solve in a general way.
+
+* ''Please define "intermediate routine" and why one would need one.''
+
+* If the code providing the strings calls another function, which in turn calls "until", then the stack is ''two'' deep to get back to x, not one. Why would you need one? I dunno - but it might be the natural structure of some bit of code, and this hypothetical extension to eval is quite fragile as described. "until" needs to know too much about its caller(s). Now, you could pass down a parameter along with the strings which each level of function increments - but, well, that's no longer very easy to code, is it? Closures do all this sort of bookkeeping for you.
+
+* ''I would have to see actual problems with such to comment.''
+
+* OK. Look further down here, where I add timing to each body statement. Note that when I mentioned "time", I called it a macro. It's predefined in the standard, and thus part of the language - but it's a macro. So what does that mean? Note that the argument it gets in the example is passed to it by code in timed-until. But the value of that argument comes from the caller of timed-until. There you go - a perfectly typical example, that arises naturally in the course of solving a programming problem.
+
+* ''I don't see anything in the Until loop that would behave any differently than it would in a While loop. If we made "timeMe {x}" control structure the same way we made the Until loop construct, it would still execute. Keep in mind that "1" means up one level. It is relative, not absolute. It seems to me that the "context pointer" would go up a level, then back down on the "timeMe{}" call, and then back up where it belongs via timeMe's Execute function. Perhaps I should test that theory in TCL (I am still new to the language).''
+
+* Well, at least I'm not the only one here that isn't conversant in Tcl. :) Go ahead, try it in Tcl, I'll be interested in what it does. To do the same thing as the example below, your version of timed-until would need to modify the strings it received to insert the timeMe{} calls. (Note that ''each statement'' in the body is timed individually, not the entire body.) To do that, it has to figure out what to wrap the timeMe{} calls around - a non-trivial exercise, in general. Then, for eval to work as you describe, it would have to somehow intuit which parts of the strings came from which caller.
+* To illustrate the latter problem better, assume that timed-until opens a file that is to receive the timing data, which is passed as an additional argument to timeMe. Now the code eval'ed by timeMe will contain references to variables local to both timed-until and its caller. And just in case Tcl does some sort of dynamic binding based on names, try naming the file variable "x", just like the integer in the outermost code. 
+
+* ''You sure are going out of your way to bust this thing. I suppose your argument is that if one uses such techniques heavily, then they are fairly likely to run into the kinds of problems you envision. My experience is that they are not needed that often. I don't believe that building your own control structures saves that much code if you know how to do "regular" factoring properly. But, I have not tested languages such as TCL to its limits.''
+
+* I'm not going out of my way at all. These problems arise naturally, as in the timed-until example; I didn't ''plan'' for that to illustrate the scoping problem, it came about naturally in the course of writing layered code. A function or macro is an abstraction; if the user of that abstraction has to know the internals of the function in order to use it safely, its value is greatly diminished. These sorts of problems lead to bugs that are pretty hard to diagnose, too.
+* ''You talk about it like it has been a proven fault of TCL. Don't jump to conclusions yet.''
+** Not at all. "These sorts of problems" refers to problems of scope and misinterpreting references. They exist in various macro systems. They can occur in Lisp, too, in more complex macros than the examples on this page, if they're not written carefully. Whether Tcl suffers problems in this regard, I have no idea. I'm waiting for you to find out for us. :)
+* Now, I've gone through a good deal of effort to provide ''concrete'', albeit simple, examples. I would greatly appreciate that instead of telling me what you ''believe'', that you try to reciprocate, and develop your advocated methods to the same degree of detail. I am honestly curious what you could come up with.
+* "My experience is that they are not needed that often." Might I humbly suggest that this means one of two things: You have worked only on small programs or in very small teams, ''or'' these sorts of things occur all the time, but you haven't noticed because they're not a problem until you try to do clever things like pass around strings to evaluate. For example, how often have you seen i, j, and k used as loop variables? Do you really think that it's unusual to have several functions simultaneously active on the stack that are each keeping track of a loop with a like-named variable? 
+* BTW, I can give you a very common example of new control structures that save quite a bit of code. See LispMacro; search for the name WITH-SCARCE-RESOURCE. This is a technique for using a resource like a file handle or a socket within some scope, and being assured that the resource will be released at the end of the scope. Variations of this for file handles are part of the CommonLisp standard; new variations are invented all the time to deal with new resources. This is a common idiom in languages that support closures or something like them; see for instance RubyLanguage.
+
+Here's an equivalent dynamic solution in (non-hypothetical) CommonLisp. (A better solution follows after some discussion of this one.)
+
+ (defun until-1 (condition body)
+	(funcall body)
+	(while (not (funcall condition))
+	(funcall body)))
+
+ (setq x 1)
+ (until-1
+	(lambda () (> x 10))
+	(lambda () (incf x) (print x)))
+I've replaced "foo" with a statement to print x. This prints out 2 through 11, as your example would with the same modification. Note that the code fragments passed to until-1 have to be functions. The lambda expressions create unnamed functions. They're defined in the same context as x, so there's no concern about "levels". This is the magic of closures. Although the lambdas add a lot of "noise", they do serve the useful purpose of immediately and obviously marking the contained code as something executable. Using strings, one would have to examine the code more carefully to distinguish between mere data and data-to-be-evaluated.
+
+A more attractive, better-performing, and easier-to-use solution uses a Lisp macro:
+
+ (defmacro until-2 (condition &rest body)
+	`(progn ,@body
+	(while (not ,condition)
+	,@body)))
+
+ (setq x 1)
+ (until-2 (> x 10)
+	(incf x)
+	(print x))
+This solution is obviously easier to use. In defmacro, the first argument is bound to "condition". The keyword &rest tells Lisp to collect the remaining arguments into a list, and bind that list the parameter "body". Because until-2 is a macro, Lisp doesn't evaluate the arguments before calling until-2; however, the Lisp reader has converted the source code text to sexprs that represent it. These sexprs refer to x in the same context where the expressions were read - again, no concerns about scope here.
+
+until-2 creates and returns new code, but doesn't execute that code (this is expected, because it's a macro). Now, assume we typed the call to until-2 in the REPL (the read-eval-print-loop which you typically work in when developing or debugging Lisp). The Lisp evaluator will immediately execute the code returned by until-2. Had we been compiling rather than evaluating, then the code returned by until-2 would be compiled - the binary need not contain any trace of the original call, just the resulting macro-generated code. The progn expression is just a way of packaging several expressions together into a single expression - it evaluates each in turn, and returns the value of the last ("nth") expression. In other words, it makes a block, like curly braces do in many other languages. (This could be written without the progn, by using a Lisp looping construct other than "while", or even Lisp's equivalent of gotos, but I figured that a while-loop is nice and intuitive.)
+
+The back-quote, comma, and comma-at symbols in until-2 are syntactic conveniences for common things that people do in macros. They make your example and mine look quite similar. Basically, the back-quote says "the next expression is a template". The comma says "replace the next expression in the template with its value" - the value of condition is the (< x 10) in our example. The comma-at is similar, except that it assumes the value will be a list, and splices it in place. (Note that "body" will always be bound to a list, even if you just passed one expression for the body, because the &rest keyword always collects the trailing arguments into a list. This works even if there are one, or none.) For our purposes, they sort of obscure the fact that the macro is actually operating on sexprs, so let's see what until-2 would look like without them:
+
+  (defmacro until-3 (condition &rest body)
+	(append (list* 'progn body) (list (list* 'while (list 'not condition) body))))
+"list" forms a list of all its arguments, list* prepends elements onto the last argument (which is usually a list), and "append" concatenates its arguments (which are usually all lists). The single-quote prevents the following expression from being evaluated. The language keywords that we want to embed in the result - progn, while, not - are all quoted. They're just symbols, we don't want them to be evaluated.
+
+until-3 looks quite unwieldy to define, but it shows how a macro can manipulate lists to build code. The back-quote technique is much preferred for simple cases like this example, but some macros do very complicated things with code - looping through expressions, picking out symbols and examining their characteristics, rearranging the order of things, replacing symbols with bits of code, etc. etc. All this can be done without having to parse any strings. The Lisp reader has already broken everything down into (mostly) symbols and lists for you. It's as if you had direct access to the output of the lexer in many other languages.
+
+Say for instance, in your original example, that we wanted to time each statement in the body of your loop. This would be fairly easy in Lisp. There's a macro named "time" which evaluates its argument, prints the elapsed time out, and returns whatever the evaluation returned. So we want to wrap each expression of "body" in a call to "time". Easy:
+
+  ('''defmacro''' timed-until (condition '''&rest''' body)
+	('''let''' ((timed-body ('''mapcar''' ('''lambda''' (expr) ('''list''' ''''time''' expr)) body)))
+	`('''progn'''
+		,@timed-body
+		('''while''' ('''not''' ,condition)
+			,@timed-body))))
+"let" introduces new local variables; in this case, timed-body. "mapcar" applies a function to each element of a list, and returns all of the result as a list. So the line starting with "(let ..." defines and initializes "timed-body" to the results of calling mapcar. In this case, the list that mapcar operates on is the value of "body", containing all the expressions that go in the body of our "until" loop. The function is a lambda form that takes one argument, and wraps it in a list with time at the head - that's the representation of a function call to time. The rest of the "let" is just the back-quoted "progn" form of until-2, except that we use "timed-body" instead of "body". 
+
+To do this using strings, you'd have to pick apart the body string. Search for statement separators? Sure, that might work most of the time - except when the statement have embedded strings in them that happen to contain statement separators. To avoid that sort of problem, you'd actually have to do a full lexical analysis of the string! That's exactly why working with the code as ''structured'' data is advantageous - the system has already done that work for you.
+
+(Since I'm very much a ''part-time'' Lisper, corrections to any of the above are welcome. I tested the code using AllegroCL.)
+
+-- DanMuller
+
+As a person with a reasonable amount of Tcl experience, and only a small amount with Lisp, I figured it might be useful for me to jump in with some Tcl code. The following implements an ''until'' control structure. It runs the body it's passed in the context of its caller until the condition ''(also evaluated in the context of its caller)'' proves to be false.
+
+ proc until {condition body} {
+	uplevel 1 $body
+	while {![uplevel 1 [list expr $condition]]} {
+	 uplevel 1 $body
+	}
+ }
+I made the above code simple, so it's easy to read. In the real code, there would probably be only one uplevel ''(since it would be faster)''. Using the above, the following code would print out 0 through 10.
+ until { $x >= 10 } {	
+	puts $x
+	incr x
+ }
+As a minor note, neither the body nor the condition of the until call need to be reparsed each iteration of the loop. They are parsed once when it starts to run and converted to bytecode. The bytecode is then used for each iteration. 
+
+-- RHS
+
+Thanks for the contribution! Can you comment on some of the other issues brought up on this page, e.g. the possible fragility of a this Tcl "until" function, or the feasibility of writing "timed-until" in Tcl (or other languages that rely on evaluation of strings for language extensions and closure-like features)?
+
+-- DanMuller
+
+----
+
+I have a question about the "timing" wrapper in the Lisp example. Does that rely on something built into the language, or is it possible to write one from scratch without altering the interpreter?
+
+----
+
+''Is this turning into a TCL versus Lisp debate?''
+
+No, they're just convenient vehicles for the topic under discussion. I've been accused recently of being vague and providing "unobjective evidence", so I thought a concrete, runnable example with a detailed example for those unfamiliar with the language would be appropriate. -- DanMuller
+
+----
+Jeezus Aitch Christ on a Keirin bicycle - this debate is pretty friggin' pointless.
+
+The fundamental difference between "dynamic strings" (eval) and defined functions/lambdas/closure is not a distinction of ''what'', but ''when''. Defined functions are known before the program is executed; "dynamic strings" may not be (they might be hardcoded but handled via eval; they might be generated once at startup and invariant there
+after, or they might be different each time). Like may other things in ComputerScience, invariance provides optimization opportunities and increased ability to reason about programs. Some languages require things be invariant and known in advance; others make ''everything'' dynamic. The really useful languages make things dynamic but optimize the heck out of things known to be static.
+
+An ideal language would have both optimized static functions and eval(), and make the transition between them syntactically seamless. At which point, unless you explicitly run eval on changing strings, the difference vanishes.
+
+To put it another way - when your compiler parses and translates a function during its execution - what it does is in many ways similar to what eval() does. The difference is that a compiler produces translated code as an output; whereas eval() executes the thing. (It might, and probably does, produce a translated version of some sort as a by-product).
+
+-- AnonymousDonor
+
+No, that is not all there is to it. I think you're talking about a different debate than the one going on here. Yes, if your strings never change, then there's no significant difference. But the title of this page includes the phrase "dynamic strings", hmm?
+
+Closures provide binding to the run-time environment that can't be emulated with strings-as-code without additional bookkeeping and data structures. TopMind is hypothesizing very simplistic solutions to these issues that don't hold up in real code. The example of until-1 points in this direction, but a more involved example involving the passing of first-class function objects through layers of functions would be needed to fully illustrate it, along similar lines as timed-until. (I focused more on Lisp macros, since this would be much the more typical way of approaching the example provided by TopMind.) As to dynamically modified (strings/data)-as-code, there are similar issues, plus issues of how easily code can be modified.
+
+You do point to something important in your last paragraph, however. One of the key aspects of Lisp that makes its macros powerful has nothing to do with closures or lambdas. It's a combination of these things:
+* "Compilation" or "interpretation" is broken into distinct pieces: The reader, the interpreter, and the compiler. Each component is accessible to Lisp programs.
+* The output of the reader is well-defined; it's an sexpr-based representation of the source code. The reader basically does what a lexer would do in most languages.
+* Input to the interpreter and compiler is the same data structure produced by the reader.
+* The programmer can insinuate code between the reader and the interpreter or compiler by writing macros.
+
+This combination of abilities blows "dynamic strings" out of the water in terms of how easily the programmer can modify programmer-written source code before it is translated or executed. This is less a question of whether you ''can'' or ''cannot'' do the same things using strings-as-code; it's much more a question of how ''easily'' and ''robustly'' you can do it.
+
+I hope that TopMind does return to this page and try to address the questions posed above, using Tcl or a hypothetical Tcl extension, with concrete examples. 
+
+-- DanMuller
+
+Without a specific UseCase that we all agree is realistic, we will not likely agree. You suggest that dynamic strings will fail when used heavily and deeply nested. There are key missing parts to complete this argument:
+
+* Practical example in DB-able domain where they would be used heavily and deeply nested.
+* No competitive alternative to the heavy-use design.
+* Evidence that string techniques would fail in under the heavy-use scenario, such as finding a problem that even the best TCL wizzes cannot handle.
+
+Note that I raised a question about the "timing" example above.
+
+-- top
+
+A) What does "DB-able" mean, and what does it have to do with this discussion? (Are you moving goalposts?)
+B) Try a more specific or more descriptive word than "competitive", otherwise this sounds like an attempt to bail out on grounds of Turing-completeness.
+C) I'm sure that string techniques can be devised that can handle any scenario. (Ref. Turing-completeness.) That's not the issue for me; it's the conciseness, expressivity, and ease of maintenance that distinguish a language's fitness for a given application. (That's why relational languages, even SQL, trump procedural languages for querying non-trivial data structures, for instance.)
+
+Regarding your question: I'll assume you mean this unsigned sentence from above: "I have a question about the "timing" wrapper in the Lisp example. Does that rely on something built into the language, or is it possible to write one from scratch without altering the interpreter?"
+
+That's not easy to answer, because it's not very specific. Various operators used in the example, are of course standard Lisp. (I went back and marked each standard symbol in bold.) The ability to treat code as lists is also, of course, built into the language. If the thrust of the question is: "Can you do the same thing using a string representation of the code to be altered, without altering the interpreter?", then the answer of course is "yes", given that you have something equivalent to "time". If you qualify the question, as in "Can you do the same thing using a string representation of the code to be altered ''easily'', without altering the interpreter?" then I guess that depends on the language. Given the Tcl examples provided on this page by RHS and Neil, I suspect that this example wouldn't be too hard to write in Tcl either, but you'd have to add some stuff to manage the "stack level" needed to interpret the modified code correctly.
+
+In a sense, the qualification "without altering the interpreter" is a weird one to apply to Lisp code that uses macros (or reader macros, compiler macros, symbol macros - variations on the theme) because these constructs are explicitly provided in order to ''give'' you a way of "altering the interpreter" - or at least particular phases of the text-to-execution path. Lisp is fairly unique in this regard. The whole language seems to grow out of an attitude of permissiveness: If it's not particularly difficult to allow the programmer to do something interesting, don't disallow it. Since Lisp interpreters were from early on written in Lisp, it was pretty easy to make the interpreters extensible. Thus they are, and this attitude was carried forward to compilers.
+
+-- DanMuller
+
+What I am wondering is how easy is it to "intercept" any command? For example, if you want to make a debugger that timed and logged the start and end of each command being executed for both built-in and user defined commands. I know languages that have built-in utilities for such, but I wonder if somebody can build that from scratch in Lisp without explicit parsing. Pseudo-code example:
+
+  some code...
+  logging(on=true)
+  some complex deeply nested code...
+  logging(on=false)
+  some more code...
+
+Or even:
+
+  some code...
+  logging(on=true)
+  some complex deeply nested code...
+  if some-condition
+	logging(on=false)
+  end-if
+  some more code...
+-- Top
+
+Yes, this is pretty standard stuff for people learning macros in Lisp, and there are numerous implementations of exactly these sorts of things. This particular example you'd actually do by wrapping the function in another function; you can't actually modify the internals of an existing function, because the standard doesn't require the function to be stored or implemented as a list; in fact, the standard doesn't require a Lisp implementation to have an interpreter. Some implementations don't have one, and always compile functions to byte code or machine code. (CormanLisp is an example of the latter, on Windows.) This doesn't detract from the power of macros, however, which execute between the reader and the compiler-or-interpreter. It also doesn't mean that you lose access to EVAL; it will just compile-then-run on such implementations.
+
+The TRACE function happens to be standard in Lisp, but you could write one easily as follows. (Well, pretty easily - I spent some time looking things up in the standard at my current level of Lisp fluency.)
+
+  ('''defun''' my-trace (fun)
+	('''let''' ((original-function ('''symbol-function''' fun)))
+	('''setf''' ('''get''' fun 'traced-function) original-function)
+	('''setf''' ('''symbol-function''' fun)
+	('''lambda''' ('''&rest''' args)
+	  ('''format''' '''*trace-output*''' "Entering function ~A~%" fun)
+	  ('''apply''' original-function args)
+	  ('''format''' '''*trace-output*''' "Finished function ~A~%" fun))))
+	('''values'''))
+
+  ('''defun''' my-untrace (fun)
+	('''setf''' ('''symbol-function''' fun) ('''get''' fun 'traced-function)))
+It took me about ten minutes to get this right. Someone who knows Lisp well could've done it without waking up.
+
+You pass a symbol to MY-TRACE, which gets the original function and stores it on the property list of the symbol. (Every symbol has a property list; they're not used much, but can be handy for this sort of thing. You could also store it away somewhere else, for instance in a global hash.) It then redefines the function associated with the symbol, very simply. The new function is a closure; notice that it uses two variables in lexical scope, FUN and ORIGINAL-FUNCTION. No bookkeeping required to reference these; Lisp knows that the function object we create with the LAMBDA form needs them, it does the bookkeeping. I used the VALUES form to make MY-TRACE return nothing, since we run it for side-effect; I wasn't consistent about this in MY-UNTRACE. MY-UNTRACE undoes the damage. Example run, using AllegroCL, with the above functions defined:
+
+  ''CL-USER>'' (defun foo (a) (format t "Yop! => ~A~%" a))
+  '''FOO'''
+  ''CL-USER>'' (foo "Haha")
+  '''Yop! => Haha'''
+  '''NIL'''
+  ''CL-USER>'' (my-trace 'foo)
+  '''; No value'''
+  ''CL-USER>'' (foo "Haha")
+  '''Entering function FOO'''
+  '''Yop! => Haha'''
+  '''Finished function FOO'''
+  '''NIL'''
+  ''CL-USER>'' (my-untrace 'foo)
+  '''#<Interpreted Function FOO>'''
+  ''CL-USER>'' (foo "Haha")
+  '''Yop! => Haha'''
+  '''NIL'''
+
+-- DanMuller
+
+Let me see if I got this. You are doing this by having a function that wraps the target function with a closure that provides start and end behavior and redefines the name. Then removing this wrapper for the end-trace operation by repointing the function name to the original, which was stored in a map associated with the function (symbol) upen trace-on? What I really had in mind is having it automatically performing a standard "sandwich" for every operation, not just those explicitly designated. If a language provides hooks (events) for start and end of such, it should be fairly strait-forward. But I was wondering if there was a way to do it without relying on built-in language hooks. -- Top
+
+Yes, you got it.
+
+Wrapping each expression can't be done "after the fact", i.e. after a function has already been defined, at least not in standard CommonLisp, because the standard doesn't guarantee that a function which is already defined is represented in any way that you can pick apart. In other words, the thing returned by (symbol-function 'foo) is opaque. This flexibility allows implementations to generate efficient code.
+
+If by "automatic", you mean for every statement in every already-existing function, then I can't imagine how that could ''ever'' be done without some sort of built-in language hook that ran before or around each statement. And that would place limitations on the form that such code could be stored and executed in, since optimized code doesn't preserve the original statement boundaries.
+
+You might be able to wrap individual statetents of many functions by reloading or recompiling them in the right environment, though. Reloading or recompiling a function or file is usually pretty trivial, so that's a minor inconvenience. 
+
+The usual mechanism for defining named functions is the standard macro DEFUN, and the standard doesn't allow conforming programs to redefine it (for obvious reasons). However, it does allow most standard symbols to be defined temporarily as symbol macros, which might allow you to hook into the definitions of functions and manipulate them this way before they're defined. (I'm not familiar with the use of symbol macros yet.) Also, I suspect many implementations would let you get away with creating a shadowing definition of DEFUN. And finally, you could write a MY-DEFUN to use instead of DEFUN, and have it response to a global setting to either define a function normally, or first process it however you see fit. So, yes, there are ways to do it.
+
+However you end up hooking into the function definition process, the basic code you'd write to do the wrapping would look much like the earlier example using TIME. If you wanted to reach more deeply into nested code for wrapping, though, then the code would get a little bit more complex. Such systems are called "code walkers" in the Lisp world. I haven't look at any in detail, but I think if the wrapping needs are simple, then the code walkers can be, too. They would have to expand any macros that they encounter (the system provides functions to do this), and recognize special operators (like IF) to know when and when not to descend into the code tree. Code walkers are not much different in form from Lisp evaluators written in Lisp, examples of which you can find in numerous tutorials on Lisp. (The topic is related that homoiconic thing that DougMerrit was going on about.)
+
+-- DanMuller
+
+''I would suggest AdvantagesOfExposingRunTimeEngine for the times when you need to get at the guts of something that the language builders had not anticipated. Further, if the run-time engine had the usual RDBMS features, then one could set a trigger on any variable to monitor its reference and changes. In short, we don't need to complicate the language for something like the tracing request; simply make a back-door available for the few times when we need strong meta features. Of course some propose they are more than "occasional use", but I have yet to see sufficient UseCase occurrences to justify a high frequency claim. -- top''
+
+----
+
+(Here is a response I got from another "forum")
+
+Why "versus"? Both are easily available. HOF are very useful things. "Dynamic" strings (by which, I assume you mean a script built up at runtime and then [eval]ed) are also useful for defining new control structures. The former is a functional technique, whereas the latter is generally an imperative technique. In a language like Tcl, things are generally geared up more for imperative programming (no tail-call optimization, type system etc), and creating new control structures via [uplevel] or [eval] is all sorts of fun.
+
+As I'm in a hurry, some observations:
+
+* The main difference seems to be between compile-time and run-time "compilation".
+* The argument against [uplevel] given near the top of the page is nonsense - if you insert an "intermediate" procedure, then you must take care to use [uplevel] again in that proc. It's simply something you have to be aware of when making use of dynamic scoping. It is not a problem which is "difficult to solve in a general way" - simply use [uplevel 1] wherever you take a script as an argument.
+* A "dynamic string" can be viewed as simply a lambda expression without a parameter list and scope closure attached. It's not too hard to add such things if you want, and arrange for it to be evaluated in a sensible manner. See, for instance TIPs 187 and 194.
+* Tcl uses a limited form of lexical/static scoping for commands (current namespace, then global namespace), and current-scope-only for variable scope. Tcl also provides mechanisms for achieving dynamic (uplevel/upvar) scoping, and you can sort of achieve lexical scoping through the various namespace mechanisms, although there could be more done in this area. actually, IIRC, Lisp (as distinct from Scheme) macros are dynamically scoped anyway. ''Not sure what was meant here, but I suspect that it's wrong. The code generated by a CommonLisp macro is evaluated in its original lexical scope. Macros also frequently define new, nested lexical scopes.''
+* The wrapping of each command in the later Lisp version is cute. You would have to write some code to parse the Tcl script if you wanted to do the same. Of course, you could always define Script and Command data types with appropriate operations, and then use them. Lisp's advantage here is merely that these data-types happen to be identical (or very similar to?) to the native list data type.
+
+For instance:
+
+proc splitScript {script} {
+	# Protect escaped newlines
+	set script [string map [list \\\n { }] $script]
+	# Break script into commands
+	split $script "\n;"
+}
+
+proc time-do {args} {
+	if {[llength $args] > 0} {
+	 set time [time {uplevel 1 $args}]
+	 puts "$args took $time"
+	}
+}
+
+proc timed-until {condition body} {
+	set timedbody ""
+	foreach cmd [splitScript $body] {append timedbody "time-do $cmd\n"}
+	uplevel 1 $timedbody
+	while {![uplevel 1 [list expr $condition]]} { uplevel 1 $timedbody }
+}
+
+And the test:
+
+set a 12
+timed-until {$a < 0} {
+	puts "In loop"
+	incr a -1
+	puts "and again?..."
+}
+
+Not exactly rocket science. The Lisp version is easier and cleaner but that's the design decision they went for.
+
+Neil.
+
+''So the above challenge was to automatically wrap each and every command in the until-block with a timer function? I did not catch the automaticness when I read it. I wonder something: if one cannot tell whether a list is a command or data except by how it is used in Lisp, then is data timed also? -- top''
+
+Cool! I'm impressed, up to a point. I poked around for Tcl documentation, but I couldn't find anything that had an explanation of variable scopes that made sense to me in the small amount of time that I spent at. The addition of an uplevel command at each level of function call seems like a neat solution, although I still wonder how you would deal with it if timed-util needed another local variable, as described earlier (but not shown in any of the examples so far). (Maybe that's what upvar could be used for, as opposed to uplevel? If so the comment about "simply use [uplevel 1]" is deceptive.) I also wonder how robust the splitScript function is in the general case - he does seem to imply that in the general case, you'd have to ''parse'' the strings. (I wonder what he had in mind with the Script and Command data types?)
+
+I might feel compelled to install a Tcl interpreter to try this. Oh wait, I already have tclsh on my Linux system!
+
+(Some time later...) This example works, too:
+
+  set a 3; timed-until {$a < 0} {puts "In loop: $a"; incr a -1; puts "and again?"}
+I'm not sure how splitScript breaks up the string, but it did even when I put it all one line. Interesting. Even this example, with extra braces in the literal string, seems to work:
+
+  set a 3; timed-until {$a < 0} {puts "In loop: {$a}"; incr a -1; puts "and again?"}
+To answer your question regarding code and data: Well, no, because you don't expect data in this context. The call to mapcar iterates through the topmost level of the nested list that represents the statements (forms or expressions in Lisp jargon) to be executed in the body. If one of these forms is data, that would be an error on the part of the caller. mapcar won't descend inside these forms, so any data (or nested calls to other functions) embedded there is not wrapped. timed-until is an exceedingly simple example of a class of functions called "code walkers" in the Lisp world.
+
+I'm impressed with what can be done with Tcl's string-based approach. I still find the Lisp macro approach conceptually simpler for code-walking applications, but the difference is smaller than I expected. I'm not sure if the Tcl example is more like the dynamic (lamda/closure) method or the macro method. Perhaps the distinction doesn't apply to Tcl's execution model. In Lisp, the easy creation of closures makes things a bit simpler than the uplevel stuff, I think - but the proof would be in more complex examples involving closures over variables in different lexical scopes. Also, closures can capture variables in scopes that can then go away, but the variables nonetheless remain valid when the closure is used later. (I hope I have the terminology right here. I can explain that in more detail if you're interested.) I would be quite surprised (again!) if Tcl can do something like that.
+
+Hmmm... I just looked up "TIP 187". (See http://www.tcl.tk/cgi-bin/tct/tip/.) This is apparently not a description of a technique, but a draft of a proposed change to Tcl to support lambdas (anonymous functions). No mention is made of closures. TIP 194 describes how to do something similar without extending the language - but mentions a patch to make it work efficiently. Interesting. I don't understand the part about namespaces in TIP 194, but I guess I'll have to read more about Tcl scoping.
+
+Thanks! Overall, I still think Lisp's approach is easier and more comprehensive, but I can sort of intuit how a string-based approach might provide similar functionality, with the addition of some bells and whistles to make the creation and application of closures easier. And you've gotten me curious about Tcl now. Always fun to be introduced to a new language!
+
+-- DanMuller
+
+As the "Neil" who wrote the above (on the comp.lang.tcl newsgroup, as it happens), I'd like to add a couple of points. Firstly, it may not be clear from what I wrote, but I do consider that Lisp macros are a more elegant technique. Tcl owes a lot of it's heritage to Lisp. For instance, the reason the splitScript procedure is so short (and yet should work for any script) is because Tcl is very regular. A script is a list of commands separated by (unescaped) newlines or semicolons. Tcl could still learn some more tricks from Lisp (and Scheme). Lambdas will help with that. Tcl currently can't do some of the fancy closures stuff that Lisp and others can do (at least, not without considerable effort). I would urge looking at Tcl, if only because of its fantastic implementation (things like cross-platform networking etc).
+
+-- Neil Madden
+
+Re: ''Tcl currently can't do some of the fancy closures stuff that Lisp and others can do (at least, not without considerable effort)''
+
+What is an example, and how practical is it? Some of us ''(an AnonymousChoir)'' suspect that many closure/HOF tricks are mostly MentalMasturbation, or just minor improvements of a few percent code reduction. -- AnonymousDonor?
+
+Lexical closures are used ubiquitously and effortlessly in typical CommonLisp code - nothing contrived about it at all. Every time you see a LAMBDA form, a lexical closure is being created if there are any references from inside that form to variables in the enclosing lexical scope. A trivial toy example off the top of my head: Sum the remainders of dividing each of a list of numbers by a given divisor:
+
+  (defun sum-remainders (divisor numbers)
+	(reduce (lambda (x y) (+ x (rem y divisor))) :initial-value 0))
+Contrast this with explicit looping and accumulation:
+
+  (defun sum-remainders (divisor numbers)
+	(let ((y 0))
+	(dolist (x numbers y)
+	  (incf y (rem x divisor)))))
+Not ''terribly'' different in effort to write, but these are simple examples. The first is much quicker to come up with, after a little practice. The first example has a LAMBDA form that creates an anonymous function to pass to the built-in higher-order function REDUCE (http://www.lisp.org/HyperSpec/Body/fun_reduce.html). The lexical closure is important because this anonymous function references divisor directly. You don't even really have to think about this, it just happens.
+
+LAMBDA forms are used very often as arguments to higher-order functions, often to avoid writing tediously trivial (and error-prone) looping code over and over again. If you consider such things "tricks" and MentalMasturbation, I'm sorry for you, because you'll be missing out on fun and easy ways to write programs.
+
+''I guess so. I don't see the practicality in it. Sorry, I just don't. Looping code is usually not the bottleneck of complexity I encounter day to day. Maybe when somebody figures out how to simplify challenge #6 using FP, my interest may be triggered again.''
+
+Some interesting side notes on the example: 
+
+I believe that in Graham's mysterious Arc language (envisioned as a successor to Lisp), the LAMBDA form would be less verbose and look something like this: 
+
+  [+ _ (rem _ divisor)]
+As an interesting note to the interesting side note, someone has already written code to add similar syntax to Common Lisp, using the built-in standard capabilities of the language! (http://groups.google.com/groups?hl=en&lr=&c2coff=1&selm=2e262238.0410050628.374a1e85%40posting.google.com)
+
+-- DanMuller
+
+----
+
+Re: Can easily use code from outside sources, such as files or databases 
+
+[''Emmmm... I wouldn't say so once I remind LispReader: once it is there, Lisp code can be stored in a database as well. In fact, the feature of using a code from runtime-determined sources is a capability of almost all InterpretedLanguage''''''s, not only ScriptingLanguage''''''s -- AndreyStolyarov''] 
+
+Yes, but then your dynamic techniques no longer are OnceAndOnlyOnce. You have two ways to do it: byte-code and strings. Plus, string-centric languages tend to have more string-oriented features, such as scope/context management options to Eval-like operations rather than one-size-fits-all. Another way of saying this is that a language that relies mostly or purely on strings for meta abilities is probably going to have more powerful string operations and options for meta techniques than one that tends to use other approaches. And, they are probably better tested since they are more relied upon.
+
+* I take issue with several things in that paragraph. Actually, just about the entire paragraph. "... string-centric languages tend to have ... scope/context management options to Eval-like operations". This discussion of Tcl is the first time I've ever seen such scope management options, so I'm suspicious of this assertion. "... a language that relies mostly or purely on strings for meta abilities is probably going to have more powerful ... options for meta techniques than one that tends to use other approaches" Pure conjecture. My knowledge of Lisp indicates otherwise, so far. Even Neil acknowledges that manipulations of things like closures are (currently) easier in Lisp languages. "... they are probably better tested since they are more relied upon." That borders on the absurd. Lisp's meta-abilities are used constantly - many of the standard operators are defined to be macros, and users frequently define new macros. Many standard and user-defined functions take function-like objects as arguments, making the use of closures exceptionally common. (And using them is essentially effortless.) -- DanMuller
+
+[C'mon Dan, top only knows about strings, of course he's going to think they are the most powerful, he doesn't even understand meta programming, he's been arguing against HigherOrderFunction''''''s for the better part of a week now.]
+
+[As a widespread counterexample, the creation of dynamic JavaScript code as strings is widespread. It's also extremely cumbersome and painful, because JavaScript has extremely poor string manipulation ability and none of the fancy uplevel stuff that TCL does. JavaScript is perhaps the most widely meta-programmed language I know of with essentially zero meta-programming support. -- ChrisMellon]
+
+''See OnceAndOnlyOnceDoesNotImplyGoldenHammer''
+
+A better interpretation of my viewpoint is that if you go with a string-centric approach, then it is easier to blur the distinction between interpreter and databases, which is what TableOrientedProgramming really wants in the long run. As far as claims about what is "easier", that is still open to debate, and tough to objectively measure. Then again, some of you anti-scientific types are happy with anecdotal evidence alone. -- top
+
+* Chortle cough sputter. And when, Top, have you ever offered any hard evidence of ''any'' sort? You make wild unsubstantiated claims all over the place, and when challenged, retreat back into your shell and offer up lame excuses like "it's just how I think" or "it's just what I prefer". If you think you'll get away with ShiftingTheBurdenOfProof, you're fooling yourself. There have been reams of research published on this topic, you might go read it sometime.
+
+* ''BenefitsAreSubjective is a legitimate viewpoint. Unless someone has objective evidence that A is worse than B (comparing all tradeoffs), it should stand as a valid viewpoint/paradigm/tool. It might not be the most popular, perhaps because some "kinds" of minds are more common than others, but if popularity was the primary criteria, then we should burn tools such as Lisp and FP, which even I agree is not a good thing. In this regard I am more open-minded than you guys. I don't belittle people who think differently than me (except when retaliating), but rather request mutual tool respect.''
+
+(Heh. I'll try to ignore the ad-hominem exchanges.) Top, please explain what you mean by blurring the distinction between an interpreter and a database, and explain why this would be desirable. Or point me somewhere else where you discuss it. Do you mean the distinction between the interpreter and the database ''system''? As in, the database system includes the interpreter? I don't see what bearing this would have on how code is represented. -- DanMuller
+
+Response in TableMantraTakenToExtreme.
+
+----
+'''Question about uplevel'''
+One question, what if what I do in lisp was putting closure in hashtable. And after that, from some function, somewhere, I look up the closure from that hashtable, and execute the function. I can do that in Lisp because the closure still capture all the state of variable when it was created.
+How can I do that using TCL's eval? Using uplevel, what is the number of level that I needed to use? uplevel 1? I don't think so because the code that put the closure into hashtable is very isolated from the code that looks up the closure to execute. Then this shows how higher order functional is easier and more useful than eval method.
+
+''I am more curious about *why* one would want them in a map.''
+
+[Lots of potential reasons. Could be a map of events to actions. Or it could be a map of names to methods, which is how one can emulate typical object architectures using functional tools. It's not an uncommon thing to do, as it's a powerful technique that can be applied to many purposes. I sometimes use a variation of it in C++, with help from the Boost libraries. -- DanM]
+
+''I don't really see why event maps require closures. I would enjoy a convincing example.''
+
+----
+
+Well the map of names of methods is not a problem in Tcl. In fact all manner of callback scripts are used all the time and is extremely common in Tcl. Generally they are then evaluated in the global scope. I'm not quite sure how else you would like it to happen as the original scope and stack might be lost by the time the callback is called. Or perhaps you want to create anonymous functions which could be useful sometimes for things such as that?
+
+I lack any experience with Lisp whatsoever so it's difficult to comment on many aspects of it. I would guess that the benefits of strings come from dealing with the outside world. F.ex. network protocols can be based on the notion of passing things back and forth which look like scripts and are just evaluated in an appropriate context. Perhaps this is what the database references are about. Serialisation to a file or database is very simple in Tcl. This file will contain human-readable data which can then be edited by someone else.
+ 
+Another example might be how HTML templates can be processed in Tcl by embedding the code into it:
+
+ <html>
+ <body>
+ <h1>Interesting Results</h1>
+ <p>
+ We created a time capsule by building a ship bigger on the inside than on the outside. Here are the results.
+ </p>
+ <h2>Data</h2>
+ <table>
+ [
+    foreach result [getResults] {
+        append htmlData <tr>$result</tr> \n
+    }
+    set htmlData
+ ]
+ </table>
+ </body>
+ </html>
+Parsing this is trivial in Tcl. Assuming the data is in the htmlData variable, here we display it on stdout:
+
+ puts [subst $htmlData]
+OK, all of this might be just as easy in Lisp, I really do not know, but perhaps it gives you some ideas of the benefits of scripts-as-strings. Another is you can do replace operations on template code for meta-programming purposes with special parts marked with your own reserved tags. Just use the normal string handling functions you would use for any other data, followed by a suitable call to eval.
+
+-- KristofferLawson
+
+Look up the term "closure" and study some examples in a language that supports them in order to understand the difference.
+
+----
+
+OK, admittedly there is a difference as closures take a snapshot of the environment where you're in (I guess you could do this in Tcl as well, but as you can go up and down the stack at will, you'd have to capture a fair bit of data). For the common event handling jobs that were mentioned, the following is generally sufficient:
+
+ set x 5
+ set script [list doSomething $x]
+ # ... some time later
+ eval $script
+This doesn't offer everything that closures do, but is a step in the right direction. And what of the benefits from having a string model that were mentioned above?
+
+-- KristofferLawson
+
+Note that a closure doesn't just get a snapshot of the state of variables in its environment; it captures references to ''bindings'' of variables (the association of a value with a variable) in its lexical environment. (And note also that it's about the lexical environment, not the stack.) In a language that is not purely functional, like Lisp, the values associated with the bindings can change on each execution of the closure, and can be modified by the closure. That's more complex and powerful than simply getting a snapshot of the environment state. (With respect to purely functional languages, I'm not sure if this distinction holds.) Closures aren't always needed - but the problem is that when you do want them, they're pretty difficult and ugly to simulate in most languages. TCL's technique gives you some of the benefits of a closure, but the lexical environment of a string has to still be active when the string is evaluated; I don't know enough about tickle to know if there's any way of working around it, but I would expect it to be very complex.
+
+I haven't see any benefits of a string-based model described on this page that I agree with. The representation used for function objects is actually immaterial to the issues raised at the top of the page. The question of whether strings are good or bad methods of representation has more to with ''other'' issues. E.g. the ease or difficulty of writing of macros, storing and loading code as data, and execution performance. Perhaps a system that provides enough tools for working with its preferred representation of source code can be relatively convenient to use regardless of what that representation is. -- DanMuller
+
+''We need better UseCases to really compare.''
+
+----
+
+The example I gave above does not rely on the lexical environment being in place as the value has been passed, not the name of the variable. It can be acted on accordingly. We can evaluate the script on any stack level, including the global level, if necessary. The example you give below operated on objects and objects in Tcl are generally created as globally accessible commands (often inside a namespace of their own). So with my limited knowledge of Lisp, the exact same thing could be written as follows (in the ExtendedObjectTcl OO fashion):
+
+ Class StateHolder -parameter myState
+ 
+ # Strictly this isn't necessary as myState is defined as a parameter: automatic accessor method provided.
+ StateHolder instproc changeState {newState} {
+     [self] myState $newState
+ }
+ 
+ proc setupStateMap {} {
+     set st1 [StateHolder new]
+     set st2 [StateHolder new]
+ 
+     bindEventHandler event-A [list $st1 changeState newState-A]
+     bindEventHandler event-B [list $st1 changeState newState-B]
+     bindEventHandler event-C [list $st2 changeState newState-C]
+ }
+Then, sometime later, the event occurs and things happen as you might expect. -- KristofferLawson
+
+----
+
+Somewhere in the framework
+
+ #define the manager class
+ (defclass state-holder ()
+  (my-state :accessor my-state))
+
+ #define method for changing the manager's state
+ (defmethod change-state ((holder state-holder) new-state)
+   (setf (my-state app-manager) new-state))
+Now you have many state-holder where each will be changed differently according to some event
+
+ (defun setup-state-map ()
+   #create many state-holders
+   (let ((st1 (make-instance 'state-holder))
+         (st2 (make-instance 'state-holder)))
+     #register event for invocations (*ev-map is global)
+     (bind-event-handler *ev-map* 'event-A (lambda () 
+                                        (change-state st1 "new-state-A")))
+     (bind-event-handler *ev-map* 'event-B (lambda () 
+                                        (change-state st1 "new-state-B")))
+     (bind-event-handler *ev-map* 'event-C (lambda () 
+                                        (change-state st2 "new-state-C")))))
+I did this because I don't want client to have direct reference to state-holders (may be security issue or something). But I allow them to invoke the event by
+
+ (notify-event map 'event-1)
+the code flow goes like this
+
+ (defvar ev-map nil)
+ (defun main ()
+   (setup-state-map)
+   (infinity-loop 
+     (handle-client map))) #somewhere, some thread in handle-client will call notify-event
+By the time I'm in the stack call of client calling NOTIFY-EVENT, the stack of SETUP-STATE-MAP is already gone. Using lambda, this is possible because lambda captures its environment (variables ST1 and ST2). How would you use uplevel or eval for this?
+
+''It might be helpful to the readers to state the requirements in English instead of in code. My understanding is that you want to execute arbitrary event strings without risking messing up the global scope? I don't know about TCL in particular, but evaluation does not necessarily have to inherit any scope. In other words, ideally the scope in which evaluation happens should be fully controllable such that one can pick a level in the stack (TCL can), or select no scope. (I don't think anyone claimed that TCL was the pinnacle of dynamic code strings. Maybe it is, I am a newbie in it.) As a backup plan, one could always simply not use sensitive global variables. Wrap them in functions. Or, is hiding function scope also part of the requirements? If so, how can it use library functions then? The ideal executor operation may look something like:''
+
+ result = executeString(codeString, variableScope=foo, functionScope=bar)
+
+AKA GreenSpunning
+
+''Are you suggesting that LISP allows easy and infinitely flexible management of scopes? I don't think so. The ultimate abstraction would be AdvantagesOfExposingRunTimeEngine because one could make operations that access/limit the scope in any damned way they please. For example, one might want to add/use a column on functions to indicate which ones to allow event snippet code access to and which to not. Sure, such is probably doable in code, but code is ugly to work with (in my opinion. CodeAvoidance). Seems we're back to our classic GreencoddsTenthRuleOfProgramming versus GreenSpunning HolyWar.''
+
+[''"If so, how can it use library functions then?"'' Arrrrgh. Top, I keep telling you, go read up on it. Wading through something like Guy Steele's "Common Lisp - The Language" (the precursor to the standards document) would teach you so much about language design that you can't afford ''not'' to learn if you're really interested in this topic. It's not light reading, but it's eye-opening. Just learning the terminology used to talk about variable scopes, binding, and environments is an enlightenment in terms of learning and refining distinctions that are ''important'' to how a programming language works. No amount of speculative example code and metaphors can replace actually studying these concepts. You may or may not like Lisp when you're done, but at least you might have some better reasons for your preferences. -- DanM]
+
+BookStop. I have no desire to further pursue Lisp. There are higher-priority things to explore. A language that hard to explain is most likely F'd anyhow in my experience. Necessary verbosity is a yellow alert.
+
+[Again, and always, you miss the point. You'd learn about ''language design'', not just Lisp in particular. But it's already more than evident that you'd rather wing it than base your investigations on available knowledge. Good luck to you while reinventing all those wobbly wheels. -- DanM, out for good on Topist topics]
+
+You won't be missed. I prefer participants who are articulate enough to not need BookStop''''''s. 
+
+''Oh please, Top, you prefer ignorance, and everyone who reads all these pages who actually took the time to study and understand these topics, knows it. Dan is trying to help you, because you express interest in language design. Guess what, you have to study existing languages to grasp these concepts, which go far beyond syntax, something you can't seem to get past. It's amazing really, watching you completely not grasp feature after feature, one example after the next, no matter who tries to show you. You will never be any good until you grasp and understand the basic power of features like closures, lambda expressions and higher order functions, to continue and argue against them is akin to jumping up and down and loudly screaming your ignorance, and to think evaluating strings are somehow on par with closures, is simply laughable. For someone who calls himself topmind, you have surprisingly little of it. Delete this after you read it, I won't be getting into a conversation about this, I know better, but sometimes people need to be told when they're a BlubProgrammer and don't realize it, and you are the very definition of a BlubProgrammer.''
+
+A year ago I might have considered your blub insult worth looking into. But after you FP fanatics failed to back your claim of "significant code reduction", '''your credibility went into the flusher'''. There you had an opportunity to provide clear evidence (less code) of FP claims made by you or your peers. You couldn't use the "use don't understand it" Weasel Escape because the claim was code-size, not vaguer metric-elusive stuff like "better organization". Why should I believe you after that major coupe? I caught you guys red handed. FP stands for "Full of Puffery" and "Failed Proof". -- top
+
+''Then may be TOP stands for "Tell Other to Proof" (cause top never proof his TOP benefit, nevertheless, shift the burden of proof to other to require proof for him to believe), or "Tons of Poof" :). ''
+
+I don't claim that my pet techniques are objectively better, only that they are not objectively worse (overall). You should know this after all these years. However, you guys are claiming that FP is superior to string-oriented techniques, so the burden of evidence (and clarity) is on you. You dug the hole, not me, so don't put this all on my back.
+
+''With all regards, I admit that some of Top's point is correct (code can be reduce if using even nimble database). But I found it hard to believe anything further for someone who doesn't even get the benefit of HOF over Eval. Does Top even understand what closure is? He even claim that using HOF SORT function is no use because SQL has SORT BY keyword, where as IMHO SORT BY is like inferior version of HOF SORT.''
+
+Then show it with semi-realistic code instead of ArgumentFromAuthority and ArgumentByIntimidation. Note that I never said SORT BY was always better, just that it greatly reduced the need for the sorting shortcuts some of you talked about. Thus, it wouldn't add much to your total simplification score. Remember, you claimed "significant reduction in code size", not clipping nasal hairs here and there.
+
+Top, every time someone shows you some code, you don't understand it, then you object that it's better, then you post some inferior crap that uses a table and suddenly you think you've proven them wrong. 
+
+''It is your fault. Primary requirements should be in English, not in code.''
+
+Not much of a programmer if you don't see code as a concrete way to state requirements.
+
+''Most wiki readers are not going to know every language known to man. It is rude to me and them to use code instead of English to state requirements. (I have been guilty of it myself in the past, I admit.)''
+
+It's a pointless exercise to show you anything, because you don't seem to have the faculties to even grasp the implications of the differences in your approach and the given approach. You try and turn everything into a turing battle rather than simply trying to grasp the expressive implications of the functional approach. Until you can grasp and understand what a closure is, and why it's important, and why it's better than evaling a string, you simply aren't capable of having this discussion. You don't have the base knowledge required to talk intelligently about the issue.
+
+''And you don't understand objectivity and requirements documentation. Show me closures simplifying REAL and COMMON stuff, not vague talk about their linguistical esthetics. I want a dishwasher, not a painting. -- top''
+
+Sure, as soon as you demonstrate that you actually understand what a closure is, because all evidence available in your writings says you don't, and you can't demonstrate something to someone who doesn't even know what it is you are talking about. Evaling a string is not equivalent to executing a closure, until you grok that, you aren't worth talking too.
+
+'' '''I never said it was equivalent, only that it solves similar kinds of problems.''' Those are not the same thing.''
+
+----
+''Are you suggesting that LISP allows easy and infinitely flexible management of scopes?''
+
+In a word, Yes.
+
+-- cwillu
+
+''All that is missing is demos that can easily apply to the real world.''
+
+----
+''Or, is hiding function scope also part of the requirements?''
+
+No, In Lisp it is not.
+
+I could have design the code to be 
+
+ (defun main ()
+   (setup-state-map-then 
+     (infinity-loop 
+       (handle-client map)))) #some where,some thread in handle-client will call notify-event
+which is coded so that the scoped of st1, st2 variable is still in stack when client call invoke-event. But I am not required to do that. The Eval approach, however, REQUIRES the variable to be in the stack so that you can use uplevel to get the binding of st1 and st2.
+
+''Actually, generally with event coding in Tcl, the value of the variable at that point is what is interesting, not the variable itself. There is not as much difference as you seem to be claiming in passing the values of variables to the event handling code (essentially this is a snapshot) and getting a complete snapshot of the environment to use. I get the feeling we are arguing about ever-smaller areas. It is clear both approaches offer a lot of flexibility which many other languages do not enjoy. -- KristofferLawson''
+
+This is one good response, thank you some reasonable guy here. If you can see in my lisp example. In the event handling code, what I did was CHANGING the value of the variable. You can not get the snapshot of the variable's BINDING to use in Eval. That's what closure does when it was created.
+
+''Well, as you might see from the example I wrote above in Tcl, there's not that much difference, mostly as a result of objects being represented as commands (indeed, you could call Tcl a CommandOrientedLanguage). True, not quite the same as closures but you can do surprising things with it. -- KristofferLawson''
+
+''Before we get any further, the requirements for an event code handling system should be made explicit (hopefully using English, not Lisp this time). Candidate requirements include:''
+
+* User enters event code into an IDE, and the IDE "files" it away somewhere. 
+* Limit which global variables (if any) the event code has access to on a case-by-case basis.
+* Limit which functions/classes the event code has access to on a case-by-case basis. This may include library functions.
+* Be able to store the event code in files or a database and have the event system use them as dispatched/supplied at run-time.
+
+If one of the requirement is to be able to store the event code in files or database first, then I would say my lisp solution will have to use Eval approach. which will lose the benefit of being able to capture the closure at the time of function's creation (There may be a library out there for serializing closure to disk, I don't know). But I don't know why this must be one of the requirement though. Why is being able to store dispatched code in database the requirement? No other programming practice except TOP does that, other paradigms use polymorphism and everything is compiled already. 
+
+''One possible reason for a DB is that we want to reuse the same IDE and/or GUI framework for multiple languages. We don't want to marry the DB to any one language. Second, I feel it is easier to manage a jillion events if in the database.'' - Then I assume that only function name is in the DB, correct? Because you can't put implementation code in DB and expect it to run cross language.
+
+Why does the requirement care where the code was invoked from? That sounds a lot like the requirement that was there to match how Top will code his code (Use DB for multiple dispatch, every code use Eval which cannot take advantage of what closure, HOF can do). You might be arguing that It's better to organize event->code dispatch in DB table instead of hard code it in. But remember we are not talking about whether that is appropriate, but we are talking about Eval and HOF here. So don't put in the requirement that require Eval to be used. 
+* Noted that it is possible to store function name in DB, look up function name from DB according to Event name, in Lisp, and execute the function, which doesn't require Eval. Putting the whole code, not just function name, in DB will surely require Eval though.
+* Am I contradicting myself? Being able to capture the closure definitely requires HOF to be used. because Eval cannot do it :). But IMHO, HOF still show more advantages in other use cases.
+* So I can accomplish the requirement "Being able to look up event code from DB" using HOF. Now I want to add this Requirement. 
+** The event code must be able to change/retrieve the value of some variable, binding of which is not available at the time the event occur but is available at the time the function is created.
+** ''Before we explore "how", let's find a good "why". Let's not make up requirements purely to break a paradigm, but rather solve realistic problems.''
+** Here's the Why
+*** First part of requirement "be able to change value of variable" is a very basic requirement. When I click a button, it's very normal for me to want to change a value of something in the system, be it a variable or anything. Or else I wouldn't create that button in the first place. (I could use DB for storing data that I will be changing, but if what I want to change is just to increment a counter, isn't DB too heavy for that?)
+*** ''I would generally suggest that widget values be changed through functions or methods, not "naked" variables for event snippets. This improves API portability and GUI event/change tracing.''
+**** I meant somewhere in the event callback, the value of a variable must be altered. Whether directly or though calling another method is fine. But for small code, why must I not put the code in directly? Do you prefer the language where "If" block can only take function name, for better tracing and debugging, and no immediate code snippet, always?
+**** ''I am not sure what you mean. Is there an example in the "Martha" example sets below?''
+**** Yep, that's what I meant.
+*** The requirement of "variable binding is not available at the time the function is called but available at the time function is created" should be viewed as "Requirement for Non-requirement". Yes, I added this requirement just to break paradigm may be (until I found some good use case). But it's there to remind of the requirement that Eval approach requires from you. It's like If I added the requirement of coding convention to be "Must declare variable nearest to it's usage", You can argue that i'm putting the requirement just to exclude "C" which has to declare variable at start of the block. But it's there to indicate the improved readability of C++ over C. You can ask the "Why?" but the answer is "Why must not?". Different style of coding, different library have different way of coding. If you are in the situation where you need this (You are using a third party event framework where the callback function get called with no parameter and you don't want to polluted your environment with global variable.) Then having the capability to do it is better than not. And using HOF does not require Ph.D. degree to understand it. So it's used all the time with high reliability. So Instead of asking the Why, why don't you just go ahead and show us How you can do it with Eval?
+* Let's see how Eval handle that
+
+----
+
+another question about uplevel
+
+What's the value of uplevel use in eval if the function that call is recursive function?
+
+something like
+
+ //pseudo-code
+ def foo  
+   x = 10
+   rec_eval(random(100), "x = 20")
+ end
+ def rec_eval(num, expr)
+   if (x = 0)
+      eval expr, ?what's value of uplevel here?
+   else
+      rec_eval(num-1, expr)
+   end
+ end
+Or am I required to keep track of stack level just to use this so convenient eval?
+
+''If I am not mistaken (I'm a Tcl newbie), it is based on the stack level, not the function itself. One can look at any level on the call stack. (Special symbolic identifiers select the very top of the stack if raw integers are not convenient.) In this way, TCL is a step closer to AdvantagesOfExposingRunTimeEngine. -- top''
+
+And the question is how do you know how deep are you from the stack call of "foo". I think one recursive call count as one Stack deeper also, right? And I am not saying that at what level of stack that "foo" get called also, it could get call in 100 stack deep from top stack. So what's the benefit?
+
+''I am confused here. Specifically what do you want to know? Are you looking for some kind of "callLevels()" function/method that tells how deep we are at a given point?''
+
+In short, Yes. If you don't know that, how would you get the variable you want to access? At the recursive eval above. the stack level of foo and stack level of rec_eval where expr is evaluated could be many stack call away. How do you determined that number to use in uplevel?
+
+''You can just uplevel the var in the recursive function. That brings that var to that level, then when it is called recursively again the variable that was 'brought in' a level up is once again brought a level up. It shouldn't be a problem. -- AnonymousDonor''
+
+Isn't that like going through the hoop just to do that? Where is "Conceptually simpler" and "Syntactically simpler" pros left? And your function have to be aware that's it's written in recursive style. And I suppose that if it is mutually recursive or involve callback-to-callback-to-callback-to-eval then each function involve must know that it's in the process of recursive function call doesn't it? So now what's the benefit of Eval left? (I know Eval has its use, everyone that try to debates with top knows benefit of eval. What i'm trying to say is that HOF is safer and simpler to use in most cases. Only in some rare case I would prefer Eval over HOF).
+
+''As far as "conceptually simpler", what practical objective are you trying to achieve? I don't necessarily dispute that such techniques make emulating closers difficult (although don't know enough Tcl to say for sure), but that is only an issue in practice if it cannot be used to solve real problems. In other words, focus on how it solves real problems instead of how it emulates your favorite internal language features. -- top''
+
+Having to make sure to get binding of variable correctly even when using just a simple recursion should not be consider non-practical? While focusing on the problem, having to not to forget to always uplevel recursive variable is a new problem, isn't it? Using eval this way can be use to solve real problem but it's also at the same time a problem in itself. I thought the argument here was about what should be use, so why should I forgive Eval approach if it require work around to solve problem?
+
+''You have not shown the practical context for such recursion. I don't know what UseCase it is solving. Maybe recursion itself is the wrong or long approach. I can't tell without seeing it in a UseCase. -- top''
+
+May be SAX parser, Lexer, you never do depth first search? how do you do it? No recursion? What would you do when you recurse into a specific node? Not evaluating an expression passed in by user?
+
+''Ideally a depth-first search should be built into a CollectionOrientedProgramming set of operations so that one does not have to keep using recursion to traverse trees. But I still have not seen a need to look "up" the stack. Besides, I don't know many people who write formal parsers for a living. It is a rather small niche. Besides, such a recursive loop may be in only one or few places in a program. Thus, if an eval solution takes a bit more code, the total difference is minor. There is no large-scale economic savings being shown here, but rather what seem to be PerfectStorm-like examples.''
+
+By the way, are you saying whatever that you don't do is not the practical solution? Why must Eval limit me to code in the limited way. All you say till now if to ask me not to do this, not to do that, that's not practical, I would not want to do that. All of that just to forgive the limit and lacks of power of Eval. I thought the discussion here is about "what is more useful", not "Why I should just use Eval and forgive all its disability". I understand why you don't see different between HOF and Eval. When all one writes is "Hello world" there is no different between C or Lisp.
+By the way, I will never mind if Top say "That's not a useful use case, I need more specific use case". Cause reading in many pages. Every time someone shows him a practical and useful application of anything Non-Top, Top always say "We need more specific use cases to discuss" or "that's not my domain".
+Why don't you just be more aggressive and raise a case where Eval is more appropriate, instead of defense for Eval. What is the connection of you with Eval anyway, Cousin?
+
+''In practice, I don't need to use Eval that often either. It is mostly toy examples where I find a use for it because the real world is not regular enough for it to be of much use. In other words, toy examples exaggerate the regularity of certain patterns. As far as "not my domain", what can I say? I want a solution for my domain, not for systems programmers. If FP is great for systems programming, that is wonderful for them, but does not necessarily make its benefits universally applicable. The fact that FP examples keep being drawn back toward systems programming like a baby bird finding its mother suggests something.''
+
+* So you don't have experience with eval, you don't have experience with HOF, yet you felt compelled to spoil wiki with quite a deluge of your 2c on the subject. In the end you take refuge by throwing more mud to confuse the discussion by handwaving that FP is great for "systems programming" (sic!), and since it doesn't apply to your domain (FoxPro data editing screens) it therefore must apply only to a negligible area of software development efforts. Then you go on to claim a trivia "its benefits are not universally applicable" that has no value and no relevance to this discussion, only you pretend that it's important. Since it should be obvious even to you that no programming style, paradigm, language, framework, operating system, nothing at all can be claimed to have "universally applicable benefits", and then you end this discussion by the way of innuendo "it suggests something". 
+** ''I didn't say I don't have experience with Eval. I only said I don't use it that often in practice. Some examples were discussed in another topic. I'll see if I can find it.''
+* This last phrase of yours is completely idiotic and obnoxious in a technical forum, because you're not here to sell BS to PHBs that may take decisions on FoxPro versus ObjectiveCaml, PHBs don't read WardsWiki at all, you're here with your technical peers and the very purpose of wiki is to exchange technical ideas and to create content that may be useful to programmers, that's why such BS is completely out of place.
+* So, in conclusion, let me re-educate you again for the thousandth tine, please repeat after me, TOP:
+ '''FunctionalProgramming excels in addressing algorithmically complex domains.'''
+Got it? This is not the same as systems programming; as a matter of fact, the common wisdom is that FP might not to be fit for systems programming at all (until somebody shows otherwise) for a couple of reasons that are not worth going into details here.
+
+''I don't have any practical experience writing formal parsers. They had a course in it when I was in college, but it was not required by my particular minor (graphics/CAD). If you have questions about how Tcl handles issues in writing parsers, then '''take it to a Tcl group'''. I was hoping an FP fan could find a biz example of their braggings, but asking for such seems to make them bleed from the ears for a very unknown reason. ''
+
+* Top, you're not making any sense here. You reduce a whole range of problems to "writing formal (sic!) parsers"? Please do not embarrass yourself even more by feeling compelled to respond to every point regardless of your knowing anything at all about what is discussed.
+* ''If it is a "whole range", then find something less narrow to present here, dammit!''
+* You meant you already finished your EnumeratingRegularLanguages exercise already? I'd be curious to see your solution. If not, I am afraid I have to reject your trolling.
+* ''About as practical as an underwater RubiksCube solving contest.''
+
+Discussion about domains at risk of offshoring moved to OffshoringPatterns.
+
+''I can agree that certain FP techniques are probably more useful for certain kinds of problems. String-based meta abilities indeed are probably not the right tool to build a widely-used operating system with. But, isn't that true of just about any tool or language? -- top''
+
+----
+
+I don't really see the problem with eval here. I've used recursive procedures several times. Often I don't need uplevel for them or upvar, but if I do it's not a biggy. I know the procedure is recursive. All I need to say is "bring that variable up from a stack level further up". I know exactly what I want to do. Also, there has been little discussion of other possible benefits of eval and strings. -- KristofferLawson
+
+''There isn't any problem with EvalFeature (other that in most case there are more robust ways to do things; the compiler cannot reason about code that doesn't even exist when the compiler executes). The problem with this page is that TopMind seems to think that "dynamic strings" are somehow in opposition to FunctionalProgramming. They aren't.''
+
+They tend to be used for similar things. Several of the "toy" examples here and in related topics have shown this to be. If a language does not have HOF's, then one can often use Eval instead, and visa-versa to some extent, for example. -- top
+
+''Well I understand that, because Anything that does not use ONLY database is a "toy" example to you. It's not that Eval is bad. It's that TopMind doesn't realize that it should be used less, and HOF more.''
+
+And you call anything that uses a DB "toy", or at least imply that it belongs to an inferior domain. Anyhow, I have not seen a convincing example outside of system software. I won't take your word for it, I wanna see code. -- top
+
+''Nope, I never think DB is "toy" or inferior domain. DB is one of many problem domains exist. But only Top is making DB THE ONLY DOMAIN WORTH learning, No it is not. There are other problem domain out there. Just because your procedural programming work for your DB domain does not mean that more elegant higher level language feature is not useful. The question is, what is your definition of "System Software"? Is anything that require calculation a system software? Is anything that can not be put conveniently in DB a System Software? Is anything that is not Mainly DB software a System Software? If, in your opinion, there are only two kinds of software, DB and System, and System Software is all "toy" domain or not something you should care. Then okay fine, we have nothing more to discuss.''
+
+''And what do you really want anyway? When I posted the code example (Lisp event binding example above), you said you didn't want to see code, you wanna see English description,''
+
+No, I wanted to see both. It is good practice to describe the requirements in English on wiki even if you have the code.
+
+''And Now that we talked about benefit of HOF, you said you didn't want word, but you wanna see Code. What a world.''
+
+I don't think that is what I meant. I think different issues are being mixed up here: describing and proving. You describe things with English and prove it with code.
+
+I consider "systems software" to be the tools that end-users generally don't use: compilers, database engines, OS's, etc. The division generally looks like this:
+
+  Systems Software <--> Applications Software <--> End User
+(I suppose end users directly use the OS, but actually they see things such as file browsers and EXE launchers, not really the OS.)
+
+''Then is DB Software == Application Software in your view? (you seemed to imply so)''
+''Is WindowsMediaPlayer Application Software?
+How is the media decoder/encoder done? Would it be easier to code encoder/decoder with HOF?
+How should layout of GUI be code? would it be easier if GUI layout is close to declarative form, which is possible because the use of HOF?
+By the way, If HOF makes programming more concise and easier, I don't see the reason why they should only be used in System Software. HOF used in Application Software will also improve the program's quality.
+As for it may not improve more than 10-20% of code, well YMMV. Productivity depends on people, give monkey Assembly, Java and Lisp, it will makes no more significant improved code. HOF is not a living cell in itself, it still need the developer's brain to makes uses of it. The point is there to enable the brain to be used, not limit the use of our ability. And it's not about only the number of line of code that is reduced, while only 10% of code lines may be reduced, the comprehension of code improve. IMHO, even 10% improvement of code comprehension is a significant improvement. The following code:''
+ 
+ for(int i = 0; i < employees.length; i++){
+    if (employees[i].is_senior()){ count++; }
+ }
+''and''
+
+ (count #'is-senior employees)
+''Lisp version may reduce only one or two lines of code, but I would say it significantly improve the comprehension of codes. Don't try to measure the Quantity of code, measure its Quality, instead.''
+
+  select count() from employees where is_senior
+As far as code-size, CollectionOrientedProgramming languages are hard to beat for these kinds of problems. See DotProductInManyProgrammingLanguages.
+
+Unfortunately, it is tough to objectively measure and define "quality" and "comprehension". If you accuse somebody's code of not being "comprehensible", they could claim that you are just not smart/experienced enough to comprehend it fast. Again, MostHolyWarsTiedToPsychology.
+
+----
+ select count() from employee where is_senior
+and you don't think you are exposing the benefit of Higher order function here? You can do this because SQL have that syntax. Why don't you show me that so terse and compact code in C++/java/Pascal? I can show you HOF function that can do declarative GUI and then you will show me another Declarative GUI framework; but that framework is surely not going to be in SQL, or integrate naturally with it. I can show you another Unification library that mainly use HOF in it's code and interface and then you will show me another Unification Expert system; but that system would, in no way, work in the same syntax as previous two libraries. Where is one single language that do all that? I don't mean in terms of something inherently in the language specs, just the language that enable those all language to mix together naturally. HOF enable you that. Don't you see that when I show the example of COUNT function that's so resemble to SQL, that you can't do that in C++/java/Pascal? What if the items I want to count can't be stored in DB - I must suffer with writing that for loop? So you have inconsistency of doing two ways of counting depending on whether you can put the data in DB or not? 
+
+Imagine if I have A gui event system that will stream me series of event and I want to filter out some event; using HOF, I could do. 
+
+(do-event-from #'next-stream
+  :filter #'is-interest
+  :handler #'handle-event)
+Event is real time, how do you use your SQL to help here?
+
+By the way, since the topic of this page is DynamicStringsVsFunctional, you can use eval in this case, since eval is interpreting it can do anything. You can even make a language that use syntax "f$%)($^$@@" to result in report creation. But then you are on your own to writing your own parser for such syntax.
+
+''You are right that the SQL issue is perhaps off topic, but it does in practice reduce the need to write the kind of loops you show. But getting back to eval, I don't know why custom parsing is allegedly needed. Some ExBase examples of passing filter criteria and a function name to be eval'd were shown in ArrayDeletionExample. As far as streams, I don't use them that often, practicing SeparateIoFromCalculation most of the time, so I'll have to think about that some more. Rough pseudocode for the prior example:''
+
+  foo = newArray[....];
+  ....
+  print(count(foo, "struct.is_senior"));
+  //----------
+  function count(myArray, myFilter) {
+    cnt = 0;
+    for(int i = 0; i < myArray.length; i++){
+      struct = array[i];
+      if (eval(myFilter)) {
+        cnt++; 
+      }
+    }
+  }
+Or if we want the reference name to also be dynamic:
+  foo = newArray[....];
+  ....
+  print(count(foo, "struct", "struct.is_senior"));
+  //----------
+  function count(myArray, refName, myFilter) {
+    cnt = 0;
+    for(int i = 0; i < myArray.length; i++){
+      &refName = array[i];
+      if (&myFilter ) {
+        cnt++; 
+      }
+    }
+  }
+In the second one, "&" means literal string substitution, which is borrowed from ExBase syntax. Note how the "refName" variable kind of resembles a closure argument.
+
+[Marker 00001]
+
+''My point still remain about what if you don't have SQL though.''
+''Ok so let's make summary of my understanding about eval and HOF okay? So that we can discuss more. It will hard to talk if you don't know how I view your word.''
+''Here's my list:''
+
+*'''You mostly use eval for passing only small snippet of code.''' ''I imply this from the example around here, you usually pass short string like "person,is_senior". or function name. I think that's usually best practice for Eval approach. And that's what I view as a Cons because, as far as the language that provide syntax check before run is concerned, you want to have the compiler/interpreter check your executable statement for correctness as much as possible. I'm not talking about security issue of passing malicious statement to eval here; Just the syntax error. And as far as I experienced, Eval code tends to give less details about where the error actually occurs (it's error in the string but where does that string come from?).''
+**''Code that use Eval will have more piece of code that can't be checked at read time more than code that use HOF (since all HOf is a valid piece of code). Your code have thousands of "If-else" if this is implemented by Eval, you will have thousands of places to wait to notify you about syntax error later. (This is not big issue but you will have lots of noise during development)''
+**''One of the reason you are forced to use Eval is when you have to provide syntax which is not a valid statement in your language. And I mean very very different syntax.''
+*'''Eval don't contains the binding Information.''' ''So you use uplevel to get the binding you want. Now I view this Cons of Eval whereas you may view it as Pros also. Closure in HOF captures the binding as soon as they are created; It follows the lexical scope and looks just like normal statement. So this is about two approach: Eval do binding of variable later, while Closure do it early. This is the same different as Lexical scoping and Dynamic scoping. I think you will agree with me here that Eval is like Dynamic scoping. You know how dynamic scoping make code hard to manage, I am not trying to use ArgumentByAnalogy here, But IMHO binding concept of Eval would gives the same level of confusion''
+**''One reason you are forced to use eval if when you have requirement to use so complex binding of variable that you can't set it up in HOF.''
+*''If a language someone is working on has both Eval and HOF, it's always wise to try it using HOF first. There's rarely a need for Eval. Because of the reasons above.''
+*''TCL is always edge case here, because it's interpreted (so every syntax error is shown at execution time anyway) and it provides uplevel and such to simulate closure; That's to say I think TCL's eval is different from conventional eval; And those uplevel thing is there to simulate the use of closure, so why don't use the real language that has closure? Please remember that the topic is about HOF vs Eval, so we should talk about why one should use one feature over another if there are both features in their language. TCLers don't have a choice, they have a work around.''
+* As far as "checking more at compile time", this is somewhat similar to the long-running debates about dynamicness-vs-staticness that rage say between SmallTalk fans and Java or Eiffel fans. I like dynamic languages, so using the compiler as program prover is generally ignored anyhow under this philosophy (although some "lint" utilities would be nice). As far as TCL being an exception, I have to disagree. ExBase allowed one to dynamically execute in the parent scope using it's odd "caller scope inheritance" feature. One could argue such a feature is ugly for other reasons (it could use some lang adjustments), but it allowed more or less the same thing as an "up level" scope specifier and I used that feature fairly often in Eval situations. Having Eval allows a language to have less features. Eval and HOF's tend to overlap in uses. Thus if we want to keep a language simple, we should probably pick one or the other as a feature. Further, HOF's cannot readily be stored in a database, but function names can. 
+** Top, you don't know anything about the topic, having eval has nothing to do with deciding if a language has function as a first class concept. Putting a function in a variable and passing it around, isn't at all related to eval. And passing functions around as variables is far simpler than putting it's name in a string, passing that around, and evaling it when you need it. HOF cannot readily be stored in a database, what kind of ignorant claim is that, it's a dam function, like any other, do you complain that you can't put functions into the database. Do you want to store your RunSql function in the database? Go learn what these things are before you start tossing around words that you don't even understand, you sound like a fool.
+** ''Let me clarify: you cannot store a HOF reference in a database.''
+**[What's a HOF reference?]
+**Yes you can, you can store the function's name in database and use reflection to get the function to call, and call it.
+** ''Reflection is a kind of weak or narrow-purpose Eval.''
+*** Really? Is it so? Then how can I use eval to dynamically get all methods of the object I have? How can I use Eval to get the arity of a function? How can I use Eval to list all classes in a package? In the domain of reflection features, Eval is WEAK or NARROW-PURPOSE reflection. You like ExposingRuntimeEngine but don't know reflection?
+*** If the run-time engine was exposed, then we wouldn't need reflexion. (I suppose you could call reflection a very mild form of such exposure.) Classes/objects are just maps more or less. You are right that by itself eval couldn't replace reflection. I was sloppy there and I admit it.
+*** ''I thought Reflection is the ability of program to query about itself. Which is the same as exposing runtime engine. If it was so, how would we need exposing runtime engine but not need reflection?''
+*** I agree that exposing the run-time engine is nice, but is that and reflexion an FP feature? If not, it may be off-topic. And, you notice how you need to keep adding/using different features to solve problems that Eval can do? And, you still need Eval to execute expressions from a database, for example. (This parallels a discussion in ChallengeSixVersusFpDiscussion, so maybe we should consolidate them.)
+*** I'll answer it in there. Either you moved those thing here or vice versa is fine.
+* I am a little miffed by all the fads that keep getting added to languages to be "in". A while ago is was "contract" stuff by Bertrand Meyer. Try/Catch's are another example of glorified IF statements that turned into language and training bloater. Let's stop the CreepingFeaturitis in language design. -- top
+** Training bloater... contracts and try/catch, are you kidding me? For someone who doesn't know jack shit about language design, you sure have a lot of stupid opinions on the subject.
+** ''That is like a power-train expert dictating to the car driver how sensitive the steering wheel should be. I might not know how try/catch's work, but I know I wouldn't miss them if they disappeared. Anyhow, that is another topic, some of who agree with me.''
+** If you don't know how try and catch works, you just need to shut the hell up and quit wasting wiki space with your ignorant opinions of topics far more advanced than try/catch and HOF. How can you honestly continue to argue when at every turn you're forced to admit you don't even understand the topic, never tried the techniques, and can't even follow the discussion without making a fool of yourself?
+*** It is not really about language design, it is about language usage. If you have decent API's, a decent language, and follow good practices such as SeparateIoFromCalculation, then one does not need such constructs often. Then again, SeparateIoFromCalculation may not work well in systems software, where resource usage or resource predictability is more important. In that situation try/catch might make more sense. But please don't extrapolate your domain's needs onto all other domains. -- top
+** If you don't like Feature Creep of the language then I see no reason you don't want HOF. HOF is the fundamental building block of the language, It's the only language feature you will want to add. If your language has HOF, you don't even need "If,Else" construct. But If you want one, because the industry think the concept of "if,else" construct is so useful to have, you can add it to your language and it will looks just like "If,Else" in language which has that built in. You can emulate any language feature (try/catch, OO) in the language that lacks it. But only language with HOF capability allow the feature to be emulated and used naturally. 
+** ''I suppose most EverythingIsa proponent will suggest that their pet concept can cover or solve the need for multiple features often hard-wired into languages. For example, I sometimes suggest that if the run-time engine was treated like a big structure or database, then we could grab any scope we needed to build whatever features we need. It could see any scope closures can, and more. Thus, it can be considered a super-set of closers (except no compile-time checking). However, this is illustrative only, and I don't want to bring a fight about it here also.''
+----
+Example even snippet pseudo-code for reference:
+
+ // Example "Martha"
+ function event_button7_click(info_array) {
+   if (info_array['mouse_coord_x] > 38) {
+     message = 'You clicked the button too far to the edge';
+     setGuiAttrib('formX.myTextBox.value', message);
+     refresh_all(); 
+   }
+ }
+Or
+
+ // Example "Martha 2"
+ function event_button7_click(info) {
+   if (info.mouse_coord_x > 38) {
+     message = 'You clicked the button too far to the edge';
+     formX.myTextBox.value = message;
+     refresh_all(); 
+   }
+ }
+The first example can use a more language-neutral API, while the second is a bit more compact. Since I don't like "tree paths" in GUI's, the middle line can perhaps be:
+
+  setGuiAttrib('formX','myTextBox','value', message);
+Or in Tcl:
+
+  setGuiAttrib formX myTextBox value $message
+But I suppose I am wondering a bit off topic. I am just hoping to create some material to use as examples.
+
+''Which you are required to declare formX as global variable. Here is one way I would code my GUI''
+
+ def setUpGUI()
+     formX = Form.new
+     button7 = Button.new
+     //add some component in to  form
+     bindEvent(button7, :click) do |info|
+           if (info.mouse_coord_x > 38)
+              message = 'You clicked the button too far to the edge'
+              formX.myTextBox.value = message
+              refresh_all()
+           end
+     end
+ end
+* Well, that's one way to do it. Functions and declarative approaches are more portable across languages in my opinion and good GUI engines should be language neutral. But, I don't want to turn this into a "my GUI framework can beat up yours" battle. There are already topics on that floating around here somewhere. -- Top
+
+* ''There's no such thing as a language neutral GUI engine. The absolute best you can do is serialization to a common file format (HTML, for example) which is displayed by the engine, but you then give up *any* sort of expandability or dynamic functionality not built directly into the engine. When people say "language neutral", they usually really mean "has bindings for the language I prefer", which usually (but not always) is the same as "is written in C".''
+
+* Continued at LanguageNeutralGui
+
+''The "do..end" actually create a closure which captures the binding of formX. I didn't add any new variable to the global space. It might not be so useful for GUI cases (but it's what I usually do), But for other kind of library it makes your program better organized.''
+
+----
+
+an important part of tcl is missed in the above discussion - the namespace command. namespace code {...} creates a script with variables bound in the enclosing scope. there are also a number of other namespace commands for explitly creating named namespaces, finding which namespace you are currently in etc. 
+
+''Yes, '''namespace code''' looks like it addresses the scoping issues. At that point, however, we're not talking about "evaluating dynamic strings" - these are now truly closures. The thesis of this page, that "dynamic strings" are as capable as functional closures, is not supported by Tcl examples. More specifically, the first two of the "Pros" given above, namely syntactic and conceptual simplicity, are not illustrated at all. In fact, it seems that someone deemed it worthwhile to add true closures to a language that was initially based on the evaluation of strings. -- DanMuller''
+
+yes top's thesis was flawed, but at the same time it is surely worth noting that tcl can solve those problems using the very techniques that top dislikes, if only because of the irony. a slight technicall point; namespace code doesn't quite give you the same as a closure in lisp - you must assign a name to the 'closure' to be able to pass it anywhere useful i.e. there is no concept of an anonymous namespace in tcl.
+
+----
+See also: ArrayDeletionExample
+
+NovemberZeroSeven

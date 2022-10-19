@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Node Js And Hof Gui Discussion Three
+      </h1>
+      <p>
+        Continued from <a href="NodeJsAndHofGuiDiscussionTwo.html">NodeJsAndHofGuiDiscussionTwo</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>Event Handling Models</strong>
+      </p>
+      <p>
+        It looks like I'll have to flesh out a specific event handling model. For reference, I use "structures" described at <a href="TablizedGuiDiscussion.html">TablizedGuiDiscussion</a>. They don't necessarily have to be in a RDBMS.
+      </p>
+      <p>
+        Current GUI kits often use or expose pre-registration of event "watch" or "listener" lists. In my opinion it's best if "typical" event handlers are attached to the object themselves, such that the code to handle "onClick" for a button is "attached" to that object. Conceptually that's usually the most natural to app developers and follows the OOP "composition" ideal: <strong>objects should carry around their own behavior</strong>. But this means that use of a registration list would be a violation of <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a> because it's "registered" in two places: the information that a given event is associated with a given button is stored redundantly in two spots.
+      </p>
+      <p>
+        When a button is clicked, the clicked object's onClick event handler block can be easily found and executed. <strong>We don't need a middle-man event "list"</strong>. The container objects, such as forms or windows, can also be checked to see if they have an onClick handler. Traversing up the container hierarchy to see if each GUI object layer has a relevant handler is usually not computationally intensive. 
+      </p>
+      <p>
+        But there are some circumstances where this may not be sufficient.
+      </p>
+      <p>
+        For example, suppose we wanted an outer container's click event handler to have priority over (execute before) the button-level handler does? Well, we could make an attribute called "eventPriority" for each object, and then one with the highest priority is ran first. (The default of eventPriority would be a middle level, such as "5" if the range is from 0 to 9.) However, this would apply to all events, not just clicks, and thus doesn't give us a fine enough granularity.
+      </p>
+      <p>
+        Further, the GUI engine would have to buffer the "run list" so that the event manager can inspect all the priorities before firing them off. This buffer would resemble the eventListener table in <a href="TablizedGuiDiscussion.html">TablizedGuiDiscussion</a>. This is not a show-stopper, but does complicate things and the eventListener table is already resembling a "regular" event registry list such that it suggests we might as well go all the way and use the current approach instead of attaching them to GUI objects. I'll return to that point later.
+      </p>
+      <p>
+        And, we may want the ability to dynamically add event listeners. Adding listeners dynamically wouldn't necessarily interfere with the "object layer traversal" approach mentioned before, but it does conceptually complicate it.
+      </p>
+      <p>
+        It could work by first doing the "layer traversal" steps, collecting a temporary list, and then merging it (virtually) with the formal eventListener list. The layer traversal methods would be given a middle-level priority such that the "priority" attribute in the eventListener list can be used to run events before or after the object-embedded handler methods (such as onClick).
+      </p>
+      <p>
+        But, this complicates the event model.
+      </p>
+      <p>
+        We could still have embedded methods such as onClick methods on button objects, which auto-register themselves into a listener list using a constructor method or similar so that the system doesn't have to do object traversal to process events. This may allow us to have the best of both worlds, but that's still kind of a violation of <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a>, as described above. But it's an option to consider.
+      </p>
+      <p>
+        We may still be able to dispense with a central listener registry with a few extra standard methods. Suppose each GUI object would have an optional firstEvents() and lastEvents() method. These would be fired off before or after, respectively, of any other handler methods, such as onClick. This allows the ability to control the execution priorities for special circumstances. We can fine-tune which event is responded to by analyzing the various event object attributes:
+      </p>
+      <code>
+        // Example 6482<br/>
+        class formX extends Form {  <br/>
+        ...<br/>
+        firstEvents(event) {<br/>
+        if (event.eventType=="double-click" && inList(mySpecialList, event.targetObject)) {<br/>
+        // special stuff done first<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        I believe this may be sufficient to give us enough custom control over ordering that we don't need a formal central event listener list. (For buffering or caching purposes, an internal one may be temporarily created during processing. Also, inner objects get priority over outer objects for the firstEvents and lastEvents execution order.)
+      </p>
+      <p>
+        But, I agree that we need to study more <a href="UseCase.html">UseCase</a>s to evaluate whether this is good enough control over event firing order. You are welcome to suggest (realistic) use-cases. I'm floating the idea here. Note that the use of event methods directly attached to GUI objects does not directly depend on this registration-list-versus-no-list decision, for attached methods can use either technique. But the architecture may be more complicated if used with a central list compared to the direct-register technique often found in current GUI engines.
+      </p>
+      <p>
+        I generally focus on the simplifying the common usage (coding) patterns for application developers and give that priority over architectural considerations, although both should be weighed. <a href="JavaIoClassesAreImpossibleToUnderstand.html">JavaIoClassesAreImpossibleToUnderstand</a> presents a somewhat similar design tradeoff decision. Generally one has to decide which to optimize at the expense of others:
+      </p>
+      <ul>
+        <li>
+           Most common <a href="UseCase.html">UseCase</a> or coding pattern
+        </li>
+        <li>
+           Advanced, special, or highly-customized needs
+        </li>
+        <li>
+           Implementation of the "guts" (base libraries, etc.)
+        </li>
+      </ul>
+      <p>
+        <strong>Recap</strong>
+      </p>
+      <p>
+        To recap the "object traversal" technique, here are typical steps a GUI engine would go through when buttonX is clicked.  When the button is first clicked, the "root" of the button and/or GUI object class (GUI library operation) creates an Event object, which will typically be passed as a parameter to various event handlers. The event object has among other things: the event type (such as "click"), target object name and/or reference, mouse coordinates at time of click, time of event, etc.
+      </p>
+      <p>
+        The event manager then starts the object traversal process. It will defer execution until it's done with traversal and thus create a little list or table to track which methods will be fired. It starts at the base object, a button in the case, and looks for any onClick, firstEvents, or lastEvents methods, and logs them in the working event list if found. (All event types would typically look for firstEvents and lastEvents methods, but "onClick" is specific to this event type.)
+      </p>
+      <p>
+        It would then traverse up the GUI object hierarchy to similarly log the 3 event handlers, if found. When traversal is complete, the list may resemble:
+      </p>
+      <code>
+        Internal Temporary Method Tracker List<br/>
+        .<br/>
+        guiObject...method.......traverseOrder //comments<br/>
+        -------------------------------------------------<br/>
+        buttonX.....onClick......1<br/>
+        windowX.....firstEvents..3  // #2 had no applic. methods<br/>
+        appX........lastEvents...4<br/>
+      </code>
+      <p>
+        Once it has this list, it then decides which to execute in which order. The rules are generally as such in this order:
+      </p>
+      <ul>
+        <li>
+           1. All "firstEvents" are executed, in traversal order.
+        </li>
+        <li>
+           2. All "regular" event-related events are executed, such as "onClick", in traversal order.[1]
+        </li>
+        <li>
+           3. All "lastEvents" are executed, in traversal order.
+        </li>
+      </ul>
+      <p>
+        (Implementation notes: It may be more efficient to use 3 separate lists, but this is only a conceptual explanation, not a speed-optimized one. The "guiObject" column may be either a name or a pointer. If we use a name, then the name-space would probably also need to be tracked. But that's an implementation decision detail.)
+      </p>
+      <p>
+        --top
+      </p>
+      <hr/>
+      <p>
+        <em>Your alleged confusion over "yet another language idiom" (e.g., lambda expressions) appears to be baseless, especially as certain language constructs like lambda expressions appear to simplify real </em><a href="UseCases.html">UseCases</a>, like being able to attach an arbitrary number of independent event handlers to an event without the labyrinthine circumlocution described [above]. In short, I see trivial evidence that "yet another language idiom" (e.g., lambda expressions) can simplify code (and thus make it less confusing) but no evidence that "yet another language idiom" causes confusion.<em></em>
+      </p>
+      <p>
+        I am not understanding your complaint. One can add a million lines of code for the very same "type" of handlers to this setup if they want (if the hardware handles it). I don't see it as a "labyrinthine circumlocution". It's <strong>based on four relatively simple rules</strong> (3 "levels" plus intra-level priority of inner GUI item first). Perhaps you are just used to the listener-centric approach and habitually think design from the perspective of a formal listener structure/list.
+      </p>
+      <p>
+        And while I agree it won't necessarily make ALL maintenance or feature scenarios easier (typically different designs favor different scenarios), I don't see how it's worse for the <em>average/typical</em> set of needs. 
+      </p>
+      <p>
+        If the app coder needs a routine shared among a group of buttons, the simplest course of action is to put the shared method in the next higher level of the widgets that "enclose" the common-ness, which is typically a "form" object/class. Each widget's handler then calls the shared routine attached to the form level. (One can add their own methods as needed). There are other ways to do it such as sub-classing to make a custom button "type" or add group membership "marker" attributes (search "belongToGroup7" in <a href="NodeJsAndHofGuiDiscussionTwo.html">NodeJsAndHofGuiDiscussionTwo</a>), but this is conceptually the simplest or "most conventional" and probably the most common. -t
+      </p>
+      <p>
+        <em>The above seems unusually complex.  Normally, each event handler is defined as a container for </em>EventHandlerS.  E.g., the following may be built into a base class for GUI widgets:<em></em>
+      </p>
+      <code>
+        List<<a href="EventHandler.html">EventHandler</a>> onClick = new <a href="LinkedList.html">LinkedList</a><<a href="EventHandler.html">EventHandler</a>>();<br/>
+      </code>
+      <p>
+        <em>Firing an event --- which is also built into the base class for GUI widgets -- consists of something like the following to iterate the list and invoke each </em><a href="EventHandler.html">EventHandler</a>:<em></em>
+      </p>
+      <code>
+        for (<a href="EventHandler.html">EventHandler</a> handler: onClick)<br/>
+        handler.fire(event);<br/>
+      </code>
+      <p>
+        <em>Adding a new widget, followed by adding an event handler to it -- which will be seen throughout the user code -- is like:</em>
+      </p>
+      <code>
+        Button myButton = new Button("Click me!");<br/>
+        myButton.onClick.add(event -> print("Clicked!"));<br/>
+      </code>
+      <p>
+        <em>That's the whole system.  It's simple, handles single and multiple event handlers with the same code, and subclassing is only needed for creating new widget categories.</em>
+      </p>
+      <p>
+        <em>It does not support the 'traverseOrder' of your system, as order dependencies in event handlers are considered a </em><a href="BadThing.html">BadThing</a>.  However, if they were needed, it's straightforward to modify the above to use a sorted container in place of List, with a numeric priority specified as a parameter to onClick.add().  E.g:<em></em>
+      </p>
+      <code>
+        PriorityList<Integer, <a href="EventHandler.html">EventHandler</a>> onClick = new PriorityList<Integer, <a href="EventHandler.html">EventHandler</a>>();<br/>
+      </code>
+      <p>
+        <em>Firing an event --- which is also built into the base class for GUI widgets -- consists of something like the following to iterate the list and invoke each </em><a href="EventHandler.html">EventHandler</a>:  (Note that it hasn't changed; we're assuming PriorityList defines an Iterator ordered by an Integer passed to add().)<em></em>
+      </p>
+      <code>
+        for (<a href="EventHandler.html">EventHandler</a> handler: onClick)<br/>
+        handler.fire(event);<br/>
+      </code>
+      <p>
+        <em>Adding a new widget, followed by adding an event handler to it, is like:</em>
+      </p>
+      <code>
+        Button myButton = new Button("Click me!");<br/>
+        // Specify priority 3, which fires before events with priority 4 and after events with priority 2.<br/>
+        myButton.onClick.add(3, event -> print("Clicked!"));<br/>
+      </code>
+      <p>
+        I am still not following your complaint. RE: "order dependencies in event handlers are considered a <a href="BadThing.html">BadThing</a>" -- There MUST be an order, unless you are proposing parallel event processing. You talk about multiple events added to a given widget. So you have event snippet A and event snippet B (two code blocks). You pretty much have 4 choices in our universe: A before B, B before A, A and B parallel, order randomly determined at run-time. The last two add too much unpredictability to the system for typical needs. (A snippet can launch a separate independent process/thread if necessary, per language features.) Thus there must be <em>some</em> ordering rule. And I'm merely offering a way to circumvent the default order if and when needed, not saying one has to adjust such. It's pretty simple, at least to me, and compared to the known alternatives.
+      </p>
+      <p>
+        [Your correspondent said "order <em>dependencies</em>", i.e., event snippets that are attached to the same event and that must run in a particular order to work properly. This is a <a href="BadThing.html">BadThing</a>; event handlers should work regardless of what order they're run in, if that's possible. Obviously, the handlers must run in some order, but it shouldn't matter to your event handlers what order they are run in. -DavidMcLean]
+      </p>
+      <p>
+        Say what? We don't want them random.
+      </p>
+      <p>
+        [Why not? That shouldn't make any difference. -DavidMcLean]
+      </p>
+      <p>
+        In a typical GUI system I would want consistency in order so that the app behaves the same in production as it does in tests etc., and potential order control if needed. But, perhaps we are wandering off topic.
+      </p>
+      <p>
+        [Best practice is to write your event handlers such that it doesn't matter what order the GUI system runs them in. That way, it doesn't matter whether the GUI system uses a consistent ordering or not, since you'll still get the same behaviour either way. That's what your correspondent was getting at. But yes, this is a little off-topic. -DavidMcLean]
+      </p>
+      <p>
+        That's an issue with app-side development. But because <a href="HumansSuck.html">HumansSuck</a>, I'd like consistency of order in case I have to maintain/fix another person's bad code in the future. That's usually a bigger bottleneck than any machine efficiency gained by order-agnostic event processing for typical apps (as I encounter them). Making the order consistent per run is better stupid-proofing. -t
+      </p>
+      <p>
+        <em>That's fine, if you insist.  My second example -- which is not significantly more complicated than the first -- supports ordered event handlers.</em>
+      </p>
+      <hr/>
+      <p>
+        Footnote [1] 
+      </p>
+      <p>
+        I didn't define what happens if two "regular" methods are defined for a given widget, such defining both click and double-click. Perhaps an ordering list should be specified, but for now I don't see a need for such and will specify that method name is the tie-breaker. Thus, "onClick" runs before "onDoubleClick". If a developer doesn't like this order, then typically they can explicitly "intercept" it with a "firstEvents" method having a conditional somewhat like Example 6482, but at the widget level. But typically one wants click and double-click to do the same thing rather than different things. One can simply have one call the other to get this. -t
+      </p>
+      <hr/>
+      <p>
+        <strong>Object-Embedded Blocks</strong>
+      </p>
+      <p>
+        Note that "onX"-like routines in HTML form widgets are a form of "attach handlers to GUI objects" design. Thus, the Java-like central registration approach is not necessarily the most common.
+      </p>
+      <p>
+        [What with addEventListener() and the ludicrously pervasive <a href="JayQuery.html">JayQuery</a>, I'd be reluctant to consider HTML events an example of the onX approach. The DOM-standard method addEventListener() is almost precisely equivalent to Java's setup, and <a href="JayQuery.html">JayQuery</a>'s handler-registration methods simply extend it such that it can implicitly apply to collections; both are higher-order functions to register handlers, wholly akin to the approach used in Java or C#. -DavidMcLean]
+      </p>
+      <p>
+        I'm not following. Whether it uses HOF's under the hood (<a href="SystemsSoftware.html">SystemsSoftware</a>) is moot; the app coder usually doesn't have to see them or know they exist.
+      </p>
+      <p>
+        [What's under the hood is irrelevant. addEventListener() and <a href="JayQuery.html">JayQuery</a> are APIs used directly by application coders. -DavidMcLean]
+      </p>
+      <p>
+        Because JS has shitty OOP syntax. But my original point is that the on-X style is provided by the <a href="HtmlStack.html">HtmlStack</a> and used often in the wild.
+      </p>
+      <p>
+        [I'm not sure what <a href="JavaScript.html">JavaScript</a>'s OOP syntax has to do with the fact that <a href="JayQuery.html">JayQuery</a>'s an API used directly by app coders. Your other point is true, although use of onX attributes is heavily discouraged these days for <a href="SeparationOfConcerns.html">SeparationOfConcerns</a> and related reasons, in favour of <a href="JayQuery.html">JayQuery</a> or equivalent approaches. -DavidMcLean]
+      </p>
+      <p>
+        <a href="SeparationOfConcerns.html">SeparationOfConcerns</a> doesn't say separate event handler code from the object itself. If it does, it needs a tweak. In a good TOP gui, it wouldn't matter, per <a href="SeparationAndGroupingAreArchaicConcepts.html">SeparationAndGroupingAreArchaicConcepts</a>. But if stuck with old-fashioned linear code, then often there is nothing wrong with object attachment, or it's the least evil of the choices. 
+      </p>
+      <p>
+        <em>What's a "TOP gui"?  Actually, event handler code is normally associated with the event-generating object's container, not the event-generating object.  For example, if you have a button that generates an "onClick" event, you want the onClick event handler associated with the form the button lives in, not the button.  That's because the button's event handler typically affects the form, not (just) the button.</em>
+      </p>
+      <ul>
+        <li>
+           That can be handled under-the-hood, and the association is established by gui widget nesting (buttons inside of forms). It's arguably a violation of <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a> to have to specify that association twice.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>What association is being specified twice?</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Perhaps we should back up a bit. What exactly did you mean by "you want the onClick event handler associated with the form the button lives in, not the button." Actually it is typically associated with BOTH. But in textual code we can only group it with the form or the button (or neither) and thus must favor one over the other.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>An event handler is normally only associated with the most restricted scope that will work.  An event handler that only effects the widget that generates the event will belong to the widget.  An event handler that effects multiple widgets (and, often, does other things) will belong to the widget's container.</em>
+        </li>
+      </ul>
+      <p>
+        But anyhow I believe HOF's are common in JS-centric GUI kits because in large part JS has <strong>crappy OOP syntax, making HOF's look good in comparison</strong>. If tool A is implemented poorly, and B is an alternative, then users will lean toward usage of B.
+      </p>
+      <p>
+        [<a href="SeparationOfConcerns.html">SeparationOfConcerns</a> does say to separate behaviour from content -- <a href="JavaScript.html">JavaScript</a> event handlers being an example of the former, and HTML elements the latter -- hence separating such aspects being encouraged in client-side scripting. <a href="JavaScript.html">JavaScript</a>'s object syntax is excellent, by the way, but here's not the place to debate that anyway; my point is merely that events in HTML are nowadays almost invariably bound using jQuery (yes, it's <em>that</em> pervasive), which uses a higher-order function approach. -DavidMcLean]
+      </p>
+      <p>
+        Most developers I work with do <em>not</em> like <a href="JavaScript.html">JavaScript</a>'s OOP (among other things) nor jQuery and are <strong>frustrated by the lack of choice</strong> brought about by client-side <a href="QwertySyndrome.html">QwertySyndrome</a>. (Some will admit it's good <a href="JobSecurity.html">JobSecurity</a> to master the arcane world of the <a href="HtmlStack.html">HtmlStack</a>.) I know you disagree. Let's not reinvent that debate here and <a href="LetTheReaderDecide.html">LetTheReaderDecide</a>. -t
+      </p>
+      <p>
+        [I wasn't claiming jQuery is good or liked (although personally I think it's pretty neat, with the notable exception that its Deferred implementation isn't up to standard). I'm just claiming it's ubiquitous. It's what's used now to handle eventing in browser scripts in almost all cases. "onX" attributes still exist but have faded into relative obscurity. -DavidMcLean]
+      </p>
+      <p>
+        "Almost all cases"? Hell no. But QWERTY keyboards and Windows are also ubiquitous in the office, however, most will agree that's not because they are "great".
+      </p>
+      <p>
+        [Hell yes. There are dozens of libraries and choices for binding events, but jQuery's gonna be first choice nine times out of ten. In fact, it's practically supplanted <a href="JavaScript.html">JavaScript</a> itself for many. And yep, plenty of ubiquitous things aren't great. I'm not saying this one is. -DavidMcLean]
+      </p>
+      <p>
+        For custom intranet apps I encounter, typically server-side-processing is the favored approach I see, and <a href="JavaScript.html">JavaScript</a> is lightly sprinkled in for things the server-side can't handle well. jQuery is still too browser-version finicky. Maybe if older versions of IE go away this will change, but we are not there yet, and MS is in no hurry to make itself obsolete (except when it forces you to buy their new version).
+      </p>
+      <p>
+        [Reasonable enough, I suppose. Is any of that relevant? -DavidMcLean]
+      </p>
+      <p>
+        I don't know because I'm not entirely sure what your point was. Incidentally, if you are only using JS lightly, then you typically don't need jQuery.
+      </p>
+      <p>
+        [To repeat myself: I wouldn't use HTML as an example of "onX"-style event binding because, although that method is still supported, it's now almost entirely disregarded in favour of <a href="JavaScript.html">JavaScript</a> libraries providing event binding utilities, especially the practically-ubiquitous jQuery. It's certainly true that you don't need jQuery, or any libraries, if you're using tiny amounts of JS -- heck, you don't <em>need</em> jQuery even if you're writing a full-on single-page application. Nonetheless, it is tremendously pervasive and often is pulled into even minimally-scripted pages for handling the events. -DavidMcLean]
+      </p>
+      <p>
+        Are you changing the debate to how people <em>should</em> code GUI's?
+      </p>
+      <p>
+        [No. -DavidMcLean]
+      </p>
+      <p>
+        In that case, I don't know what your point is then. Because of JS's crappy OO syntax, a lot of odd stuff stuff is done with JS as a work-around.
+      </p>
+      <p>
+        [My point is exactly what I said above: HTML isn't a good example of the use of "onX"-style event bindings because its "onX" attributes are effectively deprecated in favour of <a href="JavaScript.html">JavaScript</a> libraries, especially jQuery. That's all I'm saying. -DavidMcLean]
+      </p>
+      <p>
+        Deprecated by who? I still see it used often. And that still sounds like a design style issue rather than a technology issue. Anyhow, I still allege that jQuery is fairly common because JS limits decent OOP, not because any love of jQuery. <strong>jQuery is a band-aide</strong>. Yes, I already know you disagree. <a href="AnecdoteImpasse.html">AnecdoteImpasse</a>.
+      </p>
+      <p>
+        [<em>De facto</em> deprecated by consensus, hence "effectively deprecated" rather than "officially". They're still part of the spec. And sure, I'm not saying jQuery is used because it's loved. I'm just saying it's used. All the time. -DavidMcLean]
+      </p>
+      <p>
+        Having 2+ options is not the same as "deprecated". As far as "all the time", QWERTY and MS-Windows are also used often. Popularity (high usage) is governed by many factors. 
+      </p>
+      <p>
+        [Sure thing. Does that matter? I'm not saying anything about <em>why</em> it's popular, just that it <em>is</em>. -DavidMcLean]
+      </p>
+      <p>
+        So is On-x
+      </p>
+      <p>
+        [Except, no, it isn't. onX attributes faded into relative obscurity, ousted from use almost entirely by jQuery with some very minimal contribution from other JS event binding techniques. -DavidMcLean]
+      </p>
+      <p>
+        I guess I'm on Mars, that's not what I see.
+      </p>
+      <p>
+        [I guess so! Here's a few sources discouraging embedded JS such as onX attributes, if that helps at all: <a href="http://en.wikipedia.org/wiki/Unobtrusive_JavaScript">http://en.wikipedia.org/wiki/Unobtrusive_JavaScript</a> <a href="https://developer.mozilla.org/en-US/docs/Web/Guide/Events/Event_handlers">https://developer.mozilla.org/en-US/docs/Web/Guide/Events/Event_handlers</a> <a href="http://stackoverflow.com/questions/21218190/inline-onclick-vs-jquery-click">http://stackoverflow.com/questions/21218190/inline-onclick-vs-jquery-click</a> <a href="http://stackoverflow.com/questions/138884/when-should-i-use-inline-vs-external-javascript">http://stackoverflow.com/questions/138884/when-should-i-use-inline-vs-external-javascript</a> -DavidMcLean]
+      </p>
+      <p>
+        Syntax like Example 8490 in <a href="NodeJsAndHofGuiDiscussion.html">NodeJsAndHofGuiDiscussion</a> would easily allow post-object-declaration addition of methods. Thus, using the separated approach is not inherently an FP versus OOP choice. In split-duty centralized shops with UI designers separate from app coders, it makes staff management sense to split them, but in my experience for smaller projects it often just adds unnecessary indirection and editing file hopping. Most of your links seem to focus on performance issues, not maintenance effort, and the few that do talk about human effort give very little detail. The MVC-influenced separation mantra has been over-hyped in my opinion, but this is probably not the topic to debate the merits of separation. <strong>Good OOP syntax/design can do both styles well without HOF's.</strong> -t
+      </p>
+      <p>
+        [Much of that may be true, but it's inconsequential -- whether or not event handling can be done well or better with adjusted OO syntax isn't relevant to the question of what's actually being done right now. -DavidMcLean]
+      </p>
+      <p>
+        Both styles are used, but we disagree about the extent and the reasons.
+      </p>
+      <p>
+        [The reasons aren't relevant. The extent to which jQuery has supplanted alternative approaches is obvious; it's so pervasive that questions like <a href="http://meta.stackexchange.com/questions/45176/when-is-use-jquery-not-a-valid-answer-to-a-javascript-question">http://meta.stackexchange.com/questions/45176/when-is-use-jquery-not-a-valid-answer-to-a-javascript-question</a> have to be asked. -DavidMcLean]
+      </p>
+      <p>
+        I don't disagree that its use is common. If I want a free component to make a web-page do something fancy dancy, then jQuery components are often just about the only solution. A lot of it is the <a href="NetworkEffect.html">NetworkEffect</a>, though.
+      </p>
+      <p>
+        [Sure, <a href="NetworkEffect.html">NetworkEffect</a>'s a major contributor. We appear to be in agreement. -DavidMcLean]
+      </p>
+      <p>
+        Oh oh!
+      </p>
+    </div>
+  </body>
+</html>

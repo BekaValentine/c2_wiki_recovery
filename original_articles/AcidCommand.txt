@@ -1,0 +1,108 @@
+Encapsulate a series of commands as a single AtomicConsistentIsolatedDurable command.
+
+'''Context'''
+
+You are utilizing the CommandPattern to execute a set of operations that need to be grouped in such a way that they should either all succeed or fail.
+
+Let's suppose you are working on a system that allows a user to modify a complex, highly interrelated object model. For example, consider a genomics system that tracks genetic markers through a family tree in order to pinpoint how genes are inherited. There are at least three axes of information that users would be interested in:
+
+	* The family tree itself (who descends from who)
+	* The information about individuals in the tree (who showed what symptoms and who's assays showed them to have what markers)
+	* Information about the genetic markers (what markers are used, where they are found on the genome, etc.)
+
+The problem is that the three axes are interlocking. Modifications to one object can have serious ramifications to other parts of the system. For instance, if a marker is changed, it's relation to the individuals must change. Likewise if an individual's genetic assay is found to be incorrect and changes, then statistics and calculations about the family and markers might now be incorrect.
+
+There are two "standard" approaches to maintaining the consistency of this information that can be tried:
+
+(1) Pessimistic concurrency on the entire object structure. In this case, a large chunk of the object structure is locked when the first user requests it. This has the drawback that other users are kept from modifying the structure at the same time - something that is not reasonable in a multiuser environment.
+
+(2) Optimistic concurrency on the entire structure. In this case, users are allowed to modify the structure as they choose, but the first one to "commit" his changes "wins". Anyone who had also modified those same structures would "lose" and find that their changes were now lost.
+
+A third approach, versioning, can also be tried. In this case, a new "Version" of the structure is created for each user. However, this just trades the current problem for a different, but equally difficult, version reconciliation problem.
+
+Therefore, since none of the previous solutions have worked, try the following: Encapsulate the user changes as "Commands" [2] and then treat the group of commands as as a single atomic, consistent, isolated, and durable command. Use a strategy like TwoPhaseCommit to merge commands issued by different users together.
+
+'''Problem'''
+
+How do you ensure that transactional semantics apply?
+
+'''Forces'''
+	* The importance of transactional requirements are difficult for component assemblers and developers to fathom until later in the project when system integrity is affected by lack thereof.
+	* Transactional behavior is especially important in distributed component-based systems.
+	* Acquired components integrated into a system may not be implemented using transactional semantics.
+	* Traditional transactional systems are invasive and dictate that all participants fully implement transactional semantics.
+	* Newer transactional systems are more additive, separating completion protocol from specific transaction semantics.
+
+'''Solution'''
+
+Create a command that decouples the semantics and completion protocol of the invoker.
+
+
+Also Known As: Action, Transaction 
+
+See also: Command [2], TwoPhaseCommit
+
+----
+----
+This seems very incomplete but interesting. Could someone fill in the rest of the solution? -- PhilGoodwin
+
+----
+Who wrote that Motivation!! Very, very cool indeed. -- PhilipEskelin
+
+Thanks. I probably really should sign these things. :) This draws upon some things that I wrote about in the DesignPatternsSmalltalkCompanion and some work that I've been thinking about for CrossingChasms. -- KyleBrown
+----
+'''TwoPhaseCommit and concurrency'''
+
+Nice write-up. We used the same TwoPhaseCommit protocol in a number of places in the OpenDoc API. If we had had more time, we would have factored it into a separate, generalized protocol, rather than having a number of similar protocols for different specific uses.
+
+If you look at the JiniTechnology [1] specifications, specifically the TransactionManager, you'll see they did just that. There is a Transaction interface which embodies the semantics of AcidCommand, as described above. A developer can write a class which implements that interface and have the ACID properties managed by the TransactionManager's protocol. -- JoshuaSusser
+
+''Doesn't the two-phase commit protocol use pessimistic concurrency control (usually two-phase locking) to implement the 'isolation' property of the AcidCommand? I can't see how an AcidCommand stops the users from having to lock the parts of the data structure that they are working on. Could you explain in more detail?''
+
+''I thought that an AcidCommand was used if you wanted atomicity and fault tolerance. It seems overkill to use transactions just to control concurrency.'' - Q
+
+The Jini Transaction interface can be used to implement any or all of the ACID properties for a transaction, and within the constraints it specifies it allows a great degree of choice by a user of the pattern. The two-phase commit protocol does not require pessimistic concurrency. Instead, the concurrency policy is chosen by the implementer according to his needs. A Jini object could allow any number of transactions to be begun (optimistically), and only allow the first which commits to succeed. The nice thing about the Jini design is the high level of flexibility it allows in implementation. - A
+
+Excellent discussion - precisely why I wanted to place these ProtoPattern''''''s on WikiWikiWeb in the first place.
+
+Regarding the last comment on overkill - that will be one of the things covered in applicability. You shouldn't use AcidCommand if all you want to do is control concurrency. ConcurrentCommands can be used for this. Actually, InterruptibleCommand and ConcurrentCommands were piled together into one pattern which I submitted to PlopConference called Interruptible Command [3].
+
+The three are complementary. Sometimes you need an interruptible, concurrent command that is fault tolerant, atomic, consistent, etc. This fits well into the context of ComponentBasedDevelopment, but is not limited to it. Perhaps this trio - based on the venerable Command [2] pattern - could be presented as a subgraph of ComponentDesignPatterns called CommandPattern''''''s. -- PhilipEskelin
+----
+'''Relation to CommandPattern and CompositePattern'''
+
+Can you do AcidCommand as a CompositeCommand? DesignPatterns touches on CompositeCommand in several places (see pp. 234, 235, 237, 241, 242). RichardHelm and I take those discussions a step further in the April 99 issue of CppReport. I can post that article on Wiki as soon as the three-month grace period with SIGS is over. -- JohnVlissides
+
+I think this pattern has a very strong relationship to the Command and CompositeCommand DesignPatterns. And I would imagine that your article will be even more relative. My thinking is - in the context of ComponentBasedDevelopment, where you have control over some components and don't have control over others - that we can add value in the issue of transactions and components in general.
+
+Existing technologies like COM and CORBA facilitate managing behavior in interactions between disparate components through interfaces. In addition, sometimes AbstractInteractions need to have a subset of ACID properties to make things work right. Therefore, I think certain technologies (like Jini and MTS) can help facilitate the management of state in the interactions between components that are collaborating to get a job done.
+
+This is one of the first patterns I will be improving on in a plan I've created that will be improving upon each pattern (and perhaps invalidating some) so that they offer true value to the user. Most of the patterns at this level heavily relate to existing work in the patterns community (e.g., component persistence patterns and how they relate to patterns like Serializer, etc.). One of the things I look forward to is not only determining whether patterns in this language are worth documenting, but also being very forthright in refererencing existing work in their relative contexts. -- PhilipEskelin
+----
+'''AcidProperties'''
+
+''Are you saying that AcidProperties might be a better name? Is that what's present when you have transactional interactions amongst components?'' -- PhilipEskelin
+
+No, I'm not. I apologize for not having been clearer. Being ACID is obviously the most important feature of the AcidCommand, so much of the discussion here has been about the AcidProperties of the AcidCommand. While I find this discussion very interesting, I think it might be helpful if somebody could take some time to define these AcidProperties more formally.
+
+ACID = AtomicConsistentIsolatedDurable
+
+''I don't know about getting "formal" but I agree that more than just reiterating what many patterns already cover is what we've done here. I think we'll see more of the extra value AcidCommand adds emerge when we start looking at how this applies to interactions amongst disparate components. Heck, maybe the name's not the best name for it. But it works for now.'' -- PhilipEskelin
+------
+
+Hmmm, this is interesting, if a bit confusing. Declaring a command to be ACID doesn't appear to be a pattern as such, but the implied infrastructure around it could be. Specifically, it doesn't solve any of the ACID problems. Nor does invocation of "2-phase commit", which is just a protocol for aggregating independent transactions.
+
+Atomicity is supported by the command pattern, but the CID are more than that I think.
+
+To be consistent implies that the database as a whole remains valid. This is not relevant here as the rules of consistency are not atomic per se, and can be pretty arbitrary. It is often more complicated than implied above e.g. "a person may only have one mother and father". As such it implies an algorithmic step in the database = "Don't allow data to be modified until future consistency is checked and valid".
+
+Isolation is difficult, and dramatically affects the method used to avoid collisions. It is also a database behaviour. Isolation level 2 (serializable), for example, requires a lot of care or extensive locking. The lower isolation levels are partial optimizations to try and avoid this difficulty and thus improve concurrency. 
+
+Durability is a physical property of the database, usually made an architectural constraint on the database.
+
+So I'm not sure ACID can be encapsulated in a pattern in the restricted sense it is used in GoF and here.
+
+--RichardHenderson.
+
+----
+CategoryPattern ComponentDesignPatterns CategoryJargon

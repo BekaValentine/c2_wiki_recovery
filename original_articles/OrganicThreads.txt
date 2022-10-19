@@ -1,0 +1,57 @@
+Something I'm tinkering with, a sketch of an OO architecture that merges causal-dependence with functional-dependence. Submitted for your consideration in the light of old discussions on MultiCaster and new ones on ThreadsConsideredHarmful. --PeterMerel
+
+-----
+
+If you must thread, MultiCaster is a nice way to keep causality straight without sending your poor programmers insane. But it's not perfect. In particular I forever see in MultiCaster situations where agents tend to be constructed to form bi-directional relationships. This isn't captured explicitly by a PublishAndSubscribe metaphor, so I got to thinking about it. What I ended up with is a pattern of agents - here called organs to distinguish them - that resolve their own bindings to other organs with many new opportunities for adaptive smarts. At the same time, like MultiCaster, this pattern hides the gory threading details from the application programmers - they just implement methods within a certain idiom and don't think too hard ...
+
+Internally, each organ wraps some kind of model, plus a yang (doing) thread, plus an outgoing event "queue" plus and a model consistency (readwrite) semaphore. Keep the outgoing "queue" in mind - it's important for the rest of this to make sense. It's unusual, at least in my experience, for components to have an outgoing rather than an incoming event queue. But you should see later on this allows improved adaptation to changing circumstances.
+
+Events for an organ come in with their own thread lent from the originating organ. From the receiving organ's point of view, these are called yin (feeling) threads. Hey, you don't like a little yin/yang, you're talking to the wrong architect. The point is that organs only produce threads themselves for outgoing events; incoming ones provide their own thread courtesy of someone else.
+
+Each organ has a number of limbs, which are entry points for yins and
+therefore binding sites with other organs. A limb is two interfaces, one
+supplied by the organ (yang), one to be supplied (yin). I'll leave how you go about configuring the bindings as an exercise for the reader, but obviously a BlackboardPattern is possible. So is a StoneSociety ... but that's a story for another day.
+
+Each limb is a two-way handshake with another organ's limb; events go in and out through it. Organs can bind limbs only when the limb interfaces are complementary. The two way handshake makes limb binding more intimate than just a callback or subscription, and provides a way to avoid marshalling and so on.
+
+When one organ's yin interface is messaged by a partner's yang thread, it
+modifies the organ's model and/or attached device to some effect. Like a
+method, but with a predetermined threadiness. Importantly, the limb animated
+by the yin thread can also respond by scheduling calls to one or more yang
+interfaces. It doesn't actually make these calls; it just pops them on the
+organ's outgoing event "queue"
+
+Now I've called this thing a "queue", but it does more than just a queue. It's
+a plan. The yin methods can edit the outgoing event queue and remove or change certain events, if they have enough smarts. Each event can affect multiple limbs. So this "queue" represents the organ's intent ... which can be modified preemptively before it's carried out.
+
+An organ's yang thread, however, can make no modification to the organ's plan. It just grabs the next event and sends it. The yang thread can pass an event to
+one or more of its limbs. If multiple limbs are involved, the yang thread
+splits itself one per limb within a transaction to keep the organ's model consistent. This uses a very loose definition of "transaction"; a transaction here is just the organ's semaphore refusing yin activity until yang completes a multi-limb event.
+
+To guarantee consistency and prevent deadlock/livelock, all an organ's yin threads use a combination of transactions and its single read-write semaphore to guard the organ's state. Each yang thread makes a readlock and uses the state the yins have been building, then releases the readlock and transacts its business. Yins writelock the semaphore. Yang can therefore make calls on whatever limbs it likes, supplying its thread(s) to its partners' Yin methods. 
+
+A yin could possibly attempt to interrupt a yang; if we allow
+this it makes the transactions and semaphore still more twisted ... if the yang is interrupted the organ rolls back any current transaction before responding to the interruption. It's vital that an organ's state remain consistent ... but note that doing this twist requires a far more involved multi-organ transaction device, and that's likely not worth the effort. Or at least I don't have a good reason to implement such a clever beast ...
+
+The semaphore I mentioned could have other pretty special properties. For one, it might be able to have a timeout or other interruption criteria. These
+criteria may be implemented as a special kind of yin - one not connected to any external organ, but activated implicitly by the organ's own yang. Since we're not going to have any incoming event queue, this reflection could be very useful, especially in, say, an organ minding a socket. It's a way to avoid having to model state-dependencies a.k.a. buffers inside the organ's model, which again simplifies the appearance of things from an app programmer's point of view.
+
+Okay, what's the point of all this? To thread efficiently we need to get away from just queueing events and delivering them regardless of an agent's perception of its model, because doing that blows away any intelligence we could build in.  So this is what yin does: it doesn't and can't react to events in any external way - it analyzes all the incoming events, sometimes paying synthetic or non-causal attention, and modifies the organ's plan. The yang threads only act according to the plan, which they can't change.
+
+Apologies if you've waded through all that verbiage and still don't see a point. Them that get interested enough to build their own version of these things, I'd very much appreciate you dropping me a line and letting me know how it goes. --PeterMerel.
+
+-----
+
+'''Comments?'''
+
+Take a look at the BehaviorLanguage by RodBrooks at MIT.  It's based on small chunks of code which communicate using "wires", and it's used to implement semi-autonomous robots.  It's designed for systems which require robust, emergent behaviors based on the interaction of many simple rules, many competing agendas, and lots of little bits of local state.  Quite clever.  --EricKidd
+
+''If I understand it, I think BehaviorLanguage embodies Brooks' SubsumptionArchitecture. OrganicThreads could be used for subsumption, but really they're adaptable for just about any component architectural purpose.''
+
+This looks interesting, but I don't think I entirely understand it.. would it be possible to describe some kind of small example? -- TorneWuff
+
+I think I'm following it (now that I've actually needed some weird thread wizardry, this makes a lot more sense)...  yin thread reads input, modifies internal state, and modifies outgoing messages; wheras yang reads outgoing messages, modifies external state, and adds (and possibly modifies?) input to other organs (modifying external and adding input are largely the same).  Or am I out to lunch?  --WilliamUnderwood
+
+''Almost. Yin doesn't modify outgoing messages. It modifies the queue of messages that haven't gone out yet. Otherwise I think you're in sandwiches. If you get it going and like it perhaps you'll post that example Torne was asking about.'' --Pete.
+
+CategorySpeculative

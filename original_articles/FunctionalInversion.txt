@@ -1,0 +1,179 @@
+'''FunctionalInversion as an AmeliorationPattern'''
+
+[text moved to AmeliorationPattern]
+
+In the following example, I will attempt (feebly) to
+show a possibly natural and reasonable (more or less)
+development for a situation which is finally recognized
+as "bad" in order to motivate the description of an
+amelioration pattern.
+
+For example, take a situation in which three streams of
+chronological data are processed sequentially: the first
+to completion, then the second stream, then the third.
+Each stream represents a particular type of data.  The
+situation may have arisen because it was thought simple
+to isolate the processing due to a given type of data.
+This happens in "phase one" of the project.  (Perhaps, in
+a phase zero, the first data stream's processing was
+implemented -- and the second and third stream-tasks
+were rip-offs.)
+
+Now, assert the desire to process the elements of the
+streams in an interleaved fashion.  We are in phase
+three of the project.  This desire is asserted for
+several reasons.  The existing sequential multi-stream
+processing
+situation includes adjustments in the processing of
+later streams due to elements being chronologically
+earlier than some elements already processed from the
+previous streams.  This added complication of
+adjustments is assumed to have arisen, in phase two,
+when the results of the three streams were combined to
+compute some inter-stream relationships where none had
+been desired before.  Note that the designers of the
+adjustment approach may have felt the adjustment
+approach legitimate if they envisioned a later possible
+need to dynamically handle elements whose processing
+order could never be made chronological (e.g., given
+performance constraints.)
+
+So what has happened to cause the new desire to be
+asserted?  Perhaps, the inter-stream relationships are
+about to become much more intense and would thus
+required significant extensions to the adjustment code.
+Further, in the time since the addition of the
+adjustment code, it has been recognized that the "later
+possible need" is very unlikely to arise in practice.
+Hence, now one wishes that an interleaving approach had
+been used as an earlier solution rather than post-hoc
+adjustment.
+
+So, in phase three, what does one do to transform from
+the pattern (used very loosely) of sequential
+chronological stream processing with inter-stream
+chronological adjustments to a pattern of chronological
+interleaving with no adjustments required?  (If this
+example doesn't seem to provide enough motivation, you
+are encouraged to provide your own caveats and
+suppositions to help it along.)
+
+What we want to do is interleave the streams
+chronologically, add the new inter-stream calculations
+to be performed on the fly, and rip out the adjustment
+code.  This should simplify the understanding of how the
+stream processing works.
+
+The rearrangement could be as follows (this kind of
+transformation has likely been more ably described
+elsewhere).  Each stream processing task currently has
+an initialization stage, then a loop within which it
+gets the next stream element and processes it (including
+any adjustments required due to the processing viz a viz
+other stream processing) and a finalization.
+
+The first part of the [pattern] is a
+Functional Inversion (put your vote for a better term
+right here).  What we want is to run each stream
+processing task's initialization, then use a
+multi-stream reader (new) which looks at the next
+element from each stream, picks the chronologically
+winning element, invokes the correct
+stream's processing task, and finally (for
+implementation simplicity) stub out the stream task's
+next element grabber so that it just returns the
+multi-stream reader's next element.  In essence, we
+evert the stream-task and next-element functions so
+that the stream-task gets called by the next-element
+function where it used to be the reverse.
+
+The second part of the [pattern] is to
+EncapsulateLocalState for each stream-task.  (We've been
+assuming that a stream-task is implemented as a
+function, in case you haven't noticed.)  
+That is, at run-time we want to preserve the
+local values which a stream-task currently keeps between
+loop iterations.  The reason is that, now, we will be
+returning from the stream-task to the next-element (the
+multi-stream reader) function after each iteration --
+thus, blowing off the inter-iteration state which would
+normally have been preserved between iterations within
+that stream-task.
+
+One way to do this would be to create an object which
+contains this state and change the stream-task's local
+access code to perform some external access to get to
+the state now encapsulated in the object.  (This
+roundabout elocution means we'll make the object
+accessible via a path from some globally accessible
+root.)  Another way to do this, if the implementation
+language allows (e.g., Algol "own" or C/C++
+"static" variables), would be to make this local state
+persistent across calls to the stream-task.
+
+The third part of the [pattern] is to Clone
+NonEssentialSharing (and this is a definite candidate
+for terminology upgrade).  For example, the
+stream-tasks may gratuitously share (because of foolish
+convenience) data storage for intermediate
+(inter-iteration) results.  That is, each stream-task
+uses the same global (yes, an ugly word, but
+enlightenment hadn't reached the ends of the Earth when
+this code was laid) variable for its own purposes over 
+several element iterations.
+
+Because we may switch from one stream-task to another
+while the first has carefully cached away an
+inter-iteration value for use on its next loop
+go-around, the second stream-task could either trash the
+cached value with one of its own or (worse?) assume that
+the value currently there was one it had placed there
+earlier.  If so, then the gratuitous shared storage will
+need to be cloned so that each stream-task gets its own
+copy.  (And while we're at it, we could hide the fargin
+clones in a state object for each stream-task, of
+course.)  
+
+Now, before you protest that such a situation would never
+happen with modern coding practices, let me provide a
+possible modern-style situation where it might.
+To wit, one should remember that such
+temporary values can be sufficiently interesting or
+large so as to be cached in a database -- a
+practice which isn't always thought of as bad (because
+we don't think of persistent storage as a form of global
+variable).
+
+So, having walked through the above mess, our
+amelioration pattern has the following three pieces
+which need to be performed in order to transform the
+multiple sequential streams situation into a multiple
+interleaved streams situation.  (And, no, I don't like
+the terms.)
+
+	* Functional Inversion
+	* Encapsulate Local State
+	* Clone Non-Essential Sharing
+
+It looks useful, but is it art?  Is this ''really'' a
+pattern, or an ''AmeliorationPattern"?  Time for feedback
+to show me the error of my ways.  (And thanks in advance
+for it, too.)
+
+-- ChuckSiska
+
+----
+
+''I can certainly vouch for the pattern-ness of this, if only because it seems to encapsulate a very very common task in computer game development (and especially in porting from one platform to another).  You have your data in format F1 for code C1 which is optimized for machine M1.  Then you wish to create the same game for machine M2.  You rewrite C1 as C2, heavily optimised for machine M2, and discover that, really, C2 wants data in format F2, not in format F1.''
+
+''A concrete example is the sprites (flat bitmap images) from Id Software's Wolfenstein3D.  They are run-length encoded in RAM to be decompressed on-the-fly when rendering.  On the PC they are encoded in vertical strips, and the engine paints out vertical strips.  This works fine for the standard PC architecture, but for the ARM conversion a better solution was to paint out horizontal strips, requiring horizontally-compressed data.''
+
+''Other applications include rendering from heightmaps.  The optimum access pattern changes depending on the view angle.  You write the X first Y second version then perform FunctionalInversion on this code to create the Y first X second version.''
+
+''Granted, in these situations, the actual process performed on each element is simple, and it is often easier just to rewrite the code from scratch.  Where knowledge of the pattern comes into its own is when optimising a piece of raw assembly, where rotating the data access order literally does involve finding memory locations for values that previously could be held in a register (Clone Non-Essential Sharing and EncapsulateLocalState).''
+
+''Lastly, consider attempting to keep the same run-length sprite format (vertical) and refactor the code which renders it as vertical strips to render from '''the same data''' as horizontal strips.  Every vertical strip has to be assigned its own cache of loop state data.''
+
+''If you view the pattern from this angle, it seems to be more appropriate to call it IterationRotation ;)''
+
+--EddieEdwards

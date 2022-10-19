@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Beware Of Exceptions In The Destructor
+      </h1>
+      <p>
+        <a href="CeePlusPlus.html">CeePlusPlus</a> destructors should never throw exceptions (they should provide the "nofail" <a href="ExceptionGuarantee.html">ExceptionGuarantee</a>).  This comes down to the fact that destructors have a special role to play when exceptions are thrown -- they clean up resources as per <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a> -- and it's not clear what should happen if an exception is thrown from a destructor during the process of <a href="UnwindingTheStack.html">UnwindingTheStack</a>.  C++ defines a harsh rule, which says that an exception escaping from a destructor during stack unwinding will cause program termination, and that's not what you want.
+      </p>
+      <p>
+        (Java makes another bad choice; the first exception is silently discarded, even if it's important and informative and the second exception is something dull like a <a href="NullPointerException.html">NullPointerException</a>.)
+      </p>
+      <p>
+        Given the C++ rule on throwing from destructors during stack unwinding, here are some reasons not to allow your destructors to throw:
+      </p>
+      <ul>
+        <li>
+           Objects with throwing destructors cannot be used in Standard containers
+        </li>
+        <li>
+           Objects with throwing destructors cannot even be composed safely
+        </li>
+        <li>
+           In the new C++11 standard all throwing destructors terminate the program, even when not <a href="UnwindingTheStack.html">UnwindingTheStack</a>
+        </li>
+      </ul>
+      <p>
+        To illustrate the composition problem, take classes X and Y, where the constructor of X can throw (a fairly common case for RAII classes) and the destructor of Y can throw (yeugh).  Then define struct Z { Y y; X x; }; and try to instantiate a Z.  Suppose that the Y is constructed okay, and then construction of the X fails (which must mean that it throws an exception).  The partially constructed Z object must be dismantled, which involved destroying y.  Now the destructor of Y throws, and your program is terminated.  Naughty Y.
+      </p>
+      <p>
+        Because destructors cannot throw exceptions, they must use other mechanisms to report errors.  The best approach is to ensure that your destructors do not generate errors; if releasing a resource might fail, have an explicit release() method which might throw, and a destructor which calls release and catches its exceptions as a last resort.  Well-written code will use the release() method, but the fall-back in the destructor ensures that even badly written code won't cause resource leaks.  An example of something which can fail is the destructor of an fstream, which might fail to flush the file contents to disk.  Calling close() is always the correct thing to do (though of course toy code doesn't always need correctness).
+      </p>
+      <p>
+        <em>close() can fail only if a flush fails, which can happen only for output streams. When using an input stream it is OK to omit an explicit close(). -- </em>YakovGalka<em></em>
+      </p>
+      <p>
+        <em>[ This page could do with a lot more information. ]</em>
+      </p>
+      <p>
+        More information on how to program well in the presence of destructors can be found in <a href="HerbSutter.html">HerbSutter</a>'s excellent book "<a href="ExceptionalCpp.html">ExceptionalCpp</a>", as well as the sequels "More Exceptional C++" and "<a href="ExceptionalCppStyle.html">ExceptionalCppStyle</a>".
+      </p>
+      <p>
+        -- <a href="JamesDennett.html">JamesDennett</a>
+      </p>
+      <hr/>
+      <p>
+        C++ destructors could (and should?) throw exceptions.  
+      </p>
+      <p>
+        As in stated (*1), for example Stroustrup says: "The standard library function uncaught_ exception() returns true if an exception has been thrown but hasn't yet been caught. This allows the programmer to specify different actions in a destructor depending on whether an object is destroyed normally or as part of stack unwinding." . This works in standard compilers like GCC , but it is not reported to work on some deviated ones like some versions of Visual C++.  
+      </p>
+      <code>
+        try<br/>
+        {<br/>
+        // [ ... ]<br/>
+        }<br/>
+        catch(...)<br/>
+        {<br/>
+        if(std::uncaught_exception() == false) <br/>
+        throw;<br/>
+        }<br/>
+      </code>
+      <p>
+        (*1)
+        "The C++ Programming Language (Third Edition)" by Bjarne Stroustrup 
+      </p>
+      <p>
+        “Industrial Strength C++”  <a href="http://hem.passagen.se/erinyq/industrial/IndustrialStrength.11.html">http://hem.passagen.se/erinyq/industrial/IndustrialStrength.11.html</a>
+      </p>
+      <p>
+        <a href="http://www.devx.com/tips/Tip/12850">http://www.devx.com/tips/Tip/12850</a>
+      </p>
+      <p>
+        <a href="http://docs.sun.com/app/docs/doc/805-4955/6j4mg807b?a=view">http://docs.sun.com/app/docs/doc/805-4955/6j4mg807b?a=view</a> 
+      </p>
+      <p>
+        -- Miguel Mira
+      </p>
+      <p>
+        <em>Note that even the standard implementation of std::uncaught_exception can give false positives. Consider checking for it in a destructor:</em>
+      </p>
+      <code>
+        X::~X() {<br/>
+        try { /* ... */ }<br/>
+        catch(...) {<br/>
+        if(!std::uncaught_exception()) throw;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>Now, if the following destructor is called during stack unwinding, X's destructor will swallow the exception, although it should not:</em>
+      </p>
+      <code>
+        Y::~Y() {<br/>
+        try {<br/>
+        X x;<br/>
+        // ...<br/>
+        } catch(...) {}<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>-- </em>YakovGalka<em></em>
+      </p>
+      <hr/>
+      <p>
+        <em>C++ destructors could (and should?) throw exceptions.</em>
+      </p>
+      <p>
+        And I will politely disagree. It goes back to the simple observation that program execution are inherently single threaded (though you may have multiple threads of execution). What I mean is that you can only do one thing at once (again barring explicit spawned threads). I'm trying to get at you can only handle one error at a time, barring extremely complicated code. That's the inherent problem. When you encounter an error (#1), if you encounter another error (#2), what do you do? Drop one in favor of the other (Java)? Try to save both and process both, one at a time? (What about out of memory errors? You might not be able to save a second error because you're out of memory.) Try to spawn a new thread to deal with the second error? (Oh god no.)
+      </p>
+      <p>
+        The inherent problem is that handling an error may raise another error. At some point, eventually your program must "give up". The C++ default way of giving up is to kill the program. 
+      </p>
+      <p>
+        Luckily, almost all programs can in any language can be phrased as something like: 1- acquire resources to perform a calculation or task, 2- do that calculation or task, possibly failing for X reasons, 3- release resources. Acquiring resources may reasonably fail. Doing a calculation or a task may fail for a multitude of task-specific reasons. However, releasing a resource generally does not fail, e.g.: acquiring memory can fail because there is no memory left, but the runtime will never complain if you return a piece of memory which was previously allocated. This is true of all resources known to the author. Freeing resources does not fail. (If it does, such as from a sanity check, your program is FUBAR anyway, and taking it down isn't such a bad idea.) 
+      </p>
+      <p>
+        Bjarne Stroustrup made this observation himself, and wrote a new programming language around it, <a href="CeePlusPlus.html">CeePlusPlus</a>. The first thing he added to <a href="CeeLanguage.html">CeeLanguage</a> to make C++ was destructors. (This is years before virtual functions, exceptions, templates, etc.) To allocate a resource, put an object on the stack which allocates it. Building the stack acquires the resources to perform the task; it builds up the environment. Eventually you have the environment to perform the task. Then you need to free those resources, aka take down the environment, aka unwind the stack. Thus follows that destructors should (generally) only free resources. Any other use and you will run into this problem of what to do when encountering multiple errors at once. 
+      </p>
+      <p>
+        This gets to transactional support; your program must always be in a destructable state, except for those very small handover pieces which are guaranteed to have the strong exception guarantee (or similar): either 1- it succeeded completely, or 2- nothing went through. This is otherwise known as commit. 
+      </p>
+      <ul>
+        <li>
+           <em>C++ in no way facilitates transactional support...</em>
+        </li>
+        <li>
+           It does. Anything with the strong exception guarantee is a commit operation, by definition. Either the operation succeeds entirely, or nothing happens. Combined with a no-throw swap, this is transactional programming in C++, which is required in any programming language to be robust and correct. 
+        </li>
+        <li>
+           <em>C++ does not facilitate a "strong exception guarantee". C++ is designed around side-effects, but does nothing to track or facilitate their reversal. Are you assuming some sort of anti-modularity and </em><a href="SelfDiscipline.html">SelfDiscipline</a> design-pattern? That is not a feature. You can do that in any language. (see <a href="FourLevelsOfFeature.html">FourLevelsOfFeature</a>: <a href="TuringTarpit.html">TuringTarpit</a>). Support for exceptions is a useful error-handling feature of C++, but the default behavior of RAII for resources in C++ and associated libraries is to commit all changes before releasing them. That's the exact opposite of a strong exception guarantee.<em></em>
+        </li>
+        <li>
+           I'm probably just phrasing this badly, so help me out here. Understand and refactor to your satisfaction. For starters, google strong exception guarantee. First hits will be describing the strong exception guarantee as commonly understood in C++: an operation with the strong exception guarantee will either succeed completely or fail with an exception and have done nothing. This commit-like semantic is required at some level for a programming language to be robust and correct. I'm not claiming this property is unique to C++. I'm not sure what semantic argument we're having. You can write a no-throw swap. This has the "no throws" guarantee. You can write vector::push_back with the strong guarantee, either the vector remains unchanged and an exception is thrown, or the push_back succeeds. Thus you can write code in C++ with the strong exception guarantee. Thus C++ allows / facilitates a "strong exception guarantee". I'm sure this is just a semantics argument at this point, and I'm sorry I don't see your point at the moment. 
+        </li>
+        <li>
+           <em>I suspect the semantic argument we're having is what it means to claim a property is facilitated by a language. You use words like "you </em>'can<strong> write code in C++ with the strong exception guarantee". But that's too low a bar! 'Facilitate' is, as any English dictionary will tell you, a greater level of support than "does not make impossible" (equivalently, "allows"), and greater even than "does not actively hinder". C++ does not statically check code or issue warnings regarding the strong exception guarantee. C++ does not achieve strong exception guarantee as the default property; achieving it takes care and awareness. When composing code (i.e. objects that reference other objects), C++ does not make it easy to predict whether the strong exception guarantee will still hold in the composition. </strong>C++ provides nothing resembling support or guidance for achieving that property, nor is the property inherent to C++ code.<strong> To claim it is a property 'facilitated by' C++, much less a property 'of' C++, is ridiculous! The strong exception guarantee is </strong>explained<strong> in terms of C++ in order to facilitate the disciplining of code </strong>by the programmers<strong>. A property or guarantee achieved by rigorous efforts and </strong><a href="SelfDiscipline.html">SelfDiscipline</a> of programmers without support from the language is <strong>not</strong> a property of the language. At best, it's a property of a program or library.<em> </em>
+        </li>
+        <li>
+           <em>Perhaps a comparison would help. The </em><a href="ClojureLanguage.html">ClojureLanguage</a> has <a href="FirstClass.html">FirstClass</a> support for <a href="SoftwareTransactionalMemory.html">SoftwareTransactionalMemory</a>. Use of STM is clear 'facilitation of transactional support', despite the limited extent of said support (only impacts Refs and Agents, not Atoms or Vars). Now, given such a fine example, by exactly which mechanisms or designs do you believe C++ facilitates transactional support?<em></em>
+        </li>
+        <li>
+           Agreed. I was just trying to draw a parallel between the two, that you need to keep your program at most times in a destroyable state, because if you need to do additional failure-prone steps to clean up, and then encounter an error, you're in a no win situation. You should do your best to avoid such situations all together, and I see this analogous to commit. However, <a href="ArgumentByAnalogy.html">ArgumentByAnalogy</a> is fraud, which accurately describes this discourse. 
+        </li>
+        <li>
+           <em>As a person actively developing a </em><a href="PersistentLanguage.html">PersistentLanguage</a> for open systems distributed programming, I agree with the basic thrust of your argument. My language must do more than 'facilitate' support against disruption; that resilience must be integral to the language, a property achieved on the path-of-least-resistance when programming. I expect to deal with hard node crashes (sometimes permanent, as in a HDD crash or military loss). I expect to deal with communications disruption (jamming, link loss, stealth mode). I expect to deal with power downs - not always with a grace period. I also deal even with failures in <a href="GarbageCollection.html">GarbageCollection</a> heuristics since distributed GC is not feasible on an open system (given comms failure, perfect distributed GC is impossible even in the ideal case where all nodes cooperate and none are malicious... but I must also assume for an open system that some nodes are malicious towards other nodes). Having predictable pervasive/systemic guarantees in the face of PartialFailure is very important. Total failure already has nice consistency property of being 'total'. In C++, exceptions are one mechanism used to report PartialFailure, so it's nice to have some guarantees about the state of the program after an exception is thrown. The "strong exception guarantee" is a useful such guarantee (among many).<em></em>
+        </li>
+        <li>
+           <em>Transactions help on many fronts. For persistence, they providing inherent 'barriers' where durability must be achieved. For concurrency, they  provide systemic and pervasive robustness against </em><a href="RaceCondition.html">RaceCondition</a>s. The atomicity property can be used as a tool to facilitate the <strong>strong exception guarantee</strong>, allowing the initiator of the transaction to abort in the face of detected errors. Of course, I must note that these transactional properties are largely orthogonal to the exception or error reporting mechanism. The choice of <a href="LimpVersusDie.html">LimpVersusDie</a> must ultimately belong to the application. <a href="GracefulDegradation.html">GracefulDegradation</a> in the face of PartialFailure is also important.<em></em>
+        </li>
+      </ul>
+      <p>
+        As mentioned in <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a> (RAII), this also has the nice side effect that resources will automatically be freed. RAII is the practice of making all resources have an owner, including all objects (Objects are memory are resources.), where the owner is either the stack for stack objects, or object which will free the resource in its destructor, and this ownership chain should eventually end at the stack. As such, any leaks in your program will be the result of failing to maintain this ownership. Ownership need not be single ownership, and it can be transferable ownership, but there must be clear a owner [or owners] at all times, and the ownership graph must be acyclic. For those rare times which you genuinely need something like a cyclic ownership graph, GC is for you, which includes available C++ GC libraries. 
+      </p>
+      <hr/>
+      <p>
+        <em>[...] This is otherwise known as commit.</em>
+      </p>
+      <p>
+        I cannot agree more. I've always seen destructors as doing a "rollback" on the program state. Consider the following pieces of code:
+      </p>
+      <code>
+        A& operator =(const A& x) {<br/>
+        if(this != &x) {<br/>
+        A y(x); // OP<br/>
+        swap(y); // COMMIT<br/>
+        }<br/>
+        return *this;<br/>
+        }<br/>
+      </code>
+      <code>
+        void f() {<br/>
+        transaction t(db);<br/>
+        db.exec("INSERT INTO table ..."); // OP<br/>
+        t.commit(); // COMMIT<br/>
+        }<br/>
+      </code>
+      <code>
+        void g() {<br/>
+        ofstream f("out.txt");<br/>
+        f << "xyz\n"; // OP<br/>
+        f.flush(); // COMMIT<br/>
+        }<br/>
+      </code>
+      <p>
+        They all have the same OP/COMMIT pattern. The first two have strong exception guarantee, the last has basic exception guarantee. Yet, all the three guarantee that no error is silently ignored.
+      </p>
+      <p>
+        The point is that things that fail shall not be thought of as releasing resources. They should be done as a separate commit operation. Freeing resources never fails. If it fails it does more than that, and this additional part is not the duty of the destructor.
+      </p>
+      <p>
+        -- YakovGalka
+      </p>
+      <hr/>
+      <p>
+        This topic is always raised in the context of destructors as they are in OO languages, and C++ destructors specifically. Sometimes even to prove the superiority of error-codes to exception handling. However, this is a fallacy. The discussion should be about error handling in general, as it is irrelevant what mechanism we use:
+      </p>
+      <code>
+        Status f() {<br/>
+        Status ret = Status_Ok;<br/>
+      </code>
+      <code>
+        A *x = alloc_A();<br/>
+        if(!x) { ret = Status_OutOfMemory; goto E1; }<br/>
+      </code>
+      <code>
+        A *y = alloc_A();<br/>
+        if(!y) { ret = Status_OutOfMemory; goto E2; }<br/>
+      </code>
+      <code>
+        // do something<br/>
+        E2:<br/>
+        Status s2 = free_A(y);<br/>
+        E1:<br/>
+        Status s1 = free_A(x);<br/>
+      </code>
+      <code>
+        // How shall we combing s2, s1 and ret?<br/>
+        return ret;<br/>
+        }<br/>
+      </code>
+      <p>
+        As was written above, the problem is that <em>program execution are inherently single threaded</em>. In fact the problem is that <em>Turing machines are inherently single threaded</em>. Therefore no programming language can ever magically solve this. The solution as I see it is to accept that there can be only one active error at a time (or they shall be well-nested), and, upon the encounter of the first error, the program shall abandon the normal flow, rolling back to a state where the error can be handled.
+      </p>
+      <p>
+        -- YakovGalka
+      </p>
+      <hr/>
+      <p>
+        What does single-threaded programming have to do with destructor exceptions?  The problem with destructor exceptions is that C++ unwinds the stack before entering the exception handler, which leads to ambiguity when a destructor throws an exception during the unwinding process.  The solution is to enter the exception handler first and allow programmers to control when the stack is unwound, so that exceptions caused by stack unwinding can be caught in the handler itself (or at a higher level, if appropriate).  This is what you get with <em>conditions</em> in Common Lisp, no magic needed.
+      </p>
+      <p>
+        -- BenKreuter
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryException.html">CategoryException</a> <a href="CategoryCpp.html">CategoryCpp</a>
+      </p>
+    </div>
+  </body>
+</html>

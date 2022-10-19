@@ -1,0 +1,160 @@
+I'm working on a large web site in ASP.  I am limited to only ASP.  I can't write my own COM objects at all.  How am I to emulate good OoDesignPractices here?  I find my self regressing so far as to cut and paste functions and subs from one asp file to the next.  This really makes it hard to make design changes based on changes requirements.  Much as I hate perl for large projects, even perl seems better than this mess. Help!
+
+''Consider AspUnit.''
+
+---- 
+
+You could use Perl''''''Script as scripting language inside ASP. Take a look at
+http://www.webtechniques.com/archives/2000/05/powers/ --GodefroidChapelle
+
+''No, we are limited to VbScript and/or JavaScript.''
+
+----
+
+The top three ScriptingLanguage''''''s suppport OO to some extent. VBScript (as of version 5.0 I believe), JavaScript, and PerlScript.
+
+We actually do a '''TON''' of OO in our ASP pages, mainly to achieve reuse of our UI elements and keep up with DontRepeatYourself. Each ActiveServerPage is a class of it's own that supports a template method interface which is then potentially decorated several times, via the DecoratorPattern, and finally executed with a TemplateMethodPattern.
+
+--DrewMarsh
+
+''Have you found a way to use the same class between multiple ASP files w/o cutting and pasting the classes between the files?''
+
+Absolutely. The key to this is ServerSideInclude''''''s.
+
+''ASP's includes aren't the same as Apache's ServerSideInclude''''''s (XSSI). You can't dynamically include a file in ASP, as the big difference. --AdamVandenberg''
+
+Actually you can (sort of). What follows is a poor man's dynamic VBScript include:
+
+ Option Explicit
+
+ Sub Include( scriptfile )	    
+    Dim fso, file	    
+    Set fso = Create''''''Object("Scripting.FileSystemO''''''bject")    
+    Set file = fso.Get''''''File( scriptfile )    
+    Dim stream    
+    Set stream = file.OpenAsTextS''''''tream( 1 )    
+    Dim content    content = stream.Read( file.Size )    
+    Execute''''''Global( content )
+ End Sub
+
+ If Something Then
+    Include( "MyClass.class.vbs" )
+ Else If Something''''''Else
+    Include( "SomeOtherC''''''lass.class.vbs" )
+ End If
+
+Assumption is that class files are "pure" in a sense that they contain classes only.
+
+We write each class as a separate .asp file which would look something like this:
+
+ ''foo.asp''
+ <script language="VBScript" runat="server">
+	Class Foo
+	 ...
+	End Class
+ </script>
+
+We then write another .asp that essentially acts as a DLL for related classes and looks a little like this:
+ ''fooUtilities.asp''
+ <!--#include file="foo.asp"-->
+ <!--#include file="bar.asp"-->
+
+Then, in the page where you need to use the fooUtilities library, you would simply include fooUtilities.asp. 
+
+The trick is also to remember that you never want to include the same file more than once. The ScriptingEngine isn't as powerful as a compiler and while there are some ConditionalCompilation features in some of the scripting languages, you're better off performance wise forcing the top level user of the classes to include everything that is needed by all classes. So, if I had fooUtilities.asp and barUtilities.asp, and barUtilities.asp needs to use a class in fooUtilities.asp, do '''not''' include fooUtilities.asp in barUtilities.asp. Instead include both fooUtilities.asp and barUtilities.asp in myFooDisplay.asp.
+
+Yes this means that the top level user needs to understand ''all'' the relationships, but, as they say, "thems the breaks".
+
+''Two things. First, I usually use virtual includes instead of file, so that when I move the ASPs around the shared code stays in the same place.''
+
+ <!--#include virtual="/shared/class/foo.asp"-->
+
+''Second, if I have a large number of shared includes, and pages are always including a core set of them, I set up an indirect. So, all the pages in a folder might include /shared/package/display.inc and that in turn will include the five (or however many) classes that are needed. This way, if a new class comes around or I factor one out I only need to updated about 1 include instead of 10 pages.'' -- AdamVandenberg
+
+
+--DrewMarsh
+
+''Cool.  I didn't know you could combine Asp with ServerSideInclude''s''.  And I even bought an O'Reilly book on the topic.  That will make life so much easier.''
+
+I HaveThisPattern.  However, I'm not sure what I'd use ASP classes for.  ''I'm gettin' the shudders just thinkin' 'bout a web of ASP objects.''  Are there some good reasons to use them instead of say VB components?
+
+--DanGreen
+
+''Well, I don't think you'd want to keep your business logic in ASP classes, but they're great for creating UI frameworks, form data validation, etc. See my comments for more detail.''
+
+--DrewMarsh
+
+OK...after reading it again I'm still not sure what benefit the classes provide.  Template Method and Decorator patterns are still completely possible without the class construct.  I've used them...just by using ServerSideIncludes.
+
+Drew, any chance you could throw over a small code-byte that may provide me with the AhHa experience?
+
+--DanGreen
+
+I don't think anyone would actually say that they want to use ASP for business logic.  Unfortunately, some people are given the chose of do that or don't get paid.
+
+''True and the good thing is if you have '''no other choice''' you '''can''' keep put your business logic into ASP script classes and not have all the spaghetti code that one usually finds in the typical AspApplication.''
+
+Especially since the two default languages (JScript, VBScript) provide no good namespace / module / code management systems other than the ability to include files. 
+
+----
+If I couldn't use a DLL, I'd use ASP classes.  I'm not sure why you say business logic doesn't belong there.  If you can't have any compiled code (common with small clients on a virtual host), I'd definitely use ASP classes.  They have their issues, but the alternative is to not use OO programming at all.
+
+ASP classes are easy to share and work on together with a group of designers and developers with variety of skillsets.  Also, DLL development can be more complicated and require IIS restarts to update code.  If you are careful when designing your ASP classes, you can potentially port it to a compiled DLL without much change to the front-end code.
+
+Of course, I prefer compiled code for a variety of reasons.  But I think ASP classes make a lot of sense in certain situations.  
+
+- j
+----
+
+-----------------------------
+
+Keeping business logic in JavaScript (or JScript) ''classes'' works very well, I think! I prefer JScript to VBScript because you can easily walk the object hierarchy to get to class properties and methods. Also, you can bung JScript objects in the Session with relative ease, which are much smaller that COM objects. You can also use reflection techniques to automatically generate documentation / XML serialization for your classes. Another nice capability is to use the pre-processor to avoid a Server Side include ''library'' being included more that once, somthing not possible in VBScript. Not having to worry about how often you include libraries is quite liberating!. You can use the same pre-processor commands to set debug flags, for things like assert() statements. I understand that for larger web solutions, it would pay to invest time in to developing COM or Java components, but for the small-medium scale web project JavaScript classes offer a least-cost compramise, since you don't have to go through numerous compile-deploy iterationsare or use several IDEs.
+
+--TobinHarris
+
+(Removed comment about some ASP collections not being "real", replaced with what I actually meant)
+
+You can use other languages with ASP, PerlScript or PythonScript, for instanace.
+In the case of PerlScript, though, you have to be more verbose when dealing with COM objects vs VBScript.
+
+VBScript:
+  currUserId = Request.Cookies('U''''''serId') 
+
+PerlScript:
+  $currUserId = $Request->Cookies('U''''''serId')->{Item}; 
+
+Having to remember the extra "->{Item}" gets annoying.
+Intro to using PerlScript: http://www.fastnetltd.ndirect.co.uk/Perl/Articles/PSIntro.html
+-- AdamVandenberg
+
+The last -> is unnecessary, though.  This works:  
+
+  $currUserId = $Request->Cookies('U''''''serId'){Item}; 
+-- EricJablow
+
+----
+
+Still they are getting rid of all default properties in .Net so never mind eh?
+
+----
+
+''Not completely.  At least, in C#, collections can have indexers:''
+
+ Request.Cookies["Foo"];
+
+----
+
+I find you can do loads of OO-practices in ASP:
+* move code to separate files and include them in your main web pages
+* create functions for database access (e.g. Customer_Add(name, address, postcode) - even creating a database API instead of creating stored procedures in SQL Server
+* creating classes for complex data structures
+
+The only problem I encountered is that you can only persist objects in a Session when they are in DLL-format - Classes defined in include files do not persist in Session memory. The workaround i have created is to always create a "Backup" and "Restore" method for your classes, that simply import and export the data of your class to a string type, which can be easily stored in a session or application variable.
+
+I think ASP/VBScript is pretty cool and have done many intranet projects with it. I have even created a "Session control" system that lets you view in detail who is logged into your site, under which credentials etc. and allows you to "kick" someone off your site. All without using DLL's or other external files - pure ASP.
+
+--Chris. 
+
+
+----
+CategoryScripting

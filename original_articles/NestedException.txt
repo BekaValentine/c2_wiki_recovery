@@ -1,0 +1,87 @@
+The general idea is that exceptions should include references to the exception that caused them.  When a layer catches an exception and throws a new one, the new exception should include a reference to the earlier "cause".
+
+In Java, NestedException''''''s (or ChainedExceptions) are commonly found in SAX, the event-driven XML parser;  any method that is called by the parsing interface is required to wrap any exceptions as in the following Java code fragment.
+startElement is a callback method that SAX fires when a start tag, in this case <TVSCHEDULE> is encountered by the parser:  
+
+
+  public void startElement (String name, A''''''ttributeList attrs)
+	throws SAXException {
+	try {
+	if (name.equals("TVSCHEDULE")) {
+		this.P''''''arseStartSchedule(attrs);
+		return;
+		}
+	  
+	// [..endless if/else deleted...]
+	return;
+	}
+	catch (IOException e) {
+	  throw new SAXException("I/O error: "+e.toString(), e); 
+	  }
+	catch (TVScheduleParseException e) {
+	  throw new SAXException("TVScheduleParseError"+e.toString(), e);
+	  }
+	}
+
+The code catches specific exceptions that are thrown and wraps them into a SAXException.  Back at the original calling method...
+
+
+	TVScheduleOutputObject ScalaS;
+	TVScheduleHandler TVH; 
+	//
+	// Start parsing
+	//
+	try {
+	 ScalaS = new S''''''calaScript(args[1], args[2], singleoutput);
+	 TVH = new TVScheduleHandler(args[0],ScalaS);			
+	 TVH.init();
+	 }
+	catch (SAXException e) {
+	 System.out.println
+		("Parsing Error: "+e.getException().getClass().getName());
+	 System.out.println(e.getException().getMessage());
+	 if (DEBUG) e.getException().printStackTrace();
+	 }
+	catch (IOException e) {
+	 System.out.println("File error: "+e.getMessage());	
+	 }	
+	
+...the exception is unwrapped and the original exception printed out.  This program--converting XML into a multimedia script language for video bulletin boards--doesn't need elaborate error handling, though it is possible and even desirable when one needs more complex validation.  
+
+--DavidMoisan 
+
+------
+One of the distributed systems groups at XeroxParc used this technique when they were flirting with ModulaThree. As you pop the stack on your way out of the throw, you add detail from each level. It gives you a good context for where the exception happened, generally more informative than a stack trace, without exploding the ''throws'' clause.
+
+''I like this very much.  Rather than adding detail, I call it adding context.  What were you trying to do that failed?  As we come up the stack, we get closer to the user's actual goal.  Like: IO error, while trying to write a file, while trying to save current screen size, while trying to update your preferences.  We present the last exception message thrown to the user with an option to view the whole message chain when the help desk asks for more details.  In the implementation, when we catch an exception we throw new MyE''''''xception( message, e ).  The constructor builds the chained messages and stack trace as String member variables because nested exceptions were not serialized across remote calls.''
+
+-------
+I've always preferred the name CompositeThrowable.  NestedException implies that the exception doing the nesting is ''itself'' nested within something else, which isn't (obviously) always the case.  --LairdNelson
+----
+If you agree that CheckedExceptionsAreOfDubiousValue then the introduction of nested exceptions is at best neutral, at worst harmful, because it encourages you to catch exceptions that you cannot handle.
+----
+On the other hand, nested exceptions allow proper hiding of implementation details. See "Item 43: Throw exceptions appropriate to the abstraction" on page 178 of Effective Java by Joshua Bloch.
+----
+This has been implemented in Java 1.4 -- AnonymousDonor
+
+What was implemented in 1.4? A superclass called NestedException? I lamented the lack of such a superclass or interface when I discovered that my S''''''ervletException contained a J''''''spException which contained a S''''''ervletException which contained a N''''''ullPointerException. I now have a "Tomcat v4.0.4 (slightly hacked)" which will display up to ten levels of NestedException, but of course a SAXException will fool it until I add in an extra case -- MatthewAstley
+
+''Its worth noting that Tomcat's error handling generally (as of 4.1.x) sucks most horrifically. The way it wraps exceptions in exceptions and then only reports the top two levels makes it very difficult to figure out what's actually going wrong, especially with JSPs. Even when dealing with configuration errors, its pretty opaque. This leads to bad practices like catching every possibly interesting exception just before it would be passed back to Tomcat and lost from view.''
+
+The various libraries don't agree on what to call the method that gets the nested exception.  S''''''ervletException calls it getRootCause(), I''''''nvocationTargetException calls it getTargetException(), SAXException calls it getException().  Yuck!  So with no common interface, there is no way to use polymorphism to deal with a NestedException.  
+
+On the other hand, it is possible to use introspection to look for methods that return Exception or Throwable, and work your way down the stack from there... -- WillSargent
+----
+Actually in Java 1.4 all they added was the ability to create an exception and pass in a 'cause' exception as an argument to the constructor. They also added the ability to recursively call getCause on your exceptions and thus pull out the chain of nested exceptions. There's also methods for getting information about the nested stacktraces. All of this togethers means that all exceptions in Java 1.4 can potentially be nested exceptions.
+
+----
+A small hiccup with building a chain of nested exceptions comes when the final exception must be passed to another JVM.  All of the class files for the different exceptions in the chain must be available to the new virtual machine.  If not, there will be an exception and all the information will be lost.
+
+For example: an EJB uses JDBC to access a database and some error causes the JDBC driver to throw a sub-class of java.sql.SQLException (say COM.ibm.db2.jdbc.DB2Exception).  This is then nested in another exception, detailing what the SQL operation was trying to achieve, and this is thrown in turn.  When the outer exception is passed to the EJB client it will probably not have access to the DB2Exception class file, and this results in a marshalling exception.
+
+For this reason I (now) think it is better to build your own exception class constructors to extract the required information from any exceptions (or chains of exceptions) they are passed, and hold it in a stack as Strings.  -- RegWhitton
+
+
+''Strings?  Can't you use java.lang.StackTraceElement (see http://java.sun.com/j2se/1.4.2/docs/api/java/lang/StackTraceElement.html)?''
+----
+CategoryException CategoryJava

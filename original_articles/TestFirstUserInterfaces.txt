@@ -1,0 +1,262 @@
+A forum to discuss TestDrivenDevelopment for GraphicalUserInterface''''''s, with mail and news portals:
+
+	* http://groups.yahoo.com/group/testfirstuserinterfaces/
+	* news://news.gmane.org/gmane.comp.programming.test-first-user-interfaces
+
+Phlip sent the principles to the yahoo group:
+	* http://groups.yahoo.com/group/TestFirstUserInterfaces/message/615/
+	* TestFirstUserInterfacesPrinciples (also added to the reading list)
+
+And, eventually, a little EyeCandy:
+
+http://flea.sourceforge.net/rotatingBraneKandel.gif (save this image and open it locally to watch it rotate - sorry about the format!)
+
+----
+
+''TFUI'' recommends programmers write a category of TestFixture''''''s that make a project's ProgrammerTest framework comptetive with its GUIs ClassWizard''''''s, form painters, and debuggers.
+
+----
+
+The best example so far is RemoteUserInterface.
+
+----
+
+David Carlton wrote:
+
+''I'm about to add a GUI interface for an application that I'm writing;''
+
+You have already ran the first mile. You have an app with programmatic 
+controls to do everything you want, but no GUI. The layer that your GuiLayer will connect to is the "RepresentationLayer". It can do everything to 
+the object model that the GUI will, but without any awareness (import, 
+include, etc.) of the actual GuiToolkit.
+
+This is very good; beginning with the GraphicalUserInterface, and adding all the logic 
+piecemeal to its event handlers, leads to SpaghettiCode.
+
+If you are starting a new project with a GUI, and you want to avoid the 
+temptations of SpaghettiCode and TooMuchGuiCode, then use a TestFirst approach that extends 
+the ModelViewController pattern with a mock view class, which is
+very testable.  See Michael Feathers' "The Humble Dialog Box" at 
+http://www.objectmentor.com/resources/articles/TheHumbleDialogBox.pdf 
+
+''how should I test it?''
+
+By writing code that pushes data into the GUI forms. Then the code 
+manipulates the forms like a user (but at the toolkit level, not at the 
+level of raw mouse and keyboard motions), and then reading the data back 
+out.
+
+However, the GUI will probably try to display the window. Primitive GUIs 
+that ran on 286 hardware could do a lot before displaying the window, as an 
+optimization for speedy typists. On modern GUIs you can still often tap 
+<Enter> before a dialog box comes up; it will absorb the enter before it 
+displays, supress the display, and return the enter to the application.
+
+However, modern GUIs often contain widgets bonded together with an ObjectRequestBroker like 
+ActiveX, which usually turns on "apartment model threading" on principle. 
+So the GUI will probably display, because a thread other than the one 
+running your test code will service the Paint event.
+
+To write a GUI TestFirst, >most< of the time you don't want to see it. You 
+want to type, hit Go, get a GreenBar, and keep typing, with minimal 
+interruption to your MentalStateCalledFlow. And you certainly don't want the temptation of 
+that window popping up inviting you to "just test it manually, just this 
+once."
+
+If you can defeat all that, you will achieve a Nirvana where the GUI toolkit 
+is:
+
+'''just another library'''
+
+''I can test lots of the application's behavior by doing unit tests for non-GUI classes and systems tests that test the application's performance when using the text interface (which, fortunately, lets me test many important aspects of the output: the text interface vs GUI interface choice is well localized, I think), but I'm at a bit of a loss as to how to test that windows pop up and respond to mouse clicks/keyboard input/etc. in an automated fashion.''
+
+The culture and documentation for these things teach write-only. They don't 
+dwell on how you read back from a control what its current state is. But 
+the functions are >usually< available.
+
+http://wiki.rubygarden.org/Ruby/page/show/SvgCanvas
+
+That sample uses the excellent RubyLanguage on the excellent Tk Canvas 
+widget. Things inside that canvas are "objects". They are actually records, 
+at the Tk level, so changing their members changes the canvas's display. 
+And the Ruby wrapper promotes canvas items to full-fledged objects.
+
+The test below pushes a command into the GraphViz 'dot' program. 'dot' 
+filters the command into SVG; the function 'putSvgIntoCanvas' parses the 
+SVG and obeys each command in it.
+
+We test this, round-trip, by then querying those item objects out, and 
+inspecting that they are, in fact, a black oval and blue text.
+
+	def test_blueText
+
+	dottage = '''
+		aNode [label = "Kozmik Bullfrog", fontcolor = blue];
+		'''
+	svg = _emitSvg(dottage, false)
+
+	canvas = warmUp()
+	putSvgIntoCanvas(svg, canvas)
+
+	all = canvas.find_all()
+	assert_equal all.size(), 2
+	assert_equal canvas.itemtype(1), TkcOval
+	assert_equal canvas.itemtype(2), TkcText
+	oval = all[0]
+	assert_equal oval.cget('outline'), 'black'
+	assert_equal oval.cget('fill'), ''
+	text = all[1]
+	assert_equal text.cget('fill'), 'blue'
+	assert_equal text.cget('text'), 'Kozmik Bullfrog'
+
+	done(false)
+
+	end
+
+At the end, we don't call TkMainloop. That means we don't need to see the 
+canvas. If we temporarily want to, we turn the 'false' to a 'true' on that 
+last statement.
+
+That fits this pattern: ThenDontCallMainLoop
+
+''It seems like one option is to have some sort of robot that can fake user's GUI input; are there GUI libraries for C++/X-Windows that support this sort of thing? Otherwise, I guess I'll have to use non-automated tests, which I'd rather avoid whenever possible.''
+
+First, it is possible, via super-human research, to fake raw keyboard and 
+mouse input.
+
+But this would test your toolkit first, then your own GUI Layer. If you are 
+not writing or refactoring a toolkit, don't test it.
+
+To test within your own GUI layer, call its own events directly. In my 
+SvgCanvas, this line bonds a callback to an event on an item in the canvas:
+
+	thing.bind('Button-1') do
+	_selectNode(canvas, thing.gettags())
+	end
+
+("thing" is a recently created oval around a node, so in context it's not a 
+bad name.)
+
+Now the test:
+
+	def test__selectNode
+
+	dottage = '''
+		aNode [label = "glue", style = filled, fillcolor = pink, 
+		color = green];
+		bNode [label = "factory", style = filled, fillcolor = 
+		pink, color = green];
+		'''
+	svg = _emitSvg(dottage)
+	canvas = warmUp()
+	putSvgIntoCanvas(svg, canvas)
+
+	all = canvas.find_all()
+	assert_equal all.size(), 4
+	assert_equal canvas.itemtype(2), TkcText
+	text1 = all[1]
+	# assert_equal text.cget('outline'), 'green'
+	assert_equal text1.cget('fill'), 'black'
+	assert_equal canvas.itemtype(4), TkcText
+	text2 = all[3]
+	# assert_equal text.cget('outline'), 'green'
+	assert_equal text2.cget('fill'), 'black'
+
+	# selecting a node, by clicking on the oval or the text,
+	# makes the outline of the oval thicker, but does not 
+	# change the "width" of the text. Selecting another
+	# node restores the outline width of the first
+
+	# TODO text with a linefeed in it
+
+	assert_equal all[0].cget('width'), 1
+	assert_equal all[1].cget('width'), 0
+	assert_equal all[2].cget('width'), 1
+	assert_equal all[3].cget('width'), 0
+
+	_selectNode(canvas, text2.gettags())
+
+	assert_equal all[0].cget('width'), 1
+	assert_equal all[1].cget('width'), 0
+	assert_equal all[2].cget('width'), 3.0
+	assert_equal all[3].cget('width'), 0
+
+	_selectNode(canvas, all[0].gettags())
+
+	assert_equal all[0].cget('width'), 3
+	assert_equal all[1].cget('width'), 0
+	assert_equal all[2].cget('width'), 1
+	assert_equal all[3].cget('width'), 0
+	done(false)
+
+	end
+
+That just called _selectNode() itself. There are ways to test the raw input, 
+not the bound event, but we don't care.
+
+The test shows that selected nodes get thicker.
+
+If manual testing (which still must always occur anyway) reveals a problem 
+in the bindings, one could test at the Tk Canvas item level, by querying out 
+the bound event and calling it. This is a pain (due in this specific case 
+to incompatibilities between Ruby and Tk's binding conventions), but it's 
+as close to the boundary of >our< GUI Layer as possible.
+
+----
+
+GUI toolkits design to either present a window or die
+trying.
+
+A programmer, seeing such a window, might be tempted
+to click on that window with a mouse, instead of
+perform the research required to learn to click on
+that window with a test rig. Early in a project is the
+correct time to start good habits. Use TestDrivenDevelopment to write that window's features.
+
+The principle we will follow is One Button Testing.
+That means while editing one hits One Button,
+typically the Run or Debug button in one's IDE.
+
+The IDE now runs our test rig; the rig runs the
+window, "clicks" on it automatically, confirms the
+results, and dismisses the window.
+
+"The light is green the trap is clean." --Dr. Raymond
+Stantz.  Ghostbusters.
+
+Programmers who do not obey this principle will find
+themselves frequently manually putting their windows
+into various situations, such as reading a document
+containing known test data, and then manually running
+the window with that data to verify results, and
+verifying internal states with assertions and trace
+statements.
+
+Each of these manual activities represents a missed
+opportunity to write a test. Such a test would
+preserve functionality, going forward, against the
+bane of GUI development - rampant refactorings of both
+mechanics and esthetics. -- PhlIp
+
+The reading list:
+
+	* GuiTesting
+	* GuiTestingGameApps
+	* GuiTestingPatterns
+	* GuiUnitTesting
+	* JavaGuiArchitectures
+	* JavaGuiUnitTesting
+	* LetsReuseThatGui
+	* OneButtonTesting
+	* RegularExpressionMatchAssertion  <-- for HTML
+	* TestFirstUserInterfacesPrinciples
+	* TestingGraphicsSystems
+	* ThenDontCallMainLoop
+	* TooMuchGuiCode
+	* WebApplicationsAndXp
+	* WebTesting
+----
+see also TestDrivenDevelopment, TestDrivenAnalysisAndDesign
+
+----
+CategoryTesting, CategoryGui

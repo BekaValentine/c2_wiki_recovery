@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Cee Plus Plus Monads Example
+      </h1>
+      <p>
+        From <a href="OnMonads.html">OnMonads</a>, it seems that a better example is needed to help imperative programmers understand.  Here is an attempt at a <a href="CeePlusPlus.html">CeePlusPlus</a> immitation of IO monads.  I will explain each piece of code immediately above where it is displayed.
+      </p>
+      <p>
+        First, we need to include the C++ <em>iostreams</em> library so we can actually do some IO later.
+      </p>
+      <code>
+        <strong>#include <iostream></strong><br/>
+      </code>
+      <p>
+        Next is the definition of the <em>monad</em> class.
+      </p>
+      <code>
+        <strong>template<typename A_> struct monad</strong><br/>
+        <strong>{</strong><br/>
+      </code>
+      <p>
+        Luckily, C++ allows us to override the <em>>>=</em> operator, which is the same syntax used in languages like Haskell for what is referred to as a <em>bind</em> operation.  When <em>>>=</em> is invoked, it constucts a new <em>monad_bind</em> object, representing the sequenced operation.
+      </p>
+      <code>
+        <strong>template<typename B_> monad<B_>& operator >>=(monad<B_>& (*f)(A_))</strong><br/>
+        <strong>{</strong><br/>
+        <strong>return *new monad_bind<A_,B_>(*this,f);</strong><br/>
+        <strong>}</strong><br/>
+      </code>
+      <p>
+        The <em>return_value</em> function is static and returns an instance of monad<A_>, so it basically amounts to a constructor (as does <em>>>=</em>).  It is written this way for clarity.  It just constructs a new <em>monad_return</em> object and returns it.
+      </p>
+      <code>
+        <strong>static monad<A_>& return_value(A_ a)</strong><br/>
+        <strong>{</strong><br/>
+        <strong>return *new monad_return<A_>(a);</strong><br/>
+        <strong>}</strong><br/>
+      </code>
+      <p>
+        This <em>execute</em> function is the behind-the-scenes machinery.  Application code should never call this; it is for the "runtime" to know about.  It would have been made protected, but that leads to ugly problems with 99% of today's C++ compilers (ask if you really want to know).  When <em>execute</em> is called by the "runtime", it actually carries out whatever side-effect is indicated by this monad, and returns the result of the operation.
+      </p>
+      <code>
+        <strong>virtual A_ execute() = 0;    // this should be protected, but that causes a c++ problem</strong><br/>
+        <strong>private:</strong><br/>
+      </code>
+      <p>
+        Here is the <em>monad_bind</em> class we saw instantiated earlier.  It takes two template arguments, indicating the monad type that comes into it, and the monad type that leaves it (is it).
+      </p>
+      <code>
+        <strong>template<typename A_,typename B_> struct monad_bind : public monad<B_></strong><br/>
+        <strong>{</strong><br/>
+      </code>
+      <p>
+        The constructor takes its first argument as the monad previous to this one in the chain - the one it is bound to.  The second argument is the side-effectful function that you would like to have called on the result of the previous monad.
+      </p>
+      <code>
+        <strong>monad_bind(monad<A_>& ma,monad<B_>& (*f)(A_)) : _ma(ma), _f(f)</strong><br/>
+        <strong>{</strong><br/>
+        <strong>}</strong><br/>
+      </code>
+      <p>
+        These are the data members we use to hold the constructor's arguments until we are ready to use them in <em>execute</em>.
+      </p>
+      <code>
+        <strong>monad<A_>& _ma;</strong><br/>
+        <strong>monad<B_>& (*_f)(A_);</strong><br/>
+      </code>
+      <p>
+        Here, you can see that the imperative implementation is straightforward.  We just execute the previous monad <em>_ma</em>, yielding its result <em>a</em>, apply our function to that result, yeilding another monad <em>mb</em>, and then return the result of evaluating that monad.  This will be called by other monads (recursively through this function), or from the "runtime".
+      </p>
+      <code>
+        <strong>virtual B_ execute()</strong><br/>
+        <strong>{</strong><br/>
+        <strong>A_ a=_ma.execute();</strong><br/>
+        <strong>monad<B_>& mb=_f(a);</strong><br/>
+        <strong>return mb.execute();</strong><br/>
+        <strong>}</strong><br/>
+        <strong>};</strong><br/>
+      </code>
+      <p>
+        Here is the <em>monad_return</em> class we saw instantiated earlier.  Notice that this one just knows its type, and the value of that type you want it to return.  The <em>execute</em> function, unsuprisingly, just returns that value.
+      </p>
+      <code>
+        <strong>template<typename A_> struct monad_return : public monad<A_></strong><br/>
+        <strong>{</strong><br/>
+        <strong>monad_return(A_ a) : _a(a) {}</strong><br/>
+        <strong>A_ _a;</strong><br/>
+        <strong>virtual A_ execute()</strong><br/>
+        <strong>{</strong><br/>
+        <strong>return _a;</strong><br/>
+        <strong>}</strong><br/>
+        <strong>};</strong><br/>
+        <strong>};</strong><br/>
+      </code>
+      <p>
+        We use this special <em>unit</em> type when there is no information to convey from one monad to the next one in the chain.
+      </p>
+      <code>
+        <strong>struct unit</strong><br/>
+        <strong>{</strong><br/>
+        <strong>};</strong><br/>
+      </code>
+      <p>
+        This function performs a side-effect.  Here we draw another line between what the "application" can access, and what the "runtime" can access.  For simplicity, again, there is no protection to enforce that division.  The application should never call this function - it should only refer to it by name (function pointer).  The application gives this function as a parameter to the <em>bind</em> method we saw earlier.  Eventually, the "runtime" will call this function for us.  This particular function represents sending a character to the console.
+      </p>
+      <code>
+        <strong>monad<unit>& write_character(char c)</strong><br/>
+        <strong>{</strong><br/>
+        <strong>std::cout << c;</strong><br/>
+        <strong>return monad<unit>::return_value(unit());</strong><br/>
+        <strong>}</strong><br/>
+      </code>
+      <p>
+        Like <em>write_character</em>, but this one reads a character from the console.
+      </p>
+      <code>
+        <strong>monad<char>& read_character(unit)</strong><br/>
+        <strong>{</strong><br/>
+        <strong>char c;</strong><br/>
+        <strong>std::cin >> c;</strong><br/>
+        <strong>return monad<char>::return_value(c);</strong><br/>
+        <strong>}</strong><br/>
+      </code>
+      <p>
+        Here is a function that is part of our application.  In this function, we receive a character as input, and test if it is capitalized.  If it is a capitalized alpha character, we return "y", and otherwise we return "n".
+      </p>
+      <code>
+        <strong>monad<char>& is_it_capitalized(char c)</strong><br/>
+        <strong>{</strong><br/>
+        <strong>return</strong><br/>
+        <strong>isupper(c)?</strong><br/>
+        <strong>monad<char>::return_value('y')</strong><br/>
+        <strong>:</strong><br/>
+        <strong>monad<char>::return_value('n');</strong><br/>
+        <strong>}</strong><br/>
+      </code>
+      <p>
+        Here is our "application".  Here we just bind together some monads, and return the resultant monad.  Note that this function <strong>never performs any work</strong>.  All it does is build a few object and return them immediately - no input or output is done here.  The monad we return indicates that we would like to read a character from the console, send it to the <em>is_it_capitalized</em> function, and then write the result of that function to the console.
+      </p>
+      <code>
+        <strong>monad<unit>& program(monad<unit>& start)</strong><br/>
+        <strong>{</strong><br/>
+        <strong>return (((start >>= read_character) >>= is_it_capitalized) >>= write_character);</strong><br/>
+        <strong>}</strong><br/>
+      </code>
+      <p>
+        Here is our "runtime".  This function evaluates our "application", and captures the monad it returns.  Next, it invokes all that behind-the-scenes stuff we talked about earlier.
+      </p>
+      <code>
+        <strong>void main(void)</strong><br/>
+        <strong>{</strong><br/>
+        <strong>monad<unit>& result=program(monad<unit>::return_value(unit()));</strong><br/>
+        <strong>unit end=result.execute();</strong><br/>
+        <strong>}</strong><br/>
+      </code>
+      <p>
+        When <em>result.execute()</em> is called, the imperative runtime transfers control to <em>monad_bind::execute</em>, which then divides and conquers the rest of the monads.  The overall effect of the program is that when you press a key, you are told either "y" or "n", indicating that the character you typed was either capitalized or not, respectively.
+      </p>
+      <p>
+        This should give you some idea how monads are structured, but as you can imagine, a lot is lost in the language translation.  In particular, since C++ doesn't have the concept of lambdas (anonymous inline functions), we have had to write <em>is_it_capitalized</em> as a separate function outside of <em>program</em>.  That would quickly lead to a lot of clutter if we tried to write a non-trivial program this way.  In languages where monads are more typically used, we could have written <em>program</em> similar to this:
+      </p>
+      <code>
+        <strong>program = read_character >>= is_it_capitalized >>= write_character</strong><br/>
+        <strong>          where is_it_capitalized c = if isupper c</strong><br/>
+        <strong>                                          then return 'y' </strong><br/>
+        <strong>                                          else return 'n' </strong><br/>
+      </code>
+      <p>
+        There is typically also a special <em>do</em> syntax made just for chaining together monads, which would allow us to state <em>program</em> in a more compact way.
+      </p>
+      <hr/>
+      <p>
+        Maybe a version using the <a href="BoostLibraries.html">BoostLibraries</a>? It would get rid of the monad_bind bits at least, which don't really contribute to the jist of the matter. On the other hand, boost is very functional, and maybe someone who was happy hoisting bind and lambda around wouldn't find monads that hard?
+      </p>
+      <hr/>
+      <p>
+        See <a href="OnMonads.html">OnMonads</a> and also <a href="FunctoidsInCpp.html">FunctoidsInCpp</a> where much of the Haskell prelude has been implemented in C++.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryFunctionalProgramming.html">CategoryFunctionalProgramming</a> <a href="CategoryCpp.html">CategoryCpp</a>
+      </p>
+    </div>
+  </body>
+</html>

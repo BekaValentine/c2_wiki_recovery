@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Sinister Scheme Sample In Ruby
+      </h1>
+      <p>
+        This page is an attempt in Ruby to duplicate the snippet of Scheme code given in <a href="SinisterSchemeSamplePerplexesPythonPorter.html">SinisterSchemeSamplePerplexesPythonPorter</a>.  Check out that page for the original scheme code (which I don't repeat here).
+      </p>
+      <p>
+        The first three functions are easy ...
+      </p>
+      <code>
+        def make_pointer(getter, setter)<br/>
+        [getter, setter]<br/>
+        end<br/>
+      </code>
+      <code>
+        def pointer_ref(ptr)<br/>
+        ptr[0].call<br/>
+        end<br/>
+      </code>
+      <code>
+        def pointer_set!(ptr, value)<br/>
+        ptr[1].call(value)<br/>
+        end<br/>
+      </code>
+      <p>
+        We will skip the address function for now.  Scheme uses macros to implement address. We will come back to it in a moment.
+      </p>
+      <p>
+        So, let's try it out our 3 basic functions ...
+      </p>
+      <code>
+        puts "Version 1"<br/>
+        x = 1<br/>
+        px = make_pointer(lambda { x }, lambda { |value| x = value })<br/>
+        puts pointer_ref(px)     # => 1   (good)<br/>
+        pointer_set!(px, 2)<br/>
+        puts pointer_ref(px)     # => 2   (good)<br/>
+        puts x                   # => 2   (good)<br/>
+      </code>
+      <p>
+        So the basic approach works.  We use two lambdas (anonymous functions) to capture the getting and setting of the variable x, just as the scheme version did.  Note that each lambda function remembers the variable binding available at the point the lambda was created.
+      </p>
+      <p>
+        Now let's see if we can duplicate the address function.  Our first attempt fails ...
+      </p>
+      <code>
+        def address(var)<br/>
+        make_pointer(lambda { var },<br/>
+        lambda { |value| var = value })<br/>
+        end<br/>
+      </code>
+      <p>
+        The reason it fails is that the lambda are created inside the scope of the address function.  "var" in the lambdas refers to the parameter of the address function, not to the original "x" variable bound in the main program.
+      </p>
+      <p>
+        Somehow we need to create the lambdas in the enclosing scope.  One way to do it is to pass the outer bindings explicitly to the address function as a parameter, and then create the lambdas using eval.  (Note, the function "binding" returns a Binding object representing the current variable bindings that can be passed to eval)
+      </p>
+      <code>
+        def address(symbol, outer_scope)<br/>
+        make_pointer(eval("lambda { #{symbol.id2name} }", outer_scope),<br/>
+        eval("lambda { |value| #{symbol.id2name} = value }", outer_scope))<br/>
+        end<br/>
+      </code>
+      <p>
+        This version of address works fine ...
+      </p>
+      <code>
+        x = 1<br/>
+        px = address(:x, binding)<br/>
+        puts pointer_ref(px)       # => 1  (good)<br/>
+        pointer_set!(px, 2)<br/>
+        puts pointer_ref(px)       # => 2  (good)<br/>
+        puts x                     # => 2  (good)<br/>
+      </code>
+      <p>
+        Although workable, it is a bit ungainly.  Here's a variation.  Instead of passing the value of the binding method, we could pass a proc instead.  Eval can use the bindings remembered in a proc as well.  What's more, we can have the proc do double duty by returning the symbol to be returned.  This makes the usage of address <em>slightly</em> more palatable.  Here's the new version of address and how it is used...
+      </p>
+      <code>
+        def address(&block)<br/>
+        make_pointer(eval("lambda { #{yield.id2name} }", block),<br/>
+        eval("lambda { |value| #{yield.id2name} = value }", block))<br/>
+        end<br/>
+      </code>
+      <code>
+        px = address {:x}<br/>
+      </code>
+      <dl>
+        <dt> </dt>
+        <dd><strong>Ruby Note:</strong>  Ruby uses the keyword "proc" or "lambda" to introduce an anonymous function.  I used "lambda" in the above example to emphasize the parallel to the Scheme code.  When a code block (ie. lambda/proc object) is passed implicitly as the last parameter to a function, the lambda/proc keyword can be omitted.  This is the approach used with the address function.</dd>
+      </dl>
+      <p>
+        And that completes the functionality provided by the Scheme program.  We will do one more transform however.  Rubyists would rarely write the above code, instead they would encapsulate the solution in a class.  Here a the final class definition of Pointer using everything we learned up to this point.
+      </p>
+      <code>
+        class Pointer<br/>
+        def initialize(&block)<br/>
+        @getter = eval("lambda { #{yield.id2name} }", block)<br/>
+        @setter = eval("lambda { |value| #{yield.id2name} = value }", block)<br/>
+        end<br/>
+        def value<br/>
+        @getter.call<br/>
+        end<br/>
+        def value=(new_value)<br/>
+        @setter.call(new_value)<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <code>
+        x = 1<br/>
+        px = Pointer.new {:x}<br/>
+        puts px.value            # => 1  (good)<br/>
+        px.value = 2<br/>
+        puts px.value            # => 2  (good)<br/>
+        puts x                   # => 2  (good)<br/>
+      </code>
+      <p>
+        -- <a href="JimWeirich.html">JimWeirich</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>Extra Credit</strong>
+      </p>
+      <p>
+        The version of Pointer given above works great.  However, if I had not seen the scheme version first, I probably would have written it slightly differently.  Compare the following BrokenPointer class to the working version.  Why is BrokenPointer inferior to the Scheme inspired version?  (hint: think about non-integer values)
+      </p>
+      <code>
+        class BrokenPointer<br/>
+        def initialize(&block)<br/>
+        @block = block<br/>
+        @name = yield.id2name<br/>
+        end<br/>
+        def value<br/>
+        eval "#{@name}", @block<br/>
+        end<br/>
+        def value=(new_value)<br/>
+        eval "#{@name} = #{new_value}", @block<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <hr/>
+      <p>
+        Ok, wise guy. What's the difference? The fact that you could possibly eval "x = the quick brown fox"?
+      </p>
+      <hr/>
+      <p>
+        Here is another one. It works with any lvalue, not just variables.
+      </p>
+      <code>
+        class Pointer<br/>
+        attr_reader :lvalue<br/>
+        attr_reader :binding<br/>
+        attr_reader :getter<br/>
+        attr_reader :setter<br/>
+        def initialize( &block ) ref( &block) end<br/>
+        def ref( &block )<br/>
+        @block = block || proc {:@value}<br/>
+        @binding = @block.binding() <br/>
+        @lvalue  = @block.call()<br/>
+        @getter  = eval( "proc { #{@lvalue} }",         @block)<br/>
+        @setter  = eval( "proc { |v| #{@lvalue} = v }", @block)<br/>
+        end<br/>
+        def []() @getter.call() end<br/>
+        def []=( new_value ) @setter.call( new_value); end<br/>
+        def to_s() self[].to_s() end<br/>
+        def inspect() "<Pointer #{lvalue()}>#{self[].inspect()}" end<br/>
+        end<br/>
+        a = [1,2,3]<br/>
+        ptr = Pointer.new{ "a[2]"}<br/>
+        ptr[] = 4<br/>
+        p a # => [1,2,4]<br/>
+      </code>
+      <p>
+        -- <a href="JeanHuguesRobert.html">JeanHuguesRobert</a>
+      </p>
+      <hr/>
+      <p>
+        This is the original Ruby version modified so that one doesn't need to pass a block to Pointer.new.
+      </p>
+      <code>
+        # Begin of inlined binding_of_caller.rb<br/>
+      </code>
+      <code>
+        begin<br/>
+        require 'simplecc'<br/>
+        rescue LoadError<br/>
+        def Continuation.create(*args, &block)<br/>
+        cc = nil; result = callcc {|c| cc = c; block.call(cc) if block and args.empty?}<br/>
+        result ||= args<br/>
+        return *[cc, *result]<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <code>
+        # This method returns the binding of the method that called your<br/>
+        # method. Don't use it when you're not inside a method.<br/>
+        #<br/>
+        # It's used like this:<br/>
+        #   def inc_counter<br/>
+        #     Binding.of_caller do |binding|<br/>
+        #       eval("counter += 1", binding)<br/>
+        #     end<br/>
+        #   end<br/>
+        #   counter = 0<br/>
+        #   2.times { inc_counter }<br/>
+        #   counter # => 2<br/>
+        #<br/>
+        # You will have to put the whole rest of your method into the<br/>
+        # block that you pass into this method. If you don't do this<br/>
+        # an Exception will be raised. Because of the way that this is<br/>
+        # implemented it has to be done this way.<br/>
+        def Binding.of_caller(&block)<br/>
+        old_critical = Thread.critical<br/>
+        Thread.critical = true<br/>
+        count = 0<br/>
+        cc, result, error = Continuation.create(nil, nil)<br/>
+        error.call if error<br/>
+      </code>
+      <code>
+        tracer = lambda do |*args|<br/>
+        type, context = args[0], args[4]<br/>
+        if type == "return"<br/>
+        count += 1<br/>
+        # First this method and then calling one will return --<br/>
+        # the trace event of the second event gets the context<br/>
+        # of the method which called the method that called this<br/>
+        # method.<br/>
+        if count == 2<br/>
+        # It would be nice if we could restore the trace_func<br/>
+        # that was set before we swapped in our own one, but<br/>
+        # this is impossible without overloading set_trace_func<br/>
+        # in current Ruby.<br/>
+        set_trace_func(nil)<br/>
+        cc.call(eval("binding", context), nil)<br/>
+        end<br/>
+        elsif type != "line"<br/>
+        set_trace_func(nil)<br/>
+        error_msg = "Binding.of_caller used in non-method context or " +<br/>
+        "trailing statements of method using it aren't in the block."<br/>
+        cc.call(nil, lambda { raise(ArgumentError, error_msg ) })<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <code>
+        unless result<br/>
+        set_trace_func(tracer)<br/>
+        return nil<br/>
+        else<br/>
+        Thread.critical = old_critical<br/>
+        yield result<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <code>
+        # End of inlined binding_of_caller.rb<br/>
+      </code>
+      <code>
+        class Pointer<br/>
+        def initialize(target)<br/>
+        Binding.of_caller do |context|<br/>
+        @getter = eval("lambda { #{target} }", context)<br/>
+        @setter = eval("lambda { |value| #{target} = value }", context)<br/>
+        end<br/>
+        end<br/>
+        def value<br/>
+        @getter.call<br/>
+        end<br/>
+        def value=(new_value)<br/>
+        @setter.call(new_value)<br/>
+        end<br/>
+        end<br/>
+      </code>
+      <code>
+        x = 1<br/>
+        px = Pointer.new :x<br/>
+        puts px.value            # => 1  (good)<br/>
+        px.value = 2<br/>
+        puts px.value            # => 2  (good)<br/>
+        puts x                   # => 2  (good)<br/>
+      </code>
+      <hr/>
+      <p>
+        <a href="CategoryRuby.html">CategoryRuby</a>
+      </p>
+    </div>
+  </body>
+</html>

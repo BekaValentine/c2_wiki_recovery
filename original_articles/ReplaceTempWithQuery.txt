@@ -1,0 +1,160 @@
+(Concept from RefactoringImprovingTheDesignOfExistingCode by MartinFowler. http://www.refactoring.com/catalog/replaceTempWithQuery.html)
+
+The idea here is that rather than use a temp variable to hold a calculation, the calculation can be performed as needed via method call (Query).
+
+----
+
+I can see how ReplaceTempWithQuery assists greatly in using ExtractMethod, but my instincts tell me it is an obvious PerformanceLeak... something which should only be done if there is a promising need for ExtractMethod. Is there a safe way to use LazyEvaluation in ReplaceTempWithQuery for more expensive operations? -- PatrickParker
+
+Perhaps you could use ReplaceQueryWithTemp as an optimization later, if profiling shows that its a problem. For non-trivial queries, you can always cache the result within the query implementation. -- DaveWhipp
+
+''Thanks.  Caching the result sounds reasonable.''
+
+Such caching is the object programmer's secret weapon. Unfortunately, in many cases logic must be added to invalidate the cache in the presence of various changes. Performance tuning then becomes the seesaw of adding caches for speed and adding invalidation logic for correctness. Still, it's a reasonable approach because the logic is manifest rather than implicit in the "proper" call sequence. -- WardCunningham
+
+----
+
+I've long thought that there should be a sort of compiler hint that says in effect, "This method returns a value that will not change unless the object is changed." That would allow the compiler to ReplaceQueryWithTemp while leaving the code more readable. -- CurtHagenlocher
+
+Perhaps an extension of C's "restricted" keyword (use in same way as const). However, the compiler might have difficulty working out if things have changed - what assumptions can it make about multithreaded behavior? -- DaveWhipp
+
+FunctionalProgramming.  HaskellLanguage, MlLanguage, etc. -- DanielKnapp
+
+gcc has something like this, the "pure" and "const" function attributes. They basically say "this function has no side effects". The difference between pure and const functions is that pures can read global variables, consts can't. -- AriRahikkala
+
+----
+(apologies for the ranting tone, i'm tired.  feel free to tone me down.)
+ReplaceTempWithQuery strikes me as a transformation which should only be applied extremely cautiously and infrequently - as Patrick says, only if [necessary]. I'm not happy with MartinFowler's explanation of the motivation: "The problem with temps is that they are temporary and local". (That strikes me as pretty much like saying the problem with cows is that they're bovine.) "Because they can be seen only in the context of the method in which they are used, temps tend to encourage longer methods, because that's the only way you can reach the temp.  By replacing the temp with a query method, any method in the class can get at the information. That helps a lot in coming up with cleaner code for the class". Letting any method in the class being able to get at the information doesn't sound to me like the kind of thing that you should do just because you don't like temps. The final statement in particular seems to need a lot of justification to me.
+
+To give the discussion a more concrete basis, consider the example Martin gives:
+(the wiki formatting will probably need someone to help me out)
+
+ReplaceTempWithQuery:
+
+From:
+ final int basePrice = _quantity * _itemPrice;
+ //...
+To:
+ private int basePrice();
+ //...
+
+ExtractMethod:
+
+From:
+ double getPrice() {
+     final double discountFactor;
+     if (basePrice() > 1000) discountFactor = 0.95;
+     else discountFactor = 0.98;
+     return basePrice() * discountFactor;
+ }
+
+To:
+ double getPrice() {
+     final double discountFactor = discountFactor();
+     return basePrice() * discountFactor;
+ }
+
+ private double discountFactor() {
+     if (basePrice() > 1000) return 0.95;
+     else return 0.98;
+ }
+
+The ability to do the ExtractMethod is claimed as justification for the ReplaceTempWithQuery. But this has just increased the dependencies within the code. The new discountFactor() method now requires internal access to the object, just to get at the basePrice member. I'd say that this design for discountFactor is better: "private final double discountFactor(int basePrice)" (I'm a C++ programmer, I mean a static method), i.e. passing basePrice as a parameter and not giving access to the object. And if you're doing that, a large part of the justification for ReplaceTempWithQuery is gone.
+
+I'm all for adding "final" (or "const" in C++) before local variables, but replacing them with queries is just adding a potential slowdown to the code, for no win that's obvious to me. And there's no limit on how big that slowdown could be. As Ward mentions, caching doesn't come for free, it requires invalidation checks, which are, in my experience, considerably time-consuming to implement and error-prone, not to mention the extra space requirements for the cache.  When you come to consider adding the caching, you're going to look at your code and see a hundred different places where you could have used a temporary and then you wouldn't have had this problem in the first place. If I were the one who had to add the cache, I'd be cursing, especially if I'd written it with temps before it got refactored.
+
+Martin ends this section with "if worse comes to worse, it's very easy to put the temp back", which sounds like an admission that in that situation you've wasted your time (and quite possibly other people's too). I think the worst-case is that you've repeated this refactoring step many times, and it's a real pain to put all of the temps back.  In fact, ReplaceQueryWithTemp is the transform that I'd recommend. That gives actual performance gains, clearly indicates to the reader that the value isn't changing, and also indicates the actual local use for the value returned by the query, which the query's name might not do well on a local basis.
+
+Well, that's my two-dollars-worth :-) -- AnAspirant.
+
+----
+
+The way I see it, ReplaceTempWithQuery, like any other refactoring, is to be used when applicable for improving code readability, not blindly.  -- AnonymousDonor
+
+----
+
+From OO perspective, it's just bad form to write:
+
+ private final double discountFactor(int basePrice)
+
+Why should an object pass an internal member into its own method?
+Given the code above, I'd suggest there's no need for ANY temps at all:
+
+double getPrice() {
+     return basePrice() * discountFactor();
+ }
+
+ private double discountFactor() {
+     if (basePrice() > 1000) return 0.95;
+     else return 0.98;
+ }
+
+The code "dependencies" (as mentioned above) aren't affected, basePrice() is a member of the same object, and there are no inter-object dependencies created. discountFactor() is a separate IDEA from Price and for the sake of design should be separated out. 
+
+----
+
+''Why should an object pass an internal member into its own method?''
+This may be a C++/Java difference.  I'd want code like this C++ code:
+
+    static
+    double discountFactor( int basePrice )
+    {
+        return (basePrice > 1000)? 0.95 : 0.98;
+    }
+    
+    double Some''''''Class::getPrice()
+    {
+        const int basePrice = _quantity * _itemPrice;
+        
+        return basePrice * discountFactor( basePrice );
+    }
+
+The prototype "static double discountFactor( int basePrice );" indicates that
+this is a simple function which maps an int to a double with no objects getting in the way.
+In contrast, "double Some''''''Class::discountFactor();" could do anything.  Note that I've left
+basePrice untouched, i.e. I've got the abstraction benefit of ExtractMethod with no help
+from ReplaceTempWithQuery.  [In fact, I might keep discountFactor within the class
+("static double Some''''''Class::discountFactor( int basePrice );") but didn't for clarity.] --AnAspirant
+
+This looks like a step backward in terms of object design. The discount factor is a property specific to objects of Some''''''Class and depends on another instance variable, so it should be an instance method of that class. And once it's an instance method, you definitely don't need the parameter. You can also look at it this way: By requiring the basePrice parameter you are actually exposing an aspect of the method's implementation. If a client wants to know the discount factor, they shouldn't even have to know that the base price is required for the calculation (let alone tell the object its own base price). Otherwise, you may as well change basePrice() to basePrice(itemPrice), and so on. All you are doing is adding more dependency on Some''''''Class to the client. --AmarSagoo
+
+----
+
+The refactoring book has a good chapter on performance already. Many of the performance/readability arguments are stated there. 
+
+I totally agree with WardCunningham on the cache idea.
+
+In short, there is often a performance trade-off. But much of the time, correct code is more of a problem then performance is - and these refactorings lead to more easily readable/maintainable code. I believe that refactored code is also much easier to optimize because of a more robust/logical structure.
+
+----
+
+If the language is C/C++, and the performance requirements are tight (not the case with most programmers/projects), wouldn't an in-line macro (ReplaceTempWithMacro?) be the best solution? 
+
+Then you'd get the performance and the readability! (Compilers are good at optimizing duplicate code blocks.)
+
+''They're pretty damn good at inline functions too though, and inline functions are type-safe.''
+
+----
+
+In practice, this is a great refactoring to keep in mind even while writing new code. I find this refactoring usually leads to a lot of other useful refactorings.
+ 
+The potential benefits from this refactoring are HUGE.
+
+In this example, the readability has improved greatly. A new idea "discountFactor()" has been identified and isolated into one place. These all lead to more MAINTAINABLE software - isn't the statistic 70% of our time is spent maintaing/modifying existing code?
+
+Not to mention that discountFactor() looks like a code "hot-spot". It's likely to be edited frequently as the user's business policies change in the future. This refactoring gives us a great single point in which to apply these changes.
+
+As it becomes more complex, we can use this spot to delegate the code here to a replaceable (and stateless) "discount policy" object (ie. Strategy+Singleton patterns). 
+
+----
+
+You're missing my point.  I don't object to doing the ExtractMethod on discountFactor, I just think that the ReplaceTempWithQuery on basePrice didn't help, and usually doesn't, except when removing duplication.  If we're to assume that that multiplication is repeated throughout the code, it's just an ExtractMethod done for reasons linked to duplication, not to the presence of temps.  Temps allow you to provide extra intentional information for free.  *Realisation*  I think probably what Martin actually meant was "ReplaceExpressionWithQuery", which of course makes perfect sense, but is still just a special case of ExtractMethod. -- AnAspirant
+
+This is a great refactoring... temps are bad, they hurt flexibility.  By removing all temps and pointing to the query method, we now have one single place to calculate/lazily calculate, and possibly cache that result, far more flexible than a bunch of temps and makes the code far more readable elsewhere by hiding the implementation.  -- RamonLeon
+
+----
+
+I don't even understand how this can be a candidate for refactoring.  If the result of the query changes between calls, you've changed the meaning of the method.  Using a temp, the intent is clear:  get a value, use *that value* in these places.  A temp used multiple times is a snapshot, implicitly.  There is no safe way to replace that with multiple queries. -mtVessel
+
+----
+CategoryRefactoring

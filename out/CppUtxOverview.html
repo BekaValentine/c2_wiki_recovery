@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Cpp Utx Overview
+      </h1>
+      <p>
+        This is my attempt to represent the ideas of <a href="UnitTest.html">UnitTest</a>ing put-forth in the <a href="TestInfected.html">TestInfected</a> article in a way that (to me) is more suited to C++ and large-scale projects than I felt <a href="CppUnit.html">CppUnit</a> was. However, I like <a href="CppUnit.html">CppUnit</a> very much and it should be said that I used many of the same idioms. Most of all, we needed something a little more heavy duty that would be appropriate to perform and track the daily unit tests of a huge codebase for a distributed system that is compiled by a variety of compilers for a variety of platforms. The following are some of my attempts to find more opportunities for existing patterns in the system along with much of my own internal dialog....
+      </p>
+      <p>
+        <em>-- </em><a href="RobertDiFalco.html">RobertDiFalco</a><em></em>
+      </p>
+      <p>
+        Okay, so if you read <a href="TestInfected.html">TestInfected</a>, where is the testing code which is supposed to precede the implementation?  A short example will do wonders to explain the array of classes and methods defined below.
+      </p>
+      <hr/>
+      <p>
+        <strong>Terminology Assumptions</strong>
+      </p>
+      <p>
+        Let's start off with some terminology and a few assumptions. There seems to be some ambiguity between the terms "<a href="ClassUnderTest.html">ClassUnderTest</a>", "<a href="TestFixture.html">TestFixture</a>", "<a href="TestCase.html">TestCase</a>", and "<a href="TestMethod.html">TestMethod</a>". In fact, not only have I seen these terms referred to differently within the same paper but I have caught myself defining them different depending on the context or even using some of these terms synonymously. So, while the following may not represent the best definitions, they will at least provide a standard for the purposes of this overview.
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd><strong>class under test</strong></dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd>A "<a href="ClassUnderTest.html">ClassUnderTest</a>" (or CUT) is <em>some class whose instances (and maybe even the class itself) are used as the subject of one or more tests</em>. </dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd><strong>test method</strong> (or <strong>testing method</strong>)</dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd>Each discrete <em>test</em> is implemented in a member-function which I will refer to as a <em></em><a href="TestMethod.html">TestMethod</a><em>. </em></dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd><strong>test fixture</strong> (or <strong>testing fixture</strong>)</dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd>A class whose primary purpose is to host one or more <a href="TestMethod.html">TestMethod</a>s is known as a <em></em><a href="TestFixture.html">TestFixture</a><em>. This allows its instances and class data to provide a data-context for the </em>test<em>.</em></dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd><strong>test case</strong></dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd>A <a href="TestCase.html">TestCase</a> is <em>not</em> the <a href="TestMethod.html">TestMethod</a> but is instead the <em>named association</em> of a <a href="TestMethod.html">TestMethod</a> and an instance of its <a href="TestFixture.html">TestFixture</a>. In most TestFrameworks, even those <a href="TestCase.html">TestCase</a>s that share the same fixture will have their own unique instance of the <a href="TestFixture.html">TestFixture</a> so that the side-effects of one <a href="TestCase.html">TestCase</a> cannot affect the fixture data of any other <a href="TestCase.html">TestCase</a>. </dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd><strong>test suite</strong></dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd>A <a href="TestSuite.html">TestSuite</a> (as in <a href="CppUnit.html">CppUnit</a>) is a composite used to collect related <a href="TestCase.html">TestCase</a>s into a logical unit. Since <a href="TestSuite.html">TestSuite</a> is a composite, it may itself be the member of another <a href="TestSuite.html">TestSuite</a>. In UTX, the <a href="TestCase.html">TestCase</a>s comprising a <a href="TestSuite.html">TestSuite</a> will usually use the same <a href="TestFixture.html">TestFixture</a>. As such, the <a href="TestSuite.html">TestSuite</a> is usually named using the class name of this common fixture.  </dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd><strong>test driver</strong></dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd>The <a href="TestDriver.html">TestDriver</a> is the code that provides the <em>execution environment</em> for all the tests contained in the root composite <a href="TestSuite.html">TestSuite</a>. The <a href="TestDriver.html">TestDriver</a> is usually executed in main and any tests specified for running, are passed to the driver.</dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd><strong>test runner</strong></dd>
+      </dl>
+      <dl>
+        <dt> </dt>
+        <dd>The behavior responsible for actually <em>running</em> the contents of the driver. In UTX, the TestRunner is implemented using the <a href="VisitorPattern.html">VisitorPattern</a>. </dd>
+      </dl>
+      <p>
+        <strong>Putting the Terms Together</strong>
+      </p>
+      <p>
+        Say we write a class named StackTest which has the members "testPop" and "testPush". As you might imagine, these <a href="TestMethod.html">TestMethod</a>s implement the tests for this <a href="WayCool.html">WayCool</a> Stack class we wrote. Now, we create a <a href="TestCase.html">TestCase</a> for each <a href="TestMethod.html">TestMethod</a> and add it to a <a href="TestSuite.html">TestSuite</a> named "StackTest". What we just created gives us the following <a href="TestSuite.html">TestSuite</a> and <a href="TestCase.html">TestCase</a> hierarchy:
+      </p>
+      <ul>
+        <li>
+           StackTest
+          <ul>
+            <li>
+               testPop
+            </li>
+            <li>
+               testPush
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p>
+        Note the relationship between the <a href="TestSuite.html">TestSuite</a> and its <a href="TestCase.html">TestCase</a>s to the <a href="TestFixture.html">TestFixture</a> and its <a href="TestMethod.html">TestMethod</a>s. Each member of the <em>StackTest</em> <a href="TestFixture.html">TestFixture</a> (each <a href="TestMethod.html">TestMethod</a>) actually <em>implements</em> its corresponding <a href="TestCase.html">TestCase</a>. In fact, the <em>StackTest</em> fixture itself can be thought of as implementing the "StackTest" <a href="TestSuite.html">TestSuite</a>. Pretty cool, huh?
+      </p>
+      <p>
+        Okay, just to summarize from the previous example:
+      </p>
+      <ul>
+        <li>
+           The <a href="ClassUnderTest.html">ClassUnderTest</a> (CUT) is the "Stack" <em>class</em>
+        </li>
+        <li>
+           The TestingFixture is the "StackTest" <em>class</em>
+        </li>
+        <li>
+           The TestingMethods are the StackTest::testPop and the StackTest::testPush member <em>functions</em>
+        </li>
+        <li>
+           The <a href="TestCase.html">TestCase</a>s are the two associations, class StackTest + StackTest::testPop and StackTest + StackTest::testPush (named "testPop" and "testPush" respectively)
+        </li>
+        <li>
+           The <a href="TestSuite.html">TestSuite</a> is a composite object named "StackTest" that contains the <a href="TestCase.html">TestCase</a>s named "testPop" and "testPush"
+        </li>
+      </ul>
+      <p>
+        <strong>Rules of Ownership</strong>
+      </p>
+      <p>
+        Okay, so what are the rules of ownership in UTX? These will be very similar to those in <a href="CppUnit.html">CppUnit</a>, JUnit, and SUnit and will form the basis of our design:
+      </p>
+      <ul>
+        <li>
+           A <a href="TestCase.html">TestCase</a> owns a <a href="TestMethod.html">TestMethod</a> and a <a href="TestFixture.html">TestFixture</a>
+        </li>
+        <li>
+           A <a href="TestSuite.html">TestSuite</a> owns (contains) 
+          <ul>
+            <li>
+               one or more <a href="TestCase.html">TestCase</a>s
+            </li>
+            <li>
+               one or more <a href="TestSuite.html">TestSuite</a>s
+            </li>
+          </ul>
+        </li>
+        <li>
+           A <a href="TestDriver.html">TestDriver</a> contains the root <a href="TestSuite.html">TestSuite</a> and the test-context
+        </li>
+      </ul>
+      <p>
+        This relationship between cases, suites, and the root suite creates a basic graph that is similar to a file system where the root <a href="TestSuite.html">TestSuite</a> is analogous to a file system "root" (or "\"). Other <a href="TestSuite.html">TestSuite</a>s that are children of root are analogous to sub-folders (or sub-directories) while a <a href="TestCase.html">TestCase</a> is analogous to an actual file. Even the "<a href="TestFixture.html">TestFixture</a>/<a href="TestMethod.html">TestMethod</a>" pairs contained by a <a href="TestCase.html">TestCase</a> can be compared to file's <em>contents</em>. 
+      </p>
+      <p>
+        <strong>Discovering the UTX </strong><a href="SystemMetaphor.html">SystemMetaphor</a><strong></strong>
+      </p>
+      <p>
+        Rather than hide this similarity with file systems, I chose to exploit it. This provides the user (programmers and testers) with a recognized metaphor for creating tests and specifying what tests to run. Similar to a file-system, each <a href="TestCase.html">TestCase</a> in UTX has its basic <a href="TestCase.html">TestCase</a> name (e.g. "testPush"), a <em>path</em> (e.g. "StackTest"), and a fully qualified name (e.g. "StackTest.testPush"). To keep things from getting too confusing, we'll use a period (".") to separate qualifiers rather than the forwards or backwards slash ("/","\") familiar to file paths. This separator is immediately recognizable to UTX users for separating packages and methods. 
+      </p>
+      <p>
+        Just like a fully qualified path, a <em>fully qualified test-case</em> absolutely indicates the name and location of that <a href="TestCase.html">TestCase</a> in the Test System. Our previous "Stack" example has a <a href="TestCase.html">TestCase</a> named "testPop". Because "StackTest" did not belong to another outer <a href="TestSuite.html">TestSuite</a>, its fully qualified name was "StackTest.testPop". However, in a production system, the "StackTest" <a href="TestSuite.html">TestSuite</a> would be contained in another <a href="TestSuite.html">TestSuite</a> (possibly a composite of all test suites located in the same "package" as the "Stack" <a href="ClassUnderTest.html">ClassUnderTest</a>), which will ultimately lead to the <em>root</em> <a href="TestSuite.html">TestSuite</a>. In this system, the "testPop" <a href="TestCase.html">TestCase</a> may be fully qualified as:
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd>root.collections.StackTest.<strong>testPop</strong></dd>
+      </dl>
+      <p>
+        This tells us that the "testPop" <a href="TestCase.html">TestCase</a> is in the <a href="TestSuite.html">TestSuite</a> "StackTest". Furthermore, the "StackTest" suite is a member of the <a href="TestSuite.html">TestSuite</a> for the "collections" package which is itself a component of the "root" <a href="TestSuite.html">TestSuite</a>.
+      </p>
+      <hr/>
+      <p>
+        <strong>Modeling the UTX Classes</strong>
+      </p>
+      <p>
+        Most everyone can see that the relationships between suites and test-cases form a pretty traditional <a href="GangOfFour.html">GangOfFour</a> <a href="CompositePattern.html">CompositePattern</a>, as a result, most of the <a href="KentBeck.html">KentBeck</a>-based frameworks also model these classes using the <a href="CompositePattern.html">CompositePattern</a>. Since we use a file-system as our <a href="SystemMetaphor.html">SystemMetaphor</a>, our Composite is pretty similar to the Composite example in the <a href="JohnVlissides.html">JohnVlissides</a> book <a href="PatternHatching.html">PatternHatching</a>. Instead of files, we use <a href="TestCase.html">TestCase</a>s.
+      </p>
+      <p>
+        Let's drill down a little more and fill out the <a href="CompositePattern.html">CompositePattern</a> participants for UTX. First, we will make an abstract base-class named "Test" to represent the <strong>Component</strong> participant, a concrete class <a href="TestSuite.html">TestSuite</a> will model the <strong>Composite</strong>, while an abstract class "<a href="TestCase.html">TestCase</a>" is used to represent the "Leaf" components. This creates the following inheritance tree:
+      </p>
+      <code>
+        namespace utx<br/>
+        {<br/>
+        class Test;	 <em>// Component (abstract)</em><br/>
+        class TestSuite; <em>// Composite (concrete)</em><br/>
+        class TestCase;  <em>// Leaf (abstract)</em><br/>
+        }//utx::<br/>
+      </code>
+      <p>
+        Pretty basic <a href="CompositePattern.html">CompositePattern</a> stuff. If it wasn't so basic to represent, we'd know that we had selected the wrong pattern. 
+      </p>
+      <p>
+        If we further explore this idea of implementing the UTX <a href="TestSuite.html">TestSuite</a> using a <a href="CompositePattern.html">CompositePattern</a> we can't help but question why the current <a href="CppUnit.html">CppUnit</a> design didn't provide a Test Visitor to generalize <a href="TestSuite.html">TestSuite</a> traversals. Currently, there are two places where traversals happen -- (1) in the <em>countTestCases</em> member and (2) in the <em>run</em> member. By removing these members and replacing them with visitors, we can raise the cohesion of the system while loosening its coupling. This opens the system up to extension since anyone can create a new visitor without disturbing the existing classes in the framework. 
+      </p>
+      <p>
+        <em>Just to drill this point down to those new to decoupling, it is only because we have decoupled iterating over tests from the test classes that we can create new behaviors without modifying those classes. Since there is no idiom for traversal in </em><a href="CppUnit.html">CppUnit</a>, we would continually have to add new members to the abstract base-class Test, and redefine in <a href="TestCase.html">TestCase</a> and <a href="TestSuite.html">TestSuite</a> accordingly. Each new behavior would break the existing framework.<em></em>
+      </p>
+      <p>
+        By using the <a href="VisitorPattern.html">VisitorPattern</a>, we are in effect saying that <em>any </em><a href="UnitTest.html">UnitTest</a> behaviors that need to traverse the <a href="TestSuite.html">TestSuite</a> Composite<em> will be defined in the members of a visitor class. Besides the TestCounter visitor and the TestRunner visitor mention above, new visitors may include the following:</em>
+      </p>
+      <ul>
+        <li>
+           TestLister -- lists all <a href="TestCase.html">TestCase</a>s and their <a href="TestSuite.html">TestSuite</a>s, maybe as a tree like the tree command of some file-systems.
+        </li>
+        <li>
+           TestFilter -- only traverse tests that match a filter condition.
+        </li>
+        <li>
+           TestQualifier -- build the qualified name for each <a href="TestCase.html">TestCase</a>
+        </li>
+        <li>
+           TestFinder -- hierarchically search for any Test component starting at any <a href="TestSuite.html">TestSuite</a> 
+        </li>
+      </ul>
+      <p>
+        Of course, many other behaviors could also be implemented such as sorting, pruning, finding where to add a new Test component (i.e. <a href="TestCase.html">TestCase</a> or <a href="TestSuite.html">TestSuite</a>), and so on. Once we have decoupled traversal in this way, anything can be done without requiring changes to our basic <a href="CompositePattern.html">CompositePattern</a> participants.
+      </p>
+      <p>
+        <strong>Some Brief Notes on TestRunner and TestResult</strong>
+      </p>
+      <p>
+        It always drove me crazy that the TestResult class actually defined the code that would <em>run</em> each <a href="TestCase.html">TestCase</a>s while TestRunner was simply a <em>listener</em> of TestResult. I suppose that a little separation would have improved the design here. While refactoring UTX, we removed the <em>running behavior</em> and <em>running state</em> (ala <em>shouldStop</em>) code from TestResult altogether making TestResult a simple Data Model. The <em>running behavior</em> was placed into our TestRunner while the <em>running state</em> was placed into a class named TestContext. We then made TestContext the single point of access for the running state and the single TestResult instance. Rather than make TestRunner into a View, we created a simple View class that interacted with the TestResult model. Other model listeners might serialize the test run results into an XML or CSV file.  This made the framework roles very well defined and made UTX much easier to extend and maintain. 
+      </p>
+      <ul>
+        <li>
+           TestRunner -- a TestVisitor responsible for running specified <a href="TestCase.html">TestCase</a>s and posting their results to TestRunner (do you mean TestResult here?) while watching the state of TestContext <em>shouldStop</em>.
+        </li>
+        <li>
+           TestRecord -- the result of a single <a href="TestCase.html">TestCase</a> run. Fields included the <a href="TestCase.html">TestCase</a> name, the start and stop time, and the <em>run</em> result.
+        </li>
+        <li>
+           TestResult -- a simple data-model that is a collection of TestRecord instances.
+        </li>
+        <li>
+           TestContext -- provided a single point of access for all shared state such as <em>shouldStop</em>, <em>traceStream</em>, the <em>TestResult</em> instance, and even a <em>specified tests</em> array set on the command line and accessed by TestRunner to know which tests to run (usually all).
+        </li>
+      </ul>
+      <p>
+        Unlike <a href="JavaUnit.html">JavaUnit</a>, <a href="CppUnit.html">CppUnit</a>, and <a href="SmalltalkUnit.html">SmalltalkUnit</a>, the UTX <em>run</em> signature for a <a href="TestMethod.html">TestMethod</a> contains a single argument. This argument is an immutable (constant) reference to the system-wide <em>TestContext</em> (created and stored as a private member of the <a href="TestDriver.html">TestDriver</a>). A <a href="TestMethod.html">TestMethod</a> could use the context to access a trace-stream, check <em>shouldStop</em> during long tests, or access various state flags such as <em>isVerbose</em>, and so on.
+      </p>
+      <p>
+        <strong>Why introducing the TestContext class is such a cool thing...</strong>
+      </p>
+      <p>
+        Here's an interesting story about the TestContext singleton. Because we were developing a very large distributed system, it became clear that some tests needed their own <em>command-line arguments</em>. For example, the <a href="TestFixture.html">TestFixture</a> for our LogServer should be able to use different ports and addresses for its TestMethods. Instead of having one HUGE command line for the entire Test Application, we decided, instead, to use something similar to a Java properties file (of course, in Java, we could have simply used system properties and left it at that). The file would have a layout something like the following:
+      </p>
+      <code>
+        ;<br/>
+        ; test.def -- arguments for various suites or cases<br/>
+        ; <br/>
+        root -verbose<br/>
+        root.debug.LogServer -port 666 -host "ten.ada.net"<br/>
+        root.io.FileStream.testRead -in testing.dat<br/>
+        ; eof: test.def<br/>
+      </code>
+      <p>
+        This worked hierarchically. For example, the first line adds the "-verbose" option to the TestContext for all tests while the second line is only used for each <a href="TestCase.html">TestCase</a> in the LogServer <a href="TestSuite.html">TestSuite</a>. The last line is an example of specifying arguments for a single <a href="TestCase.html">TestCase</a>.
+      </p>
+      <p>
+        In <a href="CppUnit.html">CppUnit</a>, this would have been very difficult to do without performing some surgery or without introducing new classes into the mix, since <a href="CppUnit.html">CppUnit</a> has no place for shared data. In UTX, we only needed to create the class that parses the "test.def" file (really just a map whose keys were the test specifier and whose values were argv-like vectors created from the arguments). Once this class was created, the map was encapsulated into the TestContext class. Since the TestContext already tracks the currently running test, we only need to add a simple accessor that would return an "argv" like vector for the currently executing <a href="TestCase.html">TestCase</a>. For example:
+      </p>
+      <code>
+        void FileStreamTest::testRead( const TestContext& ctx )<br/>
+        {<br/>
+        TestContext::ArgVector argv = ctx.getArgs():<br/>
+        .<br/>
+        .<br/>
+        .<br/>
+        }<br/>
+      </code>
+      <p>
+        In keeping with the metaphor of 'argv', the argument at index zero, would return the fully qualified <a href="TestCase.html">TestCase</a> currently running.
+      </p>
+      <p>
+        <strong>Back to the </strong><a href="CompositePattern.html">CompositePattern</a> and <a href="VisitorPattern.html">VisitorPattern</a><strong></strong>
+      </p>
+      <p>
+        One of the drawbacks to the <a href="CompositePattern.html">CompositePattern</a> is that you often have to add interface members to the <strong>Component</strong> class that (while useful to the <strong>Composite</strong>) may never be used by the <strong>Leaf</strong> instances. For example, consider the pure virtual <em>countTestCases</em> member of the <strong>component</strong> class in <a href="CppUnit.html">CppUnit</a>. This is used to calculate the number of <a href="TestCase.html">TestCase</a>s <em>contained</em> (i.e. <em>owned</em>) by a <a href="TestSuite.html">TestSuite</a> (or all cases if called from the <em>root</em> <a href="TestSuite.html">TestSuite</a>). Since <a href="TestSuite.html">TestSuite</a> is a composite, the designer ended up having to implement the <em>countTestCases</em> member in the <strong>leaf</strong> participant (class <a href="TestCase.html">TestCase</a>) as well as the <strong>composite</strong> participant (class TestCase). Now, here comes the smell. Because the <strong>leaf</strong> doesn't really <em>own</em> any other leaves, this member is simply hard coded to return one. For <a href="TestSuite.html">TestSuite</a> the <em>countTestCases</em> means <em>return all </em><a href="TestCase.html">TestCase</a>s we contain<em> while for the </em><a href="TestCase.html">TestCase</a> the member means <em>how many are we</em>. This is only designed this way to make the implementation of <em>countTestCases</em> in the <a href="TestSuite.html">TestSuite</a> class work recursively. Not because the <em>countTestCases</em> member adds any value to the <em>leaf</em> class <a href="TestCase.html">TestCase</a>. No one would ever use the public <em>countTestCases</em> member of <a href="TestCase.html">TestCase</a> on its own. <em>Yow!</em> Another cohesion problem.
+      </p>
+      <p>
+        <strong>Redesigning <em>countTestCases</em> as a Visitor</strong>
+      </p>
+      <p>
+        As stated early, the <a href="VisitorPattern.html">VisitorPattern</a> allows us to eliminate implementation-helper methods like <em>countTestCases</em> that must be publicly declared virtual in the <strong>component</strong>, defined in both the <strong>composite</strong> and the <strong>leaf</strong>, but only have real meaning for the <em>composite</em> interface. Using the <a href="VisitorPattern.html">VisitorPattern</a> for tree traversal alleviates the need for a <em>countTestCases</em> member-function <em>at all</em>!! The <strong>component</strong> (class <em>Test</em>) doesn't need to declare <em>any</em> other virtual methods other than those that fulfill the <a href="VisitorPattern.html">VisitorPattern</a> contract -- the <em>accept</em> member. In UTX we count <a href="TestCase.html">TestCase</a>s the same way we do anything else that traverses the <em>composite</em> -- we simply create a counting visitor. A counting visitor is just a TestVisitor that defines a count instance variable and defines the <em>visit( </em><a href="TestCase.html">TestCase</a>* )<em> member to increment a counter:</em>
+      </p>
+      <code>
+        class CountingVisitor : public TestVisitor<br/>
+        {<br/>
+        size_t m_nCases;<br/>
+      </code>
+      <code>
+        public:<br/>
+      </code>
+      <code>
+        void CountingVisitor::visit( <a href="TestCase.html">TestCase</a>* ) {<br/>
+        <strong>m_nCases++;</strong><br/>
+        }<br/>
+      </code>
+      <code>
+        size_t count() { return m_nCases; }<br/>
+        };<br/>
+      </code>
+      <p>
+        I mean, come on, what seems easier, the way <em>countTestCases</em> is implemented in <a href="CppUnit.html">CppUnit</a> or this <em>CountingVisitor</em> class? If you really <strong>must</strong> have a <em>countTestCases</em> member, you can simply implement it in the <strong>composite</strong> class like so:
+      </p>
+      <code>
+        size_t <a href="TestSuite.html">TestSuite</a>::countTestCases() const<br/>
+        {<br/>
+        CountingVisitor counter;<br/>
+        accept( counter );<br/>
+        return counter.count();<br/>
+        }<br/>
+      </code>
+      <hr/>
+      <p>
+        <strong>Defining the UTX Component Class</strong>
+      </p>
+      <p>
+        Okay, let's get back to our framework and define the <a href="CompositePattern.html">CompositePattern</a> participants we declared earlier. Unlike <a href="CppUnit.html">CppUnit</a> or <a href="JavaUnit.html">JavaUnit</a>, we are going to add the <em>name</em> behavior and interface to the <em>Test</em> class. This is because, in UTX, <em>name</em> works the same for a <a href="TestCase.html">TestCase</a> as it does for a <a href="TestSuite.html">TestSuite</a>. As a result, there is no reason for both to define the member as in <a href="CppUnit.html">CppUnit</a>. We simply added an immutable <em>string</em> member variable and a non-virtual selector that returns this immutable string (that is initialized during construction). 
+      </p>
+      <p>
+        Here is the entire <strong>component</strong> class:
+      </p>
+      <code>
+        class utx::Test<br/>
+        {<br/>
+        public:<br/>
+      </code>
+      <code>
+        typedef TestVisitor Visitor;	<em>// Test is redundant</em><br/>
+      </code>
+      <dl>
+        <dt>Test( const string& sName ) </dt>
+        <dd><em>// Only set during construction</em></dd>
+      </dl>
+      <code>
+        m_sName( sName )<br/>
+        {<br/>
+        }<br/>
+      </code>
+      <code>
+        const string& name() const	<em>// Name Selector</em><br/>
+        {<br/>
+        return m_sName;<br/>
+        }<br/>
+      </code>
+      <code>
+        virtual bool <strong>accept</strong>( Visitor& ) = 0;<br/>
+      </code>
+      <code>
+        private:<br/>
+      </code>
+      <code>
+        string m_sName;<br/>
+        };<br/>
+      </code>
+      <p>
+        So far, so good. The <strong>component</strong> is very small and simple and our only virtual member is <em>accept</em>. But wait! There's something strange and unfamiliar about this <em>accept</em> member...what is this boolean result?  Well, this is the magic that allows us to short-circuit the traversal of a specific <a href="TestSuite.html">TestSuite</a> or a test run (such as in response to <em>TestContext::shouldStop</em>). But this boolean result for <em>accept</em> ain't the half of it. 
+      </p>
+      <p>
+        <strong>Implementing the CompositeVisitorPattern</strong>
+      </p>
+      <p>
+        UTX uses what I am current calling the CompositeVisitorPattern (or HierarchicalVisitor, or...err...maybe ConditionalCompositeVisitor?). In addition to the typical <em>Visitor::visit</em> member, the CompositeVisitorPattern used by UTX has a <em>visitEnter( node )</em> member <em>and</em> a <em>visitLeave( node )</em> member.
+      </p>
+      <code>
+        <em>/**</em><br/>
+        <em>* Visits while maintaining the current hierarchical</em><br/>
+        <em>* context. Also allows the traversal to be short-circuited</em><br/>
+        <em>* at any point during the visitation.</em><br/>
+        <em>*/</em><br/>
+        class utx::TestVisitor<br/>
+        {<br/>
+        public:<br/>
+      </code>
+      <code>
+        <em>//..Should we enter this node and its children?</em><br/>
+        virtual bool <strong>visitEnter</strong>( <a href="TestSuite.html">TestSuite</a>* )<br/>
+        {<br/>
+        return true;<br/>
+        }<br/>
+      </code>
+      <code>
+        <em>//..Returns true to continue to next Leaf</em><br/>
+        virtual bool <strong>visit</strong>( <a href="TestCase.html">TestCase</a>* ) = 0;<br/>
+      </code>
+      <code>
+        <em>//..Returns true to continue to next Composite</em><br/>
+        virtual bool <strong>visitLeave</strong>( <a href="TestSuite.html">TestSuite</a>* )<br/>
+        {<br/>
+        return true;<br/>
+        }<br/>
+      </code>
+      <code>
+        protected:<br/>
+      </code>
+      <code>
+        <em></em>TestVisitor() {}<em></em><br/>
+        <em></em>TestVisitor( const TestVisitor& ) {}<em></em><br/>
+        };<br/>
+      </code>
+      <p>
+        The <em>visitEnter</em> and <em>visitLeave</em> members work as a sort of <em>push composite</em> and <em>pop composite</em> in a way that allows us to go in and out of tree branches. There are a number of <a href="WayCool.html">WayCool</a> things one can do with this sort of visitor. Some of these exploit its ability to maintain a <em>composite stack</em>, other its conditional abilities, while still other exploit both. Moreover, if our subclass only defines the <em>visit</em> member and always returns <em>true</em>, our visitor will act just like a traditional visitor. It has always smelled bad to me that for something hierarchical (like a file-system) that I would have to implement some traversals using recursive member-functions while others would be implemented using a Visitor. For example, how do you print a tree listing like the following with a traditional visitor?
+      </p>
+      <ul>
+        <li>
+           root
+          <ul>
+            <li>
+               composite-a
+              <ul>
+                <li>
+                   leaf-a1
+                </li>
+                <li>
+                   leaf-a2
+                </li>
+              </ul>
+            </li>
+            <li>
+               composite-b
+              <ul>
+                <li>
+                   leaf-b1
+                </li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p>
+        You either would have to implement the tree listing with member functions, or a tree enumerator that didn't operate as a traditional visitor. With a traditional visitor, how would you know when to add a tabstop or remove a tabstop? Using the CompositeVisitorPattern, the previous formatted listing becomes easy to implement -- <em>visitEnter</em> adds tab-stops, <em>visitLeave</em> removes them, and <em>visit</em> simply prints the <strong>leaf</strong> name at the current tab-stop. <strong>Wa-hooty!!!</strong>
+      </p>
+      <p>
+        If you remember our UTX <a href="SystemMetaphor.html">SystemMetaphor</a>, you will see how important this is to UTX since <a href="TestCase.html">TestCase</a> names are qualified with their location in the overall <a href="TestSuite.html">TestSuite</a>. The CompositeVisitorPattern solves this problem very elegantly. Consider the following which extends the basic "TestVisitor" we just presented to build-up <a href="TestSuite.html">TestSuite</a> <em>paths</em> that can be used to qualify a <a href="TestCase.html">TestCase</a> in a <em>visit</em> implementation:
+      </p>
+      <code>
+        <em>/**</em><br/>
+        <em>* Maintains a string that when accessed in the "visit"</em><br/>
+        <em>* member, returns to current qualified </em><a href="TestSuite.html">TestSuite</a> path.<em></em><br/>
+        <em>*/</em><br/>
+        class utx::TestQualifier : public utx::TestVisitor<br/>
+        {<br/>
+        enum { SEPCHAR = '.'; }<br/>
+      </code>
+      <code>
+        public:<br/>
+      </code>
+      <code>
+        <em>// Entering a composite: Push its name on the Path</em><br/>
+        virtual bool visitEnter( <a href="TestSuite.html">TestSuite</a>* pSuite )<br/>
+        {<br/>
+        m_path.append( pSuite->name() );<br/>
+        m_path += SEPCHAR;  <em>// NOTE: Don't forget the separator!</em><br/>
+        return true;<br/>
+        }<br/>
+      </code>
+      <code>
+        <em>// Leaving a composite: Pop its name from the Path</em><br/>
+        virtual bool visitLeave( <a href="TestSuite.html">TestSuite</a>* pSuite )<br/>
+        {<br/>
+        <strong>assert</strong>( m_path.endsWith( pSuite->name() + SEPCHAR ) );<br/>
+      </code>
+      <code>
+        m_path.resize( m_path.size() - pSuite->name().size() );<br/>
+        return true;<br/>
+        }<br/>
+      </code>
+      <code>
+        <em>// Provide read-only access to the current qualifier</em><br/>
+        const string& currentPath() const<br/>
+        {<br/>
+        return m_path;<br/>
+        }<br/>
+      </code>
+      <code>
+        private:<br/>
+      </code>
+      <code>
+        string m_path;	<em>// Current qualifier</em><br/>
+        };<br/>
+      </code>
+      <p>
+        That's it! Now, this visitor class can be used to implement behavior that requires qualified names! For example, we could extend <em>TestQualifier</em> to print the fully qualified name of every <a href="TestCase.html">TestCase</a>:
+      </p>
+      <code>
+        class QualifiedTestPrinter : public TestQualifier<br/>
+        {<br/>
+        public:<br/>
+      </code>
+      <code>
+        virtual bool visit( <a href="TestCase.html">TestCase</a>* pTest )<br/>
+        {<br/>
+        std::cout << currentPath() + pTest->name() << std::endl;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        This can be used like so:
+      </p>
+      <code>
+        QualfiedTestPrinter printer;<br/>
+        root_suite.accept( printer );<br/>
+      </code>
+      <p>
+        As I mentioned earlier, this sort of thing is near impossible with a traditional visitor since we cannot know when to "pop" a name off of the qualified path string -- we can only keep "pushing" onto it. 
+      </p>
+      <p>
+        What is even more cool about this sort of visitor is that we can use "visitEnter" to conditionally control whether a <strong>composite</strong> should visit its <strong>components</strong> or move on to the next peer <strong>composite</strong>. This allows us to (a) optimize searches by excluding entire subtrees, (b) respond to "shouldStop", (c) filter <a href="TestCase.html">TestCase</a> traversals, and so on. Take (a) for example. We can build a visitor that will only search through nodes whose qualified name matches a substring of the search pattern.  We'll get back to this a little later, but for now let's continuing fleshing out the <a href="CompositePattern.html">CompositePattern</a> for UTX.
+      </p>
+      <hr/>
+      <p>
+        <strong>Defining the UTX Composite Class</strong>
+      </p>
+      <p>
+        Let's take a look at our <strong>composite</strong> participant, the concrete class <a href="TestSuite.html">TestSuite</a>. This class will only require one new member-function and a single new data-member. The data-member is a vector of pointers <em>Test</em> components or better yet, a vector of <em>counted_ptr<Test></em> instances [See: <a href="CppCountedPointerImplementation.html">CppCountedPointerImplementation</a>]. All in all, the <em></em><a href="TestSuite.html">TestSuite</a><em> class is almost as simple as the </em>Test<em> class was:</em>
+      </p>
+      <code>
+        class utx::<a href="TestSuite.html">TestSuite</a> : public utx::Test<br/>
+        {<br/>
+        typedef std::vector< counted_ptr<Test> > Tests;<br/>
+      </code>
+      <code>
+        public:<br/>
+      </code>
+      <code>
+        <a href="TestSuite.html">TestSuite</a>( const string& name ) :<br/>
+        Test( name )<br/>
+        {<br/>
+        }<br/>
+      </code>
+      <code>
+        <em>// Add a component to the </em><a href="TestSuite.html">TestSuite</a> composite<em></em><br/>
+        void add( Test* pTest )<br/>
+        {<br/>
+        m_tests.push_back( pTests );	<em>// constructs a counted_ptr</em><br/>
+        }<br/>
+      </code>
+      <code>
+        <em>// Implement the Test::accept member</em><br/>
+        virtual bool accept( Test::Visitor& v )<br/>
+        {<br/>
+        if ( v.visitEnter( this ) )<br/>
+        {<br/>
+        Tests::iterator end = m_tests.end();<br/>
+        for ( Tests::iterator at = m_tests.begin(); at != end; ++at )<br/>
+        if ( !(*at)->accept( v ) )<br/>
+        break;<br/>
+        }<br/>
+      </code>
+      <code>
+        return v.visitLeave( this );	<em>// continue with siblings?</em><br/>
+        }<br/>
+      </code>
+      <code>
+        private:<br/>
+      </code>
+      <code>
+        Tests m_tests;  <em>// Collection of Suites and/or Cases</em><br/>
+        };<br/>
+      </code>
+      <p>
+        The only part that is a little complex is the implementation of "Test::accept". In it, we first call "visitEnter" to determine whether we should enter this node and visit its children (i.e. components that may be leaves or other composites). If <em>visitEnter</em> returns true, we invoke <em>accept</em> on each child some of which may be other composites (i.e. nodes). The result of calling accept always indicates whether we should continue to visit siblings at this tree depth. You can think of the result of accept as a <strong>continue at this level</strong> flag. If "accept" returns false, we stop visiting components at this level. After visiting all the children of this node, we invoke <em>visitLeave</em> and use its result as the nodes return value. As always, if <em>accept</em> returns false, we do not move on to the next sibling of the current composite, but attempt to move to the parent level.
+      </p>
+      <hr/>
+      <p>
+        <strong>Defining the UTX Leaf Class</strong>
+      </p>
+      <p>
+        In UTX, the basic <strong>leaf</strong> <a href="TestCase.html">TestCase</a> is an abstract class. The concrete <a href="TestCase.html">TestCase</a> will actually be a template that implements the <a href="CommandPattern.html">CommandPattern</a>. It will be this class that does the real work of a <a href="TestCase.html">TestCase</a>. However, before we can get into the <a href="CommandPattern.html">CommandPattern</a> we need to define our <a href="CompositePattern.html">CompositePattern</a>s abstract <strong>leaf</strong>, the abstract <em>class </em><a href="TestCase.html">TestCase</a><em>.</em>
+      </p>
+      <code>
+        class utx::<a href="TestCase.html">TestCase</a> : public utx::Test<br/>
+        {<br/>
+        public:<br/>
+      </code>
+      <code>
+        typedef TestContext Context; <em>// Test in </em>TestContext is redundant<em></em><br/>
+      </code>
+      <code>
+        <a href="TestCase.html">TestCase</a>( const string& sName ) :<br/>
+        Test( sName )<br/>
+        {<br/>
+        }<br/>
+      </code>
+      <code>
+        virtual bool accept( Visitor& v )<br/>
+        {<br/>
+        return v.visit( this );<br/>
+        }<br/>
+      </code>
+      <code>
+        virtual void run( const Context& ) = 0;  <em>// Subclass Responsibility</em><br/>
+        };<br/>
+      </code>
+      <p>
+        Since "class <a href="TestCase.html">TestCase</a>" is a leaf (as oppose to a composite like <a href="TestSuite.html">TestSuite</a>), its "accept" member merely needs to "visit" itself. The only new behavior introduced by the <a href="TestCase.html">TestCase</a> class is the pure virtual method "<a href="TestCase.html">TestCase</a>::run". This is where the action is going to occur. Hopefully you will remember our discussion about decoupling and cohesion that lead to the definition of TestContext. This is a singleton instance owned by the TestDriver that provides a single interface to the shared data context. You can refer back to <strong>Why Introducing the TestContext class is such a cool thing...</strong> for a reminder. Anyway, each <a href="TestMethod.html">TestMethod</a> is required to include a reference to the TestContext in its signature.
+      </p>
+      <hr/>
+      <p>
+        <strong>Defining the Concrete </strong><a href="TestCase.html">TestCase</a> Template<strong></strong>
+      </p>
+      <p>
+        Until now, everything has been very straightforward and easy, almost writing itself. Unfortunately, deciding on an implementation approach for Test Cases and Test Fixtures is a little more difficult. This is where the lack of meta-classes (or even Java-like reflection) really hurts and leads us into the usual assortment of <a href="CeePlusPlus.html">CeePlusPlus</a> kludges. Fortunately, it occurred to me (after checking-out Martijn's very cool alternative to <a href="CppUnit.html">CppUnit</a>) that solving this problem provides us with the opportunity to strip away some of the <a href="CppUnit.html">CppUnit</a> and <a href="JavaUnit.html">JavaUnit</a> complexity.
+      </p>
+      <p>
+        <strong>Reducing </strong><a href="CppUnit.html">CppUnit</a> Complexity<strong></strong>
+      </p>
+      <p>
+        The first realization is that unlike <a href="JavaUnit.html">JavaUnit</a>, <a href="SmalltalkUnit.html">SmalltalkUnit</a>, or <a href="CppUnit.html">CppUnit</a> the <a href="TestFixture.html">TestFixture</a> classes that UTX users will be creating <strong>will not inherit from </strong><a href="TestCase.html">TestCase</a><strong>. This will allow users to create and maintain their own inheritance hierarchies in a way that make sense from the perspective of testing their application domain instead of that of building the </strong><a href="TestingFramework.html">TestingFramework</a>. We eliminate the need to inherit from <a href="TestCase.html">TestCase</a> by using the <a href="GangOfFour.html">GangOfFour</a> "<a href="CommandPattern.html">CommandPattern</a>". Our implementation of this pattern will use a template argument to compile the <a href="TestFixture.html">TestFixture</a> with a pointer to one of its <a href="TestMethod.html">TestMethod</a>s (i.e. member-functions) into a <a href="TestCase.html">TestCase</a>. Actually, most of the <a href="CppUnit.html">CppUnit</a> implementations out there use some variant on the <a href="CommandPattern.html">CommandPattern</a> in order to implement the <a href="TestCase.html">TestCase</a> class. Unfortunately, most of them then require your <a href="TestFixture.html">TestFixture</a> to inherit from this class --- a dubious requirement that smells very <em>very</em> bad. 
+      </p>
+      <p>
+        If you have ever used one of the STL function-object classes like mem_fun_t or mem_fun_ref_t, our <a href="TestCase.html">TestCase</a> implementation will not be difficult for you to grasp. The TestCase_<T> class is a template with the signature TestCase_<TFixture>. Each instance stores a <a href="TestMethod.html">TestMethod</a> pointer and then constructs an instance of "TFixture" on the stack during a "<a href="TestCase.html">TestCase</a>::run" invocation. As a result, a <a href="TestFixture.html">TestFixture</a> with one hundred <a href="TestMethod.html">TestMethod</a>s, will be constructed and destructed one hundred times. This, as was perceptively pointed out by the <a href="SmalltalkUnit.html">SmalltalkUnit</a> documentation, is required to prevent side effects from occurring between <a href="TestCase.html">TestCase</a>s. 
+      </p>
+      <p>
+        <em>Each </em><a href="TestMethod.html">TestMethod</a> must be able to count on a unique <a href="TestFixture.html">TestFixture</a> instance<em>. Herein lies our second opportunity to reduce overall complexity. Since in C++ a constructor and destructor are guaranteed to be called around each test method invocation, there is no reason to introduce the "setUp/tearDown" pair of methods required by </em><a href="CppUnit.html">CppUnit</a>, <a href="JavaUnit.html">JavaUnit</a>, and <a href="SmalltalkUnit.html">SmalltalkUnit</a>. These methods smell really rancid in C++ because <em>we are already doing the same thing as "setUp/tearDown" each time we construct and destroy the </em><a href="TestFixture.html">TestFixture</a><em>!!! </em>
+      </p>
+      <p>
+        If this all seems a bit complex, blame my technical prose because the basic idea is pretty straightforward and can be done with very little code.
+      </p>
+      <hr/>
+      <p>
+        <strong>Defining the UTX </strong><a href="CommandPattern.html">CommandPattern</a><strong></strong>
+      </p>
+      <p>
+        Now that we have the abstract <strong>leaf</strong> class and have gone over our strategy a bit, let's go ahead and define the <a href="CommandPattern.html">CommandPattern</a> in the concrete TestCase_<T> template class:
+      </p>
+      <code>
+        template< class FixtureT ><br/>
+        class utx::TestCase_ : public utx::<a href="TestCase.html">TestCase</a><br/>
+        {<br/>
+        typedef void (FixtureT::*TestMethodPtr)( Context& );<br/>
+      </code>
+      <code>
+        public:<br/>
+      </code>
+      <code>
+        <em>// Constructor adds the TestMethod pointer</em><br/>
+        TestCase_( const string& sName, TestMethodPtr pTestMethod ) :<br/>
+        m_pTestMethod( pTestMethod ),<br/>
+        <a href="TestCase.html">TestCase</a>( sName )<br/>
+        {<br/>
+        }<br/>
+      </code>
+      <code>
+        <em>// Create a </em><a href="TestFixture.html">TestFixture</a> instance and invoke <a href="TestMethod.html">TestMethod</a><em></em><br/>
+        virtual void run( const Context& ctx )<br/>
+        {<br/>
+        ( FixtureT().*m_pTestMethod )( ctx );<br/>
+        }<br/>
+      </code>
+      <code>
+        private:<br/>
+      </code>
+      <code>
+        TestMethodPtr m_pTestMethod;<br/>
+        };<br/>
+      </code>
+      <p>
+        <strong>Advantages of the </strong><a href="TestCase.html">TestCase</a> <a href="CommandPattern.html">CommandPattern</a>...<strong></strong>
+      </p>
+      <p>
+        Because we are again going with recognized patterns instead of rolling our own tightly-coupled solutions, we can actually create other "<a href="CommandPattern.html">CommandPattern</a>" classes for UTX. For example, at our shop, tests had previously been written as free-functions that returned void and took no arguments. To keep from having to rewrite a great many tests, I was able to create a simple adaptor that allowed the legacy tests to be added to UTX <a href="TestSuite.html">TestSuite</a>s. This adapter is a peer to the TestCase_<Fixture> template. Notice how similar their implementation is, almost like they were both cut from the same pattern ;-). The main difference is that utx::TestCaseFunction doesn't have to be a template since <em>free-functions</em> do not have a <a href="TestFixture.html">TestFixture</a>:
+      </p>
+      <code>
+        class utx:TestCaseFunction : public utx::<a href="TestCase.html">TestCase</a><br/>
+        {<br/>
+        public:<br/>
+      </code>
+      <code>
+        TestCaseFunction( const string& s, void (*pTestFunc)() ) :<br/>
+        m_pTestFunc( pTestFunc ),<br/>
+        <a href="TestCase.html">TestCase</a>( s )<br/>
+        {<br/>
+        }<br/>
+      </code>
+      <code>
+        virtual void run( Context& ) <em>// NOTE: ctx can't be used!</em><br/>
+        {<br/>
+        (*m_pTestFunc)();<br/>
+        }<br/>
+      </code>
+      <code>
+        private:<br/>
+      </code>
+      <code>
+        void (*m_pTestFunc)();<br/>
+        };<br/>
+      </code>
+      <hr/>
+      <p>
+        <strong>Wrapping Up UTX</strong>
+      </p>
+      <p>
+        As we've seen, a <a href="TestCase.html">TestCase</a> is the named association of a <a href="TestFixture.html">TestFixture</a> instance with that <a href="TestFixture.html">TestFixture</a>s <a href="TestMethod.html">TestMethod</a>. Start introducing the template arguments, class names, namespaces, all those scope-resolution operators and composing <a href="TestCase.html">TestCase</a>s can start getting more complicated than their actual implementation. Take the following code (based on our original StackTest example) that adds the "testPush" and "testPop" <a href="TestCase.html">TestCase</a>s to a "StackTest" <a href="TestSuite.html">TestSuite</a>:
+      </p>
+      <code>
+        utx::<a href="TestSuite.html">TestSuite</a>* Stack<a href="TestSuite.html">TestSuite</a>()<br/>
+        {<br/>
+        static utx::<a href="TestSuite.html">TestSuite</a> suite( "StackTest" );<br/>
+      </code>
+      <code>
+        suite.add(<br/>
+        new utx::TestCase_< StackTest >(<br/>
+        "testPush",<br/>
+        &StackTest::testPush ) );<br/>
+      </code>
+      <code>
+        suite.add(<br/>
+        new utx::TestCase_< StackTest >(<br/>
+        "testPop",<br/>
+        &StackTest::testPop ) );<br/>
+      </code>
+      <code>
+        return &suite;<br/>
+        }<br/>
+      </code>
+      <p>
+        Most of this is redundant information. So, like the many other <a href="TestingFramework.html">TestingFramework</a>s, we will define some Macros of our own to simplify things.
+      </p>
+      <code>
+        UTX_BeginTestSuite( "StackTest" )<br/>
+        UTX_AddTestCase( StackTest, testPush )<br/>
+        UTX_AddTestCase( StackTest, testPop )<br/>
+        UTX_EndTestSuite()<br/>
+      </code>
+      <p>
+        The following provides you with the basic implementation for these macros.
+      </p>
+      <code>
+        <em>// Create the </em><a href="TestSuite.html">TestSuite</a> singleton function<em></em><br/>
+      </code>
+      <code>
+        #define <strong>UTX_BeginTestSuite</strong>( tsuite ) <strong>\</strong><br/>
+        utx::<a href="TestSuite.html">TestSuite</a>* tsuite##_TestSuite() <strong>\</strong><br/>
+        { <strong>\</strong><br/>
+        static counted_ptr< utx::<a href="TestSuite.html">TestSuite</a> > s_suite = 0; <strong>\</strong><br/>
+        if ( s_suite == 0 ) <strong>\</strong><br/>
+        { <strong>\</strong><br/>
+        s_suite = new utx::<a href="TestSuite.html">TestSuite</a>( #tsuite );<br/>
+      </code>
+      <code>
+        <em>// Add to the suite object</em><br/>
+      </code>
+      <code>
+        #define <strong>UTX_AddTestCase</strong>( tfixture, tmethod ) <strong>\</strong><br/>
+        s_suite->Add( <strong>\</strong><br/>
+        new utx::TestCase_<tfixture>( <strong>\</strong><br/>
+        #tmethod, tfixture::tmethod ) );<br/>
+      </code>
+      <code>
+        <em>// Terminate the </em><a href="TestSuite.html">TestSuite</a> singleton function<em></em><br/>
+      </code>
+      <code>
+        #define <strong>UTX_EndTestSuite</strong>( tsuite ) <strong>\</strong><br/>
+        } <strong>\</strong><br/>
+        return s_suite.get(); <strong>\</strong><br/>
+        }<br/>
+      </code>
+      <p>
+        We use a function instead of a static member for the <a href="TestSuite.html">TestSuite</a> <a href="SingletonPattern.html">SingletonPattern</a> in order to cut-down on interdependencies. C++ is nuts when it comes to dependencies so <a href="UnitTest.html">UnitTest</a>ing a huge project can really become a drag if you don't isolate the various pieces. You find you end up having to recompile everything each time you add a fixture, or add a <a href="TestCase.html">TestCase</a> to an existing <a href="TestSuite.html">TestSuite</a>. Furthermore, we use a static <a href="TestSuite.html">TestSuite</a> <em>pointer</em> just so that we have an if-statement to hide our one-time suite initialization in. You can also create a macro for adding <a href="TestSuite.html">TestSuite</a>s to other <a href="TestSuite.html">TestSuite</a> objects like so:
+      </p>
+      <code>
+        <em>// Define a </em><a href="TestSuite.html">TestSuite</a> accessor<em></em><br/>
+        #define <strong>UTX_TestSuite</strong>( tsuite ) <strong>\</strong><br/>
+        tsuite##_TestSuite()<br/>
+      </code>
+      <code>
+        <em>// Add a suite to a suite</em><br/>
+        #define <strong>UTX_AddTestSuite</strong>( name ) <strong>\</strong><br/>
+        s_suite->add( UTX_TestSuite( name ) );<br/>
+      </code>
+      <p>
+        This allows you to do the following:
+      </p>
+      <code>
+        <strong>UTX_BeginTestSuite</strong>( collection )  <em>// Suite for collection classes</em><br/>
+        <strong>UTX_AddTestSuite</strong>( StackTest )<br/>
+      </code>
+      <code>
+        <strong>UTX_EndTestSuite</strong>()<br/>
+      </code>
+      <p>
+        Now the StackTest suite we just created is contained in another suite named "collection". There are better ways to do this, but this works, its quick, and it cuts down on header file interdependencies.
+      </p>
+      <hr/>
+      <p>
+        <strong>Brief Reflections on TestRunner</strong>
+      </p>
+      <p>
+        I would like to close by showing just a little of how "TestRunner" can be implemented as a visitor. "TestRunner" will have a string collection that will be filled with tests that should run. In this example, we allow tests to be added a string at a time by calling "TestRunner::specify". Normally, you would do this from the command line in the function "main". I'm going to derive "TestRunner" from our earlier "TestQualifier" example since tests will be specified as fully qualified names. I'm leaving a few bits out that should be self-explanatory such as the TestReport, which is a collection of TestRecord's. TestRecord is a simple class that stores the test-case name, its start, stop, and duration along with the test-result. If the test failed, TestResult additionally records the failure file, line, and expression origin.
+      </p>
+      <code>
+        class utx::<a href="TestRunner.html">TestRunner</a> : public utx::TestQualifier<br/>
+        {<br/>
+        public:<br/>
+      </code>
+      <code>
+        TestRunner( Test::Context& ctx ) :<br/>
+        m_ctx( ctx )<br/>
+        {<br/>
+        }<br/>
+      </code>
+      <code>
+        void specify( const string& sQualifiedName )<br/>
+        {<br/>
+        m_tests.push_back( sQualifiedName );<br/>
+        }<br/>
+      </code>
+      <code>
+        bool visitEnter( <a href="TestSuite.html">TestSuite</a>* pSuite )<br/>
+        {<br/>
+        TestQualifier::visitEnter( pSuite );<br/>
+        return !m_ctx.ShouldStop();<br/>
+        }<br/>
+      </code>
+      <code>
+        bool visit( <a href="TestCase.html">TestCase</a>* pTest )<br/>
+        {<br/>
+        if ( m_tests.include( currentPath() + pTest->name() ) )<br/>
+        perform( pTest );<br/>
+      </code>
+      <code>
+        return m_ctx.shouldStop();<br/>
+        }<br/>
+      </code>
+      <code>
+        bool visitLeave( <a href="TestSuite.html">TestSuite</a>* pSuite )<br/>
+        {<br/>
+        TestQualifier::visitLeave( pSuite );<br/>
+        return !m_ctx.shouldStop();<br/>
+        }<br/>
+      </code>
+      <code>
+        protected:<br/>
+      </code>
+      <code>
+        void perform( <a href="TestCase.html">TestCase</a>* pTest )<br/>
+        {<br/>
+        TestRecord& rec =<br/>
+        m_db.createRecord( currentPath() + pTest->name() );<br/>
+      </code>
+      <code>
+        try<br/>
+        {<br/>
+        record.start();<br/>
+        pTest->run( m_ctx );<br/>
+        record.stop();<br/>
+        }<br/>
+        catch ( const XTestFailure& e )<br/>
+        {<br/>
+        record.log( e );<br/>
+        }<br/>
+        catch ( const XTestError& e )<br/>
+        {<br/>
+        record.log( e );<br/>
+        }<br/>
+        catch ( const std::exception& e )<br/>
+        {<br/>
+        record.log( e );<br/>
+        }<br/>
+        catch ( ... )<br/>
+        {<br/>
+        record.log( "Unknown" );<br/>
+        }<br/>
+      </code>
+      <code>
+        if ( m_ctx.isVerbose() )<br/>
+        m_ctx.traceOut() << record << std::endl;<br/>
+        }<br/>
+      </code>
+      <code>
+        private:<br/>
+      </code>
+      <code>
+        TestReport		m_db;	// Results<br/>
+        TestContext&	 m_ctx;	// The Global Testing Context<br/>
+        std::vector_<string> m_tests;  // Specified Tests<br/>
+        };<br/>
+      </code>
+      <p>
+        There are all kinds of visitors you can write with a CompositeVisitor like the one I introduced here. Because of "visitEnter" and "visitLeave", it becomes very easy to do things like maintain stacks and indent levels. We can optimize this class quite a bit by returning false from "TestRunner::visitEnter" when "pSuite->name()" is not a part of any name in the "m_tests". We can also add the ability to specify wildcards or entire suites. In the following snippet, specifying "root" will cause all tests contained in the root <a href="TestSuite.html">TestSuite</a> "root" to run while specifying "root.StackTest" will run all cases in the suite "StackTest":
+      </p>
+      <code>
+        class utx::<a href="TestRunner.html">TestRunner</a> : public utx::TestQualifier<br/>
+        {<br/>
+        private:<br/>
+      </code>
+      <code>
+        <a href="TestSuite.html">TestSuite</a>* m_pRunAll;<br/>
+      </code>
+      <code>
+        public:<br/>
+        .<br/>
+        .<br/>
+        .<br/>
+      </code>
+      <code>
+        bool visitEnter( <a href="TestSuite.html">TestSuite</a>* pSuite )<br/>
+        {<br/>
+        TestQualifier::visitEnter( pSuite );<br/>
+        if ( !m_pRunAll && m_tests.hasExactMatch( currentPath() ) )<br/>
+        m_pRunall = pSuite;<br/>
+      </code>
+      <code>
+        return m_ctx.shouldStop();<br/>
+        }<br/>
+      </code>
+      <code>
+        bool visit( <a href="TestCase.html">TestCase</a>* pTest )<br/>
+        {<br/>
+        if ( m_pRunAll || m_tests.includes( pTest->name() ) )<br/>
+        perform( pTest );<br/>
+      </code>
+      <code>
+        return m_ctx.shouldStop();<br/>
+        }<br/>
+      </code>
+      <code>
+        bool visitLeave( <a href="TestSuite.html">TestSuite</a>* pSuite )<br/>
+        {<br/>
+        TestQualifier::visitLeave( pSuite );<br/>
+      </code>
+      <code>
+        if ( m_pRunAll == pSuite )<br/>
+        m_pRunAll = 0;<br/>
+      </code>
+      <code>
+        return m_ctx.shouldStop();<br/>
+        }<br/>
+        .<br/>
+        .<br/>
+        .<br/>
+        };<br/>
+      </code>
+      <p>
+        You'll also notice that unlike <a href="CppUnit.html">CppUnit</a> I have decided to give each <a href="TestCase.html">TestCase</a> its own record object instead of sharing a single object between the cases of a suite. This gives us a little more control over stuff like logging and calculating the duration of each test. Furthermore, this allows me to output the TestReport object CSV and input that into a database for regression analysis. 
+      </p>
+      <p>
+        Yeesh, I'm trying to go but I cannot resist the urge to add a Visitor for "pretty-printing".
+      </p>
+      <code>
+        class utx::TestLister : public utx::TestQualifier<br/>
+        {<br/>
+        public:<br/>
+      </code>
+      <code>
+        virtual bool visitEnter( <a href="TestSuite.html">TestSuite</a>* pSuite )<br/>
+        {<br/>
+        TestQualifier::visitEnter( pSuite );<br/>
+      </code>
+      <code>
+        insertLine( pSuite->name() );<br/>
+        insertLine( "(" );<br/>
+        indent(1);<br/>
+      </code>
+      <code>
+        return true;<br/>
+        }<br/>
+      </code>
+      <code>
+        virtual bool visitLeave( <a href="TestSuite.html">TestSuite</a>* pTest )<br/>
+        {<br/>
+        TestQualifier::visitLeave( pSuite );<br/>
+      </code>
+      <code>
+        indent(-1);<br/>
+        insertLine( ")" );<br/>
+      </code>
+      <code>
+        return true;<br/>
+        }<br/>
+      </code>
+      <code>
+        virtual bool visit( <a href="TestCase.html">TestCase</a>* pTest )<br/>
+        {<br/>
+        insertLine( pTest->name() );<br/>
+        return m_sPath;<br/>
+        }<br/>
+      </code>
+      <code>
+        protected:<br/>
+      </code>
+      <code>
+        void insertLine( const string& s )<br/>
+        {<br/>
+        size_t N = m_nLevel * TABSIZE;<br/>
+        while ( N-- )<br/>
+        std::cout.put( ' ' );<br/>
+      </code>
+      <code>
+        std::cout << s << std::endl;<br/>
+        }<br/>
+      </code>
+      <code>
+        void indent( int N )<br/>
+        {<br/>
+        m_nLevel += N;<br/>
+        }<br/>
+      </code>
+      <code>
+        private:<br/>
+      </code>
+      <code>
+        int m_nLevel;<br/>
+        enum { TABSIZE = 3 };<br/>
+        };<br/>
+      </code>
+      <p>
+        Okay, okay, enough fun and my fingers hurt. This is way too much to type "stream of consciousness style" but, hopefully, this should be enough information for most of you to complete this adaptation of SUnit. While this is a lot of text, very little of it is actually code. In fact, this is a very small library. Because user-defined tests do not need to inherit from any particular class, the only dependency clients have is on TestContext, which is a reference, and the macro definition language. I hope these ideas are seen as adding to <a href="CppUnit.html">CppUnit</a> rather than taking away. If I get some time to create an implementation that isn't connected to our internal classes and package strategy, I will post it. If anyone incorporates these ideas into <a href="CppUnit.html">CppUnit</a> or creates a new UTX derivative, please keep me posted. Currently I have UTX running on Windows NT, Linux/Redhat, AIX, HPUX, IRIX, Solaris/Intel, and Solaris/SPARC. If there is enough interest, I will go over the application class design that allows you to create multiple Test Stations (see <a href="TestDriver.html">TestDriver</a>). 
+      </p>
+      <p>
+        <em>--</em><a href="RobertDiFalco.html">RobertDiFalco</a><em></em>
+      </p>
+      <p>
+        <strong>See also:</strong> <a href="CppUnit.html">CppUnit</a>, <a href="EnhancingCppUnit.html">EnhancingCppUnit</a>, <a href="HierarchicalVisitorPattern.html">HierarchicalVisitorPattern</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryCpp.html">CategoryCpp</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>Discussion:</strong>
+      </p>
+      <p>
+        See <a href="HierarchicalVisitorDiscussion.html">HierarchicalVisitorDiscussion</a> for comments on the <a href="VisitorPattern.html">VisitorPattern</a> variation used here.
+      </p>
+      <p>
+        <em>Robert, I for one have been following this discussion very closely. I'm working on </em><a href="DotNetUnit.html">DotNetUnit</a> and so far have been following the <a href="CppUnit.html">CppUnit</a> design because I know that's what people are familiar with. However, like you, I've always thought there was a lot of room for improvement within the <a href="TestingFramework.html">TestingFramework</a>'s architecture. Anyway, the more details you give, the better. I would love to port this architecture for the <a href="MicrosoftDotNet.html">MicrosoftDotNet</a> platform.<em> --</em><a href="DrewMarsh.html">DrewMarsh</a>
+      </p>
+      <p>
+        I also found this page to be fascinating. I've had reservations about using <a href="CppUnit.html">CppUnit</a> for many of the same reasons that you cite here. I think that what you've presented here is quite elegant and extensible, and fits C++ much better.
+      </p>
+      <p>
+        I have set up a unit test framework based on <a href="RobertDiFalco.html">RobertDiFalco</a>'s design, which I'm using at home (on Linux) and am about to introduce at work (on Win32). The biggest difference between Robert's design sketch and my implementation is that I haven't seen a need to introduce a <a href="TestResult.html">TestResult</a> object as yet -- my <a href="TestRunner.html">TestRunner</a> just reports pass/fail information to the log stream. Thanks for providing this design sketch, Robert. 
+      </p>
+      <p>
+        You can get a copy of my implementation here: <a href="http://www.spookydistance.com/uts.zip">http://www.spookydistance.com/uts.zip</a>
+      </p>
+      <code>
+        -- <a href="DanMuller.html">DanMuller</a><br/>
+      </code>
+      <p>
+        Hi Robert,
+      </p>
+      <p>
+        Thanks for designing (and publishing) <a href="CppUtx.html">CppUtx</a> -- it's an excellent design.  I've just finished implementing the full set of functionality you described on Wiki. I thought you might be interested in a few points I learned on the way.  (Unfortunately I am not allowed to distribute the code.)
+      </p>
+      <p>
+        - The big new feature I added was the optional systematic execution of all exception pathways in each test, based on Ben Stanley's excellent article in the new (April 2001) C++ User's Journal.  Ben also provided a simple diagnostic memory manager to enable the forced failure of operator new(), and to detect memory leaks, which saved me from writing my own (which was my next job).  You can find the article and code here: <a href="http://www.cuj.com/documents/s=8027/cuj0104stanley/">http://www.cuj.com/documents/s=8027/cuj0104stanley/</a>
+      </p>
+      <p>
+        Adding/adapting this small amount of (quite tricky) code adds a qualitative difference to the test system; it amazing to watch it execute one test 40+ times, and find occasional resource leaks.  I got it working last night, and it immediately found a lot of hidden problems with our existing tests/code.  Until now we have been writing manual tests to try to execute error paths, but having it automated is so much easier, and _massively_ more thorough.  In fact it is so thorough it seems to be finding compiler bugs in exception code - which Ben noticed too.
+      </p>
+      <p>
+        I found it useful to allow test authors to specify whether a testcase should have its exceptions exercised, when they add it to a test suite. (A flag is stored in the test command object for this.)  It is also useful to provide for the enabling/disabling of this via the test-arguments feature (described below), which allows users to apply the technique experimentally to existing tests without rebuilding. 
+      </p>
+      <p>
+        Also, it is important to allow users to force the execution of any one specific exception path, as they need to be able to go straight to it for debugging, without having to step through 30 "pass" paths first.  Note: to keep the TestReport manageable, I generate one TestRecord for each failed path, or one record if ALL paths pass. i.e. I don't generate a pass for every successful execution path - there are a lot of them.  If the 'normal' path (no exceptions forced) passes but one of the exception paths fails then I record a "weak pass", because that is very useful information.  Also, because of the compiler bugs I mentioned above, I may need to add an option to specify/avoid any "bugged exception paths".
+      </p>
+      <p>
+        - The most convenient, powerful tool I've found for writing exception-safe, exception-correct code is Andrei Alexandrescu and Petru Marginean's ScopeGuard library.  This also helps massively to write the tests themselves in an exception-correct (no resource leaks) manner, which is vital for using the "run all exception paths" system described above.  The article and code are here: <a href="http://www.cuj.com/experts/1812/alexandr.htm">http://www.cuj.com/experts/1812/alexandr.htm</a>  (Note: I found a minor bug in the Janitor variant, which Andrei and Petru confirmed -- it needs try/catch around its own use of new, and to call the user-supplied function it fails (and then re-throw to show the failure).  The systematic exception-testing system just verified this bug, and also verified my fix!)
+      </p>
+      <p>
+        - I implemented the hierarchical argument-passing scheme you suggested -- it's great. However, the ability to add arguments 'higher up' in the hierarchy makes the position (number) of any given argument on each test's "command line" quite unstable, and this can easily break tests.  I fixed this by switching to keyword "name=value" arguments. These are easily implemented using a std::map<>, and are accessed via TestContext::GetCurrTestArgs().  (The TestRunnerVisitor must tell the TestContext which test is currently being executed.)
+      </p>
+      <p>
+        - I added a set of UTX_ExpectEquals() macros and templates.  I guess you left these out because they are pretty obvious. However, I did find Yonat Sharon's stringize() template to be very useful in generating meaningful messages: <a href="http://ootips.org/yonat/4dev/stringizer.h.">http://ootips.org/yonat/4dev/stringizer.h.</a>  
+      </p>
+      <code>
+        Here is a snippet:<br/>
+      </code>
+      <code>
+        #define UTX_ExpectEquals(expr, expected)	utx::internal_ExpectEquals(expr, expected, #expr, __FILE__, __LINE__)<br/>
+      </code>
+      <code>
+        namespace utx<br/>
+        {<br/>
+        template<typename T1, typename T2><br/>
+        void internal_ExpectEquals(T1 value, T2 expected, const char * szExpr, const char * szFilename, unsigned uLine )<br/>
+        {<br/>
+        if ( value != expected )	//lint !e731 testing "bool != bool"<br/>
+        {<br/>
+        throw utx::C_UTX_TestFailedException( "Expected '" + stringize(expected) + "' but got '" + stringize(value) + "' from '" + szExpr + "' at line " + stringize(uLine) + ", file: " + szFilename );<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        - I had some problems with various counted_ptr<> implementations with VC++ 6.0 (eventually <a href="AlanGriffiths.html">AlanGriffiths</a> excellent library worked a treat: <a href="http://www.octopull.demon.co.uk/arglib/)">http://www.octopull.demon.co.uk/arglib/)</a>  However, Andrei Alexandrescu's Loki library looks even better (but I haven't tried it yet) : <a href="http://cseng.aw.com/book/0,,0201704315,00.html">http://cseng.aw.com/book/0,,0201704315,00.html</a>
+      </p>
+      <p>
+        - I just checked the Wiki page and found your new page on TestDrivers.  I shared some of these concerns.  I've already refactored <a href="TestRunner.html">TestRunner</a>, TestReport and TestContext considerably, but I am still far from sure that TestContext should provide the shouldStop() and LogOStreamRef() interfaces.  However, it does work fine as it is.
+      </p>
+      <p>
+        Anyway, thanks _very_ much for a great design -- it is so powerful and convenient; my team love it.  -- Chris Newcombe, chrisn@valvesoftware.com
+      </p>
+      <hr/>
+      <p>
+        I just checked this page for the first time in a while, and I notice that the design has changed a bit since I came up with my utx-inspired implementation (<a href="http://www.spookydistance.com/uts.zip).">http://www.spookydistance.com/uts.zip).</a> The main change seems to be the addition of a test fixture. Personally, I don't see the need for it, and its omission in the earlier version of the design (at least as I remember it) was one of the things that appealed to me.
+      </p>
+      <p>
+        Essentially, the test fixture seems like nothing but a shared type definition, together with management of construction and destruction times by the framework. But the methods for sharing type definitions and controlling object lifetimes in C++ are trivial. For instance, we have a group of unit tests at work that each requires two databases to be opened and accessible. We simply wrap these database objects up in a struct which opens the databases in its constructor, and closes them in its destructor. Each unit test that needs this kind of context creates a local variable of that struct type -- initialization and shutdown of this context is thus taken care of using a very common and well-understood C++ idiom -- as natural as breathing. 
+      </p>
+      <p>
+        In short, the inclusion of test fixtures seems quite unnecessary to me.
+      </p>
+      <code>
+        -- <a href="DanMuller.html">DanMuller</a><br/>
+      </code>
+      <hr/>
+      <p>
+        I have an idea to design <a href="TestSuite.html">TestSuite</a>s (but I don't know if it can run so fast). Here is an example:
+      </p>
+      <code>
+        utx::RootTestSuite& suite = driver.rootSuite();<br/>
+        suite.begin("hop");<br/>
+        suite.add("TestBip");<br/>
+        suite.add("TestBof");<br/>
+        suite.end();<br/>
+        suite.begin("withfailure");<br/>
+        suite.add("Test1");<br/>
+        suite.add("Test2");<br/>
+        suite.add("Test3");<br/>
+        suite.end();<br/>
+        suite.begin("withsuccess");<br/>
+        suite.add("TestSuccessed1");<br/>
+        suite.add("TestSuccessed2");<br/>
+        suite.add("TestSuccessed3");<br/>
+        suite.end();<br/>
+      </code>
+      <p>
+        This example generates the following test cases:
+      </p>
+      <code>
+        suiteroot.hop.TestBip<br/>
+        suiteroot.hop.TestBof<br/>
+        suiteroot.withfailure.Test1<br/>
+        suiteroot.withfailure.Test2<br/>
+        suiteroot.withfailure.Test3<br/>
+        suiteroot.withsuccess.TestSuccessed1<br/>
+        suiteroot.withsuccess.TestSuccessed2<br/>
+        suiteroot.withsuccess.TestSuccessed3<br/>
+      </code>
+      <hr/>
+      <p>
+        Thanks to <a href="DanMuller.html">DanMuller</a> for making his implementation available.  Are there any other implementations of <a href="CppUtx.html">CppUtx</a> available for download?
+      </p>
+      <hr/>
+      <p>
+        I'm building up a new implementation called <a href="CppUtx.html">CppUtx</a>, which is available on <a href="SourceForge.html">SourceForge</a> (<a href="http://sourceforge.net/projects/cpputx).">http://sourceforge.net/projects/cpputx).</a>
+        Currently it is still in draft state, but feel free for having a look at and give me some feedback.
+      </p>
+      <code>
+        -- Patrick Dreyer (<a href="mailto:patrickdreyer@users.sourceforge.net)">mailto:patrickdreyer@users.sourceforge.net)</a><br/>
+      </code>
+      <hr/>
+      <p>
+        <strong>Some thoughts on setup/teardown vs. constructor/destructor</strong>
+      </p>
+      <p>
+        I agree that in most cases setup/teardown are unnecessary and it makes more sense to just use the constructor and destructor of the fixture. But there are some cases where it is also handy to have setup and teardown. I have a complex case for testing various instances of the decorator pattern where I actually have fixtures inheriting from other fixtures and all of the testing is actually in the base test fixture. The one thing that the constructor cannot do that a instance method can do is call virtual methods and have them be virtual (see <a href="http://www.parashift.com/c++-faq-lite/strange-inheritance.html#faq-23.3).">http://www.parashift.com/c++-faq-lite/strange-inheritance.html#faq-23.3).</a>
+      </p>
+      <p>
+        We could debate the merits of setup/teardown, but there is no need since we can have our cake and eat it to. I came up with a way to allow the TestCase_ to work with classes that have setup/teardown and those that don't. Those fixtures that have setup/teardown must extend this class:
+      </p>
+      <code>
+        class <a href="TestFixture.html">TestFixture</a><br/>
+        {<br/>
+        public:<br/>
+        virtual void setup() {};<br/>
+        virtual void teardown() {};<br/>
+      </code>
+      <code>
+        static inline void setup( <a href="TestFixture.html">TestFixture</a> * fixture )<br/>
+        {<br/>
+        fixture->setup();<br/>
+        }<br/>
+      </code>
+      <code>
+        static inline void teardown( <a href="TestFixture.html">TestFixture</a> * fixture )<br/>
+        {<br/>
+        fixture->teardown();<br/>
+        }<br/>
+      </code>
+      <code>
+        static inline void setup( void * ) { }<br/>
+      </code>
+      <code>
+        static inline void teardown( void * ) { }<br/>
+        };<br/>
+      </code>
+      <p>
+        Then there is only a small change to the run method of TestCase_:
+      </p>
+      <code>
+        virtual void run( const Context& ctx )<br/>
+        {<br/>
+        FixtureT fixture;<br/>
+        <a href="TestFixture.html">TestFixture</a>::setup( &fixture );<br/>
+        ( fixture.*m_pTestMethod )( ctx );<br/>
+        <a href="TestFixture.html">TestFixture</a>::teardown( &fixture );<br/>
+        }<br/>
+      </code>
+      <p>
+        If the class is subclass of <a href="TestFixture.html">TestFixture</a> then its setup/teardown will be called. Otherwise it won't.
+      </p>
+      <code>
+        --- Dale King (kingd@tmicha.net)<br/>
+      </code>
+      <p>
+        Hmm, even it's easy and simple to do so, we loose one advantage of <a href="CppUtx.html">CppUtx</a> by doing so:
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd>The first realization is that unlike <a href="JavaUnit.html">JavaUnit</a>, <a href="SmalltalkUnit.html">SmalltalkUnit</a>, or <a href="CppUnit.html">CppUnit</a> the <a href="TestFixture.html">TestFixture</a> classes that UTX users will be creating will not inherit from <a href="TestCase.html">TestCase</a>. This will allow users to create and maintain their own inheritance hierarchies in a way that make sense from the perspective of testing their application domain instead of that of building the <a href="TestingFramework.html">TestingFramework</a>. -- Quotation of <a href="RobertDiFalco.html">RobertDiFalco</a></dd>
+      </dl>
+      <p>
+        Then I would say it's better to go back one step and calling setup/teardown on <strong>all</strong> <a href="TestFixture.html">TestFixture</a> classes. This way even one not have a need for setup/teardown has to implement them, but we don't have to subclass from <a href="TestFixture.html">TestFixture</a>.
+      </p>
+      <code>
+        -- Patrick Dreyer (<a href="mailto:patrickdreyer@users.sourceforge.net)">mailto:patrickdreyer@users.sourceforge.net)</a><br/>
+      </code>
+      <hr/>
+      <p>
+        The new version of <a href="CppUnit.html">CppUnit</a>, called CppUnit2, includes many of the ideas here including some other neat ones including the use of Functors.
+      </p>
+      <p>
+        See <a href="http://cppunit.sourceforge.net/cgi-bin/moin.cgi/CppUnit2">http://cppunit.sourceforge.net/cgi-bin/moin.cgi/CppUnit2</a>
+      </p>
+      <p>
+        <em>-- Dale King</em>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryTesting.html">CategoryTesting</a>
+      </p>
+    </div>
+  </body>
+</html>

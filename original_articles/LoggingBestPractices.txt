@@ -1,0 +1,107 @@
+From LoggingDiscussion, we can see that there are certain advantages to using logging.  How best to log though?
+
+[At one extreme,] you log every single method call, entry and exit, log all the parameters given and log every program step. In the event of an error, the person sifting through the log knows exactly what is going on... however the log files are huge and unwieldy, and you end up not being able to see the wood for the trees.
+
+[At the other extreme,] you don't bother with logging at all. The program crashes overnight and no one knows why.
+
+How about some best practices around what it is useful to log, what it is not, what categories (debug, warn, info) etc, to assign to different statements and so on.
+
+-- RobMoffat [, AnonymousDonor]
+
+----
+The more successful logging facilities I've worked with were simple, and evolved to match the types of problems people were wrestling with in the particular system being developed. These types of problems tended to predict the types of problems that would be found in the fielded product. In all cases, logging "levels" could be set. In a few cases, we provided separate sets of switches for different parts of the system.
+
+The less successful logging facilities I've worked with fell prey to a (well-intentioned?) desire to design them "the right way" up front, and to propagate policies for what could be logged and how. Having a clean log became a goal that displaced the goal of getting one's hands on the right info to diagnose problems.
+
+-- DaveSmith
+
+----
+'' this is one of the great advantages of log4j.  It provides you with the ability to set logging on in different areas, as well as define your own new logging levels if you need them.  I like to distinguish between production logging and development logging too.  Production logging can be at any level - debug, warn, error, etc. and is there for when the application is deployed.  it shouldn't slow down the system too much and each entry should explicitly state what is happening and where in the code.  Development logging is a lot more akin (and probably is, in a lot of places) to a System.out.println statement thrown into the code.''
+
+'' Either way, another practice I stick to is to make sure that the amount of logging at whatever level never renders the system inoperably slow, or create so much logging information that you can't cope with it.''
+
+----
+Ok, here are some rules of thumb that I've used in the past, assuming use of JavaLanguage.
+
+* Use log4j. Never use System.out.println. With log4j you get timing information, context information, exceptions are easy to log and you can vary the output, format and how much is logged so easily.
+* Use Logger.getLogger(Class); This way you get the class name in the output. This is very useful for debugging.
+* Always override toString() to give a good representation of the object. You can use the apache commons for this. Too often you get code which looks like: this=mjf.log.Log''''''Example@16cd7d5. Which is useless.
+* For each (public) method or constructor, log the name of the method and all of the entry parameters, at level debug. This is so you can, in debug mode, see the route through the code.
+* When you get an exception, log the exception in full, *and* log the relevant objects that caused the exception, at level error. This means that when logging gets turned down to error only, you still get relevant information for that exception from the logs. Far too many times I've come across code that throws the error away, or logs the exception but not what caused it.
+* Try to persuade your system guys to create more space for logs, and then leave debug level on. Sometimes you only need to ask.
+* If you're logging the output of a web service or something like that, make sure you log an item which is unique to the session in each log message. With log4j, you can do this using a NDC. (We didn't use the session id, thats too long, we grabbed a unique integer and put it into the session). This way you can trace whats happening to a single session very easily. You can also log the request parameters as well if you're concerned about that sort of thing.
+
+Example:
+
+ public class Log''''''Example {
+  private Logger logger = Logger.getLogger(this.getClass());
+
+  public void stuff(String id, Date entryDate, int number) {
+    logger.debug("stuff:" +
+        " id=" + id +
+        " entryDate=" + entryDate +
+        " number=" + number);
+
+    String filename = "c:\\log\\file-" + id + "-" + number + ".xml";
+    try {
+      File f = new File(filename);
+      new FileInputS''''''tream(f);
+    } catch (FileNotFoundE''''''xception e) {
+      logger.error("caught a FileNotFoundE''''''xception - filename=" + filename + " should exist: ", e);
+    }
+
+    // etc.
+ }
+
+This produces the following output in log4j:
+
+ 2006-01-13 11:25:38,421 [main] DEBUG mjf.log.Log''''''Example - stuff: id=id entryDate=Fri Jan 13 11:25:38 CET 2006 number=5
+ 2006-01-13 11:25:38,421 [main] ERROR mjf.log.Log''''''Example - caught a FileNotFoundE''''''xception - filename=c:\log\file-id-5.xml should exist:
+ java.io.FileNotFoundE''''''xception: c:\log\file-id-5.xml (The system cannot find the path specified)
+ at java.io.FileInputS''''''tream.open(Native Method)
+ at java.io.FileInputS''''''tream.<init>(Unknown Source)
+ at mjf.log.Log''''''Example.stuff(Log''''''Example.java:35)
+ at mjf.log.Log''''''Example.main(Log''''''Example.java:23)
+
+Obviously the above are just guidelines, and I find myself ignoring them quite often, but represent what I would like if I was trying to track down a problem.
+
+I've seen objections to logging on the grounds that people 'don't want to wade through a load of crap to find the one bit of information they want'. Its a hell of a lot easier to find a needle in a haystack if the needle is there in the first place.
+
+I have to admit I'm a convert to log4j. Please read any of the articles in 
+http://logging.apache.org/log4j/docs/documentation.html particularly, the Dont use System.out.println one. -- MatthewFarwell
+
+----
+
+''Logging should always be considered when handling an exception but should ''never'' take the place of a real handler.''
+
+That is, the following is an anti-pattern:
+  try {
+    connectToTheDatabase();
+  } catch (Could''''''Not''''''Connect''''''Exception cnce) {
+    log("Hey, is the db down again?");
+  }
+But the following is (IMHO) a GoodThing:
+  try {
+    connectToTheDatabase();
+  } catch (Could''''''Not''''''Connect''''''Exception cnce) {
+    warnTheUser("We couldn't connect to the database at this time. We will try again later, but if this keeps up, you may want to contact your sysadmin.");
+    log("We couldn't connect to the database", cnce);
+    tryAgainLater();
+  }
+--AalbertTorsius
+
+That warn/log is ok if the exception is not getting propagated, but note this related anti-pattern:
+
+   # (switching to python)
+   try:
+       connectToTheDatabase()
+   except db.Error:
+       log.warn("We couldn't connect to the database [and here is some additional local detail]")  # bad to use logging here
+       raise
+ 
+That's a problem because calling code may have a legit handler that wants to forget that the failure happened, but it can't undo the logging. Better is some way of putting that warning *in* the exception object, so it can be logged only when that exception gets handled by some exception-printer.
+
+----
+Related: LoggingDiscussion, LoggingToaQueue, PatternsForLoggingDiagnosticMessages
+----
+CategoryLogging

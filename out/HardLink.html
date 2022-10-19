@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Hard Link
+      </h1>
+      <p>
+        In a traditional UNIX filesystem, a directory is just a file that contains an association list. The entries in that list map names, which are strings, to inode numbers, which are unique file identifiers. An inode number is essentially an on-disk pointer; the file object can be efficiently located from this number. No two objects have the same inode number, and no object has more than one inode number.
+      </p>
+      <p>
+        The term "hard link" is essentially just a synonym for "directory entry".  When an object is created for the first time, a directory entry is created for it as well. This is in fact a hard link, but most people usually associate "hard linking" to be the creation of additional directory entries for an existing object. But the original entry is not special in any way; all the links are equal in the sense that there is no way to tell which was the original.
+      </p>
+      <p>
+        Directories can contain directories, of course, and this is done by hard links as well. When a subdirectory is created, a directory entry is created in the parent which associates the name of the subdirectory with the newly created inode. Also, the new subdirectory object is automatically stuffed with two entries which associate the names . and .. (dot and dotdot) with the new directory, and the parent, respectively. Therefore, the creation of a subdirectory creates a new hard link to the parent, and two new hard links to the new object: one from the parent, and one from its own dot entry.
+      </p>
+      <p>
+        Directory hard links are special. Firstly, the only way to create them is to create directories; the operating system functions for hard linking will not allow the target of a hard link operation to be a directory inode. The reason for that is that it could create cycles in the filesystem's directory structure. Depending on the kernel, the decision to allow a directory hard link may be deferred to the filesystem module itself.
+      </p>
+      <p>
+        [Dumb question: if it was possible two have two directories /p1/d1 and /p2/d2 hard linked to the same inode, what would be the result of "cd .." in each of this directory ? -- FabriceGautier]
+      </p>
+      <ul>
+        <li>
+           If you mean, what if d1 and d2 <strong>were</strong> the same inode (or <strong>referenced</strong> the same inode, to be strictly accurate -- a directory entry merely associates a name with an inode) -- then the question is, what is the directory entry ".." associated with? You're assuming d1 and d2 are the same thing. Therefore they're only one directory, not two different directories. Therefore "they" have the same contents, including "..". When d1 or d2 is first created, ".." is created at the same time, as a hard link to the parent directory. So it basically depends on which was created first. Simple Directed Acyclic Graphs like this in the filesystem don't cause catastrophes, although they'll create user confusion in various circumstances.
+        </li>
+        <li>
+           <em>Which is why you don't create any ".." links in directories. Only "parent named X" or something like it. The same issue comes up in language when you switch from single dispatch to multiple dispatch; "self" no longer has any meaning.</em>
+        </li>
+      </ul>
+      <p>
+        In a traditional UNIX filesystem, cycles are bad for two reasons: firstly, the reclamation of storage is based on reference counting, which doesn't handle cyclic references! The only backreferences are the .. and . entries, and these are handled as special cases.
+      </p>
+      <p>
+        Secondly, backreferences in the tree structure can lead to nasty multithreading problems. In the traditional kernel design, like the BSD kernel, inodes that are in use are represented by in-memory structures called vnodes. These nodes are accessed concurrently, and contain locks. Certain operations retain a lock on a directory while navigating to the subdirectory. In a cycled graph, this can lead to two processes trying to acquire a pair of locks on the same two objects, but in an opposite order, which will deadlock the processes. These locking operations are often done in a way that cannot be interrupted by a signal, so the processes will stay deadlocked until a reboot.
+      </p>
+      <p>
+        There are special hacks in BSD to avoid this deadlock when navigating the .. reference. Basically, the lock on the originating directory vnode is relinquished, the .. lock is acquired and then the originating directory is re-locked. Yes, it's basically an open race. It's possible that the original directory is deleted by the time the lock is re-acquired, for instance.
+      </p>
+      <p>
+        I once implemented a cycle detection algorithm for vnode locks, to try to support cyclic hard linking in a file system for a version of BSD, but the problem was that although the code itself worked beautifully, it was just too hard to make the rest of the kernel cooperate. Too many places in the kernel, in the higher layers above the filesystem drivers, simply assume that a lock will succeed, or eventually succeed, and are consequently not prepared to correctly deal with an EDEADLK error. It's not entirely clear, even, what to do with the information which tells you that a deadlock would occur if you were allowed to proceed. Do you abort the whole system call? At what level do you retry? How will applications respond to having random filesystem operations bail with deadlock errors.
+      </p>
+      <p>
+        And so that's about five paragraphs more than you ever wanted to know about hard links.
+      </p>
+      <p>
+        -- <a href="KazKylheku.html">KazKylheku</a>
+      </p>
+      <p>
+        In Apple's OS X 10.5, a restricted form of hard links to directories is allowed, and is used to implement Time Machine, Apple's backup software. When Time Machine backs up a hard disk to a destination volume, if a subtree has not changes since a previous backup, it hard links to that subtree. This allows only the changes to be stored, making efficient use of the hard disk. When it does this, it sets the directories that are involved as read-only, so the Directed Acyclic Graph it has made can never be converted into a graph with cycles. 
+      </p>
+      <p>
+        -- DavidPhillipOster
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,890 @@
+This is my attempt to represent the ideas of UnitTest''''''ing put-forth in the TestInfected article in a way that (to me) is more suited to C++ and large-scale projects than I felt CppUnit was. However, I like CppUnit very much and it should be said that I used many of the same idioms. Most of all, we needed something a little more heavy duty that would be appropriate to perform and track the daily unit tests of a huge codebase for a distributed system that is compiled by a variety of compilers for a variety of platforms. The following are some of my attempts to find more opportunities for existing patterns in the system along with much of my own internal dialog....
+
+''-- RobertDiFalco''
+
+Okay, so if you read TestInfected, where is the testing code which is supposed to precede the implementation?  A short example will do wonders to explain the array of classes and methods defined below.
+
+----
+'''Terminology Assumptions'''
+
+Let's start off with some terminology and a few assumptions. There seems to be some ambiguity between the terms "ClassUnderTest", "TestFixture", "TestCase", and "TestMethod". In fact, not only have I seen these terms referred to differently within the same paper but I have caught myself defining them different depending on the context or even using some of these terms synonymously. So, while the following may not represent the best definitions, they will at least provide a standard for the purposes of this overview.
+
+	 :	'''class under test'''
+	 :	A "ClassUnderTest" (or CUT) is ''some class whose instances (and maybe even the class itself) are used as the subject of one or more tests''. 
+
+	 :	'''test method''' (or '''testing method''')
+	 :	Each discrete ''test'' is implemented in a member-function which I will refer to as a ''TestMethod''. 
+
+	 :	'''test fixture''' (or '''testing fixture''')
+	 :	A class whose primary purpose is to host one or more TestMethod''''''s is known as a ''TestFixture''. This allows its instances and class data to provide a data-context for the ''test''.
+
+	 :	'''test case'''
+	 :	A TestCase is ''not'' the TestMethod but is instead the ''named association'' of a TestMethod and an instance of its TestFixture. In most TestFrameworks, even those TestCase''''''s that share the same fixture will have their own unique instance of the TestFixture so that the side-effects of one TestCase cannot affect the fixture data of any other TestCase. 
+
+	 :	'''test suite'''
+	 :	A TestSuite (as in CppUnit) is a composite used to collect related TestCase''''''s into a logical unit. Since TestSuite is a composite, it may itself be the member of another TestSuite. In UTX, the TestCase''''''s comprising a TestSuite will usually use the same TestFixture. As such, the TestSuite is usually named using the class name of this common fixture.  
+
+	 :	'''test driver'''
+	 :	The TestDriver is the code that provides the ''execution environment'' for all the tests contained in the root composite TestSuite. The TestDriver is usually executed in main and any tests specified for running, are passed to the driver.
+
+	 :	'''test runner'''
+	 :	The behavior responsible for actually ''running'' the contents of the driver. In UTX, the Test''''''Runner is implemented using the VisitorPattern. 
+
+'''Putting the Terms Together'''
+
+Say we write a class named Stack''''''Test which has the members "testPop" and "testPush". As you might imagine, these TestMethod''''''s implement the tests for this WayCool Stack class we wrote. Now, we create a TestCase for each TestMethod and add it to a TestSuite named "Stack''''''Test". What we just created gives us the following TestSuite and TestCase hierarchy:
+
+	* Stack''''''Test
+		* testPop
+		* testPush
+
+Note the relationship between the TestSuite and its TestCase''''''s to the TestFixture and its TestMethod''''''s. Each member of the ''Stack''''''Test'' TestFixture (each TestMethod) actually ''implements'' its corresponding TestCase. In fact, the ''Stack''''''Test'' fixture itself can be thought of as implementing the "Stack''''''Test" TestSuite. Pretty cool, huh?
+
+Okay, just to summarize from the previous example:
+
+	* The ClassUnderTest (CUT) is the "Stack" ''class''
+	* The TestingFixture is the "Stack''''''Test" ''class''
+	* The TestingMethod''''''s are the Stack''''''Test::testPop and the Stack''''''Test::testPush member ''functions''
+	* The TestCase''''''s are the two associations, class Stack''''''Test + Stack''''''Test::testPop and Stack''''''Test + Stack''''''Test::testPush (named "testPop" and "testPush" respectively)
+	* The TestSuite is a composite object named "Stack''''''Test" that contains the TestCase''''''s named "testPop" and "testPush"
+
+
+'''Rules of Ownership'''
+
+Okay, so what are the rules of ownership in UTX? These will be very similar to those in CppUnit, JUnit, and SUnit and will form the basis of our design:
+
+	* A TestCase owns a TestMethod and a TestFixture
+	* A TestSuite owns (contains) 
+		* one or more TestCase''''''s
+		* one or more TestSuite''''''s
+	* A TestDriver contains the root TestSuite and the test-context
+
+This relationship between cases, suites, and the root suite creates a basic graph that is similar to a file system where the root TestSuite is analogous to a file system "root" (or "\"). Other TestSuite''''''s that are children of root are analogous to sub-folders (or sub-directories) while a TestCase is analogous to an actual file. Even the "TestFixture/TestMethod" pairs contained by a TestCase can be compared to file's ''contents''. 
+
+
+'''Discovering the UTX SystemMetaphor'''
+
+Rather than hide this similarity with file systems, I chose to exploit it. This provides the user (programmers and testers) with a recognized metaphor for creating tests and specifying what tests to run. Similar to a file-system, each TestCase in UTX has its basic TestCase name (e.g. "testPush"), a ''path'' (e.g. "Stack''''''Test"), and a fully qualified name (e.g. "Stack''''''Test.testPush"). To keep things from getting too confusing, we'll use a period (".") to separate qualifiers rather than the forwards or backwards slash ("/","\") familiar to file paths. This separator is immediately recognizable to UTX users for separating packages and methods. 
+
+Just like a fully qualified path, a ''fully qualified test-case'' absolutely indicates the name and location of that TestCase in the Test System. Our previous "Stack" example has a TestCase named "testPop". Because "Stack''''''Test" did not belong to another outer TestSuite, its fully qualified name was "Stack''''''Test.testPop". However, in a production system, the "Stack''''''Test" TestSuite would be contained in another TestSuite (possibly a composite of all test suites located in the same "package" as the "Stack" ClassUnderTest), which will ultimately lead to the ''root'' TestSuite. In this system, the "testPop" TestCase may be fully qualified as:
+
+	 :	root.collections.Stack''''''Test.'''testPop'''
+
+This tells us that the "testPop" TestCase is in the TestSuite "Stack''''''Test". Furthermore, the "Stack''''''Test" suite is a member of the TestSuite for the "collections" package which is itself a component of the "root" TestSuite.
+
+----
+'''Modeling the UTX Classes'''
+
+Most everyone can see that the relationships between suites and test-cases form a pretty traditional GangOfFour CompositePattern, as a result, most of the KentBeck-based frameworks also model these classes using the CompositePattern. Since we use a file-system as our SystemMetaphor, our Composite is pretty similar to the Composite example in the JohnVlissides book PatternHatching. Instead of files, we use TestCase''''''s.
+
+Let's drill down a little more and fill out the CompositePattern participants for UTX. First, we will make an abstract base-class named "Test" to represent the '''Component''' participant, a concrete class TestSuite will model the '''Composite''', while an abstract class "TestCase" is used to represent the "Leaf" components. This creates the following inheritance tree:
+
+ namespace utx
+ {
+	class Test;	 ''// Component (abstract)''
+	class Test''''''Suite; ''// Composite (concrete)''
+	class Test''''''Case;  ''// Leaf (abstract)''
+ }//utx::
+
+Pretty basic CompositePattern stuff. If it wasn't so basic to represent, we'd know that we had selected the wrong pattern. 
+
+If we further explore this idea of implementing the UTX TestSuite using a CompositePattern we can't help but question why the current CppUnit design didn't provide a Test Visitor to generalize TestSuite traversals. Currently, there are two places where traversals happen -- (1) in the ''countTestCases'' member and (2) in the ''run'' member. By removing these members and replacing them with visitors, we can raise the cohesion of the system while loosening its coupling. This opens the system up to extension since anyone can create a new visitor without disturbing the existing classes in the framework. 
+
+''Just to drill this point down to those new to decoupling, it is only because we have decoupled iterating over tests from the test classes that we can create new behaviors without modifying those classes. Since there is no idiom for traversal in CppUnit, we would continually have to add new members to the abstract base-class Test, and redefine in TestCase and TestSuite accordingly. Each new behavior would break the existing framework.''
+
+By using the VisitorPattern, we are in effect saying that ''any UnitTest behaviors that need to traverse the TestSuite Composite'' will be defined in the members of a visitor class. Besides the Test''''''Counter visitor and the Test''''''Runner visitor mention above, new visitors may include the following:
+	* Test''''''Lister -- lists all TestCase''''''s and their TestSuite''''''s, maybe as a tree like the tree command of some file-systems.
+	* Test''''''Filter -- only traverse tests that match a filter condition.
+	* Test''''''Qualifier -- build the qualified name for each TestCase
+	* Test''''''Finder -- hierarchically search for any Test component starting at any TestSuite 
+
+Of course, many other behaviors could also be implemented such as sorting, pruning, finding where to add a new Test component (i.e. TestCase or TestSuite), and so on. Once we have decoupled traversal in this way, anything can be done without requiring changes to our basic CompositePattern participants.
+
+'''Some Brief Notes on Test''''''Runner and Test''''''Result'''
+
+It always drove me crazy that the Test''''''Result class actually defined the code that would ''run'' each TestCase''''''s while Test''''''Runner was simply a ''listener'' of Test''''''Result. I suppose that a little separation would have improved the design here. While refactoring UTX, we removed the ''running behavior'' and ''running state'' (ala ''shouldStop'') code from Test''''''Result altogether making Test''''''Result a simple Data Model. The ''running behavior'' was placed into our Test''''''Runner while the ''running state'' was placed into a class named Test''''''Context. We then made Test''''''Context the single point of access for the running state and the single Test''''''Result instance. Rather than make Test''''''Runner into a View, we created a simple View class that interacted with the Test''''''Result model. Other model listeners might serialize the test run results into an XML or CSV file.  This made the framework roles very well defined and made UTX much easier to extend and maintain. 
+
+	* Test''''''Runner -- a Test''''''Visitor responsible for running specified TestCase''''''s and posting their results to Test''''''Runner (do you mean Test''''''Result here?) while watching the state of Test''''''Context ''shouldStop''.
+	* Test''''''Record -- the result of a single TestCase run. Fields included the TestCase name, the start and stop time, and the ''run'' result.
+	* Test''''''Result -- a simple data-model that is a collection of Test''''''Record instances.
+	* Test''''''Context -- provided a single point of access for all shared state such as ''shouldStop'', ''traceStream'', the ''Test''''''Result'' instance, and even a ''specified tests'' array set on the command line and accessed by Test''''''Runner to know which tests to run (usually all).
+
+Unlike JavaUnit, CppUnit, and SmalltalkUnit, the UTX ''run'' signature for a TestMethod contains a single argument. This argument is an immutable (constant) reference to the system-wide ''Test''''''Context'' (created and stored as a private member of the TestDriver). A TestMethod could use the context to access a trace-stream, check ''shouldStop'' during long tests, or access various state flags such as ''isVerbose'', and so on.
+
+
+'''Why introducing the Test''''''Context class is such a cool thing...'''
+
+Here's an interesting story about the Test''''''Context singleton. Because we were developing a very large distributed system, it became clear that some tests needed their own ''command-line arguments''. For example, the TestFixture for our Log''''''Server should be able to use different ports and addresses for its TestMethods. Instead of having one HUGE command line for the entire Test Application, we decided, instead, to use something similar to a Java properties file (of course, in Java, we could have simply used system properties and left it at that). The file would have a layout something like the following:
+
+ ;
+ ; test.def -- arguments for various suites or cases
+ ; 
+ root -verbose
+ root.debug.Log''''''Server -port 666 -host "ten.ada.net"
+ root.io.File''''''Stream.testRead -in testing.dat
+ ; eof: test.def
+
+This worked hierarchically. For example, the first line adds the "-verbose" option to the Test''''''Context for all tests while the second line is only used for each TestCase in the Log''''''Server TestSuite. The last line is an example of specifying arguments for a single TestCase.
+
+In CppUnit, this would have been very difficult to do without performing some surgery or without introducing new classes into the mix, since CppUnit has no place for shared data. In UTX, we only needed to create the class that parses the "test.def" file (really just a map whose keys were the test specifier and whose values were argv-like vectors created from the arguments). Once this class was created, the map was encapsulated into the Test''''''Context class. Since the Test''''''Context already tracks the currently running test, we only need to add a simple accessor that would return an "argv" like vector for the currently executing TestCase. For example:
+
+ void File''''''Stream''''''Test::testRead( const Test''''''Context& ctx )
+ {
+	TestContext::ArgVector argv = ctx.getArgs():
+	.
+	.
+	.
+ }
+
+In keeping with the metaphor of 'argv', the argument at index zero, would return the fully qualified TestCase currently running.
+
+
+'''Back to the CompositePattern and VisitorPattern'''
+
+One of the drawbacks to the CompositePattern is that you often have to add interface members to the '''Component''' class that (while useful to the '''Composite''') may never be used by the '''Leaf''' instances. For example, consider the pure virtual ''countTestCases'' member of the '''component''' class in CppUnit. This is used to calculate the number of TestCase''''''s ''contained'' (i.e. ''owned'') by a TestSuite (or all cases if called from the ''root'' TestSuite). Since TestSuite is a composite, the designer ended up having to implement the ''countTestCases'' member in the '''leaf''' participant (class TestCase) as well as the '''composite''' participant (class Test''''''Case). Now, here comes the smell. Because the '''leaf''' doesn't really ''own'' any other leaves, this member is simply hard coded to return one. For TestSuite the ''countTestCases'' means ''return all TestCase''''''s we contain'' while for the TestCase the member means ''how many are we''. This is only designed this way to make the implementation of ''countTestCases'' in the TestSuite class work recursively. Not because the ''countTestCases'' member adds any value to the ''leaf'' class TestCase. No one would ever use the public ''countTestCases'' member of TestCase on its own. ''Yow!'' Another cohesion problem.
+
+
+'''Redesigning ''countTestCases'' as a Visitor'''
+
+As stated early, the VisitorPattern allows us to eliminate implementation-helper methods like ''countTestCases'' that must be publicly declared virtual in the '''component''', defined in both the '''composite''' and the '''leaf''', but only have real meaning for the ''composite'' interface. Using the VisitorPattern for tree traversal alleviates the need for a ''countTestCases'' member-function ''at all''!! The '''component''' (class ''Test'') doesn't need to declare ''any'' other virtual methods other than those that fulfill the VisitorPattern contract -- the ''accept'' member. In UTX we count TestCase''''''s the same way we do anything else that traverses the ''composite'' -- we simply create a counting visitor. A counting visitor is just a Test''''''Visitor that defines a count instance variable and defines the ''visit( TestCase* )'' member to increment a counter:
+
+ class Counting''''''Visitor : public Test''''''Visitor
+ {
+	size_t m_nCases;
+
+	public:
+
+	void Counting''''''Visitor::visit( TestCase* ) {
+	  '''m_nCases++;'''
+	}
+
+	size_t count() { return m_nCases; }
+ };
+
+I mean, come on, what seems easier, the way ''countTestCases'' is implemented in CppUnit or this ''Counting''''''Visitor'' class? If you really '''must''' have a ''countTestCases'' member, you can simply implement it in the '''composite''' class like so:
+
+ size_t TestSuite::countTestCases() const
+ {
+	Counting''''''Visitor counter;
+	accept( counter );
+	return counter.count();
+ }
+
+
+----
+'''Defining the UTX Component Class'''
+
+Okay, let's get back to our framework and define the CompositePattern participants we declared earlier. Unlike CppUnit or JavaUnit, we are going to add the ''name'' behavior and interface to the ''Test'' class. This is because, in UTX, ''name'' works the same for a TestCase as it does for a TestSuite. As a result, there is no reason for both to define the member as in CppUnit. We simply added an immutable ''string'' member variable and a non-virtual selector that returns this immutable string (that is initialized during construction). 
+
+Here is the entire '''component''' class:
+
+ class utx::Test
+ {
+	public:
+
+	typedef TestVisitor Visitor;	''// Test is redundant''
+
+	Test( const string& sName ) :	''// Only set during construction''
+	  m_sName( sName )
+	{
+	}
+
+	const string& name() const	''// Name Selector''
+	{
+	  return m_sName;
+	}
+
+
+	virtual bool '''accept'''( Visitor& ) = 0;
+
+
+	private:
+
+	string m_sName;
+ };
+
+So far, so good. The '''component''' is very small and simple and our only virtual member is ''accept''. But wait! There's something strange and unfamiliar about this ''accept'' member...what is this boolean result?  Well, this is the magic that allows us to short-circuit the traversal of a specific TestSuite or a test run (such as in response to ''Test''''''Context::shouldStop''). But this boolean result for ''accept'' ain't the half of it. 
+
+'''Implementing the Composite''''''Visitor''''''Pattern'''
+
+UTX uses what I am current calling the CompositeVisitorPattern (or Hierarchical''''''Visitor, or...err...maybe Conditional''''''Composite''''''Visitor?). In addition to the typical ''Visitor::visit'' member, the CompositeVisitorPattern used by UTX has a ''visitEnter( node )'' member ''and'' a ''visitLeave( node )'' member.
+
+ ''/**''
+  ''* Visits while maintaining the current hierarchical''
+  ''* context. Also allows the traversal to be short-circuited''
+  ''* at any point during the visitation.''
+  ''*/''
+ class utx::TestVisitor
+ {
+	public:
+
+	''//..Should we enter this node and its children?''
+	virtual bool '''visitEnter'''( TestSuite* )
+	{
+	  return true;
+	}
+
+	''//..Returns true to continue to next Leaf''
+	virtual bool '''visit'''( TestCase* ) = 0;
+
+	''//..Returns true to continue to next Composite''
+	virtual bool '''visitLeave'''( TestSuite* )
+	{
+	  return true;
+	}
+
+
+	protected:
+
+	''TestVisitor() {}''
+	''TestVisitor( const TestVisitor& ) {}''
+ };
+
+The ''visitEnter'' and ''visitLeave'' members work as a sort of ''push composite'' and ''pop composite'' in a way that allows us to go in and out of tree branches. There are a number of WayCool things one can do with this sort of visitor. Some of these exploit its ability to maintain a ''composite stack'', other its conditional abilities, while still other exploit both. Moreover, if our subclass only defines the ''visit'' member and always returns ''true'', our visitor will act just like a traditional visitor. It has always smelled bad to me that for something hierarchical (like a file-system) that I would have to implement some traversals using recursive member-functions while others would be implemented using a Visitor. For example, how do you print a tree listing like the following with a traditional visitor?
+
+	* root
+		* composite-a
+			* leaf-a1
+			* leaf-a2
+		* composite-b
+			* leaf-b1
+ 
+You either would have to implement the tree listing with member functions, or a tree enumerator that didn't operate as a traditional visitor. With a traditional visitor, how would you know when to add a tabstop or remove a tabstop? Using the CompositeVisitorPattern, the previous formatted listing becomes easy to implement -- ''visitEnter'' adds tab-stops, ''visitLeave'' removes them, and ''visit'' simply prints the '''leaf''' name at the current tab-stop. '''Wa-hooty!!!'''
+
+If you remember our UTX SystemMetaphor, you will see how important this is to UTX since TestCase names are qualified with their location in the overall TestSuite. The CompositeVisitorPattern solves this problem very elegantly. Consider the following which extends the basic "Test''''''Visitor" we just presented to build-up TestSuite ''paths'' that can be used to qualify a TestCase in a ''visit'' implementation:
+
+ ''/**''
+ ''* Maintains a string that when accessed in the "visit"''
+ ''* member, returns to current qualified TestSuite path.''
+ ''*/''
+ class utx::TestQualifier : public utx::TestVisitor
+ {
+	enum { SEPCHAR = '.'; }
+
+	public:
+
+	''// Entering a composite: Push its name on the Path''
+	virtual bool visitEnter( TestSuite* pSuite )
+	{
+	  m_path.append( pSuite->name() );
+	  m_path += SEPCHAR;  ''// NOTE: Don't forget the separator!''
+	  return true;
+	}
+
+	''// Leaving a composite: Pop its name from the Path''
+	virtual bool visitLeave( TestSuite* pSuite )
+	{
+	  '''assert'''( m_path.endsWith( pSuite->name() + SEPCHAR ) );
+
+	  m_path.resize( m_path.size() - pSuite->name().size() );
+	  return true;
+	}
+
+
+	''// Provide read-only access to the current qualifier''
+	const string& currentPath() const
+	{
+	  return m_path;
+	}
+
+
+	private:
+
+	string m_path;	''// Current qualifier''
+ };
+
+That's it! Now, this visitor class can be used to implement behavior that requires qualified names! For example, we could extend ''Test''''''Qualifier'' to print the fully qualified name of every TestCase:
+
+ class Qualified''''''Test''''''Printer : public TestQualifier
+ {
+	public:
+
+	virtual bool visit( TestCase* pTest )
+	{
+	  std::cout << currentPath() + pTest->name() << std::endl;
+	}
+ }
+
+This can be used like so:
+
+ Qualfied''''''Test''''''Printer printer;
+ root_suite.accept( printer );
+
+As I mentioned earlier, this sort of thing is near impossible with a traditional visitor since we cannot know when to "pop" a name off of the qualified path string -- we can only keep "pushing" onto it. 
+
+What is even more cool about this sort of visitor is that we can use "visitEnter" to conditionally control whether a '''composite''' should visit its '''components''' or move on to the next peer '''composite'''. This allows us to (a) optimize searches by excluding entire subtrees, (b) respond to "shouldStop", (c) filter TestCase traversals, and so on. Take (a) for example. We can build a visitor that will only search through nodes whose qualified name matches a substring of the search pattern.  We'll get back to this a little later, but for now let's continuing fleshing out the CompositePattern for UTX.
+
+----
+'''Defining the UTX Composite Class'''
+
+Let's take a look at our '''composite''' participant, the concrete class TestSuite. This class will only require one new member-function and a single new data-member. The data-member is a vector of pointers ''Test'' components or better yet, a vector of ''counted_ptr<Test>'' instances [See: CppCountedPointerImplementation]. All in all, the ''TestSuite'' class is almost as simple as the ''Test'' class was:
+
+ class utx::TestSuite : public utx::Test
+ {
+	typedef std::vector< counted_ptr<Test> > Tests;
+
+	public:
+
+	TestSuite( const string& name ) :
+	  Test( name )
+	{
+	}
+
+	''// Add a component to the TestSuite composite''
+	void add( Test* pTest )
+	{
+	  m_tests.push_back( pTests );	''// constructs a counted_ptr''
+	}
+
+
+	''// Implement the Test::accept member''
+	virtual bool accept( Test::Visitor& v )
+	{
+	  if ( v.visitEnter( this ) )
+	  {
+		Tests::iterator end = m_tests.end();
+		for ( Tests::iterator at = m_tests.begin(); at != end; ++at )
+		if ( !(*at)->accept( v ) )
+			break;
+	  }
+
+	  return v.visitLeave( this );	''// continue with siblings?''
+	}
+
+	private:
+
+	Tests m_tests;  ''// Collection of Suites and/or Cases''
+ };
+
+The only part that is a little complex is the implementation of "Test::accept". In it, we first call "visitEnter" to determine whether we should enter this node and visit its children (i.e. components that may be leaves or other composites). If ''visitEnter'' returns true, we invoke ''accept'' on each child some of which may be other composites (i.e. nodes). The result of calling accept always indicates whether we should continue to visit siblings at this tree depth. You can think of the result of accept as a '''continue at this level''' flag. If "accept" returns false, we stop visiting components at this level. After visiting all the children of this node, we invoke ''visitLeave'' and use its result as the nodes return value. As always, if ''accept'' returns false, we do not move on to the next sibling of the current composite, but attempt to move to the parent level.
+
+----
+'''Defining the UTX Leaf Class'''
+
+In UTX, the basic '''leaf''' TestCase is an abstract class. The concrete TestCase will actually be a template that implements the CommandPattern. It will be this class that does the real work of a TestCase. However, before we can get into the CommandPattern we need to define our CompositePattern''''''s abstract '''leaf''', the abstract ''class TestCase''.
+
+ class utx::TestCase : public utx::Test
+ {
+	public:
+
+	typedef TestContext Context; ''// Test in TestContext is redundant''
+
+	TestCase( const string& sName ) :
+	  Test( sName )
+	{
+	}
+
+	virtual bool accept( Visitor& v )
+	{
+	  return v.visit( this );
+	}
+
+	virtual void run( const Context& ) = 0;  ''// Subclass Responsibility''
+ };
+
+Since "class TestCase" is a leaf (as oppose to a composite like TestSuite), its "accept" member merely needs to "visit" itself. The only new behavior introduced by the TestCase class is the pure virtual method "TestCase::run". This is where the action is going to occur. Hopefully you will remember our discussion about decoupling and cohesion that lead to the definition of Test''''''Context. This is a singleton instance owned by the Test''''''Driver that provides a single interface to the shared data context. You can refer back to '''Why Introducing the Test''''''Context class is such a cool thing...''' for a reminder. Anyway, each TestMethod is required to include a reference to the Test''''''Context in its signature.
+
+----
+'''Defining the Concrete TestCase Template'''
+
+Until now, everything has been very straightforward and easy, almost writing itself. Unfortunately, deciding on an implementation approach for Test Cases and Test Fixtures is a little more difficult. This is where the lack of meta-classes (or even Java-like reflection) really hurts and leads us into the usual assortment of CeePlusPlus kludges. Fortunately, it occurred to me (after checking-out Martijn's very cool alternative to CppUnit) that solving this problem provides us with the opportunity to strip away some of the CppUnit and JavaUnit complexity.
+
+'''Reducing CppUnit Complexity'''
+
+The first realization is that unlike JavaUnit, SmalltalkUnit, or CppUnit the TestFixture classes that UTX users will be creating '''will not inherit from TestCase'''. This will allow users to create and maintain their own inheritance hierarchies in a way that make sense from the perspective of testing their application domain instead of that of building the TestingFramework. We eliminate the need to inherit from TestCase by using the GangOfFour "CommandPattern". Our implementation of this pattern will use a template argument to compile the TestFixture with a pointer to one of its TestMethod''''''s (i.e. member-functions) into a TestCase. Actually, most of the CppUnit implementations out there use some variant on the CommandPattern in order to implement the TestCase class. Unfortunately, most of them then require your TestFixture to inherit from this class --- a dubious requirement that smells very ''very'' bad. 
+
+If you have ever used one of the STL function-object classes like mem_fun_t or mem_fun_ref_t, our TestCase implementation will not be difficult for you to grasp. The TestCase_<T> class is a template with the signature TestCase_<TFixture>. Each instance stores a TestMethod pointer and then constructs an instance of "TFixture" on the stack during a "TestCase::run" invocation. As a result, a TestFixture with one hundred TestMethod''''''s, will be constructed and destructed one hundred times. This, as was perceptively pointed out by the SmalltalkUnit documentation, is required to prevent side effects from occurring between TestCase''''''s. 
+
+''Each TestMethod must be able to count on a unique TestFixture instance''. Herein lies our second opportunity to reduce overall complexity. Since in C++ a constructor and destructor are guaranteed to be called around each test method invocation, there is no reason to introduce the "setUp/tearDown" pair of methods required by CppUnit, JavaUnit, and SmalltalkUnit. These methods smell really rancid in C++ because ''we are already doing the same thing as "setUp/tearDown" each time we construct and destroy the TestFixture''!!! 
+
+If this all seems a bit complex, blame my technical prose because the basic idea is pretty straightforward and can be done with very little code.
+
+----
+
+'''Defining the UTX CommandPattern'''
+
+Now that we have the abstract '''leaf''' class and have gone over our strategy a bit, let's go ahead and define the CommandPattern in the concrete TestCase_<T> template class:
+
+ template< class Fixture''''''T >
+ class utx::Test''''''Case_ : public utx::TestCase
+ {
+	typedef void (Fixture''''''T::*Test''''''Method''''''Ptr)( Context& );
+
+	public:
+
+	''// Constructor adds the Test''''''Method pointer''
+	TestCase_( const string& sName, Test''''''Method''''''Ptr pTestMethod ) :
+	  m_pTestMethod( pTestMethod ),
+	  TestCase( sName )
+	{
+	}
+
+	''// Create a TestFixture instance and invoke TestMethod''
+	virtual void run( const Context& ctx )
+	{
+	  ( FixtureT().*m_pTestMethod )( ctx );
+	}
+
+	private:
+
+	Test''''''Method''''''Ptr m_pTestMethod;
+ };
+
+
+'''Advantages of the TestCase CommandPattern...'''
+
+Because we are again going with recognized patterns instead of rolling our own tightly-coupled solutions, we can actually create other "CommandPattern" classes for UTX. For example, at our shop, tests had previously been written as free-functions that returned void and took no arguments. To keep from having to rewrite a great many tests, I was able to create a simple adaptor that allowed the legacy tests to be added to UTX TestSuite''''''s. This adapter is a peer to the TestCase_<Fixture> template. Notice how similar their implementation is, almost like they were both cut from the same pattern ;-). The main difference is that utx::TestCaseFunction doesn't have to be a template since ''free-functions'' do not have a TestFixture:
+
+ class utx:TestCaseFunction : public utx::TestCase
+ {
+	public:
+
+	TestCaseFunction( const string& s, void (*pTestFunc)() ) :
+	  m_pTestFunc( pTestFunc ),
+	  TestCase( s )
+	{
+	}
+
+	virtual void run( Context& ) ''// NOTE: ctx can't be used!''
+	{
+	  (*m_pTestFunc)();
+	}
+
+	private:
+
+	void (*m_pTestFunc)();
+ };
+
+----
+'''Wrapping Up UTX'''
+
+As we've seen, a TestCase is the named association of a TestFixture instance with that TestFixture''''''s TestMethod. Start introducing the template arguments, class names, namespaces, all those scope-resolution operators and composing TestCase''''''s can start getting more complicated than their actual implementation. Take the following code (based on our original Stack''''''Test example) that adds the "testPush" and "testPop" TestCase''''''s to a "Stack''''''Test" TestSuite:
+
+ utx::TestSuite* Stack''''''TestSuite()
+ {
+	static utx::TestSuite suite( "Stack''''''Test" );
+
+	suite.add(
+	new utx::TestCase_< Stack''''''Test >(
+	  "testPush",
+	  &Stack''''''Test::testPush ) );
+
+	suite.add(
+	new utx::TestCase_< Stack''''''Test >(
+	  "testPop",
+	  &Stack''''''Test::testPop ) );
+
+	return &suite;
+ }
+
+Most of this is redundant information. So, like the many other TestingFramework''''''s, we will define some Macros of our own to simplify things.
+
+ UTX_BeginTestSuite( "Stack''''''Test" )
+	UTX_AddTestCase( Stack''''''Test, testPush )
+	UTX_AddTestCase( Stack''''''Test, testPop )
+ UTX_EndTestSuite()
+
+The following provides you with the basic implementation for these macros.
+
+ ''// Create the TestSuite singleton function''
+
+ #define '''UTX_BeginTestSuite'''( tsuite ) '''\'''
+	utx::TestSuite* tsuite##_TestSuite() '''\'''
+	{ '''\'''
+	 static counted_ptr< utx::TestSuite > s_suite = 0; '''\'''
+	 if ( s_suite == 0 ) '''\'''
+	 { '''\'''
+		s_suite = new utx::TestSuite( #tsuite );
+
+
+ ''// Add to the suite object''
+
+ #define '''UTX_AddTestCase'''( tfixture, tmethod ) '''\'''
+	s_suite->Add( '''\'''
+	 new utx::TestCase_<tfixture>( '''\'''
+		#tmethod, tfixture::tmethod ) );
+
+
+ ''// Terminate the TestSuite singleton function''
+
+ #define '''UTX_EndTestSuite'''( tsuite ) '''\'''
+	 } '''\'''
+	 return s_suite.get(); '''\'''
+	}
+
+We use a function instead of a static member for the TestSuite SingletonPattern in order to cut-down on interdependencies. C++ is nuts when it comes to dependencies so UnitTest''''''ing a huge project can really become a drag if you don't isolate the various pieces. You find you end up having to recompile everything each time you add a fixture, or add a TestCase to an existing TestSuite. Furthermore, we use a static TestSuite ''pointer'' just so that we have an if-statement to hide our one-time suite initialization in. You can also create a macro for adding TestSuite''''''s to other TestSuite objects like so:
+
+ ''// Define a TestSuite accessor''
+ #define '''UTX_TestSuite'''( tsuite ) '''\'''
+	tsuite##_TestSuite()
+
+ ''// Add a suite to a suite
+ #define '''UTX_AddTestSuite'''( name ) '''\'''
+	s_suite->add( UTX_TestSuite( name ) );
+
+
+This allows you to do the following:
+
+ '''UTX_BeginTestSuite'''( collection )  ''// Suite for collection classes''
+	'''UTX_AddTestSuite'''( Stack''''''Test )
+
+ '''UTX_EndTestSuite'''()
+
+Now the Stack''''''Test suite we just created is contained in another suite named "collection". There are better ways to do this, but this works, its quick, and it cuts down on header file interdependencies.
+
+----
+'''Brief Reflections on Test''''''Runner'''
+
+I would like to close by showing just a little of how "Test''''''Runner" can be implemented as a visitor. "Test''''''Runner" will have a string collection that will be filled with tests that should run. In this example, we allow tests to be added a string at a time by calling "Test''''''Runner::specify". Normally, you would do this from the command line in the function "main". I'm going to derive "Test''''''Runner" from our earlier "Test''''''Qualifier" example since tests will be specified as fully qualified names. I'm leaving a few bits out that should be self-explanatory such as the Test''''''Report, which is a collection of Test''''''Record's. Test''''''Record is a simple class that stores the test-case name, its start, stop, and duration along with the test-result. If the test failed, Test''''''Result additionally records the failure file, line, and expression origin.
+
+ class utx::TestRunner : public utx::TestQualifier
+ {
+	public:
+
+	Test''''''Runner( Test::Context& ctx ) :
+	  m_ctx( ctx )
+	{
+	}
+
+	void specify( const string& sQualifiedName )
+	{
+	  m_tests.push_back( sQualifiedName );
+	}
+
+	bool visitEnter( TestSuite* pSuite )
+	{
+	  Test''''''Qualifier::visitEnter( pSuite );
+	  return !m_ctx.ShouldStop();
+	}
+
+	bool visit( TestCase* pTest )
+	{
+	  if ( m_tests.include( currentPath() + pTest->name() ) )
+		perform( pTest );
+
+	  return m_ctx.shouldStop();
+	}
+
+	bool visitLeave( TestSuite* pSuite )
+	{
+	  Test''''''Qualifier::visitLeave( pSuite );
+	  return !m_ctx.shouldStop();
+	}
+
+
+	protected:
+
+	void perform( TestCase* pTest )
+	{
+	  Test''''''Record& rec =
+		m_db.createRecord( currentPath() + pTest->name() );
+
+	  try
+	  {
+		record.start();
+		pTest->run( m_ctx );
+		record.stop();
+	  }
+	  catch ( const XTestFailure& e )
+	  {
+		record.log( e );
+	  }
+	  catch ( const XTestError& e )
+	  {
+		record.log( e );
+	  }
+	  catch ( const std::exception& e )
+	  {
+		record.log( e );
+	  }
+	  catch ( ... )
+	  {
+		record.log( "Unknown" );
+	  }
+
+	  if ( m_ctx.isVerbose() )
+		m_ctx.traceOut() << record << std::endl;
+	}
+
+
+	private:
+
+	Test''''''Report		m_db;	// Results
+	Test''''''Context&	 m_ctx;	// The Global Testing Context
+	std::vector_<string> m_tests;  // Specified Tests
+ };
+
+There are all kinds of visitors you can write with a Composite''''''Visitor like the one I introduced here. Because of "visitEnter" and "visitLeave", it becomes very easy to do things like maintain stacks and indent levels. We can optimize this class quite a bit by returning false from "Test''''''Runner::visitEnter" when "pSuite->name()" is not a part of any name in the "m_tests". We can also add the ability to specify wildcards or entire suites. In the following snippet, specifying "root" will cause all tests contained in the root TestSuite "root" to run while specifying "root.Stack''''''Test" will run all cases in the suite "Stack''''''Test":
+
+ class utx::TestRunner : public utx::TestQualifier
+ {
+	private:
+
+	TestSuite* m_pRunAll;
+
+
+	public:
+	.
+	.
+	.
+
+	bool visitEnter( TestSuite* pSuite )
+	{
+	  Test''''''Qualifier::visitEnter( pSuite );
+	  if ( !m_pRunAll && m_tests.hasExactMatch( currentPath() ) )
+		m_pRunall = pSuite;
+
+	  return m_ctx.shouldStop();
+	}
+
+	bool visit( TestCase* pTest )
+	{
+	  if ( m_pRunAll || m_tests.includes( pTest->name() ) )
+		perform( pTest );
+
+	  return m_ctx.shouldStop();
+	}
+
+	bool visitLeave( TestSuite* pSuite )
+	{
+	  Test''''''Qualifier::visitLeave( pSuite );
+
+	  if ( m_pRunAll == pSuite )
+		m_pRunAll = 0;
+
+	  return m_ctx.shouldStop();
+	}
+	.
+	.
+	.
+ };
+
+You'll also notice that unlike CppUnit I have decided to give each TestCase its own record object instead of sharing a single object between the cases of a suite. This gives us a little more control over stuff like logging and calculating the duration of each test. Furthermore, this allows me to output the TestReport object CSV and input that into a database for regression analysis. 
+
+Yeesh, I'm trying to go but I cannot resist the urge to add a Visitor for "pretty-printing".
+
+ class utx::TestLister : public utx::TestQualifier
+ {
+	public:
+
+	virtual bool visitEnter( TestSuite* pSuite )
+	{
+	  Test''''''Qualifier::visitEnter( pSuite );
+
+	  insertLine( pSuite->name() );
+	  insertLine( "(" );
+	  indent(1);
+
+	  return true;
+	}
+
+	virtual bool visitLeave( TestSuite* pTest )
+	{
+	  Test''''''Qualifier::visitLeave( pSuite );
+
+	  indent(-1);
+	  insertLine( ")" );
+
+	  return true;
+	}
+
+	virtual bool visit( TestCase* pTest )
+	{
+	  insertLine( pTest->name() );
+	  return m_sPath;
+	}
+
+	protected:
+
+	void insertLine( const string& s )
+	{
+	  size_t N = m_nLevel * TABSIZE;
+	  while ( N-- )
+		std::cout.put( ' ' );
+
+	  std::cout << s << std::endl;
+	}
+
+	void indent( int N )
+	{
+	  m_nLevel += N;
+	}
+
+
+	private:
+
+	int m_nLevel;
+	enum { TABSIZE = 3 };
+ };
+
+Okay, okay, enough fun and my fingers hurt. This is way too much to type "stream of consciousness style" but, hopefully, this should be enough information for most of you to complete this adaptation of SUnit. While this is a lot of text, very little of it is actually code. In fact, this is a very small library. Because user-defined tests do not need to inherit from any particular class, the only dependency clients have is on TestContext, which is a reference, and the macro definition language. I hope these ideas are seen as adding to CppUnit rather than taking away. If I get some time to create an implementation that isn't connected to our internal classes and package strategy, I will post it. If anyone incorporates these ideas into CppUnit or creates a new UTX derivative, please keep me posted. Currently I have UTX running on Windows NT, Linux/Redhat, AIX, HPUX, IRIX, Solaris/Intel, and Solaris/SPARC. If there is enough interest, I will go over the application class design that allows you to create multiple Test Stations (see TestDriver). 
+
+''--RobertDiFalco''
+
+'''See also:''' CppUnit, EnhancingCppUnit, HierarchicalVisitorPattern
+----
+CategoryCpp
+
+----
+'''Discussion:'''
+
+See HierarchicalVisitorDiscussion for comments on the VisitorPattern variation used here.
+
+''Robert, I for one have been following this discussion very closely. I'm working on DotNetUnit and so far have been following the CppUnit design because I know that's what people are familiar with. However, like you, I've always thought there was a lot of room for improvement within the TestingFramework's architecture. Anyway, the more details you give, the better. I would love to port this architecture for the MicrosoftDotNet platform.'' --DrewMarsh
+
+I also found this page to be fascinating. I've had reservations about using CppUnit for many of the same reasons that you cite here. I think that what you've presented here is quite elegant and extensible, and fits C++ much better.
+
+I have set up a unit test framework based on RobertDiFalco's design, which I'm using at home (on Linux) and am about to introduce at work (on Win32). The biggest difference between Robert's design sketch and my implementation is that I haven't seen a need to introduce a TestResult object as yet -- my TestRunner just reports pass/fail information to the log stream. Thanks for providing this design sketch, Robert. 
+
+You can get a copy of my implementation here: http://www.spookydistance.com/uts.zip
+ -- DanMuller
+
+
+Hi Robert,
+
+Thanks for designing (and publishing) CppUtx -- it's an excellent design.  I've just finished implementing the full set of functionality you described on Wiki. I thought you might be interested in a few points I learned on the way.  (Unfortunately I am not allowed to distribute the code.)
+
+- The big new feature I added was the optional systematic execution of all exception pathways in each test, based on Ben Stanley's excellent article in the new (April 2001) C++ User's Journal.  Ben also provided a simple diagnostic memory manager to enable the forced failure of operator new(), and to detect memory leaks, which saved me from writing my own (which was my next job).  You can find the article and code here: http://www.cuj.com/documents/s=8027/cuj0104stanley/
+
+Adding/adapting this small amount of (quite tricky) code adds a qualitative difference to the test system; it amazing to watch it execute one test 40+ times, and find occasional resource leaks.  I got it working last night, and it immediately found a lot of hidden problems with our existing tests/code.  Until now we have been writing manual tests to try to execute error paths, but having it automated is so much easier, and _massively_ more thorough.  In fact it is so thorough it seems to be finding compiler bugs in exception code - which Ben noticed too.
+
+I found it useful to allow test authors to specify whether a testcase should have its exceptions exercised, when they add it to a test suite. (A flag is stored in the test command object for this.)  It is also useful to provide for the enabling/disabling of this via the test-arguments feature (described below), which allows users to apply the technique experimentally to existing tests without rebuilding. 
+ 
+Also, it is important to allow users to force the execution of any one specific exception path, as they need to be able to go straight to it for debugging, without having to step through 30 "pass" paths first.  Note: to keep the TestReport manageable, I generate one TestRecord for each failed path, or one record if ALL paths pass. i.e. I don't generate a pass for every successful execution path - there are a lot of them.  If the 'normal' path (no exceptions forced) passes but one of the exception paths fails then I record a "weak pass", because that is very useful information.  Also, because of the compiler bugs I mentioned above, I may need to add an option to specify/avoid any "bugged exception paths".
+
+- The most convenient, powerful tool I've found for writing exception-safe, exception-correct code is Andrei Alexandrescu and Petru Marginean's ScopeGuard library.  This also helps massively to write the tests themselves in an exception-correct (no resource leaks) manner, which is vital for using the "run all exception paths" system described above.  The article and code are here: http://www.cuj.com/experts/1812/alexandr.htm  (Note: I found a minor bug in the Janitor variant, which Andrei and Petru confirmed -- it needs try/catch around its own use of new, and to call the user-supplied function it fails (and then re-throw to show the failure).  The systematic exception-testing system just verified this bug, and also verified my fix!)
+
+- I implemented the hierarchical argument-passing scheme you suggested -- it's great. However, the ability to add arguments 'higher up' in the hierarchy makes the position (number) of any given argument on each test's "command line" quite unstable, and this can easily break tests.  I fixed this by switching to keyword "name=value" arguments. These are easily implemented using a std::map<>, and are accessed via TestContext::GetCurrTestArgs().  (The TestRunnerVisitor must tell the TestContext which test is currently being executed.)
+
+- I added a set of UTX_ExpectEquals() macros and templates.  I guess you left these out because they are pretty obvious. However, I did find Yonat Sharon's stringize() template to be very useful in generating meaningful messages: http://ootips.org/yonat/4dev/stringizer.h.  
+  Here is a snippet:
+
+	#define UTX_ExpectEquals(expr, expected)	utx::internal_ExpectEquals(expr, expected, #expr, __FILE__, __LINE__)
+
+	namespace utx
+	{
+		template<typename T1, typename T2>
+		void internal_ExpectEquals(T1 value, T2 expected, const char * szExpr, const char * szFilename, unsigned uLine )
+		{
+			if ( value != expected )	//lint !e731 testing "bool != bool"
+			{
+				throw utx::C_UTX_TestFailedException( "Expected '" + stringize(expected) + "' but got '" + stringize(value) + "' from '" + szExpr + "' at line " + stringize(uLine) + ", file: " + szFilename );
+			}
+	}
+
+- I had some problems with various counted_ptr<> implementations with VC++ 6.0 (eventually AlanGriffiths excellent library worked a treat: http://www.octopull.demon.co.uk/arglib/)  However, Andrei Alexandrescu's Loki library looks even better (but I haven't tried it yet) : http://cseng.aw.com/book/0,,0201704315,00.html
+
+- I just checked the Wiki page and found your new page on TestDrivers.  I shared some of these concerns.  I've already refactored TestRunner, TestReport and TestContext considerably, but I am still far from sure that TestContext should provide the shouldStop() and LogOStreamRef() interfaces.  However, it does work fine as it is.
+
+Anyway, thanks _very_ much for a great design -- it is so powerful and convenient; my team love it.  -- Chris Newcombe, chrisn@valvesoftware.com
+
+----
+
+I just checked this page for the first time in a while, and I notice that the design has changed a bit since I came up with my utx-inspired implementation (http://www.spookydistance.com/uts.zip). The main change seems to be the addition of a test fixture. Personally, I don't see the need for it, and its omission in the earlier version of the design (at least as I remember it) was one of the things that appealed to me.
+
+Essentially, the test fixture seems like nothing but a shared type definition, together with management of construction and destruction times by the framework. But the methods for sharing type definitions and controlling object lifetimes in C++ are trivial. For instance, we have a group of unit tests at work that each requires two databases to be opened and accessible. We simply wrap these database objects up in a struct which opens the databases in its constructor, and closes them in its destructor. Each unit test that needs this kind of context creates a local variable of that struct type -- initialization and shutdown of this context is thus taken care of using a very common and well-understood C++ idiom -- as natural as breathing. 
+
+In short, the inclusion of test fixtures seems quite unnecessary to me.
+
+ -- DanMuller
+
+----
+
+I have an idea to design TestSuite''''''s (but I don't know if it can run so fast). Here is an example:
+
+  utx::RootTestSuite& suite = driver.rootSuite();
+  suite.begin("hop");
+	suite.add("TestBip");
+	suite.add("TestBof");
+  suite.end();
+  suite.begin("withfailure");
+	suite.add("Test1");
+	suite.add("Test2");
+	suite.add("Test3");
+  suite.end();
+  suite.begin("withsuccess");
+	suite.add("TestSuccessed1");
+	suite.add("TestSuccessed2");
+	suite.add("TestSuccessed3");
+  suite.end();
+
+This example generates the following test cases:
+  suiteroot.hop.TestBip
+  suiteroot.hop.TestBof
+  suiteroot.withfailure.Test1
+  suiteroot.withfailure.Test2
+  suiteroot.withfailure.Test3
+  suiteroot.withsuccess.TestSuccessed1
+  suiteroot.withsuccess.TestSuccessed2
+  suiteroot.withsuccess.TestSuccessed3
+
+----
+
+Thanks to DanMuller for making his implementation available.  Are there any other implementations of CppUtx available for download?
+
+----
+
+I'm building up a new implementation called CppUtx, which is available on SourceForge (http://sourceforge.net/projects/cpputx).
+Currently it is still in draft state, but feel free for having a look at and give me some feedback.
+
+ -- Patrick Dreyer (mailto:patrickdreyer@users.sourceforge.net)
+
+----
+'''Some thoughts on setup/teardown vs. constructor/destructor'''
+
+I agree that in most cases setup/teardown are unnecessary and it makes more sense to just use the constructor and destructor of the fixture. But there are some cases where it is also handy to have setup and teardown. I have a complex case for testing various instances of the decorator pattern where I actually have fixtures inheriting from other fixtures and all of the testing is actually in the base test fixture. The one thing that the constructor cannot do that a instance method can do is call virtual methods and have them be virtual (see http://www.parashift.com/c++-faq-lite/strange-inheritance.html#faq-23.3).
+
+We could debate the merits of setup/teardown, but there is no need since we can have our cake and eat it to. I came up with a way to allow the TestCase_ to work with classes that have setup/teardown and those that don't. Those fixtures that have setup/teardown must extend this class:
+
+ class TestFixture
+ {
+ public:
+	virtual void setup() {};
+	virtual void teardown() {};
+
+	static inline void setup( TestFixture * fixture )
+	{
+		fixture->setup();
+	}
+
+	static inline void teardown( TestFixture * fixture )
+	{
+		fixture->teardown();
+	}
+
+	static inline void setup( void * ) { }
+
+	static inline void teardown( void * ) { }
+ };
+
+Then there is only a small change to the run method of TestCase_:
+
+	virtual void run( const Context& ctx )
+	{
+		FixtureT fixture;
+		TestFixture::setup( &fixture );
+		( fixture.*m_pTestMethod )( ctx );
+		TestFixture::teardown( &fixture );
+	}
+
+If the class is subclass of TestFixture then its setup/teardown will be called. Otherwise it won't.
+
+	--- Dale King (kingd@tmicha.net)
+
+Hmm, even it's easy and simple to do so, we loose one advantage of CppUtx by doing so:
+
+	 :	The first realization is that unlike JavaUnit, SmalltalkUnit, or CppUnit the TestFixture classes that UTX users will be creating will not inherit from TestCase. This will allow users to create and maintain their own inheritance hierarchies in a way that make sense from the perspective of testing their application domain instead of that of building the TestingFramework. -- Quotation of RobertDiFalco
+
+Then I would say it's better to go back one step and calling setup/teardown on '''all''' TestFixture classes. This way even one not have a need for setup/teardown has to implement them, but we don't have to subclass from TestFixture.
+
+ -- Patrick Dreyer (mailto:patrickdreyer@users.sourceforge.net)
+
+----
+
+The new version of CppUnit, called CppUnit2, includes many of the ideas here including some other neat ones including the use of Functors.
+
+See http://cppunit.sourceforge.net/cgi-bin/moin.cgi/CppUnit2
+
+''-- Dale King''
+----
+CategoryTesting

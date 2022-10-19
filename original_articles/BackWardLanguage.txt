@@ -1,0 +1,270 @@
+    # BackWardLanguage - 
+    #    stack-based language w/bare minimum
+    #    functionality to do WardNumber algorithm
+    # Inspired by PostScript Language
+    # Author: SteveHowell
+    #
+    # See WardNumberInManyProgrammingLanguages for an 
+    # example usage.
+
+    class Parser:
+        def __init__(self, fn):
+            self.fn = fn
+
+        def parse(self):
+            f = open(self.fn)
+            stack = interpreterStack()
+            for line in f.readlines():
+                tokens = line.split()
+                stack.pushmany(tokens)
+
+    class interpreterStack:
+        def __init__(self):
+            self.command = {}
+            self.builtins(['Output', 'Debug',
+                'Copy', 'Swap', 'Pop',
+                'Def', 'If', 'While',
+                'Clear', 'Add', 'Forall',
+                'Assign', 'Incr', 'Val',
+                'Set', 'Obj', 'Dict'])
+            self.command['}'] = builtIn(self.Anon)
+            self.stack = []
+            self.scope = Scope(self)
+            self.namespace = nameSpace()
+        
+        def builtins(self, names):
+            for name in names:
+                self.command[name] = builtIn(getattr(self, name))
+
+        def pushmany(self, tokens):
+            for token in tokens:
+                self.push(token)        
+
+        def push(self, token):
+            self.scope.push(token)
+
+        def run(self, token):
+            if token in self.command:
+                self.command[token].run()
+            else:
+                self.stack.append(token)
+
+        def append(self, token):
+            self.stack.append(token)
+
+        def pop(self):
+            return self.stack.pop()        
+
+        def Def(self):
+            name = self.pop()
+            self.command[name] = self.pop()
+
+        def Anon(self):
+            cmd = Command(self)
+            self.stack.append(cmd)
+
+        def If(self):
+            else_cmd = self.pop()
+            if_cmd = self.pop()
+            self.pop().run()
+            cond = self.pop()
+            if int(cond) > 0:
+                if_cmd.run()
+            else:
+                else_cmd.run()
+
+        def While(self):
+            repeat_cmd = self.pop()
+            cond_cmd = self.pop()
+            while 1:
+                cond_cmd.run()
+                cond = self.pop()
+                if int(cond) == 0:
+                    break
+                repeat_cmd.run()
+
+        def Copy(self):
+            count = int(self.pop())
+            list = self.stack[-1 * (count):]
+            for item in list:
+                self.stack.append(item)
+                
+        def Pop(self):
+            self.stack.pop()
+            
+        def Swap(self):
+            (self.stack[-1], self.stack[-2]) = (self.stack[-2], self.stack[-1])
+
+        def Obj(self):
+            self.namespace.lookup(self, 'obj')
+
+        def Set(self):
+            self.namespace.lookup(self, 'set')
+
+        def Dict(self):
+            self.namespace.lookup(self, 'dict')
+
+        def Add(self):
+            obj = self.pop()
+            obj.Add(self.pop())
+
+        def Clear(self):
+            obj = self.pop()
+            obj.Clear()
+
+        def Forall(self):
+            obj = self.pop()
+            obj.Forall(self)
+
+        def Val(self):
+            obj = self.pop()
+            self.append(obj.Val())
+
+        def Assign(self):
+            value = self.pop()
+            obj = self.pop()
+            obj.Assign(value)
+
+        def Incr(self):
+            obj = self.pop()
+            obj.Incr()
+
+        def Output(self):
+            obj = self.pop()
+            try:
+                obj.Output()
+            except:
+                print obj
+           
+        def Debug(self):
+            obj = self.pop()
+            obj.Debug()
+
+    class builtIn:
+        def __init__(self, cmd):
+            self.cmd = cmd
+
+        def run(self):
+            apply(self.cmd)
+
+    class Scope:
+        def __init__(self, stack):
+            self.stack = stack
+            self.level = 0
+
+        def push(self, token):
+            if token == '{': 
+                self.level = self.level + 1
+            if token == '}':
+                self.level = self.level - 1
+            if self.level == 0:
+                self.stack.run(token)
+            else:
+                self.stack.append(token)
+
+    class Command:
+        def __init__(self, stack):
+            # last curly should already be popped
+            self.stack = stack
+            self.tokens = []
+            level = 1
+            while 1:
+                token = stack.pop()
+                if token == '}':
+                    level += 1 
+                if token == '{': 
+                    level -= 1
+                if level == 0:
+                    break
+                self.tokens.append(token)
+            self.tokens.reverse()
+
+        def run(self):
+            self.stack.pushmany(self.tokens)
+
+    class Keeper:
+        def __init__(self):
+            self.vars = {}
+
+        def find(self, key):
+            if key not in self.vars:
+                self.vars[key] = self.new_item()
+            return self.vars[key]
+
+    class setKeeper(Keeper):
+        def new_item(set): return Set()
+
+    class objKeeper(Keeper):
+        def new_item(set): return Obj()
+
+    class dictKeeper(Keeper):
+        def new_item(set): return nameSpace()
+
+    class nameSpace:
+        def __init__(self):
+            self.set = setKeeper()
+            self.keeper = {
+                'obj'  : objKeeper(),
+                'set'  : setKeeper(),
+                'dict' : dictKeeper(),
+            }
+
+        def lookup(self, stack, datatype):
+            key = stack.pop()
+            try:
+                key.lookup(stack, datatype)
+            except:
+                stack.append(self.keeper[datatype].find(key))
+
+    class Obj:
+        def __init__(self, obj=None):
+            self.obj = obj
+
+        def Assign(self, value):
+            self.obj = value
+
+        def Val(self):
+            return self.obj
+           
+        def Incr(self):
+            self.obj = int(self.obj) + 1
+
+    class Set:
+        def __init__(self):
+            self.Clear()
+           
+        def Add(self, value):
+            if value not in self.dict:
+                self.set.append(value)
+                self.dict[value] = 1
+
+        def Debug(self):
+            print 'debug:', self.set
+
+        def Forall(self, stack):
+            cmd = stack.pop()
+            for item in self.set:
+                stack.append(item)
+                cmd.run()
+
+        def Clear(self):
+            self.set = []
+            self.dict = {}
+
+        def Val(self):
+            return len(self.set)
+
+    Parser('stack.ps').parse()
+
+----
+
+Strange; that looks like PythonLanguage to me... ;)  
+
+OK, so it's a BackWardLanguage interpreter written in Python.  Now that you've bootstrapped yourself, you need to supply a BackWard interpreter implemented in BackWard.
+
+:)
+
+Thank you for providing grammar, documentation, and examples for all us lazy people out there.  :P
+
+''Yes, but where are its tests?''
+

@@ -1,0 +1,111 @@
+A placeholder, in case anyone wants to WriteTheCode, or to discuss continuations in PythonLanguage.
+
+ (Why should we create place holder pages?)
+
+----
+I dubbed this page a placeholder because I had some content in mind I wanted to put here, but didn't have the time to actually do so.  My hope was that, in the interim, someone might add some content here that wouldn't have gotten added if this page didn't exist (and that happened, sort of -- someone put a link to StacklessPython).  To that extent, a placeholder page is better than a non-existing page.  
+
+Anyway, on another page, I claimed that Python 2.5 supported continuations, in the sense that it should be possible to write call/cc in it.  So, I tried to so so.
+
+As a first approximation, I looked at the following SchemeLanguage code:
+
+ (define theContinuation #f)
+  
+  (define (test)
+    (let ((i 0))
+      (call/cc (lambda (k) (set! theContinuation k)))
+      (set! i (+ i 1))
+      i))
+ 
+   (test)
+   (theContinuation)
+   (theContinuation)
+Now, I realize you can express the functionality of this code using a Python generator, but I wanted to do it using a hypothetical call_cc function implemented in Python, like so:
+ theContinuation = None
+ 
+ def call_cc (func):
+     # magic happens here
+ 
+ def invoke (continuation):
+     # more magic goes here
+     
+ def test():
+     i = 0
+     call_cc (lambda k: globals().update({'theContinuation' : k }))
+     i = i + 1
+     print i
+ 
+ test()
+ invoke (theContinuation)
+ invoke (theContinuation)
+Unfortunately, I couldn't come up with what was supposed to go in place of the "magic" comments.
+
+My first stab at it was:
+ def call_cc (f):
+      f (inspect.currentframe().f_back)
+ 
+ def invoke (c):
+      exec c.f_code in c.f_globals, c.f_locals
+Unfortunately this did not work.  Even more unfortunately, I'm not quite sure why it doesn't work.  Can anyone help?
+
+-- PaulMiller
+
+Okay - I've come up with a bytecode hack that emulates a very basic use of call/cc. This is the test case:
+
+  def func():
+    global cc
+    print "This should show only once"
+    cc = get_cc()
+    global bar
+    print bar
+    bar += 1
+
+  cc, bar = None, 0
+  func()
+  for x in xrange(10):
+    call_cc(cc)
+
+This code, using a hypothetical get_cc() and call_cc(), should print out the value of bar 11 times - the first, when the continuation is created, and the other 10 during the loop.
+
+An implementation of get_cc() and call_cc(), for which the above example works, is given below.
+
+  import inspect
+  import types
+
+  def get_cc():
+      "Generate the current continuation."
+      up_frame = inspect.currentframe().f_back
+      
+      def copy_code(base, co_code):
+          "Copy a code object, but change the code"
+          return types.CodeType(base.co_argcount, 
+                                base.co_nlocals,
+                                base.co_stacksize,
+                                base.co_flags,
+                                co_code,
+                                base.co_consts,
+                                base.co_names,
+                                base.co_varnames,
+                                base.co_filename,
+                                base.co_name,
+                                base.co_firstlineno,
+                                base.co_lnotab,
+                                base.co_freevars,
+                                base.co_cellvars)
+  
+      # In this case, the call to get_cc and the resulting assignment to a global variable
+      # is 6 bytes worth of bytecode.
+      new_code = copy_code(up_frame.f_code, up_frame.f_code.co_code[up_frame.f_lasti+6:])
+      return new_code
+  
+  def call_cc(cont):
+      "Call the current continuation"
+      exec cont
+
+This works for me on Arch Linux (x86), Python version 2.7.3. I don't know how bytecode differs across platforms, or even if using the stack like this is portable. This approach also fails at nested functions, since it doesn't save the whole stack.
+
+-- Adam Marchetti
+----
+See Also: StacklessPython
+----
+CategoryPython

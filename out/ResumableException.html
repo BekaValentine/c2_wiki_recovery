@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Resumable Exception
+      </h1>
+      <p>
+        The idea that <a href="ExceptionHandling.html">ExceptionHandling</a> can efficiently <strong>resume</strong> operation without knowing exactly <strong>how</strong> to resume operation. 
+      </p>
+      <p>
+        Related: <a href="AbortRetryIgnore.html">AbortRetryIgnore</a>, <a href="CommonLispConditionSystem.html">CommonLispConditionSystem</a>, <a href="MaskInterrupts.html">MaskInterrupts</a>, <a href="PassAnErrorHandler.html">PassAnErrorHandler</a>
+      </p>
+      <hr/>
+      <p>
+        <strong></strong><a href="ResumableException.html">ResumableException</a> C++ Examples (From my <a href="LambdaTheUltimate.html">LambdaTheUltimate</a> Post)<strong></strong>
+      </p>
+      <p>
+        If the C++ stack had 'restart points' that it could return to after an exception, it would vastly help for modularity by reducing undesired coupling between policy and mechanism (as described in  this paper).
+      </p>
+      <p>
+        The trick is to provide more than one resumption point (so that policies have an actual choice), to properly handle asynchronous exceptions, to do so in a manner reasonably symmetrical to the exception handling mechanisms, and to do so efficiently - where the static and runtime costs of doing so are, ideally, no more than the costs of the existing exception handling mechanisms.
+      </p>
+      <p>
+        It's doable! A solution is described below.
+      </p>
+      <ul>
+        <li>
+          The 'exception handler' block executes at the top of the local stack much like a local function. Some special handling is provided to appropriately handle both the dynamic context and the ability to call more functions. This behavior is already common to commercial implementations of C++ exception handling, and so should not be problematic.
+        </li>
+        <li>
+          The exception handler can 'resume', at which point execution would unwind the stack to the appropriately labeled resumption point that is on a stack frame between the exception handler frame and the signaling event. During stack unwind, any destructors (or 'finally' blocks in Java) are called appropriately. The benefit here is to allow the policy to select a given resumption point that partially unwinds the stack (whereas one currently unwinds all the way to the exception handler).
+        </li>
+        <li>
+          The resumption point can accept a parameter in much the same way as the exception handler receives an exception. This allows resume-with-parameters.
+        </li>
+        <li>
+          The exception handler could perform any of its normal behaviors just as it does today, with leaving the exception handler block or returning from the function causing the stack to unwind all the way to the exception handler.
+        </li>
+      </ul>
+      <p>
+        For syntax, it would be necessary to mark certain regions as 'restartable' such that they can be found by the exception handler in the same way the exception handler itself was located. A given restart might be selected under a number of conditions. If parameters are required for the restart, there would need to be a block associated with each restart condition prior to entering the restartable action. For symmetry, one might simply put 'restarts' on the opposite side of the 'try' block from the 'catch' blocks.
+      </p>
+      <p>
+        In the example, I call the resumable blocks reset, and so the try/catch duo becomes reset/try/catch. In Java, it would become reset/try/catch/finally. The behavior of a reset block is to accept the parameter it receives (if a name was specified), execute any behavior inside the following block, then pass control to the try block. When initially entering the try block, reset blocks are simply skipped.
+      </p>
+      <code>
+        namespace std { <br/>
+        template<typename T> class continue_with{ <br/>
+        private: T t; <br/>
+        public:  T const& value(); <br/>
+        }; <br/>
+        class signal : public exception {};<br/>
+        class div_by_zero : public signal{}; <br/>
+        // the above would presumably override 'what()'<br/>
+        // Assume C++ is modified to throw 'div_by_zero()' <br/>
+        //  after a division by zero error.  <br/>
+        }<br/>
+      </code>
+      <code>
+        double divide(double a, double b) {<br/>
+        reset(std::continue_with<double> const& cwd) { return cwd.value(); }<br/>
+        try { return a/b; }<br/>
+        }<br/>
+      </code>
+      <code>
+        double randf(double a, double b) {<br/>
+        try { return a + divide(divide(rand(),RAND_MAX+1),(a-b))); }<br/>
+        catch(div_by_zero const&) { resume(continue_with<double>(0.0)); }<br/>
+        }<br/>
+      </code>
+      <p>
+        The above is a trivial example, intended more to indicate syntax than anything else. If one called randf(1.0,1.0), one would get 1.0 back because the failed 'divide' throw an exception but then would 'continue with' 0.0.
+      </p>
+      <p>
+        One thing to note is that the resume action seems to be assuming, without testing, that the given resume type is available. Presumably there would be another exception (perhaps unresumable_exception) if this were not the case! While one could catch 'unresumable_exception' to try a variety of possible resumptions, it would be convenient to have another keyword, resumable(type) to dynamically test whether a given resumption condition is available. To be symmetrical, one might also want to add a catchable(type) to test whether a given type will be caught if thrown.
+      </p>
+      <p>
+        This whole approach to resumable exceptions also introduces the possibility of very cleanly handling asynchronous exceptions, which would include kill signals, timeouts, thread interrupts or alerts, alarms, etc. Basically, an asynchronous signal would itself execute much like a function at the top of the stack that throws an exception. If the interrupt needs to be fully resumable, it simply needs the correct 'reset' behavior:
+      </p>
+      <code>
+        class signal_kill { class ignore {}; };<br/>
+      </code>
+      <code>
+        void kill(void*) {<br/>
+        reset(signal_kill::ignore&) { return; }<br/>
+        try { throw signal_kill(); }<br/>
+        }<br/>
+        void sure_kill(void*) { throw signal_kill(); }<br/>
+      </code>
+      <code>
+        void black_knight(int hitpoints) {<br/>
+        try {<br/>
+        while(hitpoints > 0) {<br/>
+        sleep(3000);<br/>
+        // output snarky comments, swing sword<br/>
+        }<br/>
+        } catch(signal_kill const&) {<br/>
+        --hitpoints;<br/>
+        if((hitponts > 0) && resumable(signal_kill::ignore)) {<br/>
+        cout << "I fight on! Tis only a flesh wound!" << endl;<br/>
+        resume(signal_kill::ignore());<br/>
+        }<br/>
+        // if code reaches this point then black knight is dead<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        void goodknight(bool bHasExcalibur, int patience, Thread* opponent) {<br/>
+        // assume Thread.interrupt(void (*pfn)(void*),void*) will push an event <br/>
+        // to execute in the given thread (much like a signal handler) at the <br/>
+        // top of the stack when interrupts are unmasked or ASAP. Might cause <br/>
+        // a CPU interrupt if other thread is active. <br/>
+        while(patience-- > 0) {<br/>
+        sleep(3000); // can only get one good blow in every 3 seconds<br/>
+        if(bHasExcalibur) { opponent->interrupt(&sure_kill,0); }<br/>
+        else { opponent->interrupt(&kill,0); }<br/>
+        if(opponent->is_terminated()) {<br/>
+        cout << "Good night." << endl;<br/>
+        return;<br/>
+        }<br/>
+        }<br/>
+        }  <br/>
+      </code>
+      <p>
+        The above does ignore a few difficulties, such as receiving asynchronous interrupts while handling asynchronous interrupts, and properly catching the results. In this case it would work out well enough, though the black knight might die in the middle of saying "I fight on!" if he lost the last of his hitpoints in another asynchronous call. (Because the exception handler unwinds the stack only after resuming, the same handler would receive all of the sig_kill calls until the black_knight dies, but the handler itself could be sitting on the stack in various states of resumption.) In the more general case, something like an RAII based interrupt mask might be appropriate to avoid dealing with reentrant signal handlers.
+      </p>
+      <code>
+        class TIMask { // thread.interrupt() mask<br/>
+        private: bool bMasked;<br/>
+        public: TIMask() { bMasked = get_current_thread()->mask_interrupts(); }<br/>
+        public: ~TIMask() { if(bMasked) get_current_thread()->unmask_interrupts(); }<br/>
+        }<br/>
+        void kill(void*) { <br/>
+        TIMask m; // blocks other signals until after returning from 'signal_kill' exception handler.<br/>
+        reset( signal_kill::ignore&) { return; }<br/>
+        try { throw signal_kill(); }<br/>
+        // would use <strong>finally</strong> clause in Java instead of TIMask.<br/>
+        }<br/>
+      </code>
+      <p>
+        Anyhow, I seriously think this is workable with and reasonably symmetrical to the existing exception handling capabilities found in languages like C++, Java, and C#. As in, we could have it in an experimental version of C++ and ready for integration with whatever comes after C++0x or the next version of Java.
+      </p>
+      <p>
+        <em>For clear semantics you should consult the article cited in </em><a href="AbortRetryIgnore.html">AbortRetryIgnore</a>. But yet, this sketch looks promising.<em></em>
+      </p>
+      <p>
+        Indeed. That paper is a bit thick, but helps cover the reasons for <a href="ResumableException.html">ResumableException</a> much more clearly. The approach advocated in <a href="AbortRetryIgnore.html">AbortRetryIgnore</a>, using continuations, is actually much more generic than <a href="ResumableException.html">ResumableException</a>... but has an associated larger cost in terms of potential memory and temporal overhead. <a href="ResumableException.html">ResumableException</a> as described in this section can be optimized to the point it meets the <a href="CeePlusPlus.html">CeePlusPlus</a> maxim: you don't pay for resumptions that you don't use.
+      </p>
+      <p>
+        <em>See </em><a href="FunctoidsInCppMonadExamples.html">FunctoidsInCppMonadExamples</a> for a first try at implementing some of this in C++.<em> -- </em><a href="JohnFletcher.html">JohnFletcher</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryException.html">CategoryException</a>
+      </p>
+    </div>
+  </body>
+</html>

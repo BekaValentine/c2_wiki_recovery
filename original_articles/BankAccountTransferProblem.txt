@@ -1,0 +1,72 @@
+The BankAccountTransferProblem is the classic description of why AtomicConsistentIsolatedDurable transactions are useful. Basically, it goes like this:
+
+A bank account transfer operation can be decomposed into the following steps:
+
+	1. Withdraw money from account one
+	2. Deposit money into account two
+
+The transfer operation must be Atomic. If for some reason either step one fails or step two fails or the computer crashes between step one and step two, the entire transfer operation should fail. We should not be left in a state where the money is withdrawn from account one but not deposited into account two.
+
+''The opposite inconsistent state, OTOH, wouldn't be so bad. :)''
+
+The transfer operation must be Consistent. After the transfer operation succeeds, any other transaction that is started subsequently should see the results of the transfer.
+
+The transfer operation must be Isolated. If another transaction tries to simultaneously perform an operation on either of my accounts, what they do to those accounts should not affect the outcome of the transfer option.
+
+The transfer operation must be Durable. After the transfer operation succeeds, if the computer should fail, there should be some record that the transfer took place.
+----
+see also AtomicConsistentIsolatedDurable
+----
+The original ''Isolated'' statement said:
+''The transfer operation must be Independent. If another transaction tries to simultaneously perform an operation on either of my accounts, what they do to those accounts should not affect the outcome of the transfer option. In practice, this means causing one of the two transactions to fail in some way.''
+
+to which Anonymous (CostinCozianu?) responded:
+
+''No. In practice that does not necessarily mean they both have to fail. Mark, I guess you substitute concurrency control possible solutions with what Gemstone generally does. You know, Gemstone is not the widest available database on the market, so generally this will not be the case :)''
+
+*chuckle* I ''knew'' that statement would get me into trouble! Like I've said before, I'm proud of my ignorance and show it off whenever I can. I amended the original definition and removed the offending statement. -- MarkAddleman
+
+Well, you can say that ''In practice, this means you should not lose money (nor gain undeserved money - for that matter, too)'', based on the KissPrinciple. -- CostinCozianu
+----
+I'm only tangentially aware of various transaction control mechanisms. The ones I know about give me one of three options:
+	1.MultiVersionConcurrency will automatically fail one transaction on write-write conflicts and will allow read-write to go through without a problem (subject to implementation limits)
+	2.Locking allows one transaction to wait while the other proceeds although this mechanism can cause the DeadlyEmbrace or DeadLock condition causing both transactions to timeout and fail.
+	3.Allowing dirty reads which solve the implementation problems of MultiVersionConcurrency (as I understand them), but relax the definition of ''independence''.
+
+I suppose there could be dirty writes, but I don't know why you would want such a thing. What other concurrency mechanisms are there?
+
+-- MarkAddleman
+
+Mark, I could enlist here the whole theory that is available online and free anyway (see ObjectRelationalImpedanceMismatchLinks), but it will not do this page any good. We should focus on presenting the problem more carefully, instead.
+
+Basically, what you describe as ''MVCC'' is not ''MVCC'', it is something generally called non-locking policies, and also ''optimistic'' because they will assume that things will generally happen to be OK, and when it realizes something might go wrong it aborts the offending transaction.
+
+The easiest way (not necessarily always optimum) to detect problems is to timestamp the transactions, and if you find two conflicting operations you have to test what operations happened first, if the operations that happened first belongs to the older of the two transactions, then everything is OK, otherwise you have to pick one of them and abort it, letting the other one continue. This is vaguely what seems to be happening in Gemstone, from what you described elsewhere.
+
+Allowing dirty reads is hardly an option in any circumstances, and ''dirty writes'' do not exist. -- Costin
+
+''They do. Though they have limited usefulness. Dirty reads are common and useful for read performance. No ACID, but that doesn't always matter.'' (probably RichardHenderson here) ''Yes, it's me :).''
+
+Yes, you are right, both dirty reads and dirty writes do exist, such as in MySQL , an example of a pretended relational database which is kind-of relational, but it's not exactly a database. Dirty reads are useful in non-transactional scenario, I was strictly referring to transactional use-cases where data integrity is our primary concern. -- CostinCozianu
+
+''Now I've got AC/DC singing "DirtyReadsDoneDirtCheap" in my head.'' '''tee hee :).'''
+----
+''I'll put this here since it may not be totally relevant. Isolation levels can subtly affect transactions. Take the Bank Account transfer problem. Say you wish to only remove money if the bank account balance is positive. Unless the balance is locked before the balance is read, and remains locked until the balance is finally updated, then errors will occur. Synchronized object methods can mitigate this problem, but only for the very simplest cases. -- RichardHenderson''
+* MultiversionConcurrencyControl can achieve isolation without locking the balance before the moment of commit. 
+* SoftwareTransactionalMemory techniques are a flexible and composable alternative to synchronized object methods, and can handle complex cases.
+
+I'm curious now. Are these transaction locks dependent on OS facilities, application design, or database operational design? The locks have to be consistent and available to any entity with the same level of access as your transaction application, right? Do permissions figure into this stuff? Is everything equal, or are some sources of transaction requests more equal than others?
+
+{ACID transactions are usually a facility provided by a DBMS, which typically makes locking invisible to the end user and mostly invisible to the software developer. This may be complicated somewhat in the case of distributed databases, application servers, or other technology that (at least) may expose some of the locking API to the developer. [see DistributedTransaction.] The locks do have to be consistent - for a given transaction type, it is generally not possible (or at least not acceptable) to have some transactions issue appropriate locks and others not. Permissions have nothing to do with this, and generally the source of a transaction request is irrelevant. The "synchronized object methods" above refer only to protecting critical sections (i.e., an area of code that should only have one thread in it at a time) in a simple multi-threaded program (in which ACID as a whole almost certainly doesn't apply) or ''possibly'' to some system involving an application server.}
+----
+Suppose one had this particular bit of nonisolated for Bank Accounts? An intermediate sum might see the money in neither A or B. The guarantee is the money was atomically withdrawn from A and will be atomically deposited in B, but you might be able to split inbetween them with an accounting report. Is this a problem? The answer depends on specifics of the application, but when transferring between different banks, this is always observable.
+
+''That scenario represents a failure to properly isolate (the 'I' in ACID) the transaction. Several anomalies can result from lack of full isolation, but performance requirements sometimes force it, as full isolation is computationally expensive compared to partial isolation. Most DBMSes allow the desired level of isolation to be specified. See http://en.wikipedia.org/wiki/Isolation_%28database_systems%29''
+
+{BankAccountTransferProblem is didactic, not a lesson on actual bank processes. But keep in mind that to achieve an "intermediate sum" for which the isolation is actually violated would require performing an ACID sum on ''both'' banks. That's not going to happen in practice.}
+
+I got the point about didactic. In my job I have to deal with the inner workings of a distributed transactional system. BankAccountTransferProblem is a really good way to discuss the nature of DistributedTransaction''''''s as well as local transactions.
+----
+CategoryConcurrency
+----
+SeptemberTen

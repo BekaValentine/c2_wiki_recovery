@@ -1,0 +1,110 @@
+A RichardHenderson production.
+
+Pulse logic is an evil technique that turns out to be pretty powerful. I'm sure it has a proper name, but I don't know what it is. See BowlingGameSpikes for a small example.
+
+PULSE(a,b) is a non-branching instruction that evaluates to 0 or 1.  (it's actually (a==b)).  Multiplying (or ANDing) a term in an expression by PULSE(a,b) selects that term.  Use in contexts where branching is expensive.  SIMD Parallel processors such as the ICL DAP use an 'active' bit on each processor.  In RISC processors such as the ARM each instruction is conditional, in effect there is a non-branching conditional built in to each opcode.
+
+----
+
+I have used pulse logic in SQL and in some analytics calculators. Because the expression is arithmetic, it may be manipulated algebraically. The result, at least InTheory, is the minimal set of state changes. The BowlingGameSpikes example has this property, using only a simple step function.
+
+Logically, multiply may express an AND relationship, addition may express an OR relationship. All we need is some way of normalising the parameters and the results to 1 or 0. For branching we need value testing, preferably with a 1 or 0 result. In this way any static calculation (all parameters available), even with logical tests in it, may be expressed in a single arithmetic statement.
+
+ FALSE 0
+ TRUE 1 // Actually > 0
+ NORM(x) x>0?1:0
+ NOT(x) x>0?0:1
+
+ A OR B <=> NORM(A + B)
+ A AND B <=> NORM(A * B)
+
+Ideally languages should directly implement the PULSE(x,y) construct atomically since short circuit logic can lead to optimal state machines. This is allowed by the fact there are no branches. All branching is explicitly embedded in the code.
+
+First, some functions, here explicitly using a step function as the basis:
+
+ ABV(x) (x)<0?0:1  // Is 1 if x >= 0
+ PULSE(a,b) ABV(a-b)*ABV(b-a) // Is 1 if a=b
+
+The PULSE(a,b) function is only 1 if a=b. This is good for integers. 
+
+We can extend the length of the pulse to include floats for value bucketing. Need a non-inclusive step function:
+
+ BEL(x) (x)<0?1:0  // Is 1 if x < 0
+ PULSE1(a,b) ABV(a-b)*BEL(a-b-1) //1 if: a-b >= 0 AND a-b <1. 
+
+So, imagine we have a construct :
+
+ if (x==0) y*=2 else
+ if (x==1) y+=235 else
+ if (x==2) y-=-22
+
+This is identical to case/switch statements. Processors choke their cache on these sorts of things, and rDB's have to iterate for each possible case, or use slow cursor techniques. So, for example, putting totals into 52 buckets requires 52 scans of the data.
+
+In 'C' we can use the fact that TRUE is 1, and FALSE is 0, to do this directly.:
+
+ y = (x==0)*(y*2) + (x==1)*(y+235) + (x==2)*(y-(-22))
+
+This is the same as arithmetic pulse logic.
+
+ y = PULSE(x,0)*(y*2) + PULSE(x,1)*(y+235) + PULSE(x,2)*(y-(-22))
+
+SQL often has a SGN() function which returns 0 on a zero, otherwise +-1. Most processors have a simple zero/sign test instruction that can be adapted. The point is that PULSE(a,b) may be expressed as a non-branching instruction that effectively selects alternatives by multiplying them by 1 or 0.
+
+In SQL this allows you to bucket transactions into monthly buckets in one shot. On each row retrieved, every bucket adds the transaction value multiplied by the selector.
+
+So, in pseudo SQL:
+
+ table Transaction (
+   month integer,
+   value float
+ )
+
+ select SUM(value*PULSE(month,1)), SUM(value*PULSE(month,2))..........
+ from Transaction
+
+The SQL version of PULSE:
+
+ PULSE(x,y) = 1-ABS(SGN(x-y)) // Is 1 if x-y == 0.
+
+----
+Very cool.  The disadvantage as I see it is that with case/switch you can put the likely cases first so that subsequent cases aren't evaluated.  For enumerated cases (ints) you could use indices instead.  --AndyPierce
+
+''That's true, and then it's not :). I have only ever used this in ultimate high-performance applications, where a branch is significantly more expensive than a few redundant calculations. As chips get longer and longer caches, with faster and faster arithmetic, so this sort of thing helps. I might add the evil gate as well, to do the Bowling spike in one assignment. Or even the really downright disgusting single parameter expression. Only one variable and a lot of arithmetic. <moohahahahaha>''
+
+----
+[corrected so a simple array lookup just won't do :).]
+
+----
+
+Right, the most disgusting possible bowling spike I can come up with. I'm going to invent language constructs and do all sorts of horrible low level things.Basically this is pulse logic with a nasty approach to packing all the relevant variables (including the loop variable) into a single value. I think this one can be compiled to silicon (GizzaJob :)).
+
+Here macros are recursively expanded. (do some proper languages do this?) This is so ugly ;).
+
+ int b[21]={1,4,4,5,6,4,5,5,10,0,1,7,3,6,4,10,2,8,6,0,0}; // the ball scores
+
+ int Z=10<<24 // the 'bus', set F to 10, 0 tests are easy
+
+ S(y) ((y)<0?0:1)// y<0:1, y>=0:0
+ NS(y) (1-S(y))   // y<0:0, y>=0:1 , NOT S.
+ P(y) S(y)*S(-y) // y==0:1, simple pulse
+ L    0x00FF     // lower 16 bits, this is the evil gate
+ H    0xFF00     // upper 16 bits, I think HDL has a cute syntax for all this
+ F    Z>>24      // extract F(rame number) from Z
+ FI   1<<24      // will be subtracted from F to do loop. Gratuitous, I know.
+ BX   (Z&H)>>16  // extract BX (ball index) from Z
+ I1   1<<16      // BX context 1 increment
+ I2   1<<17      // BX context 2 increment
+ T    Z&L        // extract score total from Z
+ X    10         // roman numeral for 10 ;)
+ A    b[BX]      // first ball in frame
+ B    b[BX+1]    // second ball
+ C    b[BX+2]    // third ball
+
+ while (F > 0)
+      Z += P(A-X)*(A+B+C+I1)+ NS(A-X)*P(A+B-X)*(A+B+C+I2)+ NS(A+B-X)*(A+B+I2) - FI;
+
+ printf("Evil total = %d", T);
+----
+This is similar to the active bit in SingleInstructionMultipleData architectures. There, you have a processor per variable.
+----
+CategoryEvil (by his own admission!!)

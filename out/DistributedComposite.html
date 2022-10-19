@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Distributed Composite
+      </h1>
+      <p>
+        <strong>Category:</strong> <a href="JavaSpaceIdioms.html">JavaSpaceIdioms</a>
+      </p>
+      <p>
+        <strong>Distributed Composite:</strong>
+      </p>
+      <p>
+        I came up with this idiom when I was implementing logical grouping in a commercial software product that was using <a href="JavaSpaces.html">JavaSpaces</a> at the time. The basic idea was to utilize the <a href="VisitorPattern.html">VisitorPattern</a> and <a href="CompositePattern.html">CompositePattern</a> but to do it in a way that made sense for an <a href="AssociativeMemory.html">AssociativeMemory</a> base store like <a href="JavaSpace.html">JavaSpace</a>.
+      </p>
+      <p>
+        <strong>Intent:</strong>
+      </p>
+      <p>
+        I need to store large distributed composite structures in <a href="JavaSpaces.html">JavaSpaces</a> without having to store the entire structure as a single <a href="JavaSpace.html">JavaSpace</a> entry. At the same time, we want the distributed composite structure to "act" like a regular old composite.
+      </p>
+      <p>
+        <strong>Solution:</strong>
+      </p>
+      <p>
+        To do this, we need to shift to modeling the Identities of entries as a composite and <strong>not</strong> the actual entries. The following implementations are skeletal; I'm not going to show all the implementation, just the important parts. 
+      </p>
+      <p>
+        First, we need to create a genuinely unique identifier. We need this because the composite entries will need to be identified across machines. This is pretty easy to do by using a local-host hash code along with an RMI UID instance.
+      </p>
+      <code>
+        public class UniqueIdentity<br/>
+        {<br/>
+        private int m_hid; // local-host hashCode<br/>
+        private java.rmi.server.UID m_uid; // the locally unique ID<br/>
+      </code>
+      <code>
+        public UniqueIdentity()<br/>
+        {<br/>
+        try<br/>
+        {<br/>
+        m_hid = java.net.InetAddress.getLocalHost().hashCode();<br/>
+        m_uid = new java.rmi.server.UID();<br/>
+        }<br/>
+        catch ( java.net.UnknownHostException e )<br/>
+        {<br/>
+        throw new Error( e );<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        public int hashCode()<br/>
+        {<br/>
+        return m_uid.hashCode() ^ m_hid;<br/>
+        }<br/>
+      </code>
+      <code>
+        public boolean equals( Object that )<br/>
+        {<br/>
+        if ( this == that )<br/>
+        {<br/>
+        return true;<br/>
+        }<br/>
+        else if ( that == null || this.getClass() != that.getClass() )<br/>
+        {<br/>
+        return false;<br/>
+        }<br/>
+        else<br/>
+        {<br/>
+        UniqueIdentity uuid = (UniqueIdentity)that;<br/>
+        return uuid.m_uid == this.m_uid && uuid.m_hid == this.m_hid;<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Now we can layout the actual composite identity hierarchy like so:
+      </p>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Basic Identity protocol defines the accept method
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        public abstract class Identity implements Serializable<br/>
+        {<br/>
+        private UniqueIdentity m_uid;<br/>
+      </code>
+      <code>
+        public abstract void accept( IdentityVisitor v );<br/>
+      </code>
+      <code>
+        public boolean equals( Object that )<br/>
+        {<br/>
+        if ( this == that )<br/>
+        {<br/>
+        return true;<br/>
+        }<br/>
+        else if ( that == null || this.getClass() != that.getClass() )<br/>
+        {<br/>
+        return false;<br/>
+        }<br/>
+        else<br/>
+        {<br/>
+        return ((Identity)that).m_uuid.equals( this.m_uuid );<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Defines a subclassable leaf (component) identity
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        public class LeafIdentity extends Identity<br/>
+        {<br/>
+        public void accept( IdentityVisitor v )<br/>
+        {<br/>
+        v.visit( this );<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Defines a subclassable group (composite) identity
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        public class GroupIdentity extends Identity<br/>
+        {<br/>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           This method needs to read in group entries in order
+        </li>
+        <li>
+           to get its children.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        public void accept( IdentityVisitor v )<br/>
+        {<br/>
+        // create a pattern to look for a group with this identity<br/>
+        GroupEntry pattern = new GroupEntry( this );<br/>
+      </code>
+      <code>
+        GroupEntry aGroup = (GroupEntry)<br/>
+        v.getJavaSpace().read( pattern, ... );<br/>
+      </code>
+      <code>
+        if ( aGroup == null )<br/>
+        {<br/>
+        throw<br/>
+        new Error(<br/>
+        new MissingException( "entry at: " + this ) )<br/>
+        }<br/>
+      </code>
+      <code>
+        aGroup.accept( v );  // node visits child identifiers<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Now we need to create the entry classes. Later, we'll come back to the visitor class. Note that the <em>GroupIdentity</em> needs to collaborate with a <em>GroupEntry</em> since it is the entry that actually contains the child identities (which may also be other group-idenitities). First we need to define a base entry-class for any kind of entry that needs identification. This should work just as well as a normal entry, as an item in a graph, or a member in any kind of distributed data-structured.
+      </p>
+      <code>
+        public class IdentifiedEntry extends AbstractEntry<br/>
+        {<br/>
+        public Identity identity; // Could be a Leaf or Group Identity<br/>
+      </code>
+      <code>
+        public IdentifiedEntry()<br/>
+        {<br/>
+        }<br/>
+      </code>
+      <code>
+        public IdentifiedEntry( Identity identity )<br/>
+        {<br/>
+        this.identity = identity;<br/>
+        }<br/>
+      </code>
+      <code>
+        [...]<br/>
+        }<br/>
+      </code>
+      <p>
+        Now, we'll extend this to create the <em>GroupEntry</em> class:
+      </p>
+      <code>
+        public class GroupEntry extends IdentifiedEntry<br/>
+        {<br/>
+        public ArrayList children;<br/>
+      </code>
+      <code>
+        public GroupEntry()<br/>
+        {<br/>
+        }<br/>
+      </code>
+      <code>
+        public GroupEntry( GroupIdentity identity )<br/>
+        {<br/>
+        super( identity );<br/>
+        }<br/>
+      </code>
+      <code>
+        /** Add a leaf or group as a child of this group */<br/>
+        public void add( Identity aChild )<br/>
+        {<br/>
+        if ( children == null )<br/>
+        children = new ArrayList();<br/>
+      </code>
+      <code>
+        children.add( aChild );<br/>
+        }<br/>
+      </code>
+      <code>
+        <add all the other collection members, #count, #remove, etc><br/>
+      </code>
+      <code>
+        /** Implement the accept member called by GroupIdentity */<br/>
+        public void accept( IdentityVisitor v )<br/>
+        {<br/>
+        if ( children != null )<br/>
+        {<br/>
+        // Iterate over child identities<br/>
+        for ( final Iterator at = children.iterator(); at.hasNext(); )<br/>
+        {<br/>
+        ((Identity)at.next()).accept( v );<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Note that we do not construct <em>children</em> in the constructor. This is because we may want to match <em>null</em> child arrays. This is pretty much everything save for the visitor class. The only twist in the visitor class is that it needs to have an accessor to get a <a href="JavaSpace.html">JavaSpace</a> reference. This reference is needed, at least, by the <em>GroupIdentity</em> class. I use a wrapper for <a href="JavaSpace.html">JavaSpace</a> whose constructor takes a transaction object, but you can use anything you like. Here's the basic visitor interface and a null implementation:
+      </p>
+      <code>
+        public interface IdentityVisitor<br/>
+        {<br/>
+        void visit( GroupIdentity aGroupId );<br/>
+        void visit( LeafIdentity aLeafId );<br/>
+      </code>
+      <code>
+        JavaSpace getJavaSpace();<br/>
+      </code>
+      <code>
+        public static class Basic implements IdentityVisitor<br/>
+        {<br/>
+        private JavaSpace m_space;<br/>
+      </code>
+      <code>
+        public Basic( JavaSpace space )<br/>
+        {<br/>
+        m_space = space;<br/>
+        }<br/>
+      </code>
+      <code>
+        public void visit( GroupIdentity aGroupId )<br/>
+        {<br/>
+        // do nothing by default<br/>
+        }<br/>
+      </code>
+      <code>
+        public void visit( LeafIdentity aLeafId )<br/>
+        {<br/>
+        // do nothing by default<br/>
+        }<br/>
+      </code>
+      <code>
+        public JavaSpace getJavaSpace()<br/>
+        {<br/>
+        return m_space;<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        }}}
+      </p>
+      <p>
+        Pretty simple stuff. You can then create subclasses of the visitor to do any sort of composite visiting you want to. For example, the following class interacts with <a href="JavaSpace.html">JavaSpace</a> to visit only the leaf entries:
+      </p>
+      <code>
+        public class LeafVisitor extends IdentityVisitor.Basic<br/>
+        {<br/>
+        public LeafVisitor( JavaSpace aSpace )<br/>
+        {<br/>
+        super( aSpace );<br/>
+        }<br/>
+      </code>
+      <code>
+        public void visit( LeafIdentity aLeafId )<br/>
+        {<br/>
+        IdentifiedEntry anEntry = new IdentifiedEntry( aLeafId );<br/>
+      </code>
+      <code>
+        visitEntry( (IdentifiedEntry)getJavaSpace().read( anEntry, ... ) );<br/>
+        }<br/>
+      </code>
+      <code>
+        public void visitEntry( IdentifiedEntry anEntry )<br/>
+        {<br/>
+        // use the leaf-entry<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        You can easily create a Leaf <em>modifying</em> visitor like so:
+      </p>
+      <code>
+        public class LeafModifyingVisitor extends IdentityVisitor.Basic<br/>
+        {<br/>
+        public LeafModifyingVisitor( JavaSpace aSpace )<br/>
+        {<br/>
+        super( aSpace );<br/>
+        }<br/>
+      </code>
+      <code>
+        public void visit( LeafIdentity aLeafId )<br/>
+        {<br/>
+        IdentifiedEntry anEntry = new IdentifiedEntry( aLeafId );<br/>
+        anEntry = (IdentifiedEntry)getJavaSpace().take( anEntry, ... );<br/>
+      </code>
+      <code>
+        modify( anEntry );<br/>
+      </code>
+      <code>
+        getJavaSpace().write( anEntry, ... );<br/>
+        }<br/>
+      </code>
+      <code>
+        public void modify( IdentifiedEntry anEntry )<br/>
+        {<br/>
+        // change some fields<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        I've left out error-handling and some other details, but I think you will find this sort of structure easy to use and that <em>IdentifiedEntry</em> (as well as <em>UniqueIdentity</em>) can be reused in a variety of ways, including many different kinds of distributed data-structures. Also, by replacing <a href="JavaSpace.html">JavaSpace</a> with a class named <a href="TupleSpace.html">TupleSpace</a>, you can add member-data such as Trasaction or Lease values that can then be passed on to a wrapped <a href="JavaSpace.html">JavaSpace</a> object. This allows you to use the same transaction, for example, for the entire graph traversal. For example, this prints out all the leaf entries:
+      </p>
+      <code>
+        rootGroup_id.accept( <br/>
+        new LeafVisitor( new TupleSpace( txn, lease_time ) )<br/>
+        {<br/>
+        public void visitEntry( IdentifiedEntry anEntry )<br/>
+        {<br/>
+        System.out.println( "entry: " + anEntry );<br/>
+        }<br/>
+        } );<br/>
+      </code>
+      <p>
+        If you need more control over traversal, you may want to check out <a href="HierarchicalVisitorPattern.html">HierarchicalVisitorPattern</a>. This is easily adapted for use with a distributed composite and allows you to conditionally visit nodes and leaves.
+      </p>
+      <p>
+        -- <a href="RobertDiFalco.html">RobertDiFalco</a>
+      </p>
+      <p>
+        See: <a href="DistributedGraphDataStructure.html">DistributedGraphDataStructure</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="JavaSpaceIdioms.html">JavaSpaceIdioms</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>Discussion:</strong>
+      </p>
+      <hr/>
+      <p>
+        What am I doing wrong? From looking at HierarchicalVisitor (which I intend to combine with <a href="DistributedComposite.html">DistributedComposite</a>), I would have thought that accept(IdentityVisitor) would return boolean. --TomStrickland
+      </p>
+      <p>
+        True, the code above uses a simpler traditional visitor. If you want to use the HierarchicalVisitor pattern, you will need to modify the Identity#accept signature to return a boolean. -- <a href="RobertDiFalco.html">RobertDiFalco</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="JavaSpaceIdioms.html">JavaSpaceIdioms</a>
+      </p>
+    </div>
+  </body>
+</html>

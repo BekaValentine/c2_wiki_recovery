@@ -1,0 +1,158 @@
+Discussion related to the InstanceData pattern of the ObjectBasedProgramming pattern language.
+
+----
+
+If I read this correctly, you are simply suggesting using a ''struct'' to represent the data attributes of a given class. However, you seem to be moving a step further without actually spelling it out.
+
+The reference to storage mechanisms implies that you would have a function to allocate and initialise the objects of a given class. It follows that you must also have a function to release an instance of this class.
+
+I'm not sure this is strictly necessary. If you do not have the luxury of RAM for a heap, this implies an internal allocator - perhaps an array of objects. This means that RAM must be allocated permanently for the objects even when not in use.
+
+It is often useful to be able to declare instances of (small) objects on the stack frame of the calling routine.
+
+For example, let us say you have a system such as a scanning radio. Whenever the user presses the SCAN button, the radio proceeds to scan through the spectrum until it finds a frequency with a strong enough signal, then it stops. It also stops if it gets back to its starting point.
+
+Some frequencies may be blocked for various reasons (they might be police bands for example). These are recorded in a list of "banned" frequencies.
+
+I would not like the object responsible for processing the button press to know all the details of how many frequencies are available, which ones are blocked, and so on. So I have an Iterator class to handle this.
+
+  class SpectrumIter
+  {
+  private:
+     Frequency i;
+     Frequency firstUsable;
+     Frequency lastUsable;
+     Frequency *blocked;
+
+     Frequency NextCandidate();
+  
+  public:
+     SpectrumIter ( Frequency startPoint );
+     Frequency Next();
+  };
+All of the data in this class is private, but it is unlikely that an instance would be very long lived. So, in C I choose to expose the guts of the class in a struct, thus:
+
+  // SpIter.H
+
+  typedef struct SpectrumIter
+  {
+     char private[SI_PRIVATE_SIZE];
+  } SpectrumIter;
+
+  Frequency SpectrumIter_Construct( SpectrumIter *, Frequency startPoint);
+  Frequency SpectrumIter_Next( SpectrumIter * );
+  Frequency SpectrumIter_Value ( SpectrumIter *);
+In the implementation, I might have
+
+  // SpIter.c
+
+  typedef union SpectrumIter_rep
+  {
+     SpectrumIter xRep;
+     struct
+     {
+        Frequency i;
+        Frequency startPoint;
+     } rep;
+  } SpectrumIter_rep;
+
+  static const Frequency firstUsable = ...;
+  static const Frequency lastUsable = ...;
+  static const Frequency blocked[] = { ... };
+  static const Frequency stepSize = ...;
+
+  static Frequency NextCandidate  ( Frequency f )
+  {
+    return (f > lastUsable-stepSize) ? firstUsable : f + stepSize;
+  }
+
+  static int FrequencyBlocked ( Frequency f )
+  {
+    int i;
+    int numBlocked = sizeof(blocked)/sizeof(blocked[0]);
+
+    for (i = 0; i < numBlocked && f < blocked[i]; i++ )
+      /* empty */ ;
+
+    return (i < numBlocked && f == blocked[i]);
+  }
+
+  void SpectrumIter_Construct( SpectrumIter *pThis, Frequency startPoint)
+  {
+    SpectrumIter_rep *this = *pThis;
+
+    this->rep.i = this->rep.startPoint = startPoint;
+    return SpectrumIter_Next(pThis);
+  }
+
+  Frequency SpectrumIter_Next( SpectrumIter *pthis )
+  {
+    SpectrumIter_rep *this = *pThis;
+    Frequency i;
+
+    for (i = NextCandidate(this->rep.i); 
+         i != this->rep.startPoint; 
+         i = NextCandidate(i))
+    {
+      if (!FrequencyBlocked(i))
+        break;
+    }
+
+    this->rep.i = i;
+    return i;
+  }
+
+  Frequency SpectrumIter_Value ( SpectrumIter *pThis);
+  {
+    SpectrumIter_rep *this = *pThis;
+    return this->rep.i;
+  }
+Now I can declare one of these on the stack when I need one, thus:
+
+  #include "SpIter.h"
+  extern Frequency CurrentScanFrequency( void );
+  extern void SetScanFrequencyTo( Frequency );
+  extern int SignalPresentOn ( Frequency )
+
+  void ScanPressed ( void )
+  { 
+    SpectrumIter i;
+    Frequency startPoint = CurrentScanFrequency();
+    Frequency f = SpectrumIter_Construct(&i, startPoint);
+
+    while (f != startPoint && !SignalPresentOn(f))
+         f = SpectrumIter_Next(&i);
+
+    SetScanFrequencyTo(f);
+  }
+The client knows the size of the structure, but not its details. They can create and destroy them at will.
+
+-- KeithDerrick
+
+----
+
+I see no mention of VTables within this struct.
+
+How would you implement the sample class hierarchy shown in the pattern description? Perhaps a sample header and implementation file.
+
+-- KeithDerrick
+
+----
+Keith covers the fact that in your class hierarchy all your data was protected/private.
+
+There is also the case where we have a class with data AND methods, that we wish classes to inherit from a parent. So see ClassInheritanceDiscussion, and we will create a ClassInheritancePattern at a later date when we are happy with how we wish to implement it.
+
+-- ScottWalsh
+
+----
+The PolymorphicFunction pattern requires the instance data to be passed as an opaque reference (void*), rather than an exposed data type (e.g. T''''''ypeStructure*). The reason is to provide total abstraction of the design of the instance data. Collaborating classes have no knowledge of the structure of the instance data of the said class. As a result, the design of the instance data can be completely overhauled without affecting the collaborating classes. 
+
+One subtle point that Keith may have missed is that the instance data may not be a single data structure. The instance data can be made up of multiple data structures. It can even be a file handle or a TCP/IP socket handle, or anything else. The FamilySplit pattern describes the circumstance under which it may be a good idea to split the instance data into multiple data structures.
+
+Keith is asking for vtable inside the instance data. The PolymorphicFunction pattern specifies how a polymorphic function should behave, however it does not specify how it should be implemented. The polymorphic behaviour can be achieved through the FunctionPointer pattern and the PolymorphicFunctionWithEmbeddedBehaviour pattern. If the PolymorphicFunctionWithEmbeddedBehaviour pattern is applied, vtable is not required. Even if FunctionPointer pattern is applied, a vtable is not required as long as the ClassDescriptor pattern is also applied.
+
+Scott made a shrewd observation that I have assumed that all attributes in all classes in the class hierarchy being protected/private.
+
+That's true, because a good OO design should not be exposing the internal structure of a class. However, for efficiency purposes it is often necessary to make compromises and make selected attributes publicly accessible. That's what the OperationVapourware pattern provides. The intent and motivation of the OperationVapourware pattern will be updated to make this more explicit.
+
+-- StephenCheng

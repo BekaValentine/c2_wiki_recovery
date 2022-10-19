@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Unit Testing Non Deterministic Code
+      </h1>
+      <p>
+        What strategies are people using to <a href="UnitTest.html">UnitTest</a> code that is non-deterministic?
+      </p>
+      <ul>
+        <li>
+           <a href="MockRandomizer.html">MockRandomizer</a> -- Trick your random number generator into generating predictable numbers (such as 0,1,2,3...)
+        </li>
+        <li>
+           <a href="DontChangeTheCodeTest.html">DontChangeTheCodeTest</a> -- If you absolutely can't solve the problem, there's always this resort.
+        </li>
+      </ul>
+      <p>
+        Some example problems below.
+      </p>
+      <hr/>
+      <p>
+        I've been writing a <a href="MarkovChainer.html">MarkovChainer</a> and would like a repeatable way to test certain results. I try passing it a sort of <a href="MockRandomizer.html">MockRandomizer</a> and controlling it externally, but the randomness is buried so deep inside the chainer that it's extremely hard for me to think about how to test the chainer. (There's also an issue of a <a href="CombinatorialExplosion.html">CombinatorialExplosion</a>, I suppose; for almost any markov chainer there's an infinite number of possible chains you can receive.)
+      </p>
+      <p>
+        <em>Why is it difficult to mock the randomizer?  Some consider it to be a </em><a href="CodeSmell.html">CodeSmell</a> when they encounter code that is difficult to unit test.<em></em>
+      </p>
+      <p>
+        I agree that under most circumstances, code that's difficult to <a href="UnitTest.html">UnitTest</a> is a smell. But I have the sneaking suspicion that non-deterministic code is far more difficult than other types of code, even if it's well-factored.
+      </p>
+      <p>
+        I tried mocking the randomizer, and it was really quite difficult. Maybe I'm doing something wrong:
+      </p>
+      <ul>
+        <li>
+           The code that uses a randomizer -- using java.util.Random -- makes multiple calls to "nextInt(int n)", with int n being lots of different things. To test this, I have to write a MockRandom that says arcane things like <em>the first time someone calls 'nextInt(5)', return 4. The next time they call 'nextInt(5)', return 2.</em> Yes, you can do this, but the resulting code is even harder to read than the code it tests, which seems like a smell to me as well.  <em>I think you are making this hard.  Load list of pre-determined numbers from a file.  Dish them out one at a time.  Verify the now deterministic result.  What am I missing? -- </em><a href="DanilSuits.html">DanilSuits</a><em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           You have to take care not to have endless loops. For example, with a word-based <a href="MarkovChainer.html">MarkovChainer</a> that starts with the sentence "the quick brown fox jumped over the lazy dog" it's possible to accidentally write a <a href="MockRandomizer.html">MockRandomizer</a> that always returns "the quick brown fox jumped over the quick brown fox jumped over the quick brown fox ..." and never ends. This is practically impossible with any genuine pseudo-random number generator, though chain generation may in fact be quite slow if you're unlucky.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           The chainer is decomposed into small, manageable chunks already, but that doesn't seem to help the problem. In particular, it stores a collection of link-relationships: "Given a prefix word like 'the', what's the next likely word?" I can test at that level to reduce the <a href="CombinatorialExplosion.html">CombinatorialExplosion</a>. But I also want to expose the entire collection to a test, because the link-relationships are innately related to one another. (In particular, the relation is that with the exception of the markers of the chain end, each prefix must also be a suffix in at least one link-relationship.)
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Furthermore, within the link-relationships, the suffixes are not given any order. They're stored as a Set, I believe, because order is entirely unimportant when you're picking something at random. Set ordering is non-deterministic as well. Now, of course I could make it a SortedSet -- which would make it more testable. But that means I would be <em>adding more functionality just to make code testable</em>, and that feels like a smell as well.
+        </li>
+      </ul>
+      <p>
+        In short, yes, you can <a href="UnitTest.html">UnitTest</a> it. But I can't think of a way to do it that doesn't introduce more of a mess than it cleans up.
+      </p>
+      <p>
+        <em>You're trying to do too much. I think you're mixing </em><a href="UnitTest.html">UnitTest</a>s and <a href="AcceptanceTest.html">AcceptanceTest</a>s. <a href="UnitTest.html">UnitTest</a>s are used to test interactions between a few (at most) classes. <a href="MockObject.html">MockObject</a>s are used to reduce the number of complex classes interacting. If you want to test the overall behaviour of the system, such as the final results, that's an acceptance test and you shouldn't use <a href="MockObject.html">MockObject</a>s for that. <a href="UnitTest.html">UnitTest</a>s are tools that help you write code. A side effect is that they verify behaviour, but except at the lowest level, that is not their main purpose.<em></em>
+      </p>
+      <p>
+        <em>Example: You want to test that the state transitions occur with the proper probability. Write a MockRandom class that returns [0-1] based on a predefined list of numbers. If the probabilities are 0.2, 0.3, and 0.5, set up the mock random to return boundary conditions 0.0, 0.19, 0.2, 0.49, 0.5, 1.0. Then assert that the proper state transition occurs in each case. If it works, you're done. Now, writing the acceptance test to see that you get the proper overall behaviour is a different beast. You'll want to keep the randomness and test things like averages and variances.</em>
+      </p>
+      <hr/>
+      <p>
+        Writing a hashCode() method for a Java class. Two instances of this class are equal if they match across three String fields and a Date field. (It's for eliminating duplicates in a database.) So hashCode() uses the four fields to determine a proper hashCode. But after I programmed it the simplest way I can think -- get the hashCodes of all the values, and sum them, not worrying about integer overflow -- I realized that it would be possible for two non-equal instances to return the same hashCode, if their fields had different hashCodes that happened to come to the same sum. A proper <a href="UnitTest.html">UnitTest</a> would come up with those two non-equal instances and test with them. But since hashCode() is defined non-deterministically, I can't imagine how I would do that.
+      </p>
+      <p>
+        <em>Take courage: The requirements for hashCode(), according to Sun, are not as vexing.</em>
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd><a href="http://java.sun.com/products/jdk/1.2/docs/api/java/lang/Object.html#hashCode()">http://java.sun.com/products/jdk/1.2/docs/api/java/lang/Object.html#hashCode()</a></dd>
+      </dl>
+      <p>
+        <em>Of particular interest: </em>"It is not required that if two objects are unequal according to the equals(java.lang.Object) method, then calling the hashCode method on each of the two objects must produce distinct integer rsults."<em> In other words, it is not hashCode() that you need to test, but whatever uses hashCode(). And that can be tested with a mock object which returns a deterministic hashCode.</em>
+      </p>
+      <p>
+        In other words again: "equal() objects must have the same hashCode()" - that's all you need for hashCode() to be correct. So your test could just be to create some equal objects and check that they have the same hashCode()s.
+      </p>
+      <p>
+        The idea is that if two objects have different hash codes then you know they aren't equal, but if they have the same hash code then they <em>might be</em> the equal (use equal() to find out for sure). For hashCode() to be <em>good</em> it should usually return different values for non-equal() objects, but that's another kettle of fish!
+      </p>
+      <p>
+        <em>Well, then let me redefine the problem. I, as the creator of the class, want non-equal methods to return non-distinct hashCodes. Especially since the only reason I'm defining hashCode() in the first place is to use the class as an element in a HashSet, and I have absolutely no control over what HashSet does with the elements internally. So my requirements for hashCode() are more rigid than Sun's requirements. They're still reasonable requirements, though.</em>
+      </p>
+      <p>
+        Would it be easier to write your own Set? You may note that the lexical key of your members form a total ordering of the class. That is given u=(s1,s2,s3,d), v=(S1,S2,S3,D), u<v if (s1<S1 or (if (s1==S1) s2<S2 or (if (s2==S2) ... )))). Then you can use any of the comparison based implementations of a set (e.g. red-black tree) to maintain O(logn) efficiency instead of the crappy O(n) effficiency of a naive Set implementation.
+      </p>
+      <p>
+        <em>I'm not sure why I should redefine my own Set. That's not even the class I'm trying to test. The HashSet in the JDK 2 probably works fine, if it's passed an element of a class with a functioning hashCode() function.</em>
+      </p>
+      <hr/>
+      <p>
+        If the code has any real purpose, then there must be a way to describe the characteristics of the result.  These may be in terms of ranges of acceptable values and distributions within the range.  This may require the test code run multiple passes through the operational code to collect a variety of samples.  A simple check for a normal distribution might use five result ranges.  You might decide the high and low ranges should have 0 results, the 2nd and 4th ranges should fall within 10% of each other, and the middle range should have more hits than either the 2nd or 4th ranges.  If you need a greater degree of precision, simply expand the number of sample ranges and increase the number of samples taken.  
+      </p>
+      <p>
+        <em>I suppose this would work most of the time, given a large enough sample range. Maybe I'll end up doing this. But since you're dealing with non-deterministic stuff, you still have the chance of creating a false negative -- or, even worse, creating a false positive. Normally I think of </em><a href="UnitTest.html">UnitTest</a>s as being an ironclad guarantee -- I'd like to feel the same amount of security when testing non-deterministic code.<em></em>
+      </p>
+      <p>
+        <em>And in particular, there is a meaningful way to describe the characteristics of the result -- they just aren't guaranteed to be consistent between different invocations of the same program. hashCode(), for example, has a well-defined meaning, but you can't write code like</em>
+      </p>
+      <code>
+        assertEquals(1756294, myObject.hashCode())<br/>
+      </code>
+      <p>
+        <em>and be guaranteed that the test will always work.</em>
+      </p>
+      <hr/>
+      <p>
+        I fail to see what's non-deterministic about hashCode(). I'm not even sure that's relevant...
+      </p>
+      <p>
+        <em>hashCode is non-deterministic because the results are not guaranteed to be constant between separate invocations of the same program. It seems quite relevant to me, given the title of this page.</em>
+      </p>
+      <p>
+        I'm pretty sure there's no randomness involved in hashCode(). I could be wrong, of course... I don't have the source to java.lang.String handy, for instance, but I seem to remember all it does is XOR a few characters together. The details of the implementation might vary from one VM vendor to another, of course : the <em>specification</em> can rightly said to be non-deterministic, insofar as it does not fully constrain the implementation.
+      </p>
+      <hr/>
+      <p>
+        Here's how I usually approach the question, when there's something I don't quite know how to test. Alice and Bob, another pair in the team, just told me they've completed the hashCode() method. (Chet and I have been working on the rest of the class.) You know Alice and Bob... they always forget to test for the most obvious, the most important thing that could possibly break. Chances are, their code has <em>that</em> bug - you know the one I'm thinking of. It won't be too hard to code up a situation in which that bug badly crashes the program, right? If we have a Platypus instance with <em>this</em> name and <em>that</em> birthdate, and this other instance is set up like <em>that</em>, they won't be summed right and frob() will raise an exception. (That's your unit test mapped out, the rest is "a mere matter of coding".)
+      </p>
+      <p>
+        <em>Maybe I'm not being clear enough: Below is a further restatement of the problem.</em>
+      </p>
+      <p>
+        <em>I have a class I'll call Person, which implements hashCode(). To do so, it simply sums the hashCodes of four different member variables, not worrying about integer overflow.</em>
+      </p>
+      <code>
+        int hashCode = firstName.hashCode() + lastName.hashCode() + country.hashCode() + birthday.hashCode();<br/>
+      </code>
+      <p>
+        <em>99% of the time, this will work. But I'm sure that for any given invocation of this code there exists a separate instance, with different member variables, which will return the same hashCode with this algorithm. (Someone better than me at the math could probably draw up a quick proof of this, in fact.) Or, stated somewhat more formally, that there exist some different variables firstName2, lastName2, country2, birthday2 such that</em>
+      </p>
+      <code>
+        (new Person(firstName, lastName, country, birthday)).hashCode() == (new Person(firstName2, lastName2, country2, birthday2)).hashCode()<br/>
+      </code>
+      <p>
+        <em>The problem is this: Between different invocations of the same program, there is no consistency between what values should be chosen for the second set: firstName2, lastName2, country2, birthday2. That's because hashCode is not guaranteed to be deterministic. So this prevents me from writing test code like this:</em>
+      </p>
+      <code>
+        Person person1 = new Person("John", "Doe", "us", new GregorianCalendar(1972, 5, 16).getTime());<br/>
+        Person personWithSameHashcode = new Person("ha8734hg", "m6d76*", "324tjhb", new GregorianCalendar(1999, 6, 21).getTime());<br/>
+        assertTrue(person1.hashCode() != personWithSameHashcode());<br/>
+      </code>
+      <p>
+        <em>... or, more precisely, I can write this code, but since the test member variables are a moving target, almost every time I run this test it will return a false negative.</em>
+      </p>
+      <p>
+        <em>What's interesting about this is that the code for the hashCode() function itself is fairly trivial. My code is only about 17 lines of code -- it stores all hashCode values in a static Hashtable, and then when it generates a new hashCode it enters a loop to make sure that there isn't already a object that has returned such a hashCode for an unequal object. The code itself isn't very difficult, even; without </em><a href="UnitTest.html">UnitTest</a>s I'm mostly sure it does what it's supposed to. And yet I recognize the value of <a href="UnitTest.html">UnitTest</a>s, and would love to write a <a href="UnitTest.html">UnitTest</a> for this. -- <a href="FrancisHwang.html">FrancisHwang</a><em></em>
+      </p>
+      <p>
+        I still don't see why there is a problem there. That the hashCode() method will return equal values for non-equal instances isn't a possibility - it's a certainty, since there are zillions more distinct instances of almost any conceivable Person-like class than there are values of 'int'.
+      </p>
+      <p>
+        In fact, you could perfectly well <a href="DoSimpleThings.html">DoSimpleThings</a> and have each and every hashCode() method you write return 0. <strong>This will satisfy the contract for hashCode().</strong> Classes that <em>use</em> your hashCode() might make assumptions about that contract, such that they will break with the version that just returns 0. But then it's these classes that are broken, and need a <a href="UnitTest.html">UnitTest</a> for whatever they do; not your hashCode() implementation. (You'll definitely want to have good unit tests for your implementation of equals(), which of the two is far more critical.)
+      </p>
+      <p>
+        The version that just returns 0 is correct, and cannot possibly break. It doesn't need a unit test. The next step might be to write a <a href="UnitTest.html">UnitTest</a> that <em>forces</em> you to use a "real" hashCode() implementation. The only reason you'd want to do that is performance : it will make Hashtable lookups or Vector comparisons much, much faster. So the "natural" <a href="UnitTest.html">UnitTest</a> to write would be one that compares execution times for these operations with a stupid hashCode() against execution times with a working hashCode(). (Performance tests aren't fully "deterministic" either, due to multitasking. But you can take steps to make this a negligible factor.)
+      </p>
+      <p>
+        Or you could write a test that checks for characteristics of the distribution of hashCode values for "random" instances, as suggested above, since that is what the optimizations of Hashtable et al. rely on. (Note that you would then be <em>introducing</em> randomness into your test to check for a fully deterministic property of hashCode() - not testing something that relies on randomness.)
+      </p>
+      <p>
+        Am I still missing something?
+      </p>
+      <p>
+        <em>Ah, you're quite right, aren't you? It hadn't occurred to me that every class that already relies on hashCode() -- including java.util.HashSet -- already has to take into account the possibility of unequal objects hashing the same. So I dropped the requirement, and changed my Person code to forget about trying to find non-uniqueness. Problem solved, thanks.</em>
+      </p>
+      <p>
+        <em>My brief exposure to the possibility, though, gives me the nagging suspicion that somewhere out there, there exists a requirement like the one I was trying to impose. But that's probably best left as a bridge not to be crossed yet -- and maybe nobody ever has to cross it, who knows. -- fh.</em>
+      </p>
+      <hr/>
+      <p>
+        Something that is commonly overlooked, but quite useful, is to create a <a href="StringBuffer.html">StringBuffer</a> containing the unique data you'd like to hash on, and then getting the hashCode() from the resulting String from that <a href="StringBuffer.html">StringBuffer</a>.  This is deterministic, because the algorithm that String uses to produce its hashCode is known and consistent.  In addition, the hashCode produced using this techinque is guaranteed to be unique (so far as the data is concerned) across virtual machines.  For those of you who are performance worry warts, simply cache the hashCode in a member variable called fHashCode or _hashCode or whatever.  In the constructor of your class, set this member to 0 or -1 or something you can check for in hashCode() and, if needed, create the <a href="StringBuffer.html">StringBuffer</a>, fill it, and then populate your hashCode value.  This technique works well for identity type tests (equivalent to a database key), but not for <em>weak</em> comparisons. -- <a href="JeffPanici.html">JeffPanici</a>
+      </p>
+      <hr/>
+      <p>
+        This is a <a href="JavaUnit.html">JavaUnit</a> test I wrote for a tic tac toe game. It found a mistake for me once while moving this behavior from Board to Player. It also signaled false alarm once or twice, but never twice in a row. If it was the only test that kept me from <a href="GreenBar.html">GreenBar</a> then I just pushed the button again. This test relies on the fact that in the limit the distribution of a random variable isn't random. -- <a href="WardCunningham.html">WardCunningham</a>
+      </p>
+      <code>
+        public void testChoosing() {<br/>
+        player.board = new Board (" xx xx xx");<br/>
+        int f[] = {0,0,0,0,0,0,0,0,0};<br/>
+        for (int i=0; i <1000; i++)<br/>
+        f[player.choose()]++;<br/>
+        assertEquals(0, f[1]);<br/>
+        assertEquals(0, f[2]);<br/>
+        assertEquals(0, f[4]);<br/>
+        assertEquals(0, f[5]);<br/>
+        assertEquals(0, f[7]);<br/>
+        assertEquals(0, f[8]);<br/>
+        assertTrue(f[0]>300);<br/>
+        assertTrue(f[3]>300);<br/>
+        assertTrue(f[6]>300);<br/>
+        }<br/>
+      </code>
+      <hr/>
+      <p>
+        It looks like there is a pattern here trying to crawl out.  EncapsulateRandom, perhaps.
+      </p>
+      <p>
+        Deck.shuffle() depends on a random number generator to arrange the cards. So we refactor the RNG into it's own object, and use a mock to replace it in the <a href="UnitTest.html">UnitTest</a>s
+      </p>
+      <code>
+        testShuffle ()<br/>
+        {<br/>
+        deck = new Deck();<br/>
+        deck.rand = new MockRand();<br/>
+      </code>
+      <code>
+        // call shuffle, and verify the results.  We<br/>
+        // should be able to predict the exact ordering<br/>
+        // of the deck, because we can predict the exact<br/>
+        // sequence generated by MockRand<br/>
+        }<br/>
+      </code>
+      <p>
+        Poker.getHand() depends on Deck.shuffle(), but the randomness is buried 
+        so deep inside the Deck that it's extremely hard for me to think about 
+        how to test it.  So instead, mock the Deck!
+      </p>
+      <code>
+        testGetHand()<br/>
+        {<br/>
+        poker = new Poker ();<br/>
+        poker.deck = new MockDeck();<br/>
+      </code>
+      <code>
+        // call getHand, and verify the results.  Again<br/>
+        // we can predict the exact results, because we<br/>
+        // can predict the behavior of Deck<br/>
+        }<br/>
+      </code>
+      <p>
+        MatryoshkaDoll, rinse, and repeat.
+      </p>
+      <p>
+        Ward's test would end up looking like
+      </p>
+      <code>
+        public void testChoosing() {<br/>
+        player.board = new Board ("xx xx xx");<br/>
+        player.rand = new MockRand() ;<br/>
+      </code>
+      <code>
+        int f[] = {0,0,0,0,0,0,0,0,0};<br/>
+        for (int i=0; i < 1000; i++)<br/>
+        f[player.choose()]++;<br/>
+      </code>
+      <code>
+        // and because we know what the right answers are....<br/>
+        int expected[] = {347,0,0,321,0,0,332,0,0} ;<br/>
+      </code>
+      <code>
+        for (int i=0; i < 9; i++)<br/>
+        assertEquals( expected[i], f[i] ) ;<br/>
+        }<br/>
+      </code>
+      <p>
+        I prefer this approach, though it is more work, because this is a <a href="UnitTest.html">UnitTest</a>, a safety harness to ensure that refactoring the code doesn't change its behavior.
+      </p>
+      <hr/>
+      <p>
+        Ah, this is much much more helpful, thanks. I can definitely see the value of a strategy like this. Maybe it can be stated like this:
+      </p>
+      <ul>
+        <li>
+           Isolate the non-deterministic qualities into as few classes as possible, and test those classes using one of two different methods:
+          <ul>
+            <li>
+               pass it a MockRandom class, or
+            </li>
+            <li>
+               call the method a number of times, and test to make sure the distributions are close to what you expect. (Note that this  will be easier to code, but there will be occasions when it returns false negatives.
+            </li>
+          </ul>
+        </li>
+        <li>
+           If you have other classes that rely on those non-deterministic classes, keep the non-deterministic behavior out of their tests with liberal use of <a href="MockObject.html">MockObject</a>s.
+        </li>
+      </ul>
+      <p>
+        -- <a href="FrancisHwang.html">FrancisHwang</a>
+      </p>
+      <hr/>
+      <p>
+        See <a href="UnitTestingRandomness.html">UnitTestingRandomness</a>, <a href="NonDeterministic.html">NonDeterministic</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryTesting.html">CategoryTesting</a>
+      </p>
+    </div>
+  </body>
+</html>

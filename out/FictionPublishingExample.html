@@ -1,0 +1,2556 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Fiction Publishing Example
+      </h1>
+      <p>
+        On <a href="OoIsHard.html">OoIsHard</a>, <a href="TopMind.html">TopMind</a> wrote:
+      </p>
+      <dl>
+        <dt> </dt>
+        <dd>It could be the case that if we saw your non-OOP code along with the description of the problems with it, we could offer suggestions for improving it. Finding un-repairable maintenance headaches with non-OOP paradigms could be very useful as both a training tool and as a paradigm comparison example.</dd>
+      </dl>
+      <p>
+        In the spirit of public code reviews, then, this is a place to put procedural code and have people rip it to shreds. This is <em>not</em> the place for a <a href="ParadigmPissingMatch.html">ParadigmPissingMatch</a>: it's a given that the code will be procedural/relational, and "make it OO" is not an acceptable answer. It is a place to learn better coding techniques, many of which are as applicable to OO code as procedural.
+      </p>
+      <hr/>
+      <p>
+        This is a script to read in the LINKS v2.0 database and assorted HTML pages, and migrate the data into the RDMBS schema used in our new system. It's created for <a href="http://www.fictionalley.org/,">http://www.fictionalley.org/,</a> a <a href="HarryPotter.html">HarryPotter</a> fanfiction site organized around the 4 Hogwarts houses. Each "house" stores a different type of story.
+      </p>
+      <p>
+        The database files are pipe-delimited ASCII text files. Schema for the links.db file is:
+      </p>
+      <code>
+        linkID|title|URL|Date Created|Category Name|Author Name|Author E-mail|Hit count|5 fields that are unimportant|keywords<br/>
+      </code>
+      <p>
+        Schema for categories.db is:
+      </p>
+      <code>
+        categoryID|Category Name|Description|2 unimportant fields|Keywords|2 unimportant fields|Category Display Name<br/>
+      </code>
+      <p>
+        Both authors and stories are represented as categories, the stories as subcategories of authors. Subcategories are represented in Links by a / in the category name. This is the best way to tell them apart. Also, the fields of importance differ between these two types of categories. Authors have only ID/Name/Description (list of stories by them)/Display Name. Stories have the summary as Description, and additionally have Keywords, and the Display Name is in the format "Title by Story".
+      </p>
+      <p>
+        An example fic file can be found at <a href="http://www.schnoogle.com/authors/nostrademons/TAWGA01.html.">http://www.schnoogle.com/authors/nostrademons/TAWGA01.html.</a> The filenames match up with the URLs in links.db. Basically every field in the header must be parsed.
+      </p>
+      <p>
+        The database schema is included in its current form (likely not the final form when the entire system goes live). This is working code and has not been too difficult to maintain (I've had to change the schema several times since it was first developed, to accommodate other areas of the system). 
+      </p>
+      <p>
+        Also, this script has to process approximately 1.5 GB of data. Thus, it's not practical to store everything in RAM and write it out when we have the full data. I designed it so the most memory-intensive bits - the fic text itself and the parsed hash - can be disposed of on each iteration through the main loop. Last time I ran it on the full data set, it ran in about an hour on my P3 850 MHz. If someone can find a way to significantly cut the running time, that'd be helpful too.
+      </p>
+      <p>
+        My main concerns with it:
+      </p>
+      <ol>
+        <li>
+           All variables that aren't local must be shoved into the global namespace. PHP suffers from <a href="SelfDotSyndrome.html">SelfDotSyndrome</a>, so it's object system really doesn't constitute an intermediate scope.
+        </li>
+        <li>
+           The use of associative arrays instead of dedicated structures makes debugging tedious. When this was written, an attempt to access a missing field in a hash resulted in the null string being returned, not an error (this has since been fixed in later PHP versions). Thus, every typo was a silent failure that wasn't detected until far from the point of failure.
+        </li>
+        <li>
+           The insertion itself is a fairly deeply nested HeadRecursive algorithm. Each level (chapter/story/author/user) is responsible for ensuring that the level above it exists, thus ensuring referential integrity as records are added to the database. This also helps achieve the memory usage target, since the main loop starts with chapters and throws them away after they're inserted into the DB. But it leads to very high coupling, because it is not possible to insert a chapter without potentially also inserting a story, author, and user.
+        </li>
+        <li>
+           Some information cannot be inserted until further information has been processed (for example, spoilers are changing from a per-chapter basis to a per-story basis, so the correct value is the union of all spoilers found in relevant chapters). We cannot guarantee that all chapters of a given story, or stories by a given author, will be in order. In fact, they usually won't. So we need to store this information until all files have been processed - and that means a global variable. I ran into several bugs concerning which data was added to this global story and when it was processed. These have been fixed, but the code remains quite brittle.
+        </li>
+      </ol>
+      <p>
+        I was tempted to zip up the files and post them on my webspace, but I figure this'll be more helpful if people can comment inline. If this gets <a href="TooBigToEdit.html">TooBigToEdit</a>, I can move them. I've cut out a lot of things like constant-valued inserts, because they're not interesting yet very big.
+      </p>
+      <p>
+        -- <a href="JonathanTang.html">JonathanTang</a>
+      </p>
+      <hr/>
+      <p>
+        (I put the actual text file examples back if you don't mind. I still find it helpful to see an actual example. It put in a few spaces to keep the wiki engine from hilighting everything. And, thanks for the schemas above.)
+      </p>
+      <p>
+        The links.db file behind <a href="http://www.thedarkarts.org/authorLinks/The_Gentleman/Strange_Rights/">http://www.thedarkarts.org/authorLinks/The_Gentleman/Strange_Rights/</a> looks like this:
+      </p>
+      <ol>
+        <li>
+          |Strange Rights 01|<a href="http://www.thedarkarts.org/authors/tgentleman/SR01.html">http://www.thedarkarts.org/authors/tgentleman/SR01.html</a> |14-Dec-2002|The_Gentleman/Strange_Rights||The Gentleman|gentleman_at_large@hotmail.com|467|No|No|0|0|Yes|siege rebellion prince dippet goblin
+        </li>
+        <li>
+          |Strange Rights 02|<a href="http://www.thedarkarts.org/authors/tgentleman/SR02.html">http://www.thedarkarts.org/authors/tgentleman/SR02.html</a> |7-Jan-2003|The_Gentleman/Strange_Rights||The Gentleman|tomstrasz@yahoo.com|138|No|No|0|0|Yes|goblin dippet prince rebellion sixties
+        </li>
+        <li>
+          |Strange Rights 03|<a href="http://www.thedarkarts.org/authors/tgentleman/SR03.html">http://www.thedarkarts.org/authors/tgentleman/SR03.html</a> |6-Feb-2003|The_Gentleman/Strange_Rights||The Gentleman|tomstrasz@yahoo.com|119|No|No|0|0|Yes|goblin dippet rights prince sixties
+        </li>
+        <li>
+          |Strange Rights 04|<a href="http://www.thedarkarts.org/authors/tgentleman/SR04.html">http://www.thedarkarts.org/authors/tgentleman/SR04.html</a> |27-Feb-2003|The_Gentleman/Strange_Rights||The Gentleman|tomstrasz@yahoo.com|151|No|No|0|0|Yes|dippet goblin sixties weasley
+        </li>
+      </ol>
+      <p>
+        The categories.db file behind <a href="http://www.thedarkarts.org/authorLinks/The_Gentleman/">http://www.thedarkarts.org/authorLinks/The_Gentleman/</a> looks like this:
+      </p>
+      <ol>
+        <li>
+          |The_Gentleman|Author of "Strange Rights"||||||The Gentleman
+        </li>
+        <li>
+          |The_Gentleman/Strange_Rights|Hogwarts under siege! Attacks from the Forbidden Forest! Goblin Rebellions and strikes at Gringotts! The mysterious Goblin prince! Charlie's Uncle, Dippet, Dedalus Diggle, a bookish, quiet Slytherin, Seamus Finnigan's dad, and more! Learn the sorry tale of Crabbe Sr., of Bane, of how Violet came to inhabit her painting! Learn of the rise of Dumbledore and the madness of Dippet! Civil Rights, elf-pot and the Swinging Sixties hit Hogwarts! Rock Concerts in the Grounds with the Tumbling Menhirs! Hallucinogens and magic! A surfeit of exclamation marks!!! And a cast of a thousand elephants! Ok, goblins. But hey.|||siege rebellion prince dippet goblin|||Strange Rights by The Gentleman 
+        </li>
+      </ol>
+      <hr/>
+      <p>
+        Questions:
+      </p>
+      <ul>
+        <li>
+           There seems to be some duplication of fields between the parsed HTML "headers" and the delimited files, such as title, author, categories, and email. Which trumps the other?
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Does this import program need to concern itself with versioning and workflow?
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        [File: schema.sql. Improvements on database schema are welcome too]
+      </p>
+      <code>
+        -- 'Myrtle' schema, v0.1<br/>
+        -- Created 7/17/03, Jonathan Tang<br/>
+        -- Recommended user grant statement:<br/>
+        --   GRANT ALTER,CREATE,DELETE,DROP,INDEX,INSERT,SELECT,UPDATE on dbname.* TO dbuser@localhost IDENTIFIED BY 'password';<br/>
+      </code>
+      <code>
+        -- Users table. Holds data for a single user of the system, whether author or reader.<br/>
+        DROP TABLE IF EXISTS users;<br/>
+        CREATE TABLE users (<br/>
+        user_id mediumint NOT NULL auto_increment,<br/>
+        is_enabled int(1) NOT NULL default '1',<br/>
+        username varchar(50),		-- Username for favorites display; defaults to vB<br/>
+        forum_user_id int(10) NOT NULL, 	<br/>
+        PRIMARY KEY (user_id),<br/>
+        UNIQUE KEY (username)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Pen names. These are displayed on site. Max 3/user.<br/>
+        -- Basic pen_name table contains only metainformation, because pen names are versioned<br/>
+        -- This gives us a history of pen names, both so we can track it, and in case we get asked<br/>
+        -- where author so-and-so has gone.<br/>
+        DROP TABLE IF EXISTS pen_names;<br/>
+        CREATE TABLE pen_names (<br/>
+        pen_name_id mediumint NOT NULL auto_increment,<br/>
+        user_id mediumint NOT NULL references users(user_id),<br/>
+        email varchar(60) NOT NULL,<br/>
+        display_favorites int(1) NOT NULL default '1',<br/>
+        display_email int(1) NOT NULL default '1',<br/>
+        workflow_code char(3) NOT NULL,<br/>
+        PRIMARY KEY (pen_name_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        DROP TABLE IF EXISTS pen_name_versions;<br/>
+        CREATE TABLE pen_name_versions (<br/>
+        pen_name_version_id mediumint NOT NULL auto_increment,<br/>
+        pen_name_id mediumint NOT NULL references pen_names(pen_name_id),<br/>
+        pen_name varchar(50) NOT NULL,<br/>
+        time_submitted timestamp NOT NULL,<br/>
+        author_comments varchar(255) NOT NULL,<br/>
+        PRIMARY KEY (pen_name_version_id),<br/>
+        UNIQUE KEY (pen_name)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Workflow is 1:1 with versions, but is created at a different time (only when an approver<br/>
+        -- checks out a fic). The table needs to be split so that we can maintain integrity constraints<br/>
+        -- (not null/references) on fields.<br/>
+        DROP TABLE IF EXISTS pen_name_workflow;<br/>
+        CREATE TABLE pen_name_workflow (<br/>
+        pen_name_version_id mediumint NOT NULL references pen_name_versions(pen_name_version_id),<br/>
+        pen_name_id mediumint NOT NULL references pen_names(pen_name_id),<br/>
+        approver_id mediumint NOT NULL references users(user_id),<br/>
+        time_checked_out timestamp NOT NULL,<br/>
+        time_approved datetime, <br/>
+        approver_comments varchar(255) NOT NULL,<br/>
+        resolution_code char(5),<br/>
+        PRIMARY KEY (pen_name_version_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Stories. story_id is not auto_increment because the new story id must be available<br/>
+        -- *before* the submission is complete, so that it's possible to add ships/chars to it.<br/>
+        -- A sequence table (provided automatically by some DB APIs is an easier way to do this.<br/>
+        DROP TABLE IF EXISTS stories;<br/>
+        CREATE TABLE stories (<br/>
+        story_id mediumint NOT NULL,<br/>
+        pen_name_id mediumint NOT NULL references pen_names(pen_name_id),<br/>
+        house_code char(3) NOT NULL references house_values(house_code),<br/>
+        rating_code char(5) NOT NULL references rating_values(rating_code),<br/>
+        language_code char(3) NOT NULL references language_values(language_code),<br/>
+        era_code char(20) NOT NULL references era_values(era_code),<br/>
+        fandom_era_id tinyint NOT NULL references fandom_era_values(fandom_era_id),<br/>
+        other_spoilers varchar(255) NOT NULL,	-- but null strings "" allowed<br/>
+        is_published tinyint(1) NOT NULL default '0',<br/>
+        is_completed tinyint(1) NOT NULL default '0',<br/>
+        allow_pdf tinyint(1) NOT NULL default '0',<br/>
+        review_forum_id smallint NOT NULL,<br/>
+        workflow_code char(3) NOT NULL,<br/>
+        PRIMARY KEY (story_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- The story sequence number. This is how we keep track of the next story ID.<br/>
+        -- Imperfect solution, but it's the best of several imperfect solutions.<br/>
+        DROP TABLE IF EXISTS stories_seq;<br/>
+        CREATE TABLE stories_seq (<br/>
+        next_id mediumint NOT NULL<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Story submissions. This is solely so we can track when a submission was begun, and<br/>
+        -- know which ones are "in progress". This gets cleaned out periodically, where any old<br/>
+        -- submissions, and ships/chars for them, get deleted.<br/>
+        DROP TABLE IF EXISTS story_submissions;<br/>
+        CREATE TABLE story_submissions (<br/>
+        story_id mediumint NOT NULL,<br/>
+        time_started timestamp NOT NULL,<br/>
+        PRIMARY KEY (story_id, time_started)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Story versions.<br/>
+        DROP TABLE IF EXISTS story_versions;<br/>
+        CREATE TABLE story_versions (<br/>
+        story_version_id int NOT NULL auto_increment,<br/>
+        story_id mediumint NOT NULL references stories(story_id),<br/>
+        title varchar(80) NOT NULL,<br/>
+        summary text NOT NULL,<br/>
+        time_submitted timestamp NOT NULL,<br/>
+        author_comments varchar(255) NOT NULL,<br/>
+        PRIMARY KEY (story_version_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Story workflow. Same dichotomy as pen_name_versions/workflow<br/>
+        DROP TABLE IF EXISTS story_workflow;<br/>
+        CREATE TABLE story_workflow (<br/>
+        story_version_id int NOT NULL references story_versions(story_version_id),<br/>
+        story_id mediumint NOT NULL references stories(story_id),<br/>
+        approver_id mediumint NOT NULL references users(user_id),<br/>
+        time_checked_out timestamp NOT NULL,<br/>
+        time_approved datetime,<br/>
+        approver_comments varchar(255) NOT NULL,<br/>
+        resolution_code char(5) NOT NULL,<br/>
+        PRIMARY KEY (story_version_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Chapters<br/>
+        DROP TABLE IF EXISTS chapters;<br/>
+        CREATE TABLE chapters (<br/>
+        chapter_id int NOT NULL auto_increment,<br/>
+        story_id mediumint NOT NULL references stories(story_id),<br/>
+        hits int NOT NULL default '0',<br/>
+        published_date date,<br/>
+        modified_date date,<br/>
+        sort_order tinyint unsigned NOT NULL,<br/>
+        autonumber tinyint(1) NOT NULL default '1',<br/>
+        review_thread_id int,<br/>
+        workflow_code char(3),<br/>
+        PRIMARY KEY (chapter_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Chapter content. Holds all the actual data. 2:1 with chapters<br/>
+        DROP TABLE IF EXISTS chapter_content;<br/>
+        CREATE TABLE chapter_content (<br/>
+        chapter_id int NOT NULL references chapters(chapter_id),<br/>
+        chapter_version_id int NOT NULL references chapter_versions(chapter_version_id),<br/>
+        chapter_title varchar(80) NOT NULL,<br/>
+        chapter_summary text NOT NULL,<br/>
+        chapter_disclaimer text NOT NULL,<br/>
+        chapter_pre_notes text NOT NULL,<br/>
+        chapter_post_notes text NOT NULL,<br/>
+        chapter_body mediumtext NOT NULL,<br/>
+        is_published tinyint(1) NOT NULL default '0',<br/>
+        PRIMARY KEY (chapter_id, chapter_version_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Chapter versions. Holds metadata for submissions, notes, rejections, etc.<br/>
+        -- Many:1 with chapters.<br/>
+        DROP TABLE IF EXISTS chapter_versions;<br/>
+        CREATE TABLE chapter_versions (<br/>
+        chapter_id int NOT NULL references chapters(chapter_id),<br/>
+        chapter_version_id int NOT NULL auto_increment,<br/>
+        time_submitted timestamp NOT NULL,<br/>
+        author_comments varchar(255) NOT NULL,<br/>
+        word_count mediumint NOT NULL,<br/>
+        character_count mediumint NOT NULL,<br/>
+        PRIMARY KEY (chapter_id, chapter_version_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Chapter workflow. See pen_name_versions/workflow<br/>
+        -- 1:1 with chapter_versions, but created at a different time<br/>
+        DROP TABLE IF EXISTS chapter_workflow;<br/>
+        CREATE TABLE chapter_workflow (<br/>
+        chapter_id int NOT NULL references chapters(chapter_id),<br/>
+        chapter_version_id int NOT NULL references chapter_versions(chapter_version_id),<br/>
+        time_checked_out timestamp NOT NULL,<br/>
+        time_approved datetime NOT NULL,<br/>
+        approver_comments mediumtext NOT NULL,<br/>
+        resolution_code char(5) NOT NULL,<br/>
+        PRIMARY KEY (chapter_id, chapter_version_id)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Story characters. Allows us to have multiple main characters per story<br/>
+        DROP TABLE IF EXISTS story_characters;<br/>
+        CREATE TABLE story_characters (<br/>
+        story_id mediumint NOT NULL references stories(story_id),<br/>
+        character_code char(5) NOT NULL references character_values(character_code),<br/>
+        PRIMARY KEY (story_id, character_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Story ships. Multiple ships per story<br/>
+        DROP TABLE IF EXISTS story_ships;<br/>
+        CREATE TABLE story_ships (<br/>
+        story_id mediumint NOT NULL references stories(story_id),<br/>
+        ship_char1_code char(5) NOT NULL references character_values(character_code),<br/>
+        ship_char2_code char(5) NOT NULL references character_values(character_code),<br/>
+        PRIMARY KEY (story_id, ship_char1_code, ship_char2_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Story spoilers.<br/>
+        DROP TABLE IF EXISTS story_spoilers;<br/>
+        CREATE TABLE story_spoilers (<br/>
+        story_id mediumint NOT NULL references stories(story_id),<br/>
+        spoiler_code char(5) NOT NULL references spoiler_values(spoiler_code),<br/>
+        PRIMARY KEY (story_id, spoiler_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Story genres<br/>
+        DROP TABLE IF EXISTS story_genres;<br/>
+        CREATE TABLE story_genres (<br/>
+        story_id mediumint NOT NULL references stories(story_id),<br/>
+        genre_name char(10) NOT NULL references genre_values(genre_name),<br/>
+        rank_order tinyint NOT NULL,<br/>
+        PRIMARY KEY (story_id, genre_name)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Character values<br/>
+        DROP TABLE IF EXISTS character_values;<br/>
+        CREATE TABLE character_values (<br/>
+        character_code char(5) NOT NULL,<br/>
+        character_name varchar(25) NOT NULL,<br/>
+        sort_order smallint NOT NULL,<br/>
+        PRIMARY KEY (character_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Spoiler values<br/>
+        DROP TABLE IF EXISTS spoiler_values;<br/>
+        CREATE TABLE spoiler_values (<br/>
+        spoiler_code char(5) NOT NULL,<br/>
+        spoiler_name varchar(60) NOT NULL,<br/>
+        spoiler_sort_order tinyint NOT NULL,<br/>
+        PRIMARY KEY (spoiler_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Genre values<br/>
+        DROP TABLE IF EXISTS genre_values;<br/>
+        CREATE TABLE genre_values (<br/>
+        genre_name char(10) NOT NULL,<br/>
+        PRIMARY KEY (genre_name)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- House values<br/>
+        DROP TABLE IF EXISTS house_values;<br/>
+        CREATE TABLE house_values (<br/>
+        house_code char(3) NOT NULL,<br/>
+        house_name varchar(20) NOT NULL,<br/>
+        house_description varchar(255) NOT NULL,<br/>
+        house_color char(6) NOT NULL,<br/>
+        house_rb_url varchar(255) NOT NULL,<br/>
+        house_domain varchar(50) NOT NULL,<br/>
+        house_directory varchar(50) NOT NULL,<br/>
+        house_sort_order tinyint NOT NULL,<br/>
+        PRIMARY KEY (house_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Rating values<br/>
+        DROP TABLE IF EXISTS rating_values;<br/>
+        CREATE TABLE rating_values (<br/>
+        rating_code char(5) NOT NULL,<br/>
+        rating_description text NOT NULL,<br/>
+        rating_sort_order tinyint NOT NULL,<br/>
+        PRIMARY KEY (rating_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        INSERT INTO rating_values (rating_code, rating_sort_order) VALUES<br/>
+        ("G", 5),<br/>
+        ("PG", 10),<br/>
+        ("PG-13", 15),<br/>
+        ("R", 20);<br/>
+      </code>
+      <code>
+        -- Language values<br/>
+        DROP TABLE IF EXISTS language_values;<br/>
+        CREATE TABLE language_values (<br/>
+        language_code char(3) NOT NULL,<br/>
+        language_name varchar(30) NOT NULL,<br/>
+        PRIMARY KEY (language_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Era values<br/>
+        DROP TABLE IF EXISTS era_values;<br/>
+        CREATE TABLE era_values (<br/>
+        era_code char(22) NOT NULL,<br/>
+        era_sort_order tinyint NOT NULL,<br/>
+        PRIMARY KEY (era_code)<br/>
+        );<br/>
+      </code>
+      <code>
+        -- Fandom era values<br/>
+        DROP TABLE IF EXISTS fandom_era_values;<br/>
+        CREATE TABLE fandom_era_values (<br/>
+        fandom_era_id tinyint NOT NULL AUTO_INCREMENT,<br/>
+        fandom_era_name varchar(20) NOT NULL,<br/>
+        fandom_era_sort_order tinyint NOT NULL,<br/>
+        PRIMARY KEY (fandom_era_id)<br/>
+        );<br/>
+      </code>
+      <p>
+        [File: migrate.php]
+      </p>
+      <code>
+        <?php<br/>
+      </code>
+      <code>
+        require_once('./local_config.inc.php');<br/>
+      </code>
+      <code>
+        require_once('migrate_helpers.inc.php');<br/>
+        require_once('links_parse.inc.php');<br/>
+        require_once('fic_parse.inc.php');<br/>
+        require_once('data_structures.inc.php');<br/>
+        require_once('field_listings.inc.php');<br/>
+      </code>
+      <code>
+        require_once('db_utils.inc.php');<br/>
+      </code>
+      <code>
+        $migrate_stats = array( 'total_files' => 0, 'parsable_files' => 0, 'unparsable_files' => 0,<br/>
+        'total_stories' => 0);<br/>
+      </code>
+      <code>
+        /** Overall migration entry point */<br/>
+        function migrate() {<br/>
+        global $currentHouse;<br/>
+        global $HOUSE_DIRS;<br/>
+      </code>
+      <code>
+        $LINKS_PATH = '/cgi-bin/links/admin/data/';<br/>
+      </code>
+      <code>
+        for($currentHouse = 1; $currentHouse < 5; $currentHouse++) <br/>
+        {<br/>
+        $linksDir = $HOUSE_DIRS[$currentHouse] . $LINKS_PATH;<br/>
+        handleCategories($linksDir . 'categories.db');<br/>
+        handleLinks($linksDir . 'links.db');<br/>
+        // Bulk of the insertion takes place within handleLinks<br/>
+        }<br/>
+      </code>
+      <code>
+        updateStories(); <br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Loop through Links database. This sets off the main series of INSERTs.
+        </li>
+        <li>
+           We extract everything we can from the LINKs database, then follow the
+        </li>
+        <li>
+           link to the fic file. Then we read that to grab additional info. If
+        </li>
+        <li>
+           there's currently no story record for this chapter, create one. If
+        </li>
+        <li>
+           there's no pen name or user record for the story, create one. Also
+        </li>
+        <li>
+           store and update whatever information that'll need to be updated at the
+        </li>
+        <li>
+           end.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function handleLinks($filename)<br/>
+        {<br/>
+        global $currentHouse;<br/>
+        global $HOUSE_DIRS;<br/>
+        global $migrate_stats;<br/>
+      </code>
+      <code>
+        $links =& parseLinksDb($filename, 'parseLink');<br/>
+      </code>
+      <code>
+        foreach ($links as $link) <br/>
+        {<br/>
+      </code>
+      <code>
+        // We have all the data available from the LINKs entry<br/>
+        // Now we should follow that, find the corresponding fic<br/>
+        // file, and parse that to get the rest of the data.<br/>
+        $filename = followLink($link['url'], $HOUSE_DIRS[$currentHouse]);<br/>
+        echo EOL . "Working on fic $filename...";<br/>
+        $migrate_stats['total_files']++;<br/>
+        $fic = parseFic($filename);<br/>
+      </code>
+      <code>
+        if($fic) <br/>
+        {  // Only if we could parse it<br/>
+        echo 'Parsed!';<br/>
+        $migrate_stats['parsable_files']++;<br/>
+        insertChapter($link, $fic);<br/>
+        }<br/>
+        else <br/>
+        {<br/>
+        $migrate_stats['unparsable_files']++;<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        /** <br/>
+      </code>
+      <ul>
+        <li>
+           Chapters table data. Returns the ID of record inserted. 
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertChapter($link, $fic)<br/>
+        {<br/>
+        global $storyIds;<br/>
+      </code>
+      <code>
+        if(array_key_exists($link['category'], $storyIds)) <br/>
+        {<br/>
+        $storyId = $storyIds[$link['category']]; <br/>
+        } <br/>
+        else <br/>
+        {<br/>
+        $storyId = insertStory($link, $fic);<br/>
+        if(!isAuthor($link['category'])) <br/>
+        {  // Only save chaptereds<br/>
+        $storyIds[$link['category']] = $storyId;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        // Chaptering/autonumbering<br/>
+        if(isAuthor($link['category'])) <br/>
+        {   // One-shot<br/>
+        $chapter = 1;<br/>
+        $autoNumber = 0;        // Irrelevant; no chapters<br/>
+        }<br/>
+        else <br/>
+        {<br/>
+        $chapter = extractChapterNumber($link['url']);<br/>
+        $autoNumber = isAutonumbered($link['title'], $fic['title'], $chapter);<br/>
+        updateStoryInfo($link['category'], $fic['genre'], $fic['subgenre'], $fic['rating']);<br/>
+        }<br/>
+      </code>
+      <code>
+        // Non-autonumbered chapters need chapter titles<br/>
+        if(!$autoNumber) <br/>
+        {<br/>
+        $chapterTitle = $link['title'];<br/>
+        } <br/>
+        else <br/>
+        {<br/>
+        $chapterTitle = <em>;     // Let them fix it themselves...</em><br/>
+        }<br/>
+      </code>
+      <code>
+        $record = array(<br/>
+        'story_id' => $storyId,<br/>
+        'hits' => $link['hits'],<br/>
+        'published_date' => convertDate($link['date']),<br/>
+        'modified_date' => convertDate($link['date']),<br/>
+        'sort_order' => $chapter,<br/>
+        'autonumber' => $autoNumber,<br/>
+        'review_thread_id' => $fic['review_thread']        <br/>
+        );<br/>
+        $id = insertRecord($record, 'chapters');<br/>
+      </code>
+      <code>
+        $versionId = insertChapterVersion($id, $fic['text']);<br/>
+        insertChapterContent($id, $versionId, $fic, $chapterTitle);<br/>
+        insertChapterWorkflow($id, $versionId, convertDate($link['date']));<br/>
+        }<br/>
+      </code>
+      <code>
+        function insertChapterContent($id, $versionId, $fic, $chapterTitle)<br/>
+        {<br/>
+        $record = array(<br/>
+        'chapter_id' => $id,<br/>
+        'chapter_version_id' => $versionId,<br/>
+        'chapter_title' => $chapterTitle,<br/>
+        'chapter_summary' => $fic['summary'],<br/>
+        'chapter_disclaimer' => $fic['disclaimer'],<br/>
+        'chapter_pre_notes' => $fic['pre_an'],<br/>
+        'chapter_post_notes' => $fic['post_an'],<br/>
+        'chapter_body' => $fic['text']<br/>
+        );<br/>
+        insertRecord($record, 'chapter_content', false);<br/>
+        }<br/>
+      </code>
+      <code>
+        function insertChapterVersion($chapterId, $text)<br/>
+        {<br/>
+        $record = array(<br/>
+        'chapter_id' => $chapterId,<br/>
+        'author_comments' => <em>,</em><br/>
+        'word_count' => wordcount($text),<br/>
+        'character_count' => strlen($text)<br/>
+        );<br/>
+        return insertRecord($record, 'chapter_versions');<br/>
+        }<br/>
+      </code>
+      <code>
+        function insertChapterWorkflow($chapterId, $versionId, $datePublished)<br/>
+        {<br/>
+        $record = array(<br/>
+        'chapter_id' => $chapterId,<br/>
+        'chapter_version_id' => $versionId,<br/>
+        'time_approved' => $datePublished,<br/>
+        'approver_comments' => <em>,</em><br/>
+        'resolution_code' => 'OS'<br/>
+        );<br/>
+        insertRecord($record, 'chapter_workflow', false);<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Updates the StoryInfo data structure, to keep track of any additions that will need
+        </li>
+        <li>
+           to be inserted/updated after all the data has been read.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function updateStoryInfo($key, $genre, $subgenre, $rating)<br/>
+        {<br/>
+        global $storyUpdates;<br/>
+        global $RATINGS;<br/>
+      </code>
+      <code>
+        $update =& $storyUpdates[$key];<br/>
+      </code>
+      <code>
+        $update->mainGenre = $genre;<br/>
+        $update->secondGenre = $subgenre;<br/>
+        if($RATINGS[$rating] > $update->rating) <br/>
+        {<br/>
+        $update->rating = $RATINGS[$rating];<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        function insertStory($link, $fic)<br/>
+        {<br/>
+        global $storyUpdates;<br/>
+        global $penNameIds;<br/>
+        global $currentHouse;<br/>
+        global $RATINGS;<br/>
+        global $HOUSES;<br/>
+        global $migrate_stats;<br/>
+      </code>
+      <code>
+        $authorCat = authorPart($link['category']);<br/>
+        if(array_key_exists($authorCat, $penNameIds)) <br/>
+        {<br/>
+        $penNameId = $penNameIds[$authorCat];<br/>
+        } <br/>
+        else <br/>
+        {<br/>
+        $penNameId = insertPenName($link, $fic);<br/>
+        $versionId = insertPenNameVersion($penNameId, $link, $fic);<br/>
+        insertPenNameWorkflow($versionId, $penNameId, $link, $fic);<br/>
+        $penNameIds[$authorCat] = $penNameId;<br/>
+        }<br/>
+      </code>
+      <code>
+        $spoilers = array();<br/>
+        $otherSpoilers = parseSpoilers($fic['spoilers'], $spoilers);<br/>
+      </code>
+      <code>
+        $id = storiesAutoIncrement();<br/>
+        $record = array(<br/>
+        'pen_name_id' => $penNameId,<br/>
+        'story_id' => $id,<br/>
+        'house_code' => $HOUSES[$currentHouse],<br/>
+        'rating_code' => $fic['rating'],  // Updated later for chaptereds<br/>
+        'language_code' => 'US',     // Default to U.S. English<br/>
+        'era_code' => 'Unspecified Era',    // None will be specified at first<br/>
+        'fandom_era_id' => 2,   // Shall we do this by date instead?<br/>
+        'other_spoilers' => $otherSpoilers,<br/>
+        'is_published' => 1,    // True<br/>
+        'is_completed' => isAuthor($link['category']),<br/>
+        'review_forum_id' => $fic['review_thread'],<br/>
+        'workflow_code' => WORKFLOW_ON_SITE<br/>
+        );<br/>
+        insertRecord($record, 'stories', false);<br/>
+        insertSpoilers($id, $spoilers);<br/>
+        insertCharacters($id, $link['keywords']);<br/>
+      </code>
+      <code>
+        if(isAuthor($link['category'])) <br/>
+        {<br/>
+        updateOneShot($link, $fic, $id);<br/>
+        } <br/>
+        else <br/>
+        {    <br/>
+        $update =& $storyUpdates[$link['category']];<br/>
+        $update->id = $id;<br/>
+        }<br/>
+      </code>
+      <code>
+        $migrate_stats['total_stories']++;<br/>
+      </code>
+      <code>
+        return $id;<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Handles one-shot stories. These get their title and summary from the Link
+        </li>
+        <li>
+           instead of the Category, and so need to be updated separately. No data is
+        </li>
+        <li>
+           stored within a StoryUpdate; instead, we perform all necessary SQL updates
+        </li>
+        <li>
+           here.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function updateOneShot($link, $fic, $id) {<br/>
+        $versionId = insertStoryVersion($id, $link['title'], $link['desc']);<br/>
+        insertStoryWorkflow($id, $versionId);<br/>
+        insertGenres($id, $fic['genre'], $fic['subgenre']);<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Goes through the string returned from the Spoilers header and parses it.
+        </li>
+        <li>
+           Known spoilers are pushed onto the $spoilers array passed in by reference.
+        </li>
+        <li>
+           All others are concatenated together and returned from the function.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function parseSpoilers($spoilerString, &$spoilers)<br/>
+        {<br/>
+        global $SPOILERS;<br/>
+      </code>
+      <code>
+        $spoilerArray = explode(', ', $spoilerString);<br/>
+        $otherSpoilers = <em>;</em><br/>
+      </code>
+      <code>
+        foreach ($spoilerArray as $spoiler) <br/>
+        {<br/>
+        if(array_key_exists($spoiler, $SPOILERS)) <br/>
+        {<br/>
+        array_push($spoilers, $SPOILERS[$spoiler]);<br/>
+        } <br/>
+        else <br/>
+        {<br/>
+        $otherSpoilers .= $spoiler;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        return $otherSpoilers;<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Inserts spoilers into the database. This loops through the array and
+        </li>
+        <li>
+           inserts a row for each one found.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertSpoilers($id, $spoilers) {<br/>
+        foreach($spoilers as $spoiler) <br/>
+        {<br/>
+        $record = array(<br/>
+        'story_id' => $id,<br/>
+        'spoiler_code' => $spoiler<br/>
+        );<br/>
+        insertRecord($record, 'story_spoilers', false);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Parses the keywords for possible character names and inserts them
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertCharacters($storyId, $keywords)<br/>
+        {<br/>
+        global $CHARS;<br/>
+        $keys = explode(' ', strtolower($keywords));<br/>
+        foreach($keys as $candidate)<br/>
+        {<br/>
+        if(array_key_exists($candidate, $CHARS))<br/>
+        {<br/>
+        $record = array(<br/>
+        'story_id' => $storyId,<br/>
+        'character_code' => $CHARS[$candidate]<br/>
+        );<br/>
+        insertRecord($record, 'story_characters', false);<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Inserts a pen name.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertPenName($link, $fic)<br/>
+        {<br/>
+        global $userids;<br/>
+        global $penNames;<br/>
+      </code>
+      <code>
+        $vb_id = $fic['vb_id'];<br/>
+        if(array_key_exists($vb_id, $userids)) <br/>
+        {<br/>
+        $userId = $userids[$vb_id];<br/>
+        } <br/>
+        else <br/>
+        {<br/>
+        $penName = $penNames[authorPart($link['category'])];<br/>
+        $userId = insertUser($vb_id, $penName);<br/>
+        $userids[$vb_id] = $userId;<br/>
+        }<br/>
+      </code>
+      <code>
+        $record = array(<br/>
+        'user_id' => $userId,<br/>
+        'email' => $link['email'],<br/>
+        'workflow_code' => WORKFLOW_ON_SITE<br/>
+        );<br/>
+      </code>
+      <code>
+        return insertRecord($record, 'pen_names');<br/>
+        }<br/>
+      </code>
+      <code>
+        function insertPenNameVersion($penNameId, $link, $fic)<br/>
+        {<br/>
+        global $penNames;<br/>
+        $penName = $penNames[authorPart($link['category'])];<br/>
+        $record = array(<br/>
+        'pen_name_id' => $penNameId,<br/>
+        'pen_name' => $penName,<br/>
+        'author_comments' => <em></em><br/>
+        );<br/>
+      </code>
+      <code>
+        return insertRecord($record, 'pen_name_versions', false);<br/>
+        }<br/>
+      </code>
+      <code>
+        function insertPenNameWorkflow($versionId, $penNameId, $link, $fic)<br/>
+        {<br/>
+        // All entries get inserted so that they've already passed through,<br/>
+        // are on site, with null comments and FictionAlleyMods as the approver<br/>
+        $record = array(<br/>
+        'pen_name_version_id' => $versionId,<br/>
+        'pen_name_id' => $penNameId,<br/>
+        'approver_id' => '1',<br/>
+        'time_approved' => 'NULL',<br/>
+        'approver_comments' => <em>,</em><br/>
+        'resolution_code' => 'APPR'<br/>
+        ); <br/>
+        return insertRecord($record, 'pen_name_workflow', false);<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Inserts an entry into the users table
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertUser($vb_id, $penName) {<br/>
+        $record = array(<br/>
+        'username' => $penName,<br/>
+        'forum_user_id' => $vb_id<br/>
+        );<br/>
+        return insertRecord($record, 'users');<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Handles all post-processing necessary to update the stories table.
+        </li>
+        <li>
+           Works on chaptered stories only; one-shots are updated as the record
+        </li>
+        <li>
+           is added to the stories table, in updateOneShot.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function updateStories()<br/>
+        {<br/>
+        global $storyUpdates;<br/>
+        global $migrate_stats;<br/>
+      </code>
+      <code>
+        foreach ($storyUpdates as $update) <br/>
+        {<br/>
+        if(isset($update->id) && $update->id != <em>) </em><br/>
+        {<br/>
+        $id = insertStoryVersion($update->id, $update->title, $update->summary);<br/>
+        insertStoryWorkflow($update->id, $id);<br/>
+        updateStory($update);<br/>
+        insertGenres($update->id, $update->mainGenre, $update->secondGenre);<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Inserts the info for the story_versions table. Most of this will necessarily be blank,
+        </li>
+        <li>
+           dummy values, but we insert what we can for data consistency's sake. The author will 
+        </li>
+        <li>
+           have to go back and input the chapter title (if any), and we'll have to live with the
+        </li>
+        <li>
+           timestamp being off, but we can at least keep the chapter summary.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertStoryVersion($id, $title, $summary)<br/>
+        {<br/>
+        $record = array(<br/>
+        'story_id' => $id,<br/>
+        'title' => $title,<br/>
+        'summary' => $summary,<br/>
+        'author_comments' => <em></em><br/>
+        );<br/>
+        return insertRecord($record, 'story_versions');<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Inserts dummy values for story_workflow
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertStoryWorkflow($storyId, $storyVersionId)<br/>
+        {<br/>
+        $record = array(<br/>
+        'story_version_id' => $storyVersionId,<br/>
+        'story_id' => $storyId,<br/>
+        'approver_id' => '1',<br/>
+        'time_approved' => 'NULL',<br/>
+        'approver_comments' => <em>,</em><br/>
+        'resolution_code' => 'APPR'<br/>
+        );<br/>
+        insertRecord($record, 'story_workflow', false);<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Performs whatever last-minute updates are necessary on the story
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function updateStory($update)<br/>
+        {<br/>
+        global $db;<br/>
+        global $RATINGS;<br/>
+      </code>
+      <code>
+        $record = array(<br/>
+        'rating_code' => array_search($update->rating, $RATINGS),<br/>
+        'is_completed' => $update->completed<br/>
+        );<br/>
+        dbUpdate('stories', $record, "story_id = $update->id");<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Inserts both genres.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertGenres($id, $main, $secondary) {<br/>
+        insertGenre($main, $id, 1);<br/>
+        if(isset($secondary) && $secondary != <em>) {</em><br/>
+        insertGenre($secondary, $id, 2);<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Inserts a genre record.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertGenre($genreName, $storyId, $rankOrder)<br/>
+        {<br/>
+        global $GENRES;<br/>
+      </code>
+      <code>
+        $record = array(<br/>
+        'story_id' => $storyId,<br/>
+        'genre_name' => $GENRES[$genreName],<br/>
+        'rank_order' => $rankOrder<br/>
+        );<br/>
+        insertRecord($record, 'story_genres', false);<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Inserts this record into the database. If the insert fails, it logs the
+        </li>
+        <li>
+           failure and returns false. Otherwise, it returns the autonumber ID of
+        </li>
+        <li>
+           the row just inserted.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function insertRecord($record, $tableName, $printDebug = true)<br/>
+        {<br/>
+        $result = dbInsert($tableName, $record);<br/>
+        $id = mysql_insert_id();<br/>
+        if($printDebug) {<br/>
+        //        printRecord($record, "Inserted into $tableName");<br/>
+        print EOL . "Inserted record $id into $tableName.";<br/>
+        }<br/>
+        return $id;<br/>
+        }<br/>
+      </code>
+      <code>
+        // Start script<br/>
+        migrate();<br/>
+      </code>
+      <code>
+        printRecord($migrate_stats, EOL . 'Migration complete');<br/>
+      </code>
+      <code>
+        ?><br/>
+      </code>
+      <p>
+        [File: data_structures.inc.php]
+      </p>
+      <code>
+        <?php<br/>
+      </code>
+      <code>
+        require_once("db_utils.inc.php");  // Our Eclipse wrapper<br/>
+      </code>
+      <code>
+        /*<br/>
+      </code>
+      <ul>
+        <li>
+           These cache changes that need to be made to various DB records. We create
+        </li>
+        <li>
+           the record as soon as we find an appropriate chapter; however, we can
+        </li>
+        <li>
+           only know the information from the LINKS category with certainty. E-mails
+        </li>
+        <li>
+           and such need to be derived from the <i>last</i> submitted chapter, so
+        </li>
+        <li>
+           this in-memory structure gets updated with each succesive chapter and written
+        </li>
+        <li>
+           to the DB at the end. Since we expect successive chapters to be close together,
+        </li>
+        <li>
+           the paging should be faster than doing multiple database updates.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           We set the currentHouse global variable to the ID of the house we are
+        </li>
+        <li>
+           currently processing. We also have an array that contains the base
+        </li>
+        <li>
+           directories for each house.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        $currentHouse = 1;<br/>
+      </code>
+      <code>
+        $HOUSE_DIRS = array(<br/>
+      </code>
+      <ol>
+        <li>
+           => HOUSE_PATH . SCH_DIR,
+        </li>
+        <li>
+           => HOUSE_PATH . RID_DIR,
+        </li>
+        <li>
+           => HOUSE_PATH . AT_DIR,
+        </li>
+        <li>
+           => HOUSE_PATH . TDA_DIR,
+        </li>
+      </ol>
+      <code>
+        );<br/>
+      </code>
+      <code>
+        /*<br/>
+      </code>
+      <ul>
+        <li>
+           When the users record is created, it gets the e-mail from vBulletin, the 
+        </li>
+        <li>
+           username from vB, and the userID from the chapter file (along with the default
+        </li>
+        <li>
+           fields). Thus, no need to store additional data.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           We do, however, hash the vb.userid to the users.userid. This lets us avoid
+        </li>
+        <li>
+           a SELECT on the users table. 
+        </li>
+        <li>
+          / 
+        </li>
+      </ul>
+      <code>
+        $userids = array();<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           For pen names, we get the user index from creating the user record
+        </li>
+        <li>
+           (or SELECTing for it, based on the vB ID) and the pen name dir off the path
+        </li>
+        <li>
+           to the file. We just need a hash of LINKS author categories to pen names.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        $penNames = array();<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           We also keep a hash of LINKs author categories to pen name IDs so we don't
+        </li>
+        <li>
+           need to requery. It's a separate hash because $penNames is created at
+        </li>
+        <li>
+           category-parsing, while this is created as the author record is.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        $penNameIds = array();<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Stories is trickier. We'll need to grab the title and summary off the LINKs
+        </li>
+        <li>
+           category parse and store that in a hash. But we also need to store the rating,
+        </li>
+        <li>
+           fandom era (based on date published), additional spoilers (concatenation of all
+        </li>
+        <li>
+           data found on the chapters), completed status (taken from LINKs category),
+        </li>
+        <li>
+           spoilers (union of all found within fic - we probably can just use database
+        </li>
+        <li>
+           queries for this), and genres (take the last found).
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        class StoryUpdate {<br/>
+        var $title;<br/>
+        var $summary;<br/>
+        var $id;<br/>
+        var $mainGenre;<br/>
+        var $secondGenre;<br/>
+        var $rating = 0;    // Numeric rating; updated on each chapter<br/>
+        var $completed;<br/>
+        }<br/>
+      </code>
+      <code>
+        $storyUpdates = array();<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Stores IDs, so we know which records have already been inserted.
+        </li>
+        <li>
+           Similar distinction to penNames vs. penNameIds
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        $storyIds = array();<br/>
+      </code>
+      <code>
+        /* <br/>
+      </code>
+      <ul>
+        <li>
+           No need for chapter stuff...we add those to the database as soon as we parse
+        </li>
+        <li>
+           them
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        ?><br/>
+      </code>
+      <p>
+        [File: fic_parse.inc.php]
+      </p>
+      <code>
+        <?php<br/>
+        require_once("utils.inc.php");<br/>
+      </code>
+      <code>
+        /** <br/>
+      </code>
+      <ul>
+        <li>
+           Global variable to store filename of current file. Used to log error messages
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        $FicParse_filename = "";<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Parses a fic file.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           This extracts all the header fields from the fic and
+        </li>
+        <li>
+           puts them in a hash with the following keys:<ul>
+        </li>
+        <li>
+           <li>title</li>
+        </li>
+        <li>
+           <li>author</li>
+        </li>
+        <li>
+           <li>vb_id</li>
+        </li>
+        <li>
+           <li>chapter</li>
+        </li>
+        <li>
+           <li>email</li>
+        </li>
+        <li>
+           <li>genre</li>
+        </li>
+        <li>
+           <li>subgenre</li>
+        </li>
+        <li>
+           <li>keywords</li>
+        </li>
+        <li>
+           <li>rating</li>
+        </li>
+        <li>
+           <li>spoilers</li>
+        </li>
+        <li>
+           <li>summary</li>
+        </li>
+        <li>
+           <li>disclaimer</li>
+        </li>
+        <li>
+           <li>pre_an</li>
+        </li>
+        <li>
+           <li>post_an</li>
+        </li>
+        <li>
+           <li>text</li>
+        </li>
+        <li>
+           <li>review_thread</li>
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @access public
+        </li>
+        <li>
+           @params filename Path to fic to parse
+        </li>
+        <li>
+           @returns The hash with fields
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function parseFic($filename) <br/>
+        {<br/>
+        global $FicParse_filename;<br/>
+        $FicParse_filename = $filename;<br/>
+      </code>
+      <code>
+        if(!file_exists($filename))<br/>
+        {<br/>
+        logUnfoundFile();<br/>
+        return false;<br/>
+        }<br/>
+      </code>
+      <code>
+        $data =& file_get_contents($filename);<br/>
+        $sections = splitFic($data);   // Split & trim into header & text<br/>
+        if($sections == false) {<br/>
+        return false;<br/>
+        }<br/>
+      </code>
+      <code>
+        $retval = array(<br/>
+        "text"              => $sections["text"],<br/>
+        "review_thread"     => $sections["threadid"],<br/>
+        "post_an"           => $sections["footer"]<br/>
+        );<br/>
+        $retval += parseHeader($sections["header"]);<br/>
+      </code>
+      <code>
+        return $retval;<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Splits a fic into header, text, and footer sections, based on the
+        </li>
+        <li>
+           presence of <-- headerend --> and Read? Review markers.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           Because some fics have had their review link moved above a post A/N,
+        </li>
+        <li>
+           the text actually ends at the review link, and so we need to split there.
+        </li>
+        <li>
+           However, if the review thread actually falls in the footer, we need to cut
+        </li>
+        <li>
+           off the <-- footerstart --> tag from the text section. If it doesn't, we
+        </li>
+        <li>
+           need to cut off everything after <-- footerstart --> from the footer, so it's
+        </li>
+        <li>
+           just returning the post A/N.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @access private
+        </li>
+        <li>
+           @returns Hash with the following fields: <ul>
+        </li>
+        <li>
+           <li>header - everything up through the <!-- headerstart --> tag</li>
+        </li>
+        <li>
+           <li>text - everything between that and the Read? Review! link</li>
+        </li>
+        <li>
+           <li>footer - the Post-A/N text following Read? Review link, if any</li>
+        </li>
+        <li>
+           <li>threadid - the ID of the thread</li>
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function splitFic($data) <br/>
+        {<br/>
+        // Set up regexp constants. I use % to delimit the pattern so we don't need <br/>
+        // to escape all the slashes.<br/>
+      </code>
+      <code>
+        $HEADER_START = "(?:<!-- headerstart -->|</head>)";<br/>
+        $HEADER_END = "<!-- headerend -->";<br/>
+        $FOOTER_START = "<!-- footerstart -->";<br/>
+      </code>
+      <code>
+        // First try; covers fics submitted since the post-AN field went in<br/>
+        $READ_REVIEW = "<p align=\"center\"><font size=6 color=\"#\w+\">Read\? \s*</font>\s*"<br/>
+        . "<a href=\"<a href="http://www">http://www</a>\.fictionalley\.org/\w+/reviews/newreply\.php\?"<br/>
+        . "(?:s=&)?(?:action=newreply&)?threadid=(\d+)\"(?: target=_blank)?>\s*"<br/>
+        . "<font size=6 color=\"#\w+\">Review!(?:</font></a>|</a></font>)</p>";<br/>
+        $regexp = "%$HEADER_START(.+)$HEADER_END(.+)$FOOTER_START.*$READ_REVIEW(.*)<hr>%sUi";<br/>
+      </code>
+      <code>
+        if(preg_match($regexp, $data, $matches))<br/>
+        {<br/>
+        return array(<br/>
+        "header"    => $matches[1],<br/>
+        "text"      => trim($matches[2]),<br/>
+        "threadid"  => $matches[3],            <br/>
+        "footer"    => trim($matches[4])<br/>
+        );<br/>
+        }<br/>
+      </code>
+      <code>
+        // Second try; should cover most fics from introduction of the submit form up to<br/>
+        // the introduction of post-ANs on the form. Since we moved post-A/Ns manually<br/>
+        // then, they might appear either before or after the FOOTER_START delimiter<br/>
+        $FOOTER = "(?:$FOOTER_START\s*$READ_REVIEW|$READ_REVIEW(.+)$FOOTER_START)";<br/>
+        $regexp = "%$HEADER_START(.+)$HEADER_END(.+)$FOOTER%sUi";<br/>
+      </code>
+      <code>
+        if(preg_match($regexp, $data, $matches))<br/>
+        {<br/>
+        return array(<br/>
+        "header"    => $matches[1],<br/>
+        "text"      => trim($matches[2]),<br/>
+        "threadid"  => (count($matches) == 6) ? $matches[4] : $matches[3],<br/>
+        "footer"    => (count($matches) == 6) ? trim($matches[5]) : ""<br/>
+        );<br/>
+        }<br/>
+      </code>
+      <code>
+        // Third try; covers a period where the templates were really messed up for some<br/>
+        // reason<br/>
+        $READ_REVIEW2 = "<FONT SIZE=6 COLOR=\"#\w+\"><P ALIGN=\"CENTER\">Read\? </FONT>"<br/>
+        . "<A HREF=\"<a href="http://www">http://www</a>\.fictionalley\.org/\w+/reviews/newreply.php\?"<br/>
+        . "threadid=(\d+)\"><FONT SIZE=6>Review!</FONT></A></P>";<br/>
+        $FOOTER2 = "$FOOTER_START.*$READ_REVIEW2";<br/>
+        $regexp3 = "%$HEADER_START(.+)$HEADER_END(?:</P>|<BR>)(.+)$FOOTER2%sUi";<br/>
+      </code>
+      <code>
+        if(preg_match($regexp3, $data, $matches)) <br/>
+        {<br/>
+        // Replace the end of the header with a break tag, so we can extract the A/N<br/>
+        $header = preg_replace("#</P>\s*<P ALIGN=\"CENTER\">~~~~~~~~~~~~~</P>#", "<br>", $matches[1]);<br/>
+      </code>
+      <code>
+        return array(<br/>
+        "header"    => $header,<br/>
+        "text"      => trim($matches[2]),<br/>
+        "threadid"  => $matches[3],<br/>
+        "footer"    => ""<br/>
+        );<br/>
+        }<br/>
+      </code>
+      <code>
+        // No match found; log and bail out<br/>
+        logUnparsableFile();<br/>
+        return false;<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Parse the header section into all the component fields.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @access private
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function parseHeader($header)<br/>
+        {<br/>
+        $titleLine = extractHeader("Title", $header);<br/>
+        $authorLine = extractHeader("Author name", $header);<br/>
+        //    $emailLine = extractHeader("Author email", $header);<br/>
+        $disclaimerLine = extractHeader("DISCLAIMER", $header);<br/>
+      </code>
+      <code>
+        $retval = splitTitleLine($titleLine);               // title & chapter<br/>
+        $retval = array_merge($retval, splitAuthorLine($authorLine)); // Author & VB ID<br/>
+        // E-mail comes from LINKs, so this is redundant and error-prone<br/>
+        //    $retval["email"]    = pruneEmail($emailLine);        // Remove HTML<br/>
+        $retval["genre"]    = extractHeader("Category", $header);<br/>
+        $retval["subgenre"] = extractHeader("Sub Category", $header);<br/>
+        $retval["keywords"] = extractHeader("Keywords", $header);<br/>
+        $retval["rating"]   = extractHeader("Rating", $header);<br/>
+        $retval["spoilers"] = extractHeader("Spoilers", $header);<br/>
+        $retval["summary"]  = extractHeader("Summary", $header);<br/>
+        $retval["disclaimer"] = pruneDisclaimer($disclaimerLine);   // Remove standard disclaimer<br/>
+        $retval["pre_an"]   = extractHeader("Author notes", $header);<br/>
+      </code>
+      <code>
+        return $retval;<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Extracts a single field out of the header section.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @access private
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function extractHeader($keyword, $data)<br/>
+        {<br/>
+        if(!preg_match("/$keyword:<\/b>\s(.+?)<br>/is", $data, $matches)) {<br/>
+        logUnfoundHeader($keyword);<br/>
+        return "";<br/>
+        }<br/>
+        return $matches[1];<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Splits the line returned from the Title header into title and chapter fields
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @access private
+        </li>
+        <li>
+           @returns Hash with "title" and "chapter" fields. If chapter is combined or otherwise
+        </li>
+        <li>
+           unparsable, it logs the error and returns the best guess (first number encountered)
+        </li>
+        <li>
+           it can.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function splitTitleLine($line)<br/>
+        {<br/>
+        $regexp = "/(.+) (?:\((?i:ch.+)?(\d+).*\)|pro\w*)?/";<br/>
+        if(!preg_match($regexp, $line, $matches)) {<br/>
+        logUnsplittableTitle();    // Shouldn't happen<br/>
+        $matches[1] = "";<br/>
+        $matches[2] = 0;<br/>
+        }<br/>
+      </code>
+      <code>
+        // Couldn't match chapter...either it's a prologue or combined chapter or nonstandard<br/>
+        if(count($matches) == 2) {<br/>
+        //        logMissingChapter();<br/>
+        $matches[2] = 0;<br/>
+        }<br/>
+      </code>
+      <code>
+        return array(<br/>
+        "title"     => trim($matches[1]),<br/>
+        "chapter"   => $matches[2]<br/>
+        );<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Splits the line returned from the Author header into author name and VB ID
+        </li>
+      </ul>
+      <code>
+        *<br/>
+      </code>
+      <ul>
+        <li>
+           @access private
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function splitAuthorLine($line) <br/>
+        {<br/>
+        $regexp = "/.+userid=(\d+)\"(?: target=\w+)?>(.+)<\/a>/is";<br/>
+        if(!preg_match($regexp, $line, $matches)) {<br/>
+        logUnsplittableVbId();    // Shouldn't happen, unless we've changed the format<br/>
+        $matches[1] = "";<br/>
+        $matches[2] = "";<br/>
+        }<br/>
+      </code>
+      <code>
+        return array(<br/>
+        "vb_id"     => $matches[1],<br/>
+        "author"    => preg_replace("/\s+/", " ", $matches[2])<br/>
+        );<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Extracts the raw E-mail address out of the HTMLified header
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function pruneEmail($line)<br/>
+        {<br/>
+        $regexp = "/.+<a href="mailto:(.+)">mailto:(.+)</a>\">/";<br/>
+        if(!preg_match($regexp, $line, $matches)) {<br/>
+        return "";<br/>
+        }<br/>
+      </code>
+      <code>
+        return $matches[1];<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Extracts the "additional disclaimer" information, besides the standard disclaimer.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function pruneDisclaimer($line)<br/>
+        {<br/>
+        $regexp = "/infringement is intended\.(.+)/";<br/>
+        if(!preg_match($regexp, $line, $matches)) {<br/>
+        return "";<br/>
+        }<br/>
+      </code>
+      <code>
+        return trim($matches[1]);<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Log a catastrophic error in parsing the file.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @access private
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function logUnparsableFile()<br/>
+        {<br/>
+        saveUnparsable("Unparsable file");<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Logs a title line that couldn't be split
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function logUnsplittableTitle()<br/>
+        {<br/>
+        saveUnparsable("Unsplittable title line");<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Logs an author line that couldn't be split
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function logUnsplittableVbId()<br/>
+        {<br/>
+        saveUnparsable("Couldn't extract VB ID");<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Logs an unmatched header
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @access private
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function logUnfoundHeader($header)<br/>
+        {<br/>
+        // Author notes and subcategories are no problem, so ignore them<br/>
+        if($header == "Author notes" or $header == "Sub Category" or $header == "Spoilers")<br/>
+        {<br/>
+        return;<br/>
+        }<br/>
+      </code>
+      <code>
+        saveUnparsable("Couldn't find header $header");<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Logs an unparsable chapter number
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function logMissingChapter()<br/>
+        {<br/>
+        saveUnparsable("Couldn't find chapter number");<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Logs a file that doesn't exist
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function logUnfoundFile()<br/>
+        {<br/>
+        saveUnparsable("File doesn't exist");<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Returns the current filename, converted to a URL.
+        </li>
+        <li>
+           Note: this depends on the house directories being named by the DNS name,
+        </li>
+        <li>
+           and will need to be changed for a different machine.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function filenameToHref()<br/>
+        {<br/>
+        global $FicParse_filename;<br/>
+        $url = preg_replace("#D:/FA/#", "<a href="http://www.">http://www.</a>", $FicParse_filename);<br/>
+        return "<a href = \"$url\">$url</a>";<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Saves the error text to the Unparsables file
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function saveUnparsable($message)<br/>
+        {<br/>
+        $link = filenameToHref();<br/>
+        $output = "";<br/>
+        echo "$message!" . EOL;<br/>
+        file_put_contents("unparsables.html", "$message: $link<br>\r\n", "a");<br/>
+        }<br/>
+      </code>
+      <code>
+        ?><br/>
+      </code>
+      <p>
+        [File: links_parse.inc.php]
+      </p>
+      <code>
+        <?php<br/>
+        require_once("utils.inc.php");<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Reads and parses in a LINKs database.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           This incarnation is light on error checking, so it assumes the
+        </li>
+        <li>
+           file is a valid LINKs database. If it's not, basically nothing
+        </li>
+        <li>
+           will happen - none of the regexps will match.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @param file_name Path to database
+        </li>
+        <li>
+           @param type Parsing function; can be either "parseLink" or "parseCat"
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @returns Array of hashes. The hashes are keyed based on what
+        </li>
+        <li>
+           parseLink and parseCat return.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function &parseLinksDb($file_name, $parser) {<br/>
+      </code>
+      <code>
+        $records = array();     // Store parsed DB here<br/>
+      </code>
+      <code>
+        $data = file($file_name);<br/>
+        if($data === false) {<br/>
+        error("Couldn't load database file $file_name");<br/>
+        return;<br/>
+        }<br/>
+      </code>
+      <code>
+        foreach ($data as $line) {<br/>
+        $record = $parser($line);<br/>
+        array_push($records, $record);<br/>
+        }<br/>
+      </code>
+      <code>
+        return $records;<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Parses a single line from a "link" database.
+        </li>
+        <li>
+           
+        </li>
+        <li>
+           @returns Hash of fields. The keys are:
+        </li>
+        <li>
+           <li>id</li>
+        </li>
+        <li>
+           <li>title</li>
+        </li>
+        <li>
+           <li>url</li>
+        </li>
+        <li>
+           <li>date</li>
+        </li>
+        <li>
+           <li>category</li>
+        </li>
+        <li>
+           <li>desc</li>
+        </li>
+        <li>
+           <li>contact_name</li>
+        </li>
+        <li>
+           <li>email</li>
+        </li>
+        <li>
+           <li>hits</li>
+        </li>
+        <li>
+           <li>is_new</li>
+        </li>
+        <li>
+           <li>is_popular</li>
+        </li>
+        <li>
+           <li>rating</li>
+        </li>
+        <li>
+           <li>votes</li>
+        </li>
+        <li>
+           <li>receivemail</li>
+        </li>
+        <li>
+           <li>keywords</li>
+        </li>
+        <li>
+           </ul>
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function parseLink($line) {<br/>
+        $fields = splitRecord($line);<br/>
+      </code>
+      <code>
+        $record = array(<br/>
+        "id"            => $fields[0],<br/>
+        "title"         => $fields[1],<br/>
+        "url"           => $fields[2],<br/>
+        "date"          => $fields[3],<br/>
+        "category"      => $fields[4],<br/>
+        "desc"          => $fields[5],<br/>
+        "contact_name"  => $fields[6],<br/>
+        "email"         => $fields[7],<br/>
+        "hits"          => $fields[8],<br/>
+        "is_new"        => $fields[9],<br/>
+        "is_popular"    => $fields[10],<br/>
+        "rating"        => $fields[11],<br/>
+        "votes"         => $fields[12],<br/>
+        "receivemail"   => $fields[13],<br/>
+        "keywords"      => $fields[14]<br/>
+        );<br/>
+      </code>
+      <code>
+        return $record;<br/>
+        }<br/>
+      </code>
+      <code>
+        /* Parses a single record from a category database.<br/>
+      </code>
+      <ul>
+        <li>
+           
+        </li>
+        <li>
+           @returns Hash of fields for this record. The keys are:<ul>
+        </li>
+        <li>
+           <li>id</li>
+        </li>
+        <li>
+           <li>name</li>
+        </li>
+        <li>
+           <li>desc</li>
+        </li>
+        <li>
+           <li>metadesc</li>
+        </li>
+        <li>
+           <li>metakey</li>
+        </li>
+        <li>
+           <li>header</li>
+        </li>
+        <li>
+           <li>footer</li>
+        </li>
+        <li>
+           <li>nonenglish</li>
+        </li>
+        <li>
+           </ul>
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function parseCat($line) {<br/>
+        $fields = splitRecord($line);<br/>
+      </code>
+      <code>
+        $record = array(<br/>
+        "id"            => $fields[0],<br/>
+        "name"          => $fields[1],<br/>
+        "desc"          => $fields[2],<br/>
+        "related"       => $fields[3],<br/>
+        "metadesc"      => $fields[4],<br/>
+        "metakey"       => $fields[5],<br/>
+        "header"        => $fields[6],<br/>
+        "footer"        => $fields[7],<br/>
+        "nonenglish"    => $fields[8]<br/>
+        );<br/>
+      </code>
+      <code>
+        return $record;<br/>
+        }<br/>
+      </code>
+      <code>
+        /** Splits a record into fields, using the LINKS separator | */<br/>
+        function splitRecord($line) {<br/>
+        return explode("|", trim($line));<br/>
+        }<br/>
+      </code>
+      <code>
+        ?><br/>
+      </code>
+      <p>
+        [File: migrate_helpers.inc.php]
+      </p>
+      <code>
+        <?php<br/>
+      </code>
+      <code>
+        require_once("links_parse.inc.php");<br/>
+        require_once("data_structures.inc.php");<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Loop through the categories databases, collecting any information we'll
+        </li>
+        <li>
+           be needing.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function handleCategories($filename) <br/>
+        {<br/>
+        GLOBAL $penNames;<br/>
+        GLOBAL $storyUpdates;<br/>
+      </code>
+      <code>
+        $categories =& parseLinksDb($filename, "parseCat");<br/>
+      </code>
+      <code>
+        foreach ($categories as $category) {<br/>
+        if(isAuthor($category["name"])) {<br/>
+        $penNames[$category["name"]] =& $category["nonenglish"];<br/>
+        } else {<br/>
+        $storyUpdate =& new StoryUpdate();<br/>
+        $storyUpdate->title =& extractTitle($category["nonenglish"]);<br/>
+        $storyUpdate->completed =& isCompleted($category["desc"]);<br/>
+        $storyUpdate->summary =& stripCompleted($category["desc"]);<br/>
+        $storyUpdate->rating = 1;<br/>
+        $storyUpdates[$category["name"]] =& $storyUpdate;<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Returns true if this is an author category (has no /)
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function isAuthor($categoryName) <br/>
+        {<br/>
+        return strrpos($categoryName, "/") === FALSE;<br/>
+        }<br/>
+      </code>
+      <code>
+        function extractTitle($categoryName)<br/>
+        {<br/>
+        $parts = explode(" by ", $categoryName);<br/>
+        return $parts[0];<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Given a URL, convert it to a filename within the server
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function followLink($url, $baseDir)<br/>
+        {<br/>
+        $parsed = parse_url($url);<br/>
+        return $baseDir . $parsed["path"];<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Returns the author directory from a URL
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function authorDir($url)<br/>
+        {<br/>
+        $parsed = parse_url($url);<br/>
+        $path = explode("/", $parsed["path"]);<br/>
+        return $path[2];<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Returns just the author part of a links category name (everything up to the slash).
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function authorPart($categoryName) <br/>
+        {<br/>
+        $parts = explode("/", $categoryName);<br/>
+        return $parts[0];<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Strips the [completed] flag off a summary
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function stripCompleted($summary)<br/>
+        {<br/>
+        return trim(preg_replace("/\[completed?\]/i", "", $summary));<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Returns true if the story's summary indicates it is complete
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function isCompleted($summary)<br/>
+        {<br/>
+        return preg_match("/\[completed?\]/i", $summary);<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Converts the LINKS date format to MySQL format
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function convertDate($linksFormat)<br/>
+        {<br/>
+        $MONTHS = array(<br/>
+        "Jan" => "01",<br/>
+        "Feb" => "02",<br/>
+        "Mar" => "03",<br/>
+        "Apr" => "04",<br/>
+        "May" => "05",<br/>
+        "Jun" => "06",<br/>
+        "Jul" => "07",<br/>
+        "Aug" => "08",<br/>
+        "Sep" => "09",<br/>
+        "Oct" => "10",<br/>
+        "Nov" => "11",<br/>
+        "Dec" => "12"<br/>
+        );<br/>
+      </code>
+      <code>
+        $parts = explode("-", $linksFormat);<br/>
+        $day = $parts[0];<br/>
+        $month = $MONTHS[$parts[1]];<br/>
+        $year = $parts[2];<br/>
+        return "$year-$month-$day";<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Returns the chapter number by looking at a URL, or 1 if this is a one-shot
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function extractChapterNumber($url)<br/>
+        {<br/>
+        if(!preg_match("/.+(\d\d)\.html/", $url, $matches)) {<br/>
+        return "0";     // Prologue<br/>
+        }<br/>
+        return $matches[1];<br/>
+        }<br/>
+      </code>
+      <code>
+        /**<br/>
+      </code>
+      <ul>
+        <li>
+           Returns true if the chapter title matches that
+        </li>
+        <li>
+           expected from the given chapter and title.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        function isAutonumbered($linkTitle, $title, $chapter)<br/>
+        {<br/>
+        return $linkTitle == "$title $chapter";<br/>
+        }<br/>
+      </code>
+      <code>
+        function wordcount($text) <br/>
+        {<br/>
+        // Use same criteria as wc<br/>
+        preg_match_all("/\S+/", $text, $result);<br/>
+      </code>
+      <code>
+        return count($result[0]);<br/>
+        }<br/>
+      </code>
+      <code>
+        function printRecord($record, $message)<br/>
+        {<br/>
+        print "$message:" . EOL;<br/>
+        print_r($record);<br/>
+        print EOL . EOL;<br/>
+        }<br/>
+      </code>
+      <code>
+        /** Story auto_increment simulation */<br/>
+        $currentStoryId = 0;<br/>
+        function storiesAutoIncrement() <br/>
+        {<br/>
+        global $currentStoryId;<br/>
+        $currentStoryId++;<br/>
+        return $currentStoryId;<br/>
+        }<br/>
+      </code>
+      <code>
+        /** TODO: save stories_seq to database */<br/>
+        ?><br/>
+      </code>
+      <hr/>
+      <p>
+        Due to the size of the listing, comments have been moved to <a href="FictionPublishingExampleDiscussion.html">FictionPublishingExampleDiscussion</a>.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryExample.html">CategoryExample</a>
+      </p>
+    </div>
+  </body>
+</html>

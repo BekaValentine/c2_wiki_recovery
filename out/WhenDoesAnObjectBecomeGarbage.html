@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        When Does An Object Become Garbage
+      </h1>
+      <p>
+        Moving some discussion here from <a href="ReleasingResourcesOfObjects.html">ReleasingResourcesOfObjects</a>
+      </p>
+      <p>
+        I said that releasing resources inside destructors is dangerous (even in C++) because destructors are only called *after* the object is known to be garbage (at least in
+        working code), and therefore the validity of the contents of the object is unknown.
+      </p>
+      <p>
+        <a href="JimPerry.html">JimPerry</a> observes that calling a destructor in C++ is safe because it is called after the object is deleted but "before it becomes garbage". He therefore continues that releasing resources from within destructors is not only safe but recommended {Jim, please reword this if I've inaccurately paraphrased your comments...<a href="TomStambaugh.html">TomStambaugh</a>}.
+      </p>
+      <p>
+        I think an important question is "when does an object become garbage"? I suspect, from the context of his comment, that Jim defines "garbage" to be "objects that have been deleted", whereas I define garbage to be "objects that have no references". I therefore suspect that Jim will assert that an object becomes garbage when its delete is called, whereas I assert that an object becomes garbage when its last external reference disappears. I think that examining the difference between these two times will illuminate the question of what can safely be done inside a destructor.
+      </p>
+      <p>
+        I hope that Jim will agree that, even in C++, an object that has no references and has not been deleted is still garbage. I furthermore hope that Jim will agree that, even in C++, an object that has references and has been deleted is a BUG (in fact, one of the most difficult to trace!).
+      </p>
+      <p>
+        So...it seems there are four states:
+      </p>
+      <p>
+        state 1: no references and not deleted. This is a core leak in C++ and doesn't happen in Smalltalk. Releasing resources in the destructor won't help, because the destructor is never called.
+      </p>
+      <p>
+        state 2: no references and deleted. This is the case that Jim is considering and doesn't happen in Smalltalk.
+      </p>
+      <p>
+        state 3: references and not deleted. This is a live object.
+      </p>
+      <p>
+        state 4: references and deleted: This is a bug in C++ and doesn't happen in Smalltalk. Releasing resources in the destructor may be dangerous, because the remaining references may require their use.
+      </p>
+      <p>
+        In fact, these represent a lifecycle: (3)->(1)->(2). State 4 should never occur.
+      </p>
+      <p>
+        The destructor fires after (2) in this lifecycle, and the approach Jim suggests would release the resources after (2). In the lifecycle above, a significant time might elapse between when the last reference is removed and when the object is deleted (in a core leak, this time might be infinite). This delay represents a window during which the system may change in ways that invalidate the contents of the object, including resources owned by the object. Thus, by the time that delete is actually called, the fields of the object may be invalid, and so the destructor might fail.
+      </p>
+      <p>
+        I therefore suggest that the safest time to release resources contained by an object is in the transition from (3) to (1). A design that follows the heuristic I propose will work in Smalltalk, C++, and Java. It avoids the devasting impact of state (4), works more reliably in state (2), and has no effect on state (1).
+      </p>
+      <p>
+        I therefore conclude that resources should be released in the operation that causes the last reference to the object to be removed. I agree that recognizing this moment is tricky; even in C++, though, it has to be accomplished.
+      </p>
+      <p>
+        In short, how do you know, in C++ *when* to call delete?
+      </p>
+      <p>
+        --<a href="TomStambaugh.html">TomStambaugh</a>
+      </p>
+      <hr/>
+      <p>
+        I think I would step back and say that in C++ per se objects do not become garbage, in the sense of something special happening because there are no longer references to them.  
+        A dynamically-allocated object with no references remaining to it is a bug, not garbage (as that term might be used where a garbage collector might become involved).  Rather, as you say, the operation which in effect causes the last reference to be removed must call delete (and thus the destructor).  How this happens is a matter of idiom (I'll perhaps expand on some of these idioms another time), but the point is that  in a correctly working C++ program it <em>must</em> happen, and at that time the destructor runs, releasing resources.  This happens while the last reference still exists, as a consequence (idiomatically) of removing that last reference.  So it is a safe time to release resources other than memory, and assuming the classes are suitably designed, precisely the appropriate time to release those resources.
+      </p>
+      <p>
+        The knowing of when to call delete is big question, of course, admitting of many answers.  The closest analogy I've thought of yet is "how do you know when to use the clutch?"  It begins to appear that it's also similar to "how do you know when to close a file?"
+      </p>
+      <hr/>
+      <p>
+        The "something special" that happens when there is no longer a reference to an object *is* that it "becomes garbage". I don't think this is something an environment does, its something that simply happens, in C++ as well as in Smalltalk.
+      </p>
+      <p>
+        When the environment forces the code to recognize and explicitly act upon the removal of the last reference, the environment also, by construction, introduces an operation that must be performed at the death of every object. This operation introduces two significant sources of runtime overhead, each as a result of *enumerating* deaths:
+      </p>
+      <ol>
+        <li>
+          ) Every operation that can alter a reference must check (somehow) to see if that is the last reference.
+        </li>
+      </ol>
+      <ol>
+        <li>
+          ) Every object that dies must be deleted. This imposes an overhead that is on the order of the number of dead objects.
+        </li>
+      </ol>
+      <p>
+        These (particularly the latter) are much more than "matters of idiom", they are fundamental to the integrity of the environment. No matter how they are expressed, they must be done to ensure the continued operation of the environment, and at best they impose runtime overhead on every reference assignment and on every object death.
+      </p>
+      <p>
+        Conversely, it is possible, even in C++, to relax this constraint, but only if you do nothing in the destructors. The trick is to maintain the live objects, and leave the dead objects behind. This makes the overhead dependent on the number of *live* objects, rather than the number of dead objects (or the size of the available space).
+      </p>
+      <p>
+        Instead of asking "how do you know when to close a file?", consider "how do you know when to *delete* a file?". Suppose you have a file server, shared by multiple users, that is running out of space. How do you know whether you can delete any files, and if you can, when you can?
+      </p>
+      <p>
+        Once you recognize that the problem is "how can I continue to allocate new and access existing files", rather than "how can I delete dead files", you see that for the general case you can redirect new allocations and existing references to a new physical medium. Eventually, you can just reformat the medium that was running out of space. You *never* need to delete each file on it!
+      </p>
+      <p>
+        --<a href="TomStambaugh.html">TomStambaugh</a>
+      </p>
+      <hr/>
+      <p>
+        There are plenty of people who enjoy theological discussions on the merits of garbage collection.  I am not one of them; I take it as given that in C++ there is no GC (they exist, but I neither use nor miss one), while in Java there is.  
+      </p>
+      <p>
+        I have found that a significant proportion of objects hold non-memory resources with similar lifecycle requirements as for memory (or more stringent, as GC/finalization is inadequate for managing them), and that using the same idioms that are forced upon the unhappy C++ programmer :-) by the lack of GC also addresses the management of those resources.  In designing/coding in Java, I find it easy enough not to explicitly delete objects, but I've found the absence of an explicit consistent "go-away" operation the biggest difference from writing equivalent code in C++, which is otherwise fairly similar.  So I wondered how programmers more familiar with OOD in garbage-collected environments deal with managing non-memory resources.  I took it for granted they'd tend to rely on the garbage collector to manage memory.
+      </p>
+      <p>
+        By changing the problem being considered one can find a one that suits one's solution better, but in point of fact the general issue I'm considering is closer to closing files than deleting them (which is good, because the latter is a hard problem: how is one to know when a file is "dead"?)  If I dismiss a window in which I've been editing a file, then I need to close that file (make an explicit OS call), to ensure that my edits made it onto disk, to ensure that another user elsewhere sees the new version, to release the write lock on it, etc.  That needs to happen *now*, not the next time my program opens a file or somesuch.  (Well, actually it needs to happen *if* this is the *last* edit window open on that file).
+      </p>
+      <p>
+        --<a href="JimPerry.html">JimPerry</a>
+      </p>
+      <hr/>
+      <p>
+        The reason I moved this discussion here (and away from <a href="ReleasingResourcesOfObjects.html">ReleasingResourcesOfObjects</a>) was to allow the two topics to diverge. I share your observation that GC is not part of C++  and is part of Smalltalk and Java. I, too, am weary of the religious wars about GC. Underneath the religious wars, however, there *are* some fundamental semantic implications of the two directions (GC vs non-GC). These aren't "theological", they are simply two different directions, which can be contrasted and compared.
+      </p>
+      <p>
+        I think it's because these non-memory resources have to be dealt with in Smalltalk and Java, and because that forces the Smalltalk and Java developer to confront them, that they become interesting. The Smalltalk and Java communities therefore can probably take away learnings from the C++ community, and the C++ community can probably take away learnings from the Smalltalk and Java community. My intent here (on this page) was to advance that exchange, not cast stones at either dogma.
+      </p>
+      <p>
+        I also share your interest in discovering and exploring idioms for handling the release of non-memory resources, and attempted to sketch several of them in the latter portion of <a href="ReleasingResourcesOfObjects.html">ReleasingResourcesOfObjects</a>.
+      </p>
+      <p>
+        I suspect that we may be closer to violent agreement than you might think. I agree with you that the resource release problem is "closer to closing files than deleting them". It is precisely *because* of this observation that I raised my initial concern about using the destructor for the release. Destructor's are only called during the delete. I'm therefore more comfortable with heuristics that provide more independence between the "release" operation and the "delete" operation.
+      </p>
+      <p>
+        I completely agree with you about the need to clean up the file when you close the window. I think that your closing parenthetical comment underlined the hard part.
+      </p>
+      <p>
+        There are systems that use a voting/negotiation paradigm to accomplish these decisions (clients express interest in a resource when they acquire it; a resource manager signals the listeners of a resource that it intends to release it; a client who is still interested responds by saying "still interested", the resource manager only releases resources where no objection is raised). Such a paradigm is significantly more difficult to reliably maintain when the participants are in various stages of destruction. Aren't such negotiations therefore easier to code *outside* the destructors of the various objects?
+      </p>
+      <p>
+        And is this horse dead yet? <grinning>
+      </p>
+      <p>
+        --<a href="TomStambaugh.html">TomStambaugh</a>
+      </p>
+      <hr/>
+      <p>
+        Logically what's wanted is a message that says "go away now, I'm done with you".  An implicit assumption here is that once a resource of the kind being discussed is released, the object wrapping access to that resource has no further purpose: it no longer makes sense to write to a closed file (typically it will cause an exception), and reopening the same file again is better modelled as creating a new object. A released resource-wrapping object might have some value as a sentinel marker for a missing resource, but I'd expect a null reference is clearer for that.  This is not the only model available, but it seems common.  I think it's also common to assume that the answer to "go away" won't be "no" (or if it is, something pretty catastrophic is happening).  In cases where those are true, and where a universal "go away" message already exists in the form of a "delete" operator, then I don't see an issue with using it.
+      </p>
+      <p>
+        In more complex cases, as in the two-phase example, different models might apply.  Rather than simply "go away", there might be two messages: "are you ready to go?" and THEN "go away".  The first would poll the clients, etc., the second then would actually release the resource (and perhaps notify clients etc.).  But I could see a model using <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a> to maintain "interest locks" for the clients: they would create such locks which by virtue of their existence would cause a "still interested" response, which would stop once the lock was released (deleted).  That would work for active remote locks (reference counting), or for response polling as you describe, or for active polling where the client periodically actively requests another interest timeslice.
+      </p>
+      <p>
+        --<a href="JimPerry.html">JimPerry</a>
+      </p>
+      <hr/>
+      <p>
+        I would advocate leaving the closed object as a sentinel marker as a practical solution. It's easier than tracking down all the outstanding references to null them.
+      </p>
+      <p>
+        I also think that the majority of cases would be handled by a combination of (in order):
+      </p>
+      <ul>
+        <li>
+           GC.
+        </li>
+        <li>
+           notification as enclosing scope terminates.
+        </li>
+        <li>
+           reference counting mix-in class.
+        </li>
+      </ul>
+      <p>
+        The garbage collector is the only process which should actually delete objects and reclaim memory. The other two call Close methods and leave the object as a sentinel. I figure we leave the remaining really hard cases for the programmer to sort out, since that's what they're paid for.
+        -- <a href="DaveHarris.html">DaveHarris</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryCpp.html">CategoryCpp</a>
+      </p>
+    </div>
+  </body>
+</html>

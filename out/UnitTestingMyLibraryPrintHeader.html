@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Unit Testing My Library Print Header
+      </h1>
+      <p>
+        [prev <a href="UnitTestingMyLibraryPrintFooter.html">UnitTestingMyLibraryPrintFooter</a> | next <a href="UnitTestingMyLibraryGracefulExit.html">UnitTestingMyLibraryGracefulExit</a> | top <a href="UnitTestingMyLibrary.html">UnitTestingMyLibrary</a> ]
+      </p>
+      <p>
+        The next code to test is:
+      </p>
+      <code>
+        sub printHeader {<br/>
+        # do they want a cookie?<br/>
+        if ($patronRecord->{wants_cookie}) {<br/>
+        $cookie = $output->cookie(-name    => 'uid',<br/>
+        -value   => "$patronRecord->{patron_id}",<br/>
+        -expires => "$gExpires",<br/>
+        -path    => "$MyLibrary::CONFIGURATIONS{'gRelativePath'}/");<br/>
+        } else {<br/>
+        $cookie = $output->cookie(-name    => 'uid',<br/>
+        -value   => "$patronRecord->{patron_id}",<br/>
+        -path    => "$MyLibrary::CONFIGURATIONS{'gRelativePath'}/");<br/>
+        }<br/>
+        # output the header<br/>
+        print $output->header(-expires => '-1d',<br/>
+        -cookie  => $cookie);<br/>
+        }<br/>
+      </code>
+      <p>
+        This code assumes a number of variables. $gExpires is a simple scalar.  %CONFIGURATIONS must have 'gRelativePath' as a key.  $output has to be a CGI object.
+      </p>
+      <p>
+        The hard part here is that $patronRecord would normally be the output of executing a DBI SQL select statement, which means it has to be a reference to a hash that has wants_cookie and patron_id as keys.  This observation allows us to simplify our test code and isolate it from database considerations by creating a kind of <a href="MockObject.html">MockObject</a>.  For testing we want two patron records, one for someone who does want a cookie, and one for someone who doesn't.  All other variables are internal to the subroutine.  The code for set_up and tear_down is, accordingly:
+      </p>
+      <code>
+        # ---------- tests for &MyLibrary::printHeader ----------<br/>
+        package printHeader;<br/>
+        use Test::Unit;<br/>
+        require "../MyLibrary.pm";<br/>
+        use CGI;<br/>
+        sub set_up {<br/>
+        $io = IO::String->new($result);<br/>
+        $old_handle = select($io);<br/>
+        $MyLibrary::gExpires = "+4M";<br/>
+        %MyLibrary::CONFIGURATIONS = ( 'gRelativePath' => '/mylibrary' );<br/>
+        $MyLibrary::output = new CGI ("");<br/>
+        my %r101_hash = ('patron_id' => 101, 'wants_cookie' => 1);<br/>
+        $r101 = \%r101_hash;<br/>
+        my %r102_hash = ('patron_id' => 102, 'wants_cookie' => 0);<br/>
+        $r102 = \%r102_hash;<br/>
+        }<br/>
+        sub tear_down {<br/>
+        select($old_handle);<br/>
+        $io = undef;<br/>
+        $result = undef;<br/>
+        $old_handle = undef;<br/>
+        $MyLibrary::gExpires = undef;<br/>
+        %MyLibrary::CONFIGURATIONS = undef;<br/>
+        $MyLibrary::output = undef;<br/>
+        $r101 = undef;<br/>
+        $r102 = undef;<br/>
+        $MyLibrary::patronRecord = undef;<br/>
+        }<br/>
+      </code>
+      <p>
+        $MyLibrary::patronRecord will be assigned in the test code rather than in set_up so that we can chose which possibility we're testing for within the test.
+      </p>
+      <p>
+        Again the only output is via a print to STDOUT, so we have to add our code for trapping STDOUT.
+      </p>
+      <p>
+        The next hitch is that the output of this subroutine will be time dependent.  We are passing an expiry date for the page to the CGI header method and that means that the header will contain the current system date and time and a page expiry date and, in the case of a cookie, an expiry date for the cookie.  This makes it hard to know exactly what output is expected.  The compromise is to parse out the system time from the returned header and from that to reconstruct what the header should be.  For this we need the HTTP::Date module to do the date parsing.  The simplest case is where we are not setting a cookie expiry date:
+      </p>
+      <code>
+        sub test_cookie_not_wanted {<br/>
+        use HTTP::Date;<br/>
+        my($expected, $date, $date_as_time, $page_expires);<br/>
+        $MyLibrary::patronRecord = $r102;<br/>
+        &MyLibrary::printHeader;<br/>
+        foreach (split('\n', $result)) {<br/>
+        if ( /^Date:/ ) {<br/>
+        s/^Date: (.*).$/\1/;<br/>
+        $date = $_;<br/>
+        chomp ($date);<br/>
+        }<br/>
+        }<br/>
+        $date_as_time = str2time($date);<br/>
+        $page_expires = time2str($date_as_time - (3600 * 24));<br/>
+        $expected = << "EOH";<br/>
+        Set-Cookie: uid=102; path=/mylibrary/<br/>
+        Expires: $page_expires<br/>
+        Date: $date<br/>
+        Content-Type: text/html; charset=ISO-8859-1<br/>
+      </code>
+      <code>
+        EOH<br/>
+        $expected =~ s/\n/\r\n/g;<br/>
+        assert($result eq $expected, 'printHeader failed when cookie not wanted');<br/>
+        }<br/>
+      </code>
+      <p>
+        The last manipulation is due to the fact that the CGI module seems to output DOS-style line ends.
+      </p>
+      <code>
+        sub test_cookie_wanted {<br/>
+        use HTTP::Date;<br/>
+        my($expected, $date, $date_as_time, $page_expires, $cookie_expires);<br/>
+        $MyLibrary::patronRecord = $r101;<br/>
+        &MyLibrary::printHeader;<br/>
+        foreach (split('\n', $result)) {<br/>
+        if ( /^Date:/ ) {<br/>
+        s/^Date: (.*).$/\1/;<br/>
+        $date = $_;<br/>
+        chomp ($date);<br/>
+        }<br/>
+        }<br/>
+        $date_as_time = str2time($date);<br/>
+        $page_expires = time2str($date_as_time - (3600 * 24));<br/>
+        $cookie_expires = time2str($date_as_time + (3600 * 24 * 30 * 4));<br/>
+        $cookie_expires =~ s/(\d\d) (\w\w\w) (\d\d\d\d)/\1-\2-\3/;<br/>
+        $expected = << "EOH";<br/>
+        Set-Cookie: uid=101; path=/mylibrary/; expires=$cookie_expires<br/>
+        Expires: $page_expires<br/>
+        Date: $date<br/>
+        Content-Type: text/html; charset=ISO-8859-1<br/>
+      </code>
+      <code>
+        EOH<br/>
+        $expected =~ s/\n/\r\n/g;<br/>
+        assert($result eq $expected, 'printHeader failed when cookie wanted');<br/>
+        }<br/>
+      </code>
+      <p>
+        Notice here that the cookie expiry date is produced by the CGI module with dashes between the day, month, and year.
+      </p>
+      <p>
+        Finally, we add this <a href="TestCase.html">TestCase</a> to the <a href="TestSuite.html">TestSuite</a>:
+      </p>
+      <code>
+        # ---------- run all tests ----------<br/>
+        package MyLibrary;<br/>
+        use Test::Unit;<br/>
+        create_suite();<br/>
+        create_suite("printFooter");<br/>
+        create_suite("printHeader");<br/>
+        add_suite("printFooter");<br/>
+        add_suite("printHeader");<br/>
+        run_suite();<br/>
+      </code>
+      <hr/>
+      <p>
+        <a href="CategoryTesting.html">CategoryTesting</a>
+      </p>
+    </div>
+  </body>
+</html>

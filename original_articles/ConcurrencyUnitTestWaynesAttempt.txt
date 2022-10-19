@@ -1,0 +1,86 @@
+From ExtremeProgrammingChallengeFourteenTheBug
+
+----
+
+This test exposes the error with the message "producer1 blocked". It's verbose and it's slow (takes seconds to execute), and I ''hate'' that it's not deterministic. It can also report false errors if the process doesn't get any CPU time for 200 msec.
+
+  public void testTwoProducersTwoConsumers() throws Exception {
+	final int numberOfItems = 10000;
+	final Watchdog watchdog = new Watchdog();
+	final Bounded''''''Buffer buffer = new Bounded''''''Buffer(1);
+	Thread producer1 = new Producer(buffer, watchdog, numberOfItems);
+	Thread producer2 = new Producer(buffer, watchdog, numberOfItems);
+	Thread consumer1 = new Consumer(buffer, watchdog, numberOfItems);
+	Thread consumer2 = new Consumer(buffer, watchdog, numberOfItems);
+	producer1.start();
+	producer2.start();
+	consumer1.start();
+	consumer2.start();
+	watchdog.waitUntilInactive();
+	assert("producer1 blocked", !producer1.isAlive());
+	assert("producer2 blocked", !producer2.isAlive());
+	assert("consumer1 blocked", !consumer1.isAlive());
+	assert("consumer2 blocked", !consumer2.isAlive());
+  }
+Watchdog is how I detect that nothing is happening. It allows the test to work on faster or slower CPUs:
+
+	private static class Watchdog {
+	  private long msecOfLastReset;
+	  public Watchdog() {
+		reset();
+	  }
+	  public synchronized void reset() {
+		msecOfLastReset = System.currentTimeMillis();
+	  }
+	  public void waitUntilInactive() throws Interrupted''''''Exception {
+		while (msecSinceReset() < 200)
+		Thread.sleep(200);
+	  }
+	  private synchronized long msecSinceReset() {
+		return System.currentTimeMillis() - msecOfLastReset;
+	  }
+	};
+The producers and consumers are about what you'd expect (I expect):
+
+	private abstract static class Actor extends Thread {
+	  protected Bounded''''''Buffer buffer;
+	  private Watchdog watchdog;
+	  private int numberOfItems;
+	  public Actor(Bounded''''''Buffer buffer, Watchdog watchdog, int numberOfItems) {
+		this.buffer = buffer;
+		this.watchdog = watchdog;
+		this.numberOfItems = numberOfItems;
+	  }
+	  public void run() {
+		try {
+		for (int i = 0; i < numberOfItems; i++) {
+		act();
+		watchdog.reset();
+		}
+		}
+		catch (Interrupted''''''Exception e) {
+		}
+	  }
+	  protected abstract void act() throws Interrupted''''''Exception;
+	};
+
+	private static class Producer extends Actor {
+	  public Producer(Bounded''''''Buffer buffer, Watchdog watchdog, int numberOfItems) {
+		super(buffer, watchdog, number''''''Of''''''Items);
+	  }
+	  protected void act() throws Interrupted''''''Exception {
+		buffer.put(new Object());
+	  }
+	};
+
+	private static class Consumer extends Actor {
+	  public Consumer(Bounded''''''Buffer buffer, Watchdog watchdog, int numberOfItems) {
+		super(buffer, watchdog, numberOfItems);
+	  }
+	  protected void act() throws Interrupted''''''Exception {
+		buffer.take();
+	  }
+	};
+I added a new constructor to Bounded''''''Buffer that takes the buffer size, as I wasn't able to reproduce the deadlock with the default buffer size of 4.
+
+Also, my test for one producer and two consumers showed a deadlock, as did my test for two producers and one consumer. One producer and one consumer worked fine. When I changed the notify() to notifyAll(), all the tests passed. -- WayneConrad

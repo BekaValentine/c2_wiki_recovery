@@ -1,0 +1,291 @@
+Based on conversation snippet from RelationalTreesAndGraphsDiscussionTwo
+
+----
+
+''Everything is convertible to everything else with enough effort and perhaps enough copying. But this is obviously far from the ideal. If we have 30 User Defined Structure Types and they lack relational operators, then building something for each could require up to 30 x R operators where R is the number of relational operators. Thus, if we assume 15 relational operators, we have up to 450 operators to implement. And this says nothing about efficiency, concurrency, etc, as our million-element stack report example illustrates. -t''
+
+If nothing has been said about efficiency and concurrency, then there isn't much reason to believe they suffer. And why would I implement 450 relational operators when I could write simple functions to construct relations from values then use the resulting relations? That way I'd need at most 30 such functions, likely fewer with GenericProgramming and composition.
+
+''A '''real world example? I want to perform relational operators on my existing file system'''. I know of no easy way without mass periodic copying or slow iterative loops. Maybe there is a way to hack with the OS to maintain indexes automatically or the like, but this is busting encapsulation, making implementation ADT swapping problematic. We'd have to stick with *just* POSIX-like or FTP-like commands if we want to stick to the "purer" ADT model, and thus no internal hacks.  -t''
+
+I imagine that a FileSystem (an entity that mutates in response to commands) differs in many critical ways from DomainValue''''''s, especially including immutability and the ability to receive commands. As noted in PROOF THREE and PROOF FOUR, above, DomainValue''''''s are never truly encapsulated. Since DomainValue''''''s are not encapsulated, then something about your argument is incorrect: either FileSystem DomainValue''''''s need to be immutable constructs (like versions or snapshots) that can be fully observed and processed without any use of 'commands', or the FileSystem mustn't be a DomainValue.
+
+''No, it does not significantly differ from any other database. Your oddly-defined  DomainValue double-speak will not save you.'' 
+
+A 'database' in its common usage has some sort of extrinsic identity and state, which means it is not a value and is therefore not a DomainValue. Also, I don't really need "saving" when it's your arguments that are self-destructing based on equivocation fallacies.
+
+''We have attributes and values and we want to search, sort, join etc. Show your grand proofs in action. Typical file system attributes include:''
+
+* file name
+* file size
+* file modification date/time
+* file creation date/time
+* parent folder (reference perhaps) or children folders (to support linking)
+* read-only attribute
+* archive attribute
+* content
+* path (a kind of pseudo-attribute, but useful)
+
+What is it you think I need to show? FileSystem is not a DomainValue. Neither is a Database. It is neither easier nor more difficult to add an index to a FileSystem than it is to add one to any other RDBMS. 
+
+''Joining across DB brands, or even instances of the same brand, can indeed be a pain largely because of the separation of query and implementation. The typical query interface does not provide enough integration to draw up some form of efficiency, resulting in working copies and sequential processing. It's a similar problem to the "too much encapsulation" issue raised in the parent topic. Maybe solving it for one will solve it for another.''
+----
+Merging RDBMS technology with FileSystem''''''s is not new.  There have been a number of projects that either use an RDBMS (or similar machinery) to house what would otherwise be "file" data in a more or less structured and query-able fashion, and/or to maintain query-able meta-data.  Some have only been academic experiments, others -- like Pick -- have achieved considerable commercial success.  I currently have a student producing a comprehensive survey of these, along with some experimental practical work of his own.  I'll encourage him to make it available on the Web, with a link here, when it's done. 
+
+See http://en.wikipedia.org/wiki/Pick_operating_system
+----
+
+Despite that I believe the example contrived (no FileSystem, not even a versioned one, would be represented with each FileSystem state as a DomainValue), it can still serve as a demonstrative example of how indexing is achieved. Just to be clear, though, I'm not endorsing representing FileSystem''''''s as DomainValue''''''s. By no means is a FileSystem a measure, assignment, etc.
+
+Anyhow, I'll be back.
+
+''Hell no, I'm not voting for Arnold again.''
+
+This explanation is split into three parts: '''Structure''' - an explanation of what the FileSystem looks like externally and internally. This is explained as a reference. It is not the only possibility, but is rather one selected to be complex enough for realism but simple enough that explaining it doesn't cause me any headaches. '''Indexing''' - an explanation of how the FileSystem is indexed, how those indexes are declared and maintained. Once again, this is but one design, though it is a decent one. '''Comparison''' - a comparison between this design and what TopMind believes to be superior.
+
+'''Structure:'''
+
+The filesystem tree structure used for this simulation is: 
+  
+  MD = (create:Time modify:Time)  ;; non-recursive
+  FS = dir(meta:MD content:{map string=>FS})|file(meta:MD  content:String) ;; recursive, hierarchical
+  A 'map' should just be considered shorthand for a relation (key:T1 val:T2) with the first as a candidate key.
+
+This type separates the directories from files, making them distinct types that do not overlap - a feature common to many FileSystem''''''s (and one that I've never liked about them) but all the better for simulation. 'MD' represents metadata about each file, and could be extended as necessary. Each directory contains a relation of string (filename) to another 'FS' (that is, a file or another directory). Files themselves do not know their names; the name for a file is a property of the directory.  Files are not "linkable" in this FileSystem because there is no indirection between a file and its content. Hard-linking could be added via an indirection (file->inode->content), and soft-linking via an extra type (symlink->path), but I'd rather not deal with them at the moment since they'll confuse the issue of sharing.
+
+At this point the filesystem looks something like this:
+ . . dir(meta:(create:0 modify:N)) . .
+ . . . |etc. . . |usr. . |home . . . .
+ . dir(...). . dir(...). dir(meta:(create:3 modify:N))  
+ . . . . . . . . . . . . |you. . |me . 
+ . . . . . . . . . . . dir(...). dir(...)  
+ . . . . . . . . . . ./fA. \fB . /fC .\fD
+ . . . . . . . ."StringA" "StringBC" "StringD"
+
+Note that some sharing may occur under-the-hood that isn't exposed to users; for example, your 'fB' and my 'fC' files may share the same contents ("StringBC" in the above diagram) even though they have different access permissions, create+modify metadata, and so on. This is '''value'''-sharing, not linking, which means if you modify your 'fB', it is imperative that my 'fC' remains the same. Value sharing is a logical copy, and is traditionally achieved by CopyOnWrite for shared structures (which the FileSystem can distinguish via reference-counts or via marking a bit to indicate that a structure has been shared at least once then performing GarbageCollection). I emphasize this because the distinction between forms of sharing has repeatedly been a point of confusion for TopMind (who thinks 'normalizing' is about value sharing, according to his own comments in RelationalTreesAndGraphsDiscussionTwo, and who doesn't seem to grok that shared values have different mutate characteristics than shared objects). The FileSystem is allowed to share structure under-the-hood to save space and indexing, and users won't ever be aware of this sharing except to potentially have an understanding about the performance issues in space and time when copying large values (like MP3s, videos, etc.). 
+
+Value-sharing of directory structures is also possible, though is hindered greatly if maintaining the 'create' and 'modify' times. That is, if you copied the whole '/usr' directory into your '/home/you' directory, it could have been a completely logical copy ''except'' the directory and file "meta" contents, which need to be updated so they have the most up-to-date create+modify time. The fact that even a simple 'copy' operation results in a huge meta-data 'mutate' is among the reasons that FileSystem''''''s aren't DomainValue''''''s. OTOH, if working with a '''versioned''' FileSystem, one where each update results in a new 'FileSystem value' and one can look back at many past versions of the FileSystem, then a great deal of this directory structure can easily be shared across versions of the FileSystem (and, indeed, that is how (some) versioned FileSystem''''''s are implemented; others use snapshots). 
+
+Having more value-sharing helps enforce and clarify the distinction between trees-as-DomainValue''''''s vs. trees-as-mutable-objects or hierarchical-tree-structured-data. So, for the sake of introducing as much value-sharing as possible, I'll go ahead and treat the above as a versioned FileSystem. Thus the DataBase of versioned, simulated FileSystem looks something like this:
+
+ TABLE fs_versions
+ ver . operation . . . . . . . . . . . . fs_value(create,modify)[contents] . . . . . . . . . . . . . . . . . . . . . .
+ ---------------------------------------------------------------------------------------------------------------------
+ 0 . . format. . . . . . . . . . . . . . (0,0)[] . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+ 1 . . mkdir /etc. . . . . . . . . . . . (0,1)[etc=>(1,1)[]] . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+ 2 . . mkdir /usr. . . . . . . . . . . . (0,2)[etc=>(1,1)[] usr=>(2,2)[]]. . . . . . . . . . . . . . . . . . . . . . .
+ 3 . . mkdir /home . . . . . . . . . . . (0,3)[etc=>(1,1)[] usr=>(2,2)[] . . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . home=>(3,3)[]]. . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+ 4 . . mkdir /home/you . . . . . . . . . (0,4)[etc=>(1,1)[] usr=>(2,2)[] . . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . home=>(3,4)[you=>(4,4)[]]]. . . . . . . . . . . . . . . . . . . . . . .
+ 5 . . mknod /home/you/fA. . . . . . . . (0,5)[etc=>(1,1)[] usr=>(2,2)[] . . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . home=>(3,5)[you=>(4,5)[fA=>(5,5)""]]] . . . . . . . . . . . . . . . . .
+ 6 . . write /home/you/fA "StringA". . . (0,6)[etc=>(1,1)[] usr=>(2,2)[] . . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . home=>(3,6)[you=>(4,6)[fA=>(5,6)"StringA"]]]. . . . . . . . . . . . . .
+ 7 . . mknod /home/you/fB. . . . . . . . (0,7)[etc=>(1,1)[] usr=>(2,2)[] . . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . home=>(3,7)[you=>(4,7)[fA=>(5,6)"StringA" fB=>(7,7)""]]]. . . . . . . .
+ 8 . . write /home/you/fB "StringBC" . . (0,8)[etc=>(1,1)[] usr=>(2,2)[] . . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . home=>(3,8)[you=>(4,8)[fA=>(5,6)"StringA" fB=>(7,8)"StringBC"]]]. . . .
+ 9 . . mkdir /home/me. . . . . . . . . . (0,9)[etc=>(1,1)[] usr=>(2,2)[] . . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . home=>(3,9)[you=>(4,8)[fA=>(5,6)"StringA" fB=>(7,8)"StringBC"]. . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . . . . . . . me=>(9,9)[]]] . . . . . . . . . . . . . . . . . . . . . . .
+ 10  . copy  /home/you/fB /home/me/fC  . (0,10)[etc=>(1,1)[] usr=>(2,2)[]. . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . .home=>(3,10)[you=>(4,8)[fA=>(5,6)"StringA" fB=>(7,8)"StringBC"]. . . .
+ . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . me=>(9,10)[fC=>(10,10)"StringBC"]]] . . . . . . . . . . .
+ 11  . mknod /home/me/fD . . . . . . . . (0,11)[etc=>(1,1)[] usr=>(2,2)[]. . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . .home=>(3,11)[you=>(4,8)[fA=>(5,6)"StringA" fB=>(7,8)"StringBC"]. . . .
+ . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . me=>(9,11)[fC=>(10,10)"StringBC" fd=>(11,11)""]]] . . . .
+ 12  . write /home/me/fD "StringD" . . . (0,12)[etc=>(1,1)[] usr=>(2,2)[]. . . . . . . . . . . . . . . . . . . . . . .
+ . . . . . . . . . . . . . . . . . . . . . . . .home=>(3,12)[you=>(4,8)[fA=>(5,6)"StringA" fB=>(7,8)"StringBC"]. . . .
+ . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . me=>(9,12)[fC=>(10,10)"StringBC" fd=>(11,12)"StringD"]]].
+
+Disk drives have finite space, of course, so we must occasionally delete older versions of the FileSystem and collect the space freed by doing so. Typical versioned FileSystem''''''s, as seen with would simply collect versions based on a policy... e.g. keep at least an hourly version for the last month, a daily version for the last year, and a weekly version before then, though it often needs some variation for very-large-files (e.g. if performing video-editing, gigabytes of space is often required, and keeping those around is too expensive) and files that can be regenerated (like '.o' files from compilation). In any case, for versioned FS one benefits greatly from both inter-value sharing (as between versions of the FileSystem value) and intra-value sharing (as for "StringBC") which save space. Examples of versioned FileSystem''''''s include ZFS and Mac OS X's Time Machine (among others: http://en.wikipedia.org/wiki/Versioning_file_system).
+
+After some versions are selected for deletion, they are removed from the DataBase, and a GarbageCollection must occur. E.g. if I deleted versions 5 and 6 above, then the physical space associated with nodes (0,5), (3,5), (4,5), (5,5), (0,6), (3,6), (4,6) would be available for reuse. Note that nodes (5,6), (1,1), and (2,2) are still shared by other versions and couldn't be collected. This need for GarbageCollection - recovery of the physical space in which a value or parts of a value are represented while having some concern for sharing - is a natural extension of the fact that structured DomainValue''''''s are generally shared as values rather than fully copied.
+
+The mechanisms to achieving value sharing under-the-hood are already discussed, and include interning of values, CopyOnWrite, and disfavoring use of 'parent' pointers. Parent pointers force each parent to have a full copy of all children (though an approach '''specifically''' for versioned systems, especially useful for versioned graphs, is to use multi-version pointers where a given pointer points to a range of versions - I won't be using this here since it isn't generic to value-sharing). Anyhow, detailed discussion of this sharing is in RelationalTreesAndGraphsDiscussionTwo. So, since that's a solved problem, I'm going to assume we are all in agreement that, for example, every reference to "StringA" is potentially a reference to '''the same, physical copy''' of "StringA", and every reference to 'etc=>(1,1)[]' uses the same node (1,1)[] and potentially even the same internal representation of 'etc' (though the benefit there is marginal for small file-names). Use of '''interning''' of values would allow "StringBC" to be identical even in the case it wasn't produced by copy. So, despite the amount of copying that is apparent in the above representation, actual layout on disk could be quite compact. The physical layout of versions 7 and 8 would look something like as follows:
+ . . . . . (0,7) . . . . . (0,8) . . . . . .
+ . . .[home usr etc] . [etc usr home]. . . . 
+ . . . . | . . \ . \ . / . / . . | . . . . . 
+ . . . (3,7) . .\. (1,1) ./. . (3,8) . . . . 
+ . . . [you] . . \ .[ ]. / . . [you] . . . . 
+ . . . . | . . . .\. . ./. . . . | . . . . . 
+ . . . (4,7) . . . (2,2) . . . (4,8) . . . .  
+ . . .[fB fA]. . . .[ ]. . . .[fA fB]. . . .
+ . . . | . .\______. . .______/. .|. . . . . 
+ . . (7,7) . . . . \ . / . . . .(7,8). . . . 
+ . . ."" . . . . . (5,6) . . ."StringBC" . . 
+ . . . . . . . . "StringA" . . . . . . . . .
+
+This underlying structure and value-sharing isn't exposed to the users, but it does become important for indexing performance and a few other performance issues, and so it will come up later.
+
+'''Indexing:'''
+
+We have named as desiderata for quick searches, joins, queries such attributes as filename and modification and create time as well as some derived attributes including path, file-size, and file-content (e.g. lexical searches for files containing particular words). In a versioned FileSystem, these could be requested for a particular version or for a range of versions, and perhaps some new queries might be interesting (such as DeltaIsolation + differences between versions), but optimizing for those is beyond the current agenda.
+
+Some relevant questions are: 
+* How does one go about ''expressing'' what it is one wishes to be indexed? Is this expression declarative (simply say the index should exist) or procedure/trigger-based?
+* How does one construct the index after expressing it? Is there any violation of encapsulation of representation?
+* How does the index interact with GarbageCollection and version removal?
+* Is the index RealTime? I.e. is the cost to maintain the index proportional to the delta rather than the size of the index? Is the index ever 'out of date'?
+* How is the index utilized in a query? If the index was deleted, would the queries still work?
+* And, importantly: is the indexing generic, such that it will work for other databases of other structured DomainValue''''''s? 
+
+I'm aiming here for a RealTime indexing solution (maintained for each update, maintenance cost proportional to update size) that is declarative, does not violate encapsulation of representation (i.e. users don't have access to pointers or tables under-the-hood), does not interfere with GarbageCollection, is constructed lazily, doesn't force a modification of the queries themselves, and where the solution can be applied generically to more than just versioned FileSystem''''''s. This is a tough combination of characteristics, but frankly I'm not interested in any solution that doesn't achieve them (though I'm willing to flex on the utilization-in-queries a bit). Beyond the constraints above, I also wish to guarantee that indexing has no side-effects, that all operations and computations that go into achieving the indexes will terminate, and that all indexing operations are well defined mathematically (i.e. type-safe indexing).
+
+'''Indexing - Expression Of:''' The sub-questions here are, (a) ''precisely'' how do I express a particular index for filename, filesize, path, file-content, file-create and modify time, etc. (b) ''precisely'' how do I tell the RDBMS to maintain this index?  And, of course, it isn't even that trivial: (a.prelude) how do I express the ''concepts'' of "filename", "filesize", "path", "file-content", etc? After all, before I can index over something, I must first define that 'something', and the above values are full 'filesystems'; it isn't as though "path" or even "filename" is an attribute in the RDBMS.
+
+Before answering, I'll fall back just a little bit to explain ''what'' an index is. An index is, in essence, a search performed ahead of time so it doesn't need to be performed at query-time. A search, in turn, is simply one class of computation, and indexing is one form of preprocessing. Other forms of preprocessing include pre-caching (downloading parts of a page in anticipation of their use, or loading pages from HDD in advance), pre-instantiation (FlyweightPattern), table lookups for functions (memoization, http://en.wikipedia.org/wiki/Memoization, http://en.wikipedia.org/wiki/Lookup_table), advance compilation (CompileTime is preprocess for runtime, as opposed to JustInTimeCompilation). There are more examples, of course, but the reason I bring this up is the InventorsParadox. It turns out it is simpler to solve, and implement the solution for, a more general problem than just indexing.
+
+We already have an established ways to tell an RDBMS about a computation in advance of its use: ''views'', and ''user-defined functions (UDFs)''. Usefully, UDFs can be abstracted as views. 
+
+So, to answer to all three of the above questions: I will, in essence, describe concepts and what needs to be indexed as ''views'', then I'll actually ''create'' the index by telling the RDBMS to maintain these views in advance of my requiring them. I'll be taking significant advantage of the ability for UDFs to recursively construct relations as part of defining views. For example, for purpose of querying for paths and files, the ability to associate all deep nodes back to their originating root 'fs_value' is useful
+
+Anyhow, that's all I was able to write up this Sunday. I'll be back.
+
+In the meantime, I leave TopMind with an exercise: if he really thinks he can get away without copies in the 'parent_id' schema (as discussed in RelationalTreesAndGraphsDiscussionTwo near (page anchor: node sharing example)), he should try to do so with the versioned FileSystem. I.e. represent step 3, then perform the operation to move to step 4 without copying the 'etc=>(1,1)[]' node, without destructively modifying the DomainValue used for the version in step 3.
+
+''I like the idea to not declare/create an index but instead let the system figure out the indexing needs based on usage pattern - which are embodied in the views. If this is what have in mind.''
+''I think views are generally undervalued. But I don't know why. Is it because they are not efficient in practice? Or is it because - like all things in the database - they are typically involved in a more elaborate change management process?''
+''I'd use views more if they'd be less cumbersome to introduce, maintain and use from most programming languages outside of the DB core.''
+''I think that views could and should even be generalized (polymorphism) such that they can be instantiated on different structures (tables) as needed.''   
+''Having multiple 'views' of the same underlying data kept consistent is something you cannot emulate with any programming language I know of (except of course if you implement your own view package).''
+''-- GunnarZarncke''
+''Note: Figuring out the indexing from usage is also the topic of AdaptiveCollection.''
+
+While I too like the idea of automatic discovery of or adaption to usage patterns, I do not wish to appeal in this discussion to 'sufficiently smart' anything. This also means excluding searches and automated discovery of query optimizations, and favoring algorithmic approaches. 
+
+''I on the other hand like the clear separation of concerns. Don't you think that using side effects of views for the creation of indexes is a bit to difficult to follow? ("I know I will have usage pattern X, so I have to create view XX to get this. Here I see view Y. What kind of access structure is implied by it. Is it a genuine view or just an access optimization?")''
+
+Views are a way of expressing in an RDBMS a named computation. The name allows the view to be leveraged by other queries. A view becomes an ''index'' when you tell the RDBMS to also prepare for rapid access to view data in advance of its use. If this meta-data about which views are 'prepared views' is available to those examining the SQL schema, it is unlikely to be a point of confusion. Meeting the goals above, deleting the index would not break queries, at least so long as you do not also delete the named computation - the 'view'. Because expressing a computation in advance of its requirement is ''not'' a concern separable from explicit indexing, this division between expressing the view vs. expressing+indexing the view allows a ''maximal'' separation of concerns that is possible with explicit indexing. 
+
+Admittedly, ''explicit'' creation of indexes, even if declarative, isn't quite so convenient as having the DBMS just guess or infer what it is you'll need in the future based on either the queries handed to it in the past, or perhaps based on actual abstract queries handed to it in advance of use. I wouldn't deny the DBMS the ability to implement such features; it is more that I don't wish to bring them into this discussion. Besides, when the goal is RealTime performance, the ability to tell the DBMS exactly what it needs to maintain would be critical, so good support for implicit indexing is only a substitute most of the time.
+
+SeeAlso CouchDb seems to follow this IndexFollowsView pattern. 
+
+----------------------------
+
+''Re "under-the-hood". The original requirements called for '''swappable''' implementations. In other words, any executable or service that satisfies requirements (ADT) should have the indexability characteristics. Of course if one can control the implementation, it can be integrated with the RDBMS or given RDBMS-like efficiency. I never disputed this.''
+
+Where did the "original requirements" call for such a thing? 
+
+* ''3rd paragraph from top (excluding intro sentence). '''We are using an existing file system, NOT building/changing RDBMS software.'''''
+* Ah, well I assumed from the "intro sentence" and context and your "a real world example" bold-faced lettering that you wanted to discuss something related to RelationalTreesAndGraphsDiscussionTwo, as opposed to introducing something totally new. But, it seems, I stand corrected. You're free to pursue that goal if you wish, and you can look into DestopSearch products like GoogleDesktop. Without support for indexing from the FileSystem and OperatingSystem the performance of the indexing techniques will be poor, no different than if you were indexing an RDBMS from an external application without even messages to inform you of deltas. I really can't say I'm interested in the direction you want to take this, but if you don't turn it into a straw-man attack on what we've been discussing in the other pages then you won't receive any more grief about it.
+* ''It relates in a simple way: you have to '''break encapsulation''' to get the needed efficiency. The ADT has to have special hooks and/or "leaks", aka '''consensions''' to the DB to integrate efficiently. If you are limited to the file system's existing interface, you cannot get at the guts in a way that allows efficient indexing and sharing. Desktop indexing products have to use periodic update date checking scans unless they have a back-door into the file system. -t''
+* Sigh. I promote structure DomainValue''''''s. DomainValue'''''''s aren't encapsulated (PROOF THREE), therefore these 'encapsulated' ADTs aren't domain values (MODUS TOLLENS). Therefore, promotion of DomainValue''''''s '''does not imply, or even suggest''' promotion of 'encapsulated' ADTs. To say these are 'related' due to encapsulation issues is simply incorrect. To attack something I have not been promoting is a StrawMan argument. Please cease your StrawMan arguments.
+* ''I don't know what the hell your point is because you are obtuse and meandering; but I've successully illustrated mine using something most are familiar with and can readily relate to. This is something you don't seem to value (pun). -top''
+* Believe what you wish. It's what you always do.
+
+I have been talking about user-defined DomainValue types (UDTs) including user-defined ''structure'' types (like trees, graphs, lists of trees of relations, and so on). The RDBMS is free to represent these types "under-the-hood" however it wishes, since representation is encapsulated (PROOF ONE and TWO in RelationalTreesAndGraphsDiscussionTwo). It only needs to provide for the operations over them.  I have not wavered from this position. Ever. It has been the same in CrossToolTypeAndObjectSharing, DoesRelationalRequireTypes, RelationalTreesAndGraphsDiscussion, and RelationalTreesAndGraphsDiscussionTwo. I even went to special effort to make it abundantly clear that I'm not talking about 'encapsulation' since DomainValue''''''s are never encapsulated (PROOF THREE and PROOF FOUR on the same page). 
+
+In the meantime, you've been making allegations against 'structure' types, insinuating they fail at node and index sharing, their performance will sucks rotten apples, and so on. 
+
+'''Are you saying you haven't been disputing me this whole time?''' Well... you sure fooled me. Shame on me, I guess. *eyes roll*
+
+''But swappability means you cannot control the implementation. If you are talking about a special kind of "leaky ADT", that's another animal. True, it is possible to define a reference-only ADT such that only pointers/ID's to nodes are stored "in" the ADT instead of the nodes themselves. But such is kind of a de-fanged ADT. If there are additional requirements or restrictions your "type" assumes in order to satisfy the RDBMS-like requirements, please state them. I envisioned something along the lines of "efficient querying of any file-system that satisfies the POSIX requirements". -t''
+
+RE: ''If there are additional requirements or restrictions your "type" assumes in order to satisfy the RDBMS-like requirements, please state them.'' -- Sure. '''They need to be "value" types.''' 
+
+That's the only requirement there has ever been. But it just so happens that things that can be described by 'value' types must have '''intrinsic identity''' and '''intrinsically complete representation'''. These properties were described to you at the top of the DomainValue page, and have been described elsewhere. It seems you have an appalling deficiency in your education and you don't understand what a 'value' is.  So I'll explain:
+* 'Intrinsic identity' means that one value is '''equivalent''' to another based on '''internal''' properties (properties over just the value), not from '''external''' properties (properties over the value AND its environment). External properties include pointers, for example, or from where a value is referenced, or the number of times the value has been said in a given language over the lifetime of the universe. 
+* 'Intrinsically complete representation' means that, in a given language, a given representation for a value is 'complete'; that is, the value doesn't include anything outside its own representation. 
+** There may, however, be more than one representation for a given value (e.g. set{a b} vs. set{b a})
+** And values themselves can be names or pointers. When a value is a name or pointer, the value is '''just''' the name or pointer, not the thing named or the thing pointed at.
+* Together, these properties mean any copy of a value's representation must be '''equivalent.''' And, if you don't remember, two things being '''equivalent''' means you can replace one with another and all relevant observations over them will be identical.
+* This '''excludes''' services, processes, operating systems, file systems, and so on. The reasoning is follows:
+** I copy your FileSystem (or OperatingSystem, service, process, or whatever).
+** You interact with your copy of your FileSystem.
+** Now your 'last access' date on the file you viewed has changed.
+** Now we independently observe our copies. 
+** You observe a different access time on a particular file than I observe.
+** Therefore, my copy is not '''equivalent''' to your copy, does not have '''identity'''.
+** Therefore, the copy was not '''intrinsically complete'''.
+** Therefore, the FileSystem '''is not a value'''
+
+In general, values are mathematical constructs. They are immutable and forever, like Platonic forms, and they live in a 'language' which gives them representation. Your idea about 'encapsulation' or 'not controlling implementation' isn't particularly relevant. Representations of values ''can'' be encapsulated ''by'' services, modules, etc. thus preventing them from being copied or treated as values. But, when discussing with CrossToolTypeAndObjectSharing and DoesRelationalRequireTypes and MagicEverythingMachine, we have not been discussing 'encapsulated' values. We've been talking about values shared by MessagePassing, queries, and so on. 
+
+Is this news to anyone ''other'' than TopMind? ... Don't all speak up at once, now.
+
+And, TopMind, a question for you: can you please re-establish and clarify your position with regards to the use of structure DomainValue UDTs?
+
+----
+
+I also want to perform relational operators on my existing file system. And above that I want to perform file system operations on by database. And I want to surf my filesystem and database with a browser. Possible it it. Everything is convertible to everything else. At least on a sufficiently abstract level.
+
+Just imagine being able to  
+* cd <table>/<primary_key>
+* vi <column_name>
+* select filename from directory where filesize>1000 and filename like '%.xml';  
+* select body from html_files where html.title='test';
+* update files set owner='me' where name like '%.xml';
+* ''Often when I misplace a recent file, I'd like to do something like: --top''
+** select * from files where dayDiff(now(),fileDate) < 2 and fullPath like '%stuff%' 
+** [You may be interested in zsh http://www.zsh.org/ . Among many, ''many'' other features, it has an more expressive extended globbing language that essentially permits filesystem queries like that one. "echo **/*stuff*(md-2)" corresponds to "select * from files where dayDiff(now(),fileDate) < 2 and fileName like '%stuff%'"; this is overwhelmingly likely to be what you want, but you can also express the "fullPath" version with "echo **/*stuff*/**/*(md-2)". -DavidMcLean]
+ 
+There are of course different ways to map values of the filesystem to values in the database and vice versa. 
+One way to map tables and rows to file system (hierarchical) values is implied by the example above.
+Two other ways to map files back to tables is implied by the other examples: 
+One general approach where all files and directories are represented by one single table. 
+And one specific approach where different file types might be mapped (e.g. with special plugins) to specific tables. 
+
+-- GunnarZarncke
+
+[I want to be rid of the FileSystem entirely. It shouldn't become more database-like. It should be gone. Databases can take over some of the role of FileSystem, along with DataDistributionService and persistent objects. Browsing and command+control should be an InteractiveSceneGraph service with a ZoomableUserInterface atop realtime data-fusion queries. One 'surfs' a dataflow. Static databases can be treated as an optimizable exception, and dataflow as the rule.]
+
+''That seems reasonable.  I've done some research work into GraphicalProgrammingLanguage''''''s and the like (and have created, for example, a graphical programming language in which source "code" can be altered whilst it's running, which is both fun and somewhat psychologically disturbing), but have been rather disappointed with the lack of operations per unit of display area that can be achieved compared to text, and the fact that an innordinate amount of time inevitably gets spent pointlessly rearranging the graphical elements to improve readability or aesthetics.  However, I don't see these as unsolvable problems.'' -- DaveVoorhis
+
+It's difficult to have "objects" embedded in such without tying it to a specific programming language. This is similar to the "GUI-language-tie" problem that has kept a semi-language-neutral GUI kit/protocol from being developed, and part of the reason we are stuck with bad web options. (ProgrammingLanguageNeutralGui). Something that is sharable across platforms and languages is generally going to have to be mostly declarative (unless it becomes a programming language in itself, which defeats the purpose). -t
+
+[Sharing a programming language as part of the protocol is not a "problem", and the "purpose" being defeated is a dubious one and perhaps deserves to be defeated. Distributed objects in a ZoomableUserInterface are generally recognized by use of URIs+query/command embedded in an InteractiveSceneGraph language, surrounded by the conditions for its display or operation. Requiring a browser to support from the get-go a well-designed language supporting interaction, subscription, complex queries and commands and conditions, etc. is, I suspect, a better choice than hacking this support in later, allowing the design to be more tightly integrated and amenable to composition (mashups), styling (integration with CSS or equivalent), optimization, analysis, automatic distribution (choosing which pieces go server-side and which go to the client to support privacy/secrecy), and so on.] 
+
+[Besides, it isn't as though "language neutral" is defined or has qualities associated with it. Even a "mostly declarative" language like HTML will demand considerable supporting helpers and frameworks to utilize across languages and platforms. Once one starts requiring a framework to work with a protocol, it's a very small step to have the same framework support functions and such.]
+
+* Nobody's against adding functions, it's just that the more a kit relies on TuringComplete behavior to do it's primary job (on the interface side), the less platform/app-transferable it is. -t
+* [Does that assertion - that "TuringComplete behavior is less platform/app-transferable" - have any basis on actual evidence? I understand that portability is affected by a number of things (especially dependencies), but I can't think of any instances where TuringComplete behavior has been a significant barrier to portability of apps, plugins, languages, APIs, etc. Perhaps you mean to say TuringComplete display behavior is less subject to analysis? With that I'd agree.]
+* The success of HTML over OOP GUI API's for wide adoption and use with many different languages is testament to the power of declarative (even with HTML's many weaknesses/limits). The trick is to identify common tasks and work them to be declaratively defined if possible.
+* [SDL and OpenGL also have wide adoption and use with many different languages. And, while I agree that having easy support for higher-level display language is very useful, that doesn't require 'declarative' approaches; it only requires abstraction and (for performance) having the code behind that abstraction cached and readily available to the browser. I also do not believe you can attribute HTML's success all that much to its declarative nature: you won't find many websites today that aren't hacked-together mashups of flash, javascript, and so on.]
+* If I'm not mistaken, OpenGl is used mostly by the gaming industry and primarily with C/C++. PovRay is closer to what is needed for a portable declarative language (although it lacks many potential feed-back features). As far as web-sites, Flash is mostly used for eye-candy. I agree that JavaScript is often needed, but this is often because HTML lacks basic form features such as numeric and date validation, combo-boxes, incremental page updates, etc. 
+* [Your assertion that OpenGl is mostly used in C/C++ has an analogous statement for HTML: HTML is mostly used by the document distribution industry and primarily in browsers and atop operating systems and served by webservers all written primarily with C/C++. What was your point in making that assertion? The fact remains that OpenGl has bindings in 9 languages and SDL in 24, and both of them have support across all major OS's. That's a "testament to the power of" something non-declarative. The success of those APIs, and the fact that HTML's own success is heavily tainted by its support for JavaScript, plugins, flash, etc., are two enormous blows to your ideas that HTML's success is due to its declarative nature and that declarative nature is especially useful for portability. You may assert that HTML succeeded, and you may assert that pure HTML is declarative, but you can't scientifically argue that there is a causality between those two. HTML's success can reasonably be attributed to other causes, such as it being adopted early in the Internet boom (published 1991) and thus having incumbent advantage later, its open nature (licensing issues or opaque formats from many competitors), and its original fire-and-forget-no-connection nature in an era with very few bandwidth resources. We can't rewind time and find out what other things may have succeeded in HTML's place (DisplayPostscript was promising, and procedural), but we can say for certain that success of HTML as a technology is at least as much a business issue as it is a technical one. ... Don't get me wrong. I'm a big fan of declarative for ''other'' reasons, but I've never counted portability among its advantages; indeed, the contrary is true: declarative languages of any sort require ''prodigious'' frameworks to implement in most languages when compared to, say, procedural languages of the same class. ForthLanguage or PostScript are stack-based, concatenative languages that would be relatively simple to implement in almost any TuringComplete language. This is because most languages (with the exception of Prolog and Mercury and some relational languages) support procedural far more readily than they support declarative.]
+
+I also want to be rid of the FileSystem entirely. But this cannot be done by complete substitution of a presumably better successor system. At least this kind of revolutionary replacement has to face a lot of resistance from the conservationalists - and for good reason: The migration path for such a change is very expensive (from a monetary as well as learning point).
+
+So one has to outline an incremental and clearly possible path to any future solution. Providing a PageProcessor or OpenRepository which imports and exports its enhanced data in the form of existing file systems and databases and what not and at the same time provide a - possibly visual - enriched interface.
+
+-- GunnarZarncke
+
+[Message passing systems inherently support the necessary isolation to achieve almost any migration path. Import/export/cross-compilation/transcoding/adapters for file systems and legacy databases/etc. can entirely be a feature provided by a browser/IDE or service application. Similarly, adapter services could support browsing via HtmlDomJsCss and such. Importantly, the replacement solution itself does not need to acknowledge the existence of these things, and thus may internally assume a revolutionary path without concern for backwards compatibility above transport protocol.]
+
+Indeed that is the vision. But to me the first step is not the vision and all the new possibilities we could support by a revolutionary new internal structure - and meanwhile disregarding the inconvenient 'backward compatibility'. Rather a uniform representation of the commonalities of the 'legacy' structures with explicit focus on import/export will more quickly lead to a realistic system - which can actually be used. I think going for an early BreakEven and feedback from users (might be yourself) will avoid the pitfalls of the theoretical ideal in the IvoryTower. -- .gz  
+
+[If databases and object technologies were entirely new things, perhaps I'd be more apt to agree. But I already see those as proven, usable technologies that have (quite happily) proven to be useful even in the absence of reliance on a file system.] 
+
+[When it comes to presenting InteractiveSceneGraph''''''s, that gets a bit hairy, though even then SceneGraph''''''s themselves are repeatedly proven technologies and the real question is how to go about designing something that is more optimal for composition, zoomable ui, etc. than HtmlDomJsCss. As a trivial example: rather than using 'console input' and 'console output' of mostly unstructured elements (strings) for console IO, we could make the primitives 'report' and 'prompt' with statements of priority and topic and structured elements for messages (lists, records, names, relations, etc.), and allow 'prompt' to enumerate legal answers and request that input conform to a specific type. Input and output work from single-threaded programs. Report and Prompt are far more composable, can handle multiple simultaneous prompts, can filter and organize reports, etc. Input and output of unstructured ''strings'' is invasive, forcing those objects that interact with a console to perform a great deal of translation. Report and prompt of structured values puts all the translation effort on the console, plus allows smarter consoles that can save structured values from reports and forward them into future prompts (especially useful for command prompts) or perform functional computations, indexing, complex queries, etc. By favoring translate-at-edge above invasive-import-of-existing-legacy-structure, we force a one-time implementation of a dedicated console application, avoid a language-lifetime of extra translation and stream management issues, and gain some IvoryTower features in the bargain. The console, of course, is a fairly simple beast compared to writing a graphical ObjectBrowser or full IntegratedDevelopmentEnvironment, but I believe the same basic approach will continue to lead to the same sorts of advantages: forcing adapter layers to legacy systems rather than importing "commonalities" with legacy systems into the system proper is a realistic approach that results in something quite usable, albeit at cost of a one-time implementation for the translators, but does so ''without'' sacrificing my IvoryTower ideals.]
+
+Maybe I should make this clear: My point is '''not''' that everything should be represented as file system values. Nor that everything should be represented as as database values (as some of us might prefer). And neither that everything should be accessed as objects with strange and newfangled interfaces.
+
+Instead I also 'see those as proven, usable technologies that have (quite happily) proven to be useful'. But I'd like to see a convergence and synthesis of these technologies. Currently these technologies - in particular the large DBs and object stores - have become self-centered GoldenHammer monsters. Leaving such a specialized (and often proprietary) environment can be quite difficult. 
+
+What do you think about the practical usability of the examples given?
+
+-- .gz
+
+[Object stores are a different technology than what I was talking about when I mentioned "persistent objects", the difference being that persistent objects are abstracted such that they '''always''' respond to messages, whereas objects in object stores need to be "loaded" into an application whereupon only said application can send them messages or interact with them. Persistent objects are often addressable by remote systems, usually using a URI, and I'd generally consider their design incomplete if they didn't provide secure names suitable for ObjectCapabilityModel. You need to look at something more like EeLanguage, application servers, etc.] 
+
+[As for the DBs, those are quite practical and usable today. "FileSystem values" are BLOBs anyway; it wouldn't be difficult at all to dump entire filesystems into databases excepting a small performance hit until either the DBs are optimized to carry so many BLOBs, or the files are properly shattered to divide the information they contain. The 'proprietary' can often be a bit painful, but isn't a technical issue, and there are non-proprietary options even today that have 95% of the features and performance at 5% of the cost.]
+
+That's not entirely true. Files often have a set of attributes associated with them, per list above. Performing queries on such info even without getting into the file content would be useful. RDBMS are sometimes used to store images and text narratives in practice. Thus, this "blob" aspect tends to overlap.
+
+[I sort of considered that to be a non-issue: I do not anticipate that this meta-data would represent any difficulty at all for dumping a FileSystem into a database. If you're mentioning it for completeness, that's fine by me. More than meta-data, security management will be a problem, though the hacked-together-security common to FileSystem''''''s needs reworked anyway. ObjectCapabilityModel for persistent objects + PasswordCapabilityModel (SPKI, certificate driven) for authorization to centralized data would be my approach.]
+
+Are you the one promoting that CapabilitySecurityModel stuff? It figures. Another obtuse meandering "concept" that is '''inexplicably''' un-demonstratable. You collect them, like stamps and coins. You should find a handle so that I know to steer clear.
+
+-------
+
+Possible ways to index the file system may depend on what services it offers.  A generic approach is to periodically do a system-wide directory listing and indexing anything "new". If the file service offers an "on-change" trigger, then we can use to that keep our indexes up-to-date. If we can get into the "guts" of it, then we may be able to avoid some redundancy, such as keeping a separate list of the last-changed date. -t
+
+----
+See Also: FileSystemAlternatives, AdaptiveCollection, FlikiBase, MergingFilesAndDatabase
+-------
+CategorySpeculative
+----
+MarchZeroNine

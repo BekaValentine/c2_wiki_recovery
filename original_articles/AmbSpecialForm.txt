@@ -1,0 +1,152 @@
+See StructureAndInterpretationOfComputerPrograms section 4.3 for the full story: http://mitpress.mit.edu/sicp/full-text/book/book-Z-H-28.html#%_sec_4.3
+
+But in short, amb is a special form that allows nondeterministic computation (usually implemented in the SchemeLanguage).
+
+The form (amb 1 2 3) at first returns 1. When we later encounter a failure form (amb), the program backtracks to the latest pending amb form. If it's this form, it would then return 2 and restart the computation from there.
+
+It's also one of the classic applications of CallWithCurrentContinuation that cannot be expressed using just threads, CoRoutine''''''s, exceptions, etc. Here is a possible implementation:
+
+ (define (*failure*) (error "Failure"))
+
+ (define-syntax amb
+	(syntax-rules ()
+	((amb) (*failure*))
+	((amb ?x) ?x)
+	((amb ?x ?y)
+	(let ((old-failure *failure*))
+	((call-with-current-continuation
+	  (lambda (cc)
+		(set! *failure* 
+		  (lambda () 
+			(set! *failure* old-failure)
+			(cc (lambda () ?y))))
+		(lambda () ?x))))))
+	((amb ?x ?rest ...)
+	(amb ?x (amb ?rest ...)))))
+
+
+In Unix, amb can also be expressed in the CeeLanguage using fork(), wait() and exit():
+
+  #include <stdio.h>
+  #include <errno.h>
+  #include <unistd.h>
+  #include <sys/types.h>
+  #include <sys/wait.h>
+  
+  #define AMB_FAILED 42
+  
+  // nondeterministically returns true or false (1 or 0)
+  int amb(void)
+  {
+	pid_t child_pid = fork();
+	if (child_pid == -1) {
+	perror("amb"); exit(1);
+	}
+	if (child_pid == 0) {
+	// child process
+	return 1;
+	} else {
+	// parent process
+	int status; pid_t result;
+	do {
+	result = waitpid(child_pid, &status, 0);
+	} while ((result == -1) && (errno == EINTR));
+	if (result == -1) {
+	perror("amb"); exit(1);
+	}
+	if (WIFEXITED(status)) {
+	if (WEXITSTATUS(status) == AMB_FAILED) 
+	  return 0;
+	else 
+	_exit(WEXITSTATUS(status));
+	}
+	_exit(1);
+	}
+  }
+  
+  void fail(void)
+  {
+	_exit(AMB_FAILED);
+  }
+  
+  // example use
+  int choose_number(int lower, int upper)
+  {
+	int i;
+	for (i = lower; i < upper; i++) {
+	if (amb()) return i;
+	}
+	fail();
+  }
+  
+  int main()
+  {
+	int n = choose_number(1, 10);
+	int m = choose_number(1, 10);
+	if (n*m != 54) fail();
+	printf("%d*%d=54\n", n, m);
+	return 0;
+  }
+
+In FactorLanguage, it can be implemented very compactly.
+
+ USING: kernel continuations sequences namespaces fry ;
+
+ IN: backtrack
+
+ SYMBOL: failure 
+
+ : amb ( seq -- elt )
+	failure get
+	'[ , _ '[ , '[ failure set , , continue-with ] callcc0 ] each
+	        , continue ] callcc1 ;
+
+SetlLanguage has a pair of primitives (ok and fail) which are very similar and can be used to trivially implement amb:
+
+ procedure amb(choices);
+   if exists c in choices | ok then
+     return c;
+   else
+     fail;
+   end;
+ end amb;
+----
+It would be terrifically helpful to know what amb is actually ''good'' for. 
+
+''Several applications of amb are discussed in section 4.3 of SICP, which is linked to at the top of this page.''
+
+The SICP examples are:
+
+* finding Pythagorean triples
+* logic puzzels
+* natural language parsing
+
+...perhaps there are more I missed.
+
+I like what ''Teach Yourself Scheme in Fixnum Days'' (http://www.ccs.neu.edu/home/dorai/t-y-scheme/t-y-scheme-Z-H-16.html#node_chap_14) has to say:
+
+	 :	The result is an elegant backtracking strategy that can be used for searching problem spaces directly in Scheme without recourse to an extended language. The embedding recalls the continuation strategies used to implement Prolog-style logic programming [16, 7], but is sparer because the operator provided is much like a Scheme boolean operator, does not require special contexts for its use, and does not rely on linguistic infrastructure such as logic variables and unification.
+
+i.e. You can do Prolog type things in Scheme more directly than by implementing a Prolog-ish DSL within Scheme.
+
+How might one express pathfinding using amb (or would one even do so?)
+
+''Not quite sure how to answer this... In some sense amb is just a tool for arbitrarily (but systematically) choosing the next branch of a search tree to follow -- notifying you, of course, when there are no more choices.''
+
+Can it be used as a PseudoRandomNumberGenerator?
+
+''No, because it is not random, it only models a nondeterministic choice. Typically the tree of choices is searched in a predictable order.''
+
+Why is it called 'amb'? I cannot come up with a sensible expansion of this acronym. Or isn't it any?
+
+''I think it's called 'amb' because it introduces ambiguity into the computation. And what it effectively gives you is backtracking ala PrologLanguage, so you can use it to write prolog-ish stuff in scheme.''
+----
+Is there an analogous special form for ForwardChaining?
+----
+This thing seems to imitate the List monad in HaskellLanguage. --SamuelFalvo
+
+I'm sure the list monad actually tried to imitate amb, as amb is much older than Haskell, i think it was 1963 when McCarthy published about it.
+----
+See also: AmbInRuby, AmbInPython
+----
+CategoryScheme CategoryContinuation

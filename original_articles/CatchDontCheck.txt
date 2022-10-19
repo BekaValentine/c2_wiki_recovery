@@ -1,0 +1,104 @@
+This is a JavaCodeSmell that purports to be a performance JavaIdiom.  See CatchDontCheckRefuted.
+
+----
+It is often more efficient in Java to let an exception be thrown and catch it instead of checking for the exceptional condition beforehand.
+
+For example, a loop such as this
+
+   for (int i=0; i < someArray.length; i++) {
+     // do something with someArray here
+   }
+
+can be more efficiently written as
+
+   try {
+     for (int i=0; ; i++) {
+       // do something with someArray here
+     }
+   } catch (A''''''rrayIndexOutOfBoundsException ex) {
+     // ignore the exception
+   }
+
+''This is complete and utter nonsense.  Actually running the above code shows that the second is slower.  See CatchDontCheckRefuted.  --JimLittle''
+
+Not only that, but the second approach is one of the most braindamaged 
+obsfucations I have seen in recent years.  If I saw this in a code review, I 
+might be forced to let that person go...
+
+This can't be a serious suggestion.  Someone's winding us up...
+
+Bernd Eckenfels: it does also not work very well on Array access. Most Java optimizing jit compilers can see a loop over the array and ensure, that the access to its elements does not need bounds checking. In that case the bounds checking is dropped, which is much faster than dropping the upper limit for the loop. Also the throw is so much more expensive. In short: this is not a optimization at all. Generally recent virtual machines expect sane coding and not obfuscation to perform well.
+
+----
+
+This holds true only if the cost of checking outweighs the cost of the exception. Remember: raising an Exception in Java is a fairly expensive exercise. With the posted example, the length of the array would have to be ''big'' in order for the Exception to be the cheaper option. ''--only if the bounds checking was implemented more efficiently than a simple range check.  Otherwise, it'd be just as expensive, for any size array.''
+
+The check has cost ''x'', and is performed each time through the loop. Even in the most optimal case where the cost of retrieving the length of the array is zero (such as when it's cached), the boolean comparision has non-zero cost. Raising the exception has a cost of ''X''. For a large enough value of ''n'', where ''n'' is the size of the array, ''X'' < ''nx''. Expensive fixed time vs cheap linear time, and all that. However, anyone who tried to justify this to me would be laughed at unless they had really really hard evidence to show that the loop evaluation cost was a performance impact. Furthermore, it's likely the JVM would optimise away the redundant checks it has, as noted below. -- RobertWatkins.
+
+''That doesn't make any sense.  The exception can't be raised without a test, too.  And the exceptions' test is likely to be at '''least''' as expensive as the boolean in your loop.  Exceptions aren't magic...'' 
+
+But the test that will raise the Exception is going to happen anyway (unless it gets optimised out, as listed below). The check in the loop, however, can be removed (though you're silly to do so).
+
+
+----
+
+Remember, the JVM will always check the validity of array references.  So, in the code
+
+
+   try {
+     for (int i=0; ; i++) {
+       someArray[i] = 0;
+     }
+   } catch (A''''''rrayIndexOutOfBoundsException ex) {
+     // ignore the exception
+   }
+
+the JVM will always test whether i >= 0 and i < someArray.length.  Now, in the code
+
+
+   for (int i=0; i < someArray.length; i++) {
+     someArray[i] = 0;
+   }
+
+at least the Java compiler has a fighting chance to remove the unnecessary tests, as i will be guaranteed to be in range when the array reference is done.  Another thread could reset the array somehow; that would be a very rare situation.
+
+In general, never use exceptions in place of ordinary control flow mechanisms.
+
+----
+  i = someArray.length;
+  while (i--){
+    // do something with array here
+  }
+
+
+''without a comment, it is hard to see why this was added.  Unless java compilers are much more stupid than I think they are, this has no advantage --- and the drawback of being both non-standard, and less clean than the standard for loop apporoach''
+
+That doesn't even compile!  Java wants a boolean in that test, not something that eventually can be coerced to false.  Java isn't C you know.
+
+----
+
+Actually, there is a reason for that.  Look at page 175 of Java Performance Tuning by Jack Shirazi, ISBN 0-596-00015-4:
+
+''Comparison to 0 is faster than comparisons to most other numbers.  The VM has optimizations for comparisons to the integers -1, 0, 1, 2, 3, 4, and 5.  So rewriting loops to make the test a comparison against 0 may be faster.''
+
+So, on some VMs, 
+
+  for(int i = 0; i < Repeat; i++)
+
+is slower than
+
+  for(int i = Repeat-1; i >= 0; i--)
+
+or
+
+  for (int i = Repeat; --i >= 0; )
+
+A footnote states that the latest VMs try to optimize the standard for loop; only non-JIT VMs and H''''''otSpot show improvement by rewriting.  So, there is a reason for rewriting, but it's much less important now.  I think using a while loop is dubious.  -- EricJablow
+
+''Ah, now I see.  I haven't done a lot of Java, and I guess I assumed (as in comment) that the optimizers were more sophisticated than that, since it is a pretty standard (and easy) optimization....  I guess from your above comment, they  have started to implement this''
+
+It's a pretty brain-damaged way to iterate in Java, but in Python exceptions are actually the standard way to stop iteration.  Hence the existence of the S''''''topIteration exception.  See LookBeforeYouLeap.
+----
+CategoryJava
+
+CategoryException

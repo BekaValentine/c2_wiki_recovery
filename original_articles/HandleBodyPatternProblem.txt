@@ -1,0 +1,93 @@
+How do you apply HandleBodyPattern to cyclic object graphs?  Suppose in version 1.0, we have this code as part of our file-system browser:
+
+	interface File
+	{
+		byte[] get_Data();
+	}
+
+	interface Folder
+	{
+		string get_Name();
+		Enumeration<Folder> get_SubFolders();
+		Enumeration<File> get_Files();
+		Folder F''''''indSubFolderByName(string name);
+		File F''''''indFileByName(string name);
+	}
+
+In version 2.0, we add a spiffy feature so that you can have your file and folder names automatically translated from your native language.  This is implemented using HandleBodyPattern as follows:
+
+	class L''''''anguageFolderWrapper implements Folder
+	{
+		L''''''anguageFolderWrapper(Folder wrapped,L''''''anguageTranslator translator)
+		{
+			_wrapped=wrapped;
+			_translator=translator;
+		}
+
+		string get_Name()
+		{
+			return _translator.T''''''ranslateName(_wrapped.get_Name());
+		}
+
+		Enumeration<Folder> get_SubFolders() 
+		{
+			// we have to recursively apply wrappers to sub-folders to maintain the language illusion
+			List<Folder> wrappedSubFolders=new List<Folder>;
+			foreach(Folder folder in _wrapped.get_SubFolders())
+				wrappedSubFolders.Add(new L''''''anguageFolderWrapper(folder));
+			return wrappedSubFolders;
+		}
+
+		Enumeration<File> get_Files()
+		{
+			return _wrapped.get_Files();
+		}
+
+		Folder F''''''indSubFolderByName(string name)
+		{
+			string translatedName=_translator.T''''''ranslateName(name);
+			return _wrapped.F''''''indSubFolderByName(translatedName);
+		}	
+
+		File F''''''indFileByName(string name)
+		{
+			string translatedName=_translator.T''''''ranslateName(name);
+			return _wrapped.F''''''indFileByName(translatedName);
+		}	
+	}
+
+Language translation is a huge success.  But it works so well that it is soon forgotten.  It is relegated to the dusty confines of SCM.  In version 3.0, we realized a couple limitations of the original File interface.  So, we add new features for this version as follows:
+
+	interface File
+	{
+		string get_Name();
+		Folder get_Parent();	
+		byte[] get_Data();
+	}
+
+Looks good, so we ship it.  Soon, our customers start using these interfaces on their own.  It is brought to our attention that language translation breaks if you traverse down to a File, and then back up to its parent Folder.  Seems that we forgot something.
+
+What is the cause of this problem we face? Let's look at each of these possibilities one by one.
+
+	1) It's our fault - we should have wrapped the File interface at the same time as Folder.  Then the compiler would have alerted us to this problem.:	That might sound ok for this trivial example of File and Folder.  Imagine instead that you have a complex system involving hundreds of types all interconnected in a cyclic graph.  Now, to add a "simple" wrapper, you have to create 99% useless mirror copies of each type.  That is a lot of redundancy and busy-work for something that is supposed to be saving us time.
+	
+	2) It's our fault - we should have searched our complete codebase and/or had it memorized, and we would have discovered the problem earlier.:	IMHO, the point of design patterns and even OOP in general is to relieve the memorization madness that plagued older styles of programming.  We want to be able to consider one class at a time, and as long as it achieves its goal, we shouldn't have to think about the "big picture". Aside from that, the L''''''anguageFolderWrapper class may have been written by someone else on the team, or it may actually live in a customer's codebase.
+	
+	3) The pattern is broken and/or impractical in the face of version changes.:	This seems to be the problem.  In order to use HandleBodyPattern successfully in any cyclic object graph, you have to wrap every other object that is reachable from the "body". This creates a somewhat unpronounced dependency.  Any time you change any one of the types in the object graph, you have to duplicate those changes to the wrapper types. You end up creating an entire shadow-world of adapter types.
+
+	 :	OK, so let's suppose you decide that HandleBodyPattern is just too good to resist, and you bite the bullet and write out hundreds of these shadow-world classes. There is still a subtle problem, related to object identity.  In the example above, if we go ahead and apply the appropriate wrappers, you could still end up with a situation like this:
+	 
+	 :	1) Obtain a Folder that is actually a L''''''anguageFolderWrapper proxy.
+	 :	2) Call F''''''indFileByName("foo") and get a File that is actually a L''''''anguageFileWrapper proxy.
+	 :	3) Call get_Parent() and get a Folder that is actually a L''''''anguageFolderWrapper.
+	 
+	 :	The Folder in step 1 refers to the same folder as the Folder in step 3.  The "real" implementation of File and Folder will probably give out pointers to the existing "real" objects. The adapters will wrap them in ''new'' L''''''anguageFolderWrapper's each time the pointers are encountered.  If some client code depends on the object identity of the Folder's being equal, then we will have broken that client code. Any attempt to correct this situation (that I can see) will either be slow or non-portable.
+
+----
+
+''This isn't specific to cyclic object graphs. Suppose that the File abstraction was changed so that a File could "contain" folders (for example think of archive files). Even if the resulting structure was restricted to a tree, the contained folders would not be wrapped. In this case the interface dependencies are cyclic, but not the object graph.''
+
+''In this example, when the language translation was recognised to work well but before it was forgotten, the code probably should have been refactored to integrate the translation into the base implementations of files and folders. This doesn't invalidate the main point of the example.''
+
+----
+CategoryPattern

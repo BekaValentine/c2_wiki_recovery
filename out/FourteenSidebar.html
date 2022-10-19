@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Fourteen Sidebar
+      </h1>
+      <p>
+        See <a href="ExtremeProgrammingChallengeFourteen.html">ExtremeProgrammingChallengeFourteen</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>In progress, but please pitch in, I'm admittedly confused.</strong>
+      </p>
+      <p>
+        <a href="DonWells.html">DonWells</a> suggests that there are internal defects in the methods as written. I don't see them. Here's some discussion to help me get a new angle on testing these deals, because right now I don't see a bug and my translated tests aren't seeing one either.
+      </p>
+      <p>
+        Let's look at one of the routines for internal defects. I'll state my assumptions here about what Java will and won't do. If one of them is wrong due to my lack of J-knowledge, please correct me.
+      </p>
+      <code>
+        .synchronized Object take() throws <a href="InterruptedException.html">InterruptedException</a>? {<br/>
+        .  while( occupied == 0 )<br/>
+        .    wait();<br/>
+        .  notify();<br/>
+        .  --occupied;<br/>
+        .  takeAt %= buffer.length;<br/>
+        .  return buffer[takeAt++];<br/>
+        .}<br/>
+      </code>
+      <p>
+        <strong>Assumptions from reading the Java concurrency material</strong>
+      </p>
+      <p>
+        The writeup says: "Any method or code block marked as synchronized is executed in its entirety (unless explicitly suspended via wait) before the object is allowed to perform any other synchronized method called from any other thread."
+      </p>
+      <p>
+        Further, it says that a wait() suspends the thread on an internal queue and releases its lock.
+      </p>
+      <p>
+        Let's suppose that occupied == 0. Two other threads send take() to the same <a href="BoundedBuffer.html">BoundedBuffer</a>. One enters, waits, the other enters. Now we can have two threads hanging in the wait loop on tale. Indeed, we can have any number. No take can ever notify() until there are some put()s.
+      </p>
+      <p>
+        Sooner or later put() will be sent, and notify() will happen. The writeup says: "A notify invocation results in the following actions:
+      </p>
+      <ol>
+        <li>
+           If one exists, an arbitrarily chosen thread, say T, is removed by the Java run-time system from the internal wait queue associated with the target object.
+        </li>
+        <li>
+           T must re-obtain the synchronization lock for the target object, which will always cause it to block at least until the thread calling notify releases the lock. It will continue to block if some other thread obtains the lock first.
+        </li>
+        <li>
+           T is then resumed at the point of its wait. "
+        </li>
+      </ol>
+      <p>
+        Suppose a raft of takes are waiting and a raft of puts occur in a convoy owing to some scheduler anomaly. The 0th put finds occupied ~= buffer.length and executes entirely, leaving putAt = 1; occupied = 1. Then, and only then, the 1st put runs, leaving putAt = 2; occupied = 2.  <em>If I can't assume this is the only thing that can happen, then I don't understand Lea's writeup. Please correct me.</em>
+      </p>
+      <p>
+        put 3 and 4 can run ditto, leaving putAt = 4; occupied = 4 = buffer.length. If any more puts get selected, they hang. Sooner or later the scheduler selects a take. <em>(Or is this the bug, that the scheduler in its arbitrariness may never select an eater? Hmm ...)</em>
+      </p>
+      <hr/>
+      <p>
+        Exactly, that's why bounded buffers usually have two conditions, notFull and notEmpty, for this kind of synchronization. Getters and putters are looking for different events. So the put code might be (I can't quite remember the syntax):
+      </p>
+      <code>
+        .synchronized public put(Object object) {<br/>
+        .  while (isFull()) {<br/>
+        .    wait(notFull);<br/>
+        .  }<br/>
+        .  addObject(object);<br/>
+        .  if (1 == size()) <br/>
+        .    signal(notEmpty);<br/>
+        .}<br/>
+      </code>
+      <p>
+        Do have a look at that Birrell paper I referenced in <a href="ExtremeProgrammingChallengeFourteen.html">ExtremeProgrammingChallengeFourteen</a>. It's very good on this sort of thing. --<a href="SteveFreeman.html">SteveFreeman</a>
+      </p>
+      <p>
+        Are you suggesting that the conditions <a href="TomCargill.html">TomCargill</a> wrote aren't OK? I would agree that they aren't particularly clear. Do you see a method being entered when it shouldn't be? If so, how?  Thanks. --rj
+      </p>
+      <hr/>
+      <p>
+        I see some of the confusion here. Java does not have the notion of a
+        ConditionVariable, or equivalently there is just one implicit
+        ConditionVariable associated with each lock. The wait and notification use
+        the lock generically with a GuardCondition expression that determines when
+        the needed condition has been satisfied. --<a href="TomCargill.html">TomCargill</a>
+      </p>
+      <hr/>
+      <p>
+        Does the following refactoring help?
+      </p>
+      <code>
+        .class <a href="BoundedBuffer.html">BoundedBuffer</a> {<br/>
+        .  private Object[] buffer = new Object[4];<br/>
+        .  private int putAt, takeAt, occupied;<br/>
+        .<br/>
+        .  synchronized void put(Object x) throws <a href="InterruptedException.html">InterruptedException</a> {<br/>
+        .    while( isFull() )<br/>
+        .	wait();<br/>
+        .    notify();<br/>
+        .    ++occupied;<br/>
+        .    putAt = successorCyclic(putAt);<br/>
+        .    buffer[putAt] = x;<br/>
+        .  }<br/>
+        .<br/>
+        .  synchronized Object take() throws <a href="InterruptedException.html">InterruptedException</a> {<br/>
+        .    while( isEmpty() )<br/>
+        .      wait();<br/>
+        .    notify();<br/>
+        .    --occupied;<br/>
+        .    takeAt = successorCyclic(takeAt);<br/>
+        .    return buffer[takeAt];<br/>
+        .  }<br/>
+        .<br/>
+        .  private boolean isFull() {<br/>
+        .    return occupied==buffer.length;<br/>
+        .  }<br/>
+        .<br/>
+        .  private boolean isEmpty() {<br/>
+        .    return occupied==0;<br/>
+        .  }<br/>
+        .<br/>
+        .  private int successorCyclic(int index) {<br/>
+        .    return (index+1)%buffer.length;<br/>
+        .  }<br/>
+        .}<br/>
+      </code>
+      <p>
+        --<a href="TomCargill.html">TomCargill</a>
+      </p>
+      <p>
+        <em>Well, the refactoring didn't help me. I thought it was more clear in the original form. But then I'm an old C person, so the metaphors carry over. BTW, I'm still out of things to test and am just waiting to see what the defect is, to learn something, and to see whether I can devise a test then. --</em><a href="RonJeffries.html">RonJeffries</a><em></em>
+      </p>
+      <p>
+        You need #notifyAll, #notify assumes only a single waiting thread.
+      </p>
+      <p>
+        <em>Correct.  That's the bug that started this whole discussion: What would a test that detects that bug look like?</em>
+      </p>
+      <p>
+        Ah, sorry, I was late into this. That's an interesting question and one that would be difficult to answer without being able to override #wait, #notify, and #notifyAll. Could I use some maximum latency schemes? Let me think about this, but with a maximum latency, you maybe be able to detect this in less than a couple of seconds. But then I'd have to add a TIME_OUT argument to the #wait messages and possibly another state variable to BoundedBuffer? I suppose this would be seen as instrumenting and, thus, not meet the requirements of the challenge?  <em>Processing...</em>
+      </p>
+      <p>
+        <em>I would do fancier testing as a research project (to learn how to do it), but not in production.  Consider that </em><a href="ConcurrencyUnitTestWaynesAttempt.html">ConcurrencyUnitTestWaynesAttempt</a>, for all its faults, will detect not just the known concurrency bug but probably several others, required no obfuscating modifications of the class being tested, reliably demonstrates the presence or absense of the bug, was completed in about half an hour, and is simple.  That's not bad.  It could be better, but it's good enough for now.  I also would not write this test up front, but only when I knew (or suspected) a concurrency bug.  Concurrency bugs are hard to test for; I prefer to start testing for them once I suspect a problem. -- <a href="WayneConrad.html">WayneConrad</a><em></em>
+      </p>
+    </div>
+  </body>
+</html>

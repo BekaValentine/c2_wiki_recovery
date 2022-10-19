@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Throw Your Own Exception
+      </h1>
+      <p>
+        Throw Your Own Exception is a method of <a href="TacticalTesting.html">TacticalTesting</a>.
+      </p>
+      <p>
+        In languages such as Java which have exceptions and use them in abundance, part of the challenge of testing is to exercise all the exception handling code. Naturally, as soon as something is slightly screwy, it will be the exception handlers that come into play, so they are the first line of defence against bugs. But the other problem with exception handlers is that something screwy has to happen before they can be invoked. In many cases, the developer's not even sure how to get them to happen.
+      </p>
+      <p>
+        My suggestion is that tactical testing should include a way of making exceptions be thrown so that the handler code can be tested. It's particularly important that this can be done without making the code vulnerable to attack from hackers and so forth.
+      </p>
+      <p>
+        The modification to the source is insertion of calls to simulate exceptions on the line before they might really happen. During testing, those exceptions can be thrown. In production, those exceptions will never be thrown. Each possible exception is given a unique string name, e.g. "CorbaNoImpl", or "NotSupported". The inserted call looks like <strong>testException("</strong>CorbaNoImpl")<strong> or </strong>testError("NotSupported")<strong>. The test program, which is invoking the code being tested, gets to choose beforehand which of these calls will result in an exception being thrown.</strong>
+      </p>
+      <p>
+        Now let's get Java specific. There are three methods which can throw exceptions. They are <strong>testRuntime(String)</strong> which can throw a <a href="RuntimeException.html">RuntimeException</a>, <strong>testException(String)</strong> which can throw an Exception, and <strong>testError(String)</strong> which can throw a Throwable. To avoid damaging your code in other ways (because if you insert a call which is declared to throw Exception, Java will make you catch it or rethrow it), you have to be careful about where you put these calls. A call to <strong>testRuntime()</strong> can go anywhere, because <a href="RuntimeException.html">RuntimeException</a> doesn't need to be caught. A call to <strong>testException()</strong> can only go somewhere where you are catching Exception, and a call to <strong>testError()</strong> can only go where you are catching Throwable. As I am a fairly suspicious person, I have the last two in abundance, so I will be able to insert fake exceptions fairly easily.
+      </p>
+      <p>
+        Now the three test methods described above are all static methods of a class in the package being tested. This class, which I call Testing, keeps track of which exceptions are supposed to be thrown and which are not. It can do this with a map from Strings (the parameter to the test methods) to Throwable. The Throwable is the exception to be thrown when a test method is invoked with that parameter. If the name is not in the map, don't throw anything. Of course, the test methods will have to ensure that the Throwable in the map is of an appropriate class to be thrown from that method.
+      </p>
+      <p>
+        The rest of the API for Testing is dedicated to maintaining the map, including a call to clear it between tests. Extensions to Testing will be required if different threads must throw different exceptions.
+      </p>
+      <p>
+        Now how do we turn this off for production releases? Simple - Testing has a public static final boolean called TESTING which is checked before anything is thrown.
+        For a production release, that is set to false.
+      </p>
+      <p>
+        The advantages of this approach are:
+      </p>
+      <ul>
+        <li>
+           you can test exception handler code
+        </li>
+        <li>
+           no effect on production code
+        </li>
+      </ul>
+      <p>
+        The disadvantages are:
+      </p>
+      <ul>
+        <li>
+           slightly messier code
+        </li>
+      </ul>
+      <p>
+        Comments?
+      </p>
+      <p>
+        -- <a href="JohnFarrell.html">JohnFarrell</a>
+      </p>
+      <hr/>
+      <p>
+        It seems like you really have to fight the Java type system here. Personally I try to keep exception specifications as specific as I can, rather than making everything Exception. So I'd either need lots of different versions of the testException() routine, or else to rewrite as something like:
+      </p>
+      <code>
+        if (testException("MyException"))<br/>
+        throw new MyException();<br/>
+      </code>
+      <p>
+        Either way, I feel this is pretty intrusive. I aim to have just 1 exception handler, with very simple handling code that doesn't much distinguish between different types of exception, and hope this reduces the testing burden. I've decided I hate Java's declared exceptions.
+      </p>
+      <p>
+        Is it feasible to have a tool which messes at the bytecode level, to force exceptions without being so intrusive? -- <a href="DaveHarris.html">DaveHarris</a>
+      </p>
+      <p>
+        Mm.  Imagine a tool that looks at the exception information in the bytecodes to find out where exceptions are caught and thrown, and inserts bytecodes to throw those exceptions and so test your handling.  (If you implement this, please make it <a href="FreeSoftware.html">FreeSoftware</a>.)
+      </p>
+      <p>
+        Has anybody tried AspectJ for this? -- Robert Wenner
+      </p>
+      <p>
+        I'm really starting to feel that <a href="ByteCodeIsMachineCode.html">ByteCodeIsMachineCode</a>: it's perfectly fine and good to mess around with from a postprocessor.  There are problems with doing this -- different tools might interfere with each other, it's not traceable, and so on -- but I think it's the best we can do given the constraints of <a href="JavaLanguage.html">JavaLanguage</a>. -- Martin Pool
+      </p>
+      <hr/>
+      <p>
+        Just having one exception handler would be nice, but if you're going to try to handle exceptions you can't do it forever. It's easy enough to write 8 lines of CORBA code which can throw 8 different exceptions. Along with <a href="RuntimeException.html">RuntimeException</a>, which you may get without even trying, and there may be 9 different things you want to do. I catch the specific ones I know about, but very often have a catchall at the end to get <a href="RuntimeException.html">RuntimeException</a> and NoClassDefFoundError. I used to think that proper exception handling would double the size of your code if you let it, but now I know it's far worse than that if you let it get out of hand. Yes, you can make the exception types more specific to fit neatly into more situations, but that also means that you are writing more test infrastructure, and then you'll have to debug that too!
+      </p>
+      <p>
+        Another thing I forgot to mention with this technique is that you have to make sure that you turn it off before you ship! You wouldn't want customers filing error reports of errors that aren't really happening, if you left something turned on somewhere. I suggest in the static initialiser for Testing you have a line that says <strong>if (TESTING) System.out.println("testing on in " + Testing.class);</strong> so that it's obvious when you run the program.
+      </p>
+      <p>
+        -- <a href="JohnFarrell.html">JohnFarrell</a>
+      </p>
+      <hr/>
+      <p>
+        I've never written CORBA code. To me it sounds like a misuse of exceptions - not that there are 8 things that can go wrong, but that you need to respond to them in 8 different ways.
+      </p>
+      <p>
+        Is this another type checking issue? I've found in Java that I sometimes want to catch anything that's thrown, do some clean-up, and then rethrow. <em>I</em> don't care what I've caught, but the type-checker isn't smart enough to preserve the static type of the exception on its own. So I have to catch and rethrow each exception specifically. -- <a href="DaveHarris.html">DaveHarris</a>
+      </p>
+      <p>
+        This seems to be a common knowledge gap, even for experienced programmers. If all you want, is to perform cleanup but don't need to catch an exception, just use the finally clause:
+      </p>
+      <code>
+        Resource resource = new Resource();<br/>
+        try {<br/>
+        // Do stuff that might throw...<br/>
+        } finally {<br/>
+        resource.Cleanup(); // will be executed regardless of how the try block is exited<br/>
+        }<br/>
+      </code>
+      <hr/>
+      <p>
+        The problem is not with the 8 things that can go wrong, but with the 9th one! If you expect 8 things to go wrong (and what a nightmare that is), you can just write a catch-all. But when the 9th thing goes wrong, it gets caught by the catch-all and handled as if you expected it, when it might be a disaster. To make sure you notice the disaster, you have to catch the 8, handle them the standard way, then catch the rest (including the 9th) and handle it specially. I suppose I could do
+      </p>
+      <code>
+        catch (<a href="RuntimeException.html">RuntimeException</a>) ... // possibly 9th<br/>
+        catch (Error) ...            // possibly 9th<br/>
+        catch (Throwable) ...        // must be the 8<br/>
+      </code>
+      <p>
+        except then I have 3 layers of catch-alls and the code is not obvious any more.
+        -- <a href="JohnFarrell.html">JohnFarrell</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryException.html">CategoryException</a>
+      </p>
+    </div>
+  </body>
+</html>

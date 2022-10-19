@@ -1,0 +1,138 @@
+Category: JavaIdioms
+
+This is probably an Anti''''JavaIdiom. It should really be called DontNeedlesslyCopyData or ChooseTheBestAlgorithm, neither of which are Java-specific.
+
+----
+So performance is an issue in your JavaLanguage program? Check for temporary objects which might take time from GarbageCollection.
+
+''Negative Example''
+
+	String data[100] = { /* 100 strings */ }; 
+
+	String create_report(String[] data) {
+		String result = "";
+		for(int i = 0; i < data.length, i++) {
+			result += data[i];
+		}
+		return result;
+	}
+Here the code ''result += data[i];'' creates a new ''String'' instance every time the code is executed. So there are 100 objects created in the loop, of which only the last one is of interest and returned to the caller. The remaining 99, plus the initial result object are subject to GarbageCollection. A SignalToNoiseRatio of 1/100 in the above example.
+
+For the given example, the intermediate objects can be avoided by using String''''Buffer. Other garbage-creating loops require more creative work to fix them.
+
+''Positive Example''
+
+	String data[100] = { /* 100 strings */ };
+
+	String create_report(String[] data) {
+		// Still not fast enough ? a char array can be used ;-)
+		StringBuffer result = new StringBuffer(totalNumOfChars(data));
+		for(int i = 0; i < data.length, i++) {
+			result.append(data[i]);
+		}
+		return new result.toString();
+	}
+
+	// show how ridiculous this can become:
+	// when using this method the internal size of the StringBuffer char array can be allocated once.
+	int totalNumOfChars(String[] data) {
+		int total = 0;
+		for(int i=0; i < data.length; i++) {
+			total += data[i].length();
+		}
+		return total;
+	}
+----
+
+In LispLanguage parlance: don't ''cons'' too much (''cons'' is the Lisp built-in procedure that allocates a new pair). The typical way to avoid too much ''cons''-ing is to use mutation instead (e.g., Java's String''''Buffer can be mutated in-place, whereas String cannot).
+
+This is not ''always'' better; some generational GarbageCollector algorithms
+rely on a "write barrier". Breaking this barrier (by assignment) can be very
+costly, more costly than the memory allocation that you're trying to optimize away.
+
+-- StephanHouben
+
+The time taken by the GarbageCollector is proportional to the number of ''live'' objects, not to the amount of garbage. The generational garbage collector in the HotSpotVm allocates new objects in a "nursery"; allocating a new object or collecting dead objects in the nursery involves only a couple of PointerArithmetic operations. Live objects are moved out of the nursery if they are still alive when it is collected.
+
+''The above is not always true in my experience. We do have an algorithm that does a lot of String creation. These objects do survive and you run into full GarbageCollection more often, HotSpot or no HotSpot.''
+
+Creating garbage will affect performance mainly if ThrowawayObject''''s used within an inner loop have time-consuming constructors, which is not often the case.
+
+----
+
+The biggest problem with that code was not creating garbage, but running in quadratic time. It would still take quadratic time even with a smart allocator that reused the garbage immediately. This is like comparing an exponential-time recursive algorithm for a FibonacciSequence to a linear-time iterative one, and then concluding that recursion is slow.
+
+''See RulesOfOptimization rule 1''
+
+''Explain, please, why the code should run in quadratic time.''
+
+The overhead is caused by ''data copying'' not by GarbageCollection. In the first example, every time the the loop appends strings, it concatenates two strings to create a new string, copying the data of both strings into the array of the new string. Concatenating two strings is O(N), where N is the length of the first string ''or'' the total length of both strings, depending on how you implement your strings (with LinkedList''''''s or vectors). So if you have N strings, you end up running in O(1+2+3+...+N) = O(N^2) time.
+
+The String''''''Buffer class, on the other hand, writes data into an array which doubles in size whenever it runs out of space. The complexity of data copying involved in growing the array is O(N) in total (1+2+4+8+...+N''ish'' = O(N)). The complexity of copying the strings into the array is O(N). Therefore, the complexity of the algorithm that uses the String''''''Buffer is also O(N).
+
+This simple complexity analysis is something every programmer should be able to do.
+
+The cost of += is indeed O(N^2), but you are over generous on your assessment of StringBuffer. It is not linear. It is O(lgN N), which is still better than O(N^2), but not as good as O(N).  To see this, note that there are lgN data copying occurrences with a maximum cost of N''ish''. If you don't believe me, try to find a constant c such that (1+2+4+8+...+N''ish'') <= cN for all N.
+
+''eh? N''ish'' is less than 2*N isn't it? Then the sum is <= 2N + N + N/2 + ... +1 <= 4N. lgN operations with a maximum cost of N each does not necessarily make NlgN.''
+
+Note that if you have a LinkedList implementation of strings, a solution is to concatenate the strings in backward order, i.e., loop from 100 to 1 and prepend data[i] at every step. Provided that the data[i] strings are of bounded length, this gives you linear-time complexity.
+
+If you are a CeeLanguage programmer, use an array which you mutate, and every time you run out of space, realloc() the array with a ''doubled'' size, just as the String''''Buffer does. This can be shown to be, both in space and in time, as least as efficient as the LinkedList solution.  
+
+If you are a CeePlusPlus programmer, you can use a std::string in the same manner as a Java String''''Buffer, because std::strings are mutable, and should grow using an O(N) algorithm like the one above.
+
+(As an aside, one of my HeroicDebugging stories involved working out why one of our MicrosoftWindows programs ran ridiculously slowly. I eventually discovered that the stringstream implementation in Microsoft's standard CeePlusPlus library grew the buffer by ''a single character'' when it ran out of space. This gave string concatenation algorithms O(N*N*N) complexity!
+
+''No, a CeeLanguage programmer (I'm one) would first calculate the total needed array size, then do one malloc to get a correctly sized memory block and then fill it with the strings. And he would do the same in JavaLanguage. No reallocation at all. -- HelmutLeitner''
+
+''If one can predetermine the size of the array, one doesn't need any of the algorithms described on this page. Realloc, or copying into larger arrays, is needed when one ''cannot'' calculate the total array size required, e.g., when you are reading data from a network connection. -- NatPryce''
+
+Or, if calculating the array size is slow, reallocing can be more efficient. It's also less error prone.
+
+----
+I see this as an AntiPattern. Instead, I argue against PrematureOptimization.
+
+Instead:
+
+	1. Write a UnitTest.
+	1. Write code that passes it (including code like the above Negative Example).
+	1. Measure the actual performance of your code (the whole thing, not just Negative Example).
+	1. Use your performance data to identify the bottleneck.
+	1. RefactorMercilessly to speed up the bottleneck(s), ensuring that each refactoring still passes your UnitTest''''''s.
+	1. Loop (Measure, analyze, refactor) until you achieve the desired performance.
+
+The measured impact of storage management (storage allocation and deallocation) on performance is less than 5% on virtually all modern VirtualMachine''''''s (JavaVirtualMachine or SmalltalkLanguage). The code rot and resulting smell introduced by voodoo patterns such as DontCreateGarbage usually harm, not help, performance. -- TomStambaugh
+
+If only that 5% matched my measurements. If you're not careful to avoid creating garbage, GarbageCollection can easily take most of your CPU cycles. Eliminating object creation in a real, medium-sized project improved its performance by a factor of nearly 10. Some idioms don't count as optimization: they're just good practice. -- JamesDennett
+
+''What JavaVirtualMachine are you using? My experience with SunMicrosystems' VM sans HotSpot may mirror yours, but HotSpot improves matters quite a bit. IbmCorporation's VirtualMachine, is substantially better than HotSpot for a large number of object create and destroy operations. -- MarkAddleman''
+
+
+	1. In matters of performance, you should not ask how many objects will be created but how long will they stick around. The smaller the scope the faster they can be collected.
+	1. Most of us are developing DataBase WebApplication''''''s. You can calculate the nth premier number before a simple query returns with almost no performance impact. I have actually done this kind of test in a JavaTwoEnterpriseEdition application (web & EnterpriseJavaBeans in same JavaVirtualMachine). My conclusion was that database queries take 75% of the execution time. Yes, business logic + html transfer + bloated ejb executes in 25% of the time.
+	1. If improvement of String''''''Array to String conversion is still an issue, it's better to avoid this kind of mismatch. (High level performance optimization is almost always faster/better than low level.) Talk string arrays or string (or something else) but not say both. Still too slow? Use char arrays (or on the stream).
+
+-- PhilipVanBogaert
+
+----
+''I see this as an AntiPattern. Instead, I argue against PrematureOptimization.''
+
+This is only an AntiPattern ''if'' you're doing it as a PrematureOptimization. If you ''have'' profiled your code and observed that GarbageCollection overhead is an issue, DontCreateGarbage is a perfectly appropriate idiom to apply.
+
+''If cows walk and pigs fly, it might be time to rethink biology. If storage management is taking a significant share of your overall performance, then something else is dreadfully wrong. In any case, it sounds like we agree that one should never begin a design with DontCreateGarbage in mind.''
+
+Agreed. But it is also okay to have DontCreateGarbage in mind as a design progresses. You suggest above that we should "Loop (Measure, analyze, refactor) until you achieve the desired performance." DontCreateGarbage can be a useful and appropriate pattern in the context of the "analyze, refactor" part. I think I misspoke above in talking about "observing that GC overhead is an issue". It's not the GarbageCollection overhead that you're fighting against (the roughly 5%, as you say); it's the fact that you're creating, using, and throwing away, say, O(N^2) garbage instead of O(N). It's perfectly fine to start with a simple solution that uses all that O(N^2) space (and therefore O(N^2) time). But when that solution becomes inadequate performance-wise, one useful tool in the MatureOptimization toolbox is to know where large amounts of storage are being used and discarded, and to think about how that can be eliminated. This is certainly a common pattern in the LispLanguage community (as StephanHouben states above, "Don't cons too much").
+
+''If you do *anything* O(N^2) instead of O(N) times, you have a problem that you may have to solve. If you are constrained by space, then the problem is the *space* you're using, whether garbage or not. If you do anything other than create and destroy the space (and presumably you do, otherwise you wouldn't create it) then the time you spend is probably dominated by the other operations. In either case, it seems to me that the problem, when it occurs, is the unnecessary O(N^2) vs O(N) repetition, not the garbage.''
+
+''So perhaps we can agree to suggest that ReduceLoopCounts and RefactorToUseLessSpace are sometimes useful performance optimizations, in the context of a performance benchmark that indicates a problem.''
+
+Yes. Maybe one way of looking at it is that DontCreateGarbage is an interesting special case of ReduceLoopCounts, where the excess order of magnitude in speed is being spent creating memory that will almost immediately be thrown away. The unfortunate fact is that these extraneous loop counts are often hidden underneath library abstraction barriers. So the programmer is forced to pop a level off the abstraction stack in order to see the problem and fix it. The Java String-concatenate versus StringBuffer''''''-append example (mentioned above) is a case in point.
+
+----
+
+Not all optimization is premature - String concatenation is very expensive in Java, because of design decisions made to support other aspects of strings. .NET has the same issue, as does Python. This is well known and the use of other techniques to join strings (like Javas StringBuffer) are normal programming practice, rather than PrematureOptimization. I don't think the mantra of PrematureOptimization is an excuse for being stupid about something. 
+
+----
+CategoryJava

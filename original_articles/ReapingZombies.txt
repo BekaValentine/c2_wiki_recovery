@@ -1,0 +1,65 @@
+I've been running a version of wiki with the web server software built in. I based it on example code in my perl book. Lo and behold the cribbed code doesn't clean up after itself. It seems that for every fork() you should do a wait(), but in the server there isn't any convenient place to wait. My favorite unix expert, MikeZuhl, pointed out the oxymoronic wait-NOHANG, whose usage is not obvious. Mike suggested a while loop watching wait status. I found this prone to infinite looping and still unlikely to get the last zombie. I settled to an unrolled version of the most likely loop: ''reap more than you sow''. Here's our continuing correspondence on the subject...
+
+--------
+
+'''Ward:'''
+
+Here's my incremental reaper. A burst of activity can produce quite a number of zombies, which this will reap soon enough. Under light load, there tends to be one uncollected zombie at all times. I can't see how to reap it without delaying my accept, which I don't want to do.
+
+ for(;;) {
+         ($addr = accept(NS,S)) || die "accept: $!";
+         if (($child = fork()) == O) {
+                 &service();
+         }
+         close(NS);
+         waitpid(-1, $WNOHANG);
+         waitpid(-1, $WNOHANG);
+ }
+'''Mike:'''
+
+It's almost 2am and I may not be thinking right, but try this:
+
+        for(;;) {
+                ($addr = accept(NS,S)) || die "accept: $!";
+                if (($child = fork()) == O) {   # main forks intermediate
+                        if (($child = fork()) == O) {   # which forks leaf
+                                &service();             # which does work
+                        }
+                        exit;                   # intermediate quits
+                                                # (also leaf quits here)
+                }
+                close(NS);
+                wait();         # clean up intermediate proc
+        }
+The intermediate process spawns the service routine (with a pipe, socket, or whatever) and immediately exits. The leaf-node child now has no parent, so it gets inherited by the init process which is patient and waits for everything. The remaining wait() collects the short-lived intermediate process.
+
+''Mike - I found that you also need a setpgrp() call or the process will have its parent set to its grandparent.''
+
+'''Ward:'''
+
+Ahh. Yes, I remember this "double fork" being discussed back in the Purdue days. I just never made the connection because I'd never coded it myself. Is this standard operating practice?
+
+'''Mike:'''
+
+Well, you only really need it for dispatching daemons and you don't dispatch daemons very often, so the situation doesn't come up enough to really call it "standard operating practice". One sort of related thing that is SOP is to set the process group to the current PID, thus creating a new process group. That shields the process from keyboard interrupt without disabling interrupts. You do it for background processes, but it really doesn't apply to daemons.
+
+--------
+
+High performance servers don't repeatedly fork processes. Instead, they keep a pool of pre-forked processes that they distribute work to as it arrives.
+
+DennisDeBruler points out in his PLoP I paper that really high performance servers don't mess with processes at all. -- WardCunningham
+
+----
+
+From the Solaris 2.4 signal() man page:
+
+* If any of the above functions are used to set SIGCHLD's disposition to SIG_IGN, the calling process's child processes will not create zombie processes when they terminate (see exit(2)). If the calling process subsequently waits for its children, it blocks until all of its children terminate; it then returns a value of -1 with errno set to ECHILD (see wait(2), waitid(2)).
+
+-- MichaelLindner
+
+----
+
+May I ask why forking processes is needed for a CGI app? I once wrote a wiki in PHP for the heck of it, and I never encountered a need to fork processes explicitly. Perhaps it was an efficiency-oriented decision? (I won't claim my version was optimized.)
+
+----
+CategoryWiki

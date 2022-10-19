@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Forth Blocks
+      </h1>
+      <p>
+        Forth makes explicit to the programmer two address spaces.  One address space is the dictionary, where Forth definitions are compiled and referenced at run-time.  The second address space is usually persistent, and is referenced using <em>blocks.</em>  A block is defined to be a 1024 byte chunk of memory which the Forth application can reference, and optionally modify and update.  Typically, a 16-bit Forth implementation will have up to 65535 usable blocks, giving a total persistent storage space of 64MB.  A 32-bit Forth implementation will usually have up to 4.2 billion blocks, giving it a persistent storage space of over 4 <em>terabytes.</em>  A 64-bit Forth will have more storage space available to it than most 64-bit operating systems will allow.
+      </p>
+      <p>
+        The storage devices that individual blocks map to is implementation dependent.  Some Forths provide an identity mapping with available physical RAM, and rely on the fact that nobody will ever need more than the amount of RAM installed in the computer (e.g., <a href="ColorForth.html">ColorForth</a>).  In these Forth implementations, persistence is maintained by using only a small subset of the computer's total storage facilities (e.g., if you boot from a 1.44MB floppy, then only the first 1440 blocks are persistent.  Or, if booting from a harddrive larger than 32MB, and you only have 32MB of RAM, only the first 32768 blocks are persistent).  Other Forth implementations will treat the entirety of the computer's storage facilities equally, and employ cache management policies to provide the appropriate demand loading and necessary write-backs.
+      </p>
+      <p>
+        Unlike virtual memory in other operating systems, blocks are managed by a program explicitly.  A block is referenced using the BLOCK word.  If any modifications are (anticipated to be) made, UPDATE is used to mark the most recently referenced block as being dirty (e.g., it schedules it for <em>updating</em>).  FLUSH is used to forcefully cause a writeback (similar to Linux <em>sync</em> command), while EMPTY-BUFFERS, new as of ANSI Forth, causes any pending dirty blocks to be discarded.  Application specific virtual memory can be implemented using these four words in conjunction with the normal fetch and store operators in Forth.
+      </p>
+      <p>
+        For example:
+      </p>
+      <code>
+        : LIST-LINE	DUP 64 TYPE CR 64 + ;<br/>
+        : BLOCK-END	DUP 1024 + ;<br/>
+        : LIST ( n -- )	BLOCK BLOCK-END BEGIN 2DUP < WHILE LIST-LINE REPEAT 2DROP ;<br/>
+      </code>
+      <p>
+        lists a source block to the screen.  As you might be able to tell from the code above, source blocks are arranged as 16 lines, each with 64 columns.  This provides a nice "index card"-like interface when developing Forth software.  Quite typically, a major component in each software system will fit in two of these blocks; many in only one.
+      </p>
+      <p>
+        But the above example only examines memory.  Here's a persistent <a href="GameOfLife.html">GameOfLife</a> (in ANSI Forth; should run unmodified on at least GForth, among others.  Requires the BLOCK wordset):
+      </p>
+      <code>
+        VARIABLE STATEBLK<br/>
+        VARIABLE LIFEBLK<br/>
+        VARIABLE STATEP<br/>
+      </code>
+      <code>
+        \ : -ROT	ROT ROT ;<br/>
+      </code>
+      <code>
+        : WRAPY	DUP 0< IF DROP 15 THEN DUP 15 > IF DROP 0 THEN ;<br/>
+        : WRAPX	DUP 0< IF DROP 63 THEN DUP 63 > IF DROP 0 THEN ;<br/>
+        : WRAP	WRAPY SWAP WRAPX SWAP ;<br/>
+        : DECEASED?	WRAP 64 * + LIFEBLK @ BLOCK + C@ 32 = ;<br/>
+        : LIVING?	DECEASED? 0= ;<br/>
+        : (-1,-1)	2DUP 1- SWAP 1- SWAP LIVING? 1 AND ;<br/>
+        : (0,-1)	>R 2DUP 1- LIVING? 1 AND R> + ;<br/>
+        : (1,-1)	>R 2DUP 1- SWAP 1+ SWAP LIVING? 1 AND R> + ;<br/>
+        : (-1,0)	>R 2DUP SWAP 1- SWAP LIVING? 1 AND R> + ;<br/>
+        : (1,0)	>R 2DUP SWAP 1+ SWAP LIVING? 1 AND R> + ;<br/>
+        : (-1,1)	>R 2DUP 1+ SWAP 1- SWAP LIVING? 1 AND R> + ;<br/>
+        : (0,1)	>R 2DUP 1+ LIVING? 1 AND R> + ;<br/>
+        : (1,1)	>R 1+ SWAP 1+ SWAP LIVING? 1 AND R> + ;<br/>
+        : NEIGHBORS	(-1,-1) (0,-1) (1,-1) (-1,0) (1,0) (-1,1) (0,1) (1,1) ;<br/>
+        : BORN?	NEIGHBORS 3 = ;<br/>
+        : SURVIVES?	2DUP LIVING? -ROT NEIGHBORS 2 = AND ;<br/>
+        : LIVES?	2DUP BORN? -ROT SURVIVES? OR ;<br/>
+        : NEWSTATE	STATEBLK @ BLOCK UPDATE STATEP ! ;<br/>
+        : STATE!	STATEP @ C! 1 STATEP +! ;<br/>
+        : ALIVE	42 STATE! ;<br/>
+        : DEAD	32 STATE! ;<br/>
+        : ITERATE-CELL	2DUP SWAP LIVES? IF ALIVE ELSE DEAD THEN ;<br/>
+        : ITERATE-ROW  0 BEGIN DUP 64 < WHILE ITERATE-CELL 1+ REPEAT DROP ;<br/>
+        : ITERATE-BLOCK	0 BEGIN DUP 16 < WHILE ITERATE-ROW 1+ REPEAT DROP ;<br/>
+        : GENERATION	LIFEBLK @ STATEBLK @ LIFEBLK ! STATEBLK ! ;<br/>
+        : ITERATE	NEWSTATE ITERATE-BLOCK GENERATION ;<br/>
+        : DONE?	KEY [CHAR] Q = ;<br/>
+        : PROMPT	CR ." PRESS Q TO EXIT; OTHER KEY TO CONTINUE" ;<br/>
+        : VIEW	PAGE LIFEBLK @ LIST PROMPT ;<br/>
+        : LIFE	BEGIN VIEW ITERATE DONE? UNTIL ;<br/>
+      </code>
+      <p>
+        It's worth noting that a block editor can be quite small. A fairly minimal one (such as the following example) can easily fit into <1k of source. A more complete editor with VI-style key bindings has been written in under 5k. Blocks aren't used as widely as they once were, but they are still a useful way to store source and data.
+      </p>
+      <code>
+        | <a href="RetroForth.html">RetroForth</a> Block Editor (<a href="http://www.retroforth.org)">http://www.retroforth.org)</a><br/>
+        | * Released into the public domain *<br/>
+        |<br/>
+        | This is the block editor from <a href="RetroForth.html">RetroForth</a> Release 9.2.1<br/>
+        | It splits the normal 1k block into two smaller 512-byte blocks,<br/>
+        | the one on the left for code, and the one on the right for<br/>
+        | documentation/comments. Both are displayed side by side.<br/>
+        |<br/>
+        | It makes use of some features specific to <a href="RetroForth.html">RetroForth</a>, so it<br/>
+        | will not work on an ANS FORTH system without changes. <br/>
+      </code>
+      <code>
+        tib 1024 + constant <buffer><br/>
+      </code>
+      <ol>
+        <li>
+           variable: <#blocks>
+        </li>
+      </ol>
+      <code>
+        <buffer>  variable: b0<br/>
+        variable  current-block<br/>
+      </code>
+      <code>
+        : there b0 @ ;<br/>
+        : #-of-blocks <#blocks> @ ;<br/>
+      </code>
+      <code>
+        : new there #-of-blocks 512 * 32 fill 0 current-block ! ; new<br/>
+      </code>
+      <code>
+        : (block) @current-block : block 512 * there + ;<br/>
+        : (line) 32 * (block) + ; <br/>
+      </code>
+      <code>
+        : p 2 current-block -! ;<br/>
+        : n 2 current-block +! ;<br/>
+        : d (line) 32 32 fill ;<br/>
+        : x (block) 512 32 fill ;<br/>
+        : eb (block) 512 eval ;<br/>
+        : el (line) 32 eval ;<br/>
+        : e 16 for 16 r - el next ;<br/>
+        : s !current-block ;<br/>
+        : i 0 swap : ia (line) + lnparse rot swap move ;<br/>
+        : \ 1 s e ;<br/>
+      </code>
+      <code>
+        loc:<br/>
+        : | '| emit ; <br/>
+      </code>
+      <code>
+        : row dup 32 type 32 + ;<br/>
+        : left# -16 + negate dup @base <if space then . ;<br/>
+        : right# negate 32 + . ;<br/>
+        : code|shadow row | swap row swap space ;<br/>
+        : rows 16 for r left# code|shadow r right# cr next ;<br/>
+        : x--- 2 for ." +---:---+---:---" next ;<br/>
+        : --- space space space x--- | x--- cr ;<br/>
+        : blocks @current-block 1+ block @current-block block ;<br/>
+        here ] --- blocks rows 2drop --- ;<br/>
+        ;loc is v<br/>
+      </code>
+      <code>
+        : edit [[ clear v ]] { is ui } ;<br/>
+      </code>
+      <hr/>
+      <p>
+        <a href="CategoryForth.html">CategoryForth</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Soft Wiki
+      </h1>
+      <p>
+        An experimental all-software <a href="WikiWithProgrammableContent.html">WikiWithProgrammableContent</a> by <a href="ZygoBlaxell.html">ZygoBlaxell</a>.
+      </p>
+      <p>
+        Currently unavailable to the public until a suitable server host can be found.
+      </p>
+      <p>
+        General description:
+      </p>
+      <ul>
+        <li>
+           Implementation language is a safe subset of Tcl 8.2 or 8.3 (both seem to work) (see <a href="TheTclersWiki.html">TheTclersWiki</a> for more information on Tcl) with "<a href="SoftWiki.html">SoftWiki</a> extensions" as described herein.
+        </li>
+        <li>
+           The content of the Wiki is user-editable Tcl scripts which run inside the <a href="SoftWiki.html">SoftWiki</a> interpreter and produce MIME output, including headers.  This allows <a href="SoftWiki.html">SoftWiki</a> to host - or generate on the fly - any possible WWW content-type.
+        </li>
+        <li>
+           HTTP requests are supported via CGI in the usual way.  SMTP requests should be supported via an auto-reply mailbox (<a href="SoftWiki.html">SoftWiki</a> generates the reply email headers and text, but cannot alter the source or destination SMTP envelope address), but this isn't implemented yet.
+        </li>
+        <li>
+           To respond to a request, <a href="SoftWiki.html">SoftWiki</a> loads a "boot" script with a hardcoded name ("/boot/cgi") (different scripts for email and web access) from the <a href="SoftWiki.html">SoftWiki</a> database into the safe Tcl interpreter and evaluates the script.  This "boot" script in turn does appropriate input parsing (i.e. CGI parsing if via HTTP) and pass control to another script inside the <a href="SoftWiki.html">SoftWiki</a> database, based on PATH_INFO, QUERY_STRING, Subject header, etc.
+        </li>
+        <li>
+           <a href="SoftWiki.html">SoftWiki</a> scripts generally have full access to everything from the client a CGI script would have, including file uploads, access to User-agent and Referrer fields, client IP, ability to generate non-HTML output.
+        </li>
+        <li>
+           <a href="SoftWiki.html">SoftWiki</a> scripts can themselves create safe interpreters which are even more restricted than themselves, thereby implementing their own secure wrappers for other <a href="SoftWiki.html">SoftWiki</a> scripts in a hierarchical fashion. This can be used to implement access control within <a href="SoftWiki.html">SoftWiki</a> itself.
+        </li>
+      </ul>
+      <p>
+        There exist two units of code that are not, and except in unusual circumstances, should not ever be editable through <a href="SoftWiki.html">SoftWiki</a> itself. Both units of code exist outside of the "normal" <a href="SoftWiki.html">SoftWiki</a> environment:
+      </p>
+      <ul>
+        <li>
+           Bootstrap code to create the safe interpreter, set up access to the Wiki database, set resource limits, load the boot page, evaluate it, and attempt to provide an intelligible error report if a fatal error is encountered early in a <a href="SoftWiki.html">SoftWiki</a> script's lifetime. Think of this as a minimal "kernel" on top of which everything else runs combined with a "watchdog" that prevents it running too long. This kernel is minimalistic, so hopefully there is no reason to want to change it except to set parameters such as resource limits and interpreter safety.
+        </li>
+        <li>
+           The persistent database engine. Having the ability to edit this unit is like having the ability to edit an OS's filesystem code while the OS is still running - not useful in most cases. There are reasons to want to change this, e.g. to use a different database module, or to enhance performance, or to support "invisible" features such as backups or replication. Another problem is that the bootstrap code must access this database somehow, and how does one use the database-reading code if it is located inside the database itself?
+        </li>
+      </ul>
+      <p>
+        There are two units of code that may or may not be editable by users because of site-specific policy. Both units of code may exist and even be editable inside the <a href="SoftWiki.html">SoftWiki</a> environment if the <a href="WikiWikiClone.html">WikiWikiClone</a> operator chooses to allow it:
+      </p>
+      <ul>
+        <li>
+           "Unsafe" Tcl code, which can open socket connections, load Tcl extensions from shared libraries, execute sub-processes, and so forth. Such code can provide proxy services to "safe" Tcl code which implement some kind of security policy. As an example, the "safe" restriction can be simply removed from the bootstrap code, so that the "boot" script in the <a href="SoftWiki.html">SoftWiki</a> database is not restricted to a subset of Tcl. The "boot" script in turn can create its own "safe" Tcl interpreter after establishing a new security policy, usually one that restricts write access to itself.
+        </li>
+        <li>
+           A simple web form and email address for executing Tcl code inside the <a href="SoftWiki.html">SoftWiki</a> environment. This hardcoded interface bypasses the "boot" page, and enables examination and repair of the database even if (when) someone accidentally damages the boot script. A "secure <a href="SoftWiki.html">SoftWiki</a>" would have to remove or restrict access to this unit, since it can read or modify any database entry.  Think of this as the "debugger".
+        </li>
+        <li>
+           Another simple web form and email address for accessing the most recent global database transaction log. "Most recent" means whatever the site administrator has left on the machine - they are not part of the database proper, so they can be removed at any time. This form is capable of re-inserting a continuous set of transactions in reverse, effectively acting as a "big global undo button" for reversing fatal changes. <a href="SoftWiki.html">SoftWiki</a> itself can access this log and use it to produce more sophisticated functionality (e.g. different forms of <a href="RecentChanges.html">RecentChanges</a> or <a href="QuickChanges.html">QuickChanges</a>, or restricting the reported set of transactions to those on particular keys).
+        </li>
+      </ul>
+      <p>
+        Hard resource limits are implemented in <a href="SoftWiki.html">SoftWiki</a> using a loadable C extension to Tcl which sets limits on a Unix process. These limits cannot be overridden inside the safe Tcl interpreter, but of course are trivial to override inside the boot script. They are:
+      </p>
+      <ul>
+        <li>
+           One thread
+        </li>
+        <li>
+           15 real-time seconds (not including HTTP data transfer time)
+        </li>
+        <li>
+           5 CPU seconds
+        </li>
+        <li>
+           8 megabytes rss/virtual/data/stack memory
+        </li>
+        <li>
+           8 megabytes maximum I/O, including database transactions.
+        </li>
+        <li>
+           Stock Tcl 8.2 (8.3 in testing) interpreter core with no experimental features (e.g. threads) enabled. For those who don't know Tcl very well, this means:
+          <ul>
+            <li>
+               simple, consistent, yet powerful syntax (Lisp with simpler syntax)
+            </li>
+            <li>
+               namespaces, global and local (lexically and dynamically scoped) variables
+            </li>
+            <li>
+               Perl-style regular expressions
+            </li>
+            <li>
+               Perl-style binary strings (actually Unicode, as I discovered the hard way -- <a href="ZygoBlaxell.html">ZygoBlaxell</a>)
+            </li>
+            <li>
+               lists, strings, integers, doubles, booleans, associative arrays, and procedures all convertible to a canonical string representation
+            </li>
+            <li>
+               no reference type (but some reference semantics in the implementations of various types)
+            </li>
+            <li>
+               sub-interpreters, support for multiple execution contexts
+            </li>
+            <li>
+               procedures are transparently byte-compiled at run-time for performance (important when you only get 5 seconds ;-)
+            </li>
+            <li>
+               some introspection capability can examine procedures on call stack)
+            </li>
+            <li>
+               exception handling
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p>
+        <a href="SoftWiki.html">SoftWiki</a> visible features of the database server:
+      </p>
+      <ul>
+        <li>
+           Simple key-value dictionary storage: "softwiki get key" (returns value) and "softwiki set key value" (replaces the database entry for "key" with "value").
+        </li>
+        <li>
+           Flat namespace for keys, but arbitrary key structure allowed (so "foo bar" and "/home/myself/scripts/homepage.tcl" and "::foo::bar" are all valid)
+        </li>
+        <li>
+           Sorted key enumeration. Can fetch a list of keys ranging from X to Y (or "/a/b/c/" to "/a/b/d/")
+        </li>
+        <li>
+           Lock-free transaction support. A transaction consists of two lists of (key, value) pairs. The first list is a list of assertions, while the second is a list of assignments. A transaction is processed by acquiring locks on all of the keys, then verifying all of the assertions' actual values match the values specified in the transaction, then (if all assertions are verified) assigning all of the assignments' values to their respective keys. Transactions are atomic from <a href="SoftWiki.html">SoftWiki</a>'s point of view.
+        </li>
+        <li>
+           All keys have metadata in addition to their values (actually, deleted keys have metadata too). The metadata contains:
+          <ul>
+            <li>
+               A string of audit data (IP address of CGI client, Received header for email, authenticated user ID if authentication is used). This might be stored as a simple index into an audit data database.
+            </li>
+            <li>
+               The transaction serial number of the transaction that most recently changed the key's value.
+            </li>
+            <li>
+               The timestamp of the last modification.
+            </li>
+          </ul>
+        </li>
+        <li>
+           A transaction log is accessible from within <a href="SoftWiki.html">SoftWiki</a>. Each transaction is recorded with a serial number, which increases by one on each new transaction. The transaction log records:
+          <ul>
+            <li>
+               A string of audit data, as in the metadata database
+            </li>
+            <li>
+               A timestamp, the time the transaction was committed
+            </li>
+            <li>
+               The previous values of all keys in the assignment list
+            </li>
+            <li>
+               The transaction serial numbers from any keys that were modified. These can be followed as a linked list to find the history of modifications of a key.
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p>
+        Less-visible features:
+      </p>
+      <ul>
+        <li>
+           Database implementation details are hidden from <a href="SoftWiki.html">SoftWiki</a>.  Actually, they're protected in a separate process, since <a href="SoftWiki.html">SoftWiki</a> processes are expected to receive a lot of fatal signals from the hard resource limits...
+        </li>
+        <li>
+           Flat files in a directory sounds like a good place to start.
+        </li>
+        <li>
+           Sleepycat's Berkeley DB 2.x inside a dedicated Tcl server shared among all <a href="SoftWiki.html">SoftWiki</a> clients sounds like a good place to go...or perhaps a combination of the above with "small" objects in the DB and "large" ones in files.
+        </li>
+        <li>
+           Transparent data compression might be nice, especially if it can avoid Berkeley DB overflow pages.
+        </li>
+        <li>
+           If a resource limit (e.g. CPU time) is encountered by a <a href="SoftWiki.html">SoftWiki</a> script during a transaction, it will not violate the atomicity of a transaction, but it may kill the process that initiated the transaction while the transaction is being completed.
+        </li>
+      </ul>
+      <p>
+        The following are probably good ideas, but there are issues to be worked out first before they become practical:
+      </p>
+      <ul>
+        <li>
+           Access to SMTP, HTTP, FTP, NNTP, ...
+          <ul>
+            <li>
+               There's a major potential for abuse here, e.g. port-scanning, email spamming...
+            </li>
+            <li>
+               Abuse could be mitigated by providing a white-list of URL's that can be accessed via HTTP
+            </li>
+            <li>
+               SMTP may only be allowed to people who subscribe (with confirmation) to a mailing list.  The mailing list itself would have no traffic, it would only provide a mechanism whereby people can elect to receive mail from <a href="SoftWiki.html">SoftWiki</a>, and <a href="SoftWiki.html">SoftWiki</a> scripts would only be able to send mail to subscribers.
+            </li>
+            <li>
+               HTTP access is useful for implementing middleware.
+            </li>
+            <li>
+               SMTP access is useful for implementing email notification of changes to <a href="SoftWiki.html">SoftWiki</a> objects.
+            </li>
+          </ul>
+        </li>
+        <li>
+           Scheduled/deferred execution (similar to at/cron)
+          <ul>
+            <li>
+               LambdaMOO allows this
+            </li>
+            <li>
+               Could be used for garbage collection, regenerating static pages, etc.
+            </li>
+            <li>
+               Could be implemented by having someone hit a specific URL at regular intervals, i.e. outside <a href="SoftWiki.html">SoftWiki</a>.  
+            </li>
+            <li>
+               Best implementation is probably another "boot" script which would be a <a href="SoftWiki.html">SoftWiki</a> implementation of 'cron'.
+            </li>
+            <li>
+               Could support queues of commands for "hourly", "daily", "weekly", "monthly", which allows the site administrator to pick the time while allowing the <a href="SoftWiki.html">SoftWiki</a> contributor to pick the frequency.
+            </li>
+            <li>
+               Could allow larger resource limits because the request load is better defined (no SlashdotEffect, since there is only one request per hour/day/week/month). This could allow very expensive <a href="SoftWiki.html">SoftWiki</a> scripts such as building an index for a full-text search engine.
+            </li>
+          </ul>
+        </li>
+        <li>
+           Forking (spawning new processes or threads)
+          <ul>
+            <li>
+               LambdaMOO allows this
+            </li>
+            <li>
+               Vanilla Tcl doesn't (but there is experimental thread support)
+            </li>
+            <li>
+               would probably have to be "spawn", not "fork" - i.e. evaluate a script in a different process
+            </li>
+            <li>
+               Creates all-new resource limit and ownership issues - a script has to be tracked to figure out if it was created by the web server, or by another script. Combine with HTTP client access and you have scripts that can get more resources by requesting themselves over network loopback, possibly indirected through another WWW mediator.  
+            </li>
+            <li>
+               WikiWikiEssence is probably lost when there are "ownership issues."
+            </li>
+            <li>
+               Perhaps a background priority queue would be useful. A script could specify its priority in the queue in terms of its desired level of resource usage. A script requesting 1 CPU second runs before one requesting 10, and that one runs before a script requesting 100.
+            </li>
+          </ul>
+        </li>
+        <li>
+           Access controls and authority structure
+          <ul>
+            <li>
+               LambdaMOO has access control per member of objects. You can create an object that you don't entirely own, and you can own parts of objects you didn't create. Workable solution to "ownership issues" problem, and they've been doing this much longer than we have.
+            </li>
+            <li>
+               Can probably be faked with a lot of safe Tcl interpreters and a secure executive. Unfortunately Tcl does not allow safe interpreters to expose and hide commands, not even the safe ones, but it does allow secure command aliases.
+            </li>
+            <li>
+               In particular, access control to the database can be implemented inside of the safe Tcl interpreter.
+            </li>
+          </ul>
+        </li>
+        <li>
+           Tcl "language" extensions (distinguished from "capability" extensions in that they don't provide new functionality, only new ways to express existing functionality):
+          <ul>
+            <li>
+               Itcl:  object-oriented Tcl extensions - instances, constructors, and destructors.
+            </li>
+            <li>
+               Expect: features signal handling and an interactive debugger, among other things. Might cause more problems than it solves, though: the ability to set up a signal handler would mean that resource limits could be circumvented.
+            </li>
+            <li>
+               Modify the Tcl core to implement a command count quota similar to LambdaMOO's per-process "tick" limit. "info cmdcount" in Tcl tells you how many Tcl commands have been evaluated in an interpreter. It should be trivial to implement an extension to the "interp" command ("interp quota"?) which allows setting a limiting value for "info cmdcount" inside a slave interpreter. Once the quota has been reached, any further Tcl commands in that interpreter will return errors, which will unwind the Tcl stack back up to the master interpreter's "eval" statement.
+            </li>
+          </ul>
+        </li>
+        <li>
+           Tcl "capability" extensions (distinguished from "language" extensions in that they give you access to things that cannot be represented otherwise (vastly increased efficiency counts as a capability - LZW compression in pure Tcl is amusing, but <a href="SoftWiki.html">SoftWiki</a> imposes hard RAM and CPU limits):
+          <ul>
+            <li>
+               gd: image generation (generate GIFs on the fly, popular in CGI scripts)
+            </li>
+            <li>
+               <a href="ImageMagick.html">ImageMagick</a>: more image manipulation
+            </li>
+            <li>
+               diff: show differences between revisions of a page (use this to build a <a href="QuickDiff.html">QuickDiff</a> feature inside <a href="SoftWiki.html">SoftWiki</a> itself)
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        I've been asked many times "why Tcl?", or more about supporting non-Tcl languages in <a href="SoftWiki.html">SoftWiki</a> (Python, Perl, Java, Guile, Lisp, Scheme...). I'd certainly like to be able to use other languages, but there are some issues to resolve first:
+      </p>
+      <ul>
+        <li>
+           Language implementation must feature a restricted interpreter and must pass a security audit to protect its host machine from accidents or abuse. This virtually always implies an open-source implementation.
+        </li>
+        <li>
+           Language must be available and working on Linux.
+        </li>
+        <li>
+           Language should be interpreted (but Java is a good example of a compiled language that would be acceptable).
+        </li>
+        <li>
+           Language should be easy to manipulate with a web browser (so if a tab is not syntactically equivalent to 8 spaces, the language may have problems; ditto languages that use non-ASCII-text source code).
+        </li>
+        <li>
+           Language should allow writing simple scripts quickly by someone experienced in the language (otherwise it's not very <a href="WikiWiki.html">WikiWiki</a>, is it?).
+        </li>
+        <li>
+           Language should be dynamically loadable from a C program.
+        </li>
+        <li>
+           Language should be easy to extend (positively, by adding new functionality, and negatively, by removing functionality that exists) in C, or a language accessible from C.
+        </li>
+        <li>
+           Language must respect hard CPU, memory, and I/O resource limits.  Unix makes this easy for small interpreters embedded in a single process per client request; however, if the language is something like LambdaMOO, where a big server process handles all client requests, that server will be responsible for resource managements.
+        </li>
+      </ul>
+      <p>
+        So far, Perl and Guile/Scheme are being considered as <a href="SoftWiki.html">SoftWiki</a>'s second languages.
+      </p>
+      <p>
+        The issue of multiple language support raises some interesting (and as yet not entirely resolved) problems:  
+      </p>
+      <ul>
+        <li>
+           How do you know in advance what language a <a href="SoftWiki.html">SoftWiki</a> object (all of which are simple text strings) will be written (or interpreted) in?
+          <ul>
+            <li>
+               Possible answer: A "loader" script (of course written inside <a href="SoftWiki.html">SoftWiki</a>) determines the language using something analogous to "#!" Unix syntax, except with names meaningful to <a href="SoftWiki.html">SoftWiki</a>
+            </li>
+          </ul>
+        </li>
+        <li>
+           How do interpreters of language X access interpreters of language Y?
+          <ul>
+            <li>
+               The apparent Lingua Franca is a function for each language which interprets a string of source code in that language and returns some result as a string. Passing more complex objects around, even when they are supported by both languages involved, is less well-specified.
+            </li>
+            <li>
+               One could use a two-step approach:  the first step creates an interpreter in the called language as an object in the calling language. The second step is to use the object in the calling language to interpret source code for the called language in that language's interpreter. This would allow control over initialization overhead.
+            </li>
+          </ul>
+        </li>
+        <li>
+           How often and under what circumstances do languages communicate?
+          <ul>
+            <li>
+               The most common case is likely to be a simple case of language X loading a string in language Y, interpreting that string in language Y, and then exiting. Call this the "bootstrap" model, where Tcl is used to select a different language, and all the interesting stuff happens in that language.
+            </li>
+            <li>
+               The worst case is two object-oriented languages doing inherited method calls into each other.
+            </li>
+          </ul>
+        </li>
+        <li>
+           How does <a href="SoftWiki.html">SoftWiki</a> internal security work when multiple languages are available?  Recall that Tcl can implement a hierarchical access control mechanism using nested interpreters. This access control mechanism apparently falls apart when interpreters of other languages are created, unless these other language interpreters have exactly identical access control mechanisms implemented themselves.
+          <ul>
+            <li>
+               One solution is to replace "/boot/cgi" (the Boot script) with "/boot/cgi.tcl", "/boot/cgi.pl", "/boot/cgi.guile", "/boot/cgi.py", "/boot/cgi.class", i.e. one boot script for each language. That also implies one debugger for each language, and indeed one complete set of <a href="SoftWiki.html">SoftWiki</a> infrastructure per language.
+            </li>
+            <li>
+               Another solution is to implement access control inside the database itself, outside of any interpreter. Again, what language do you express such controls in...
+            </li>
+            <li>
+               Perhaps the most elegant solution is to find some way to implement each child interpreter's <a href="SoftWiki.html">SoftWiki</a> interface in terms of its parent's. This may require N^2 different implementations for N languages. Ouch.
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <p>
+        Thanks for the comments so far. They're really helping me to better understand the problem. -- <a href="ZygoBlaxell.html">ZygoBlaxell</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="MikeStump.html">MikeStump</a> suggests <a href="SoftWiki.html">SoftWiki</a> as a first step toward a truly global source code management system. It's a nice idea, but all I designed <a href="SoftWiki.html">SoftWiki</a> for was to be a maintenance-enhanced <a href="WikiWikiWeb.html">WikiWikiWeb</a>.
+      </p>
+      <p>
+        <a href="ProgrammingInWiki.html">ProgrammingInWiki</a>?
+      </p>
+      <hr/>
+      <p>
+        See <a href="XpSystem.html">XpSystem</a>
+      </p>
+      <hr/>
+      <p>
+        I've made a system like this in Perl, based off <a href="UseMod.html">UseMod</a>. There is a small bootstrap program that runs a community-editable <a href="UseMod.html">UseMod</a>-like script. It's live and is able to accept modifications in its code. See <a href="SelfProgrammingWiki.html">SelfProgrammingWiki</a> or <a href="http://purl.net/net/spw">http://purl.net/net/spw</a> .
+      </p>
+      <p>
+        -- <a href="BayleShanks.html">BayleShanks</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryWikiImplementation.html">CategoryWikiImplementation</a>
+      </p>
+    </div>
+  </body>
+</html>

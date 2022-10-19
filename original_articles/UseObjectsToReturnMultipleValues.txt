@@ -1,0 +1,152 @@
+More of an "avoid this antipattern" than an actual idiom. It is one of the AlternativesToPassByReference.
+
+From code floating around the lab:
+
+	 public class Map {
+
+	 ... ''lots of public variable declarations including''
+
+	 public double lastDistance;  // last dist for closestLink
+
+	 .... ''and then a function which needs to return two pieces of data''
+
+	 public MapLink closestLink(Pt p) {
+
+		....
+		return c;	// recall: lastDistance also meaningful;
+				// ... wishing for Lisp's multiple-value returns
+	}
+
+	public double getLastDistance() {
+		return lastDistance;
+	}
+Now the sole point of this class is to encapsulate some geometric calculations. The client has a point and wants to know "how far is it from the network" and
+"which link is closest." The way you do it with this code is something like:
+
+	MapLink closestLink = map.closestLink(p);
+	double distance = map.getLastDistance();
+The idiom consists of: Don't structure your code this way.
+
+More precisely: If you're in a situation where the logical return value
+consists of two associated pieces of information, define a new object
+that holds both and return it. Don't structure your API so that arguments
+are sent in one call and a second call retrieves the return value.
+
+WilliamGrosso
+
+''(I made the public instance variables private because I thought the lack of accessors confused the main point. -- DaveHarris)''
+----
+I don't think I agree with this idiom.
+
+''"Now the sole point of this class is to encapsulate some geometric calculations."'' Fine. In other words, it's an example of MethodObject. If there is a mistake, it is in combining two MethodObject(s) into a single class. Maybe you need something like:
+	class LinkFinder {
+		private Map toSearch;
+		private Point toSearchFor;
+		private MapLink found;
+		private double lastDistance;
+		// ...
+	}
+Used as:
+	LinkFinder finder = new Finder( map );
+	finder.setTarget( pointToFind );
+	finder.find();
+	MapLink closest = finder.getFoundLink();
+	double distance = finder.getDistance();
+To put it another way: create the new object as the title suggests, but instead of filling it in with the answer calculated elsewhere, fill it in with the question and do the calculation ''in that object''. Your function has become pretty complex and has some intermediate state, so deserves a class to itself.
+
+(Consider also the Command/Function distinction promoted by Eiffel.)
+-- DaveHarris
+
+----
+
+What I said was: 
+
+''client messages the map and gets back an object encapsulating the results.''
+
+what you said was 
+
+''client creates an object to encapsulate the results and tells it to go acquire some state.''
+
+Which seems, more or less, to be the similar to what I mentioned (we're both avoiding messaging the map twice to get the two return values). But there's 
+also something trickily different here and I can't quite put my finger on it.
+
+When would I do one, as opposed to the other?
+
+WilliamGrosso
+----
+With the first approach, the object is just a record, it has no behavior. The behavior to fill it in is somewhere else. Mistrust objects with no behavior - and give them some. The latter approach, IMO, is generally better. I can't think of an exception. -- RonJeffries
+
+----
+
+Still confused. I'm thinking of ValueObject. Aren't ValueObject''''''s frequently 
+created by a different object and passed around? Isn't that part of the 
+point of a ValueObject (e.g. a ValueObject is a piece of information along 
+with things you can ask it. It can come into existence in many separate
+ways and that behavior is frequently partitioned out into either a factory 
+or as part of other objects which have more context-sensitive state)?
+
+And if the above question about ValueObject''''''s is reasonable, where do 
+we draw the line and switch over to more "intelligent" objects?
+
+WilliamGrosso
+----
+My take on ValueObject is that these are objects which logically represent constants. A point; your pay rate as of today; your date of birth; the time when I saved this page. A ValueObject has little behavior, in my world, other than answering its components (aPoint.x), converting (aPoint.polar()), and printing.
+
+Clearly it can be done either way ... I seem to prefer the second ... maybe I'm not sure why, but someone can tell me. -- rj
+----
+How about:
+        MapLocation location = map.locationAt (new Point (3,4));
+        MapLink link = location.findClosestLink ();
+        int distance = location.distanceFrom (link).
+The MapLocation can cache the distance calculated in findClosestLink and return it from distanceFrom. But frankly, if we are going to DoTheSimplestThingThatCouldPossiblyWork it may be better to have a method distanceFromClosestLink and implement distanceFrom only when we need it. The idea is that MapLocation does not have behavior now, but it serves a purpose and we can see that it may get new behavior someday.
+
+In general, I like UseObjectsToReturnMultipleValues. It is an instance of ResultObject. But, I would not use it here.
+
+-- MichaelFeathers
+----
+
+LinkFinder reminds me of something that I try to avoid. I was actually thinking of writing up the idea on Wiki a while back, but I never got around to it.
+
+LinkFinder (and many MethodObject implementations) allow "state orphanage."  You can set the target point for a LinkFinder and then pass it to someone. They may look at the result of the getDistance call and get the sense that it is the distance for the current target, not the one that was set prior to the last find.
+
+I tend to think that methods should be understood in terms of the current state of the receiver.. the "self".  getDistance () should return the distance of receiver. setTarget () should set the target of receiver. If you ask "what is the target point of receiver?" and "what is the distance of receiver?" and someone has called setTarget () without calling find (), you can get misleading information.
+
+What do you all think?
+
+-- MichaelFeathers
+----
+Yes, dealing with state is difficult. That's why we use ValueObject''''''s where possible. LinkFinder would be better if it didn't have setTarget(); if that info were passed in the constructor. I wasn't really expecting LinkFinder to be reused for different targets.
+
+Sometimes you have too many arguments for the single-step constructor to be convenient. Then you may have a 2-phase object: it's mutable during the set-up processes, but then becomes immutable once it is complete. Or you have set-once variables. Thus:
+	setTarget( Point target ) {
+		Assert.assert( this.target == null );
+		Assert.assert( target != null );
+		this.target = target;
+	}
+I'm currently doing this quite a lot. (See also AssignVariablesOnce.)
+
+I like your earlier point about caching. The original code could have been written that way, without introducing new objects. Instead of:
+	public class Map {
+		// ...
+		public MapLink closestLink(Pt p);
+		public double getLastDistance();
+	}
+have:
+	public class Map {
+		// ...
+		public MapLink closestLink(Pt p);
+		public double getDistance(Pt p);
+	}
+They could be called in either order. (Your version was probably better, but for general refactoring reasons.) -- DaveHarris
+
+''Yes, but isn't there another issue here? What is the "distance" of a map? When we ask for distance, we ought to be asking either a link for its distance from a location, or a location for its distance from a link. Maybe something like: Map.getDistance (Link link, Point point) would work? -- MichaelFeathers''
+----
+If you believe in ListenToYourProgram, then the fact that two values want to be together suggests that you should make an object that puts them together.
+----
+But does the distance from a point to a found link want to be with the link? I can't imagine links and distances from some arbitrary point loving each other that much. What would we call such a thing? When that snippet above talks to me, it tells me that points (or MapLocations) should be able to tell you who the closest link is, and how far away it is.
+
+Would you all opt for making a ResultObject here?
+
+-- MichaelFeathers
+----
+CategoryJava

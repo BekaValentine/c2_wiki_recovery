@@ -1,0 +1,626 @@
+Simply, monads are wrappers around function invocations. They're a lot like like C++ ->() operators. They're also a lot like interceptors in AspectOrientedProgramming. Since their semantics remain constant no matter how many times you push function invocations through them, they're also a bit like SingletonPattern''''''s. And since they carry around their own guts consistently from one invocation to another they're a bit like closures. If closures could be composited formally ...
+
+There are a bunch of different Monads with identical syntax but different semantics. Wrappers that do IO, Exceptions, Nullability, ACID State, Logging, Messaging, ... all these types of wrappers can be easily composed and transformed to achieve combinations of effects. The rest is implementation details.
+
+----
+''[From FunctionalProgrammingLanguage discussion of the HaskellLanguage...]''
+
+''Could someone explain how Haskell supports things like I/O and COM, and also supports ReferentialTransparency? I don't understand how this would be done. -- AnonymousDonor''
+
+This gets done with something called monads. You can find introductory papers on them at http://haskell.org. Basically, you serialize the world and each side effecting operation gets this world as an argument and returns it as a result. -- Lieven
+
+The basic approach even in Haskell with monads is still passing the world around. As you say, you have to guarantee that there is only one world, and both monads and UniquenessTypes are a solution to this. At least, that's how I understand http://www.abercrombiegroup.co.uk/~noel/research/monads.html.
+(working link: http://web.archive.org/web/20030816211618/http://www.abercrombiegroup.co.uk/~noel/research/monads.html) -- AnonymousDonor
+
+Can you think of a simpler explanation to the above question that doesn't involve a lot of category theory or type theory? -- Lieven
+
+Imagine a function f() that returns an integer. Now imagine a wrapper function w() that takes the same arguments as f() but returns a tuple containing the result of f() and a description of what the host system should do with it (that is, a description of the side effect be it IO, network call, whatever). w() wraps the result of f() in a result containing the value and the description of what should be done, but doesn't itself do it (because it can't in side-effect-forbidden Haskell). The host environment is free to do whatever with the result of w() it will, but w() itself is merely providing a value and a description of a related side effect. Not technically accurate in all aspects, but this is a useful way to think of things early on. -- CraigEverett
+----
+Here's another direct answer specific to the question of IO. Haskell simply separates functional programming and IO. To do so, the type IO is introduced. An expression of type (IO a) denotes a program that might perform IO and will return a value of type a, should it ever be excuted. These programs are constructed by the Haskell programm, but cannot be executed. Only the result of main, which has type (IO a), is ever executed. To facilitate construction of programs, the following primitives are provided:
+
+    ():      this program does nothing and returns itself. Read it as "unit"
+    return a:  this program does nothing and returns its argument wrapped in the monad
+    a >>= b:   in your head read this as "a pipe to b". 
+                    Almost the same thing as function composition b(a) except the monad wrapper's semantics
+                   are evaluated in between the a and the b and the result is rewrapped in the monad.
+    a >> b:    same as above but throws the result of a away.
+                    Evaluates a and then b maintaining their monad wrappers' semantics, 
+                    returning the result of b wrapped up in the monad.
+
+    getChar, putChar:    the IO primitives you would expect, among many others.
+Construction and execution of the program are effectively interleaved, so our imperative sublanguage doesn't need any control structures. Instead, we do the control in the functional host language with the usual combinators or recursion. Instead of generating a tree-structured program with branches, we do a functional branch and simply generate the correct branch on the fly. Does that mean, we are cheating and in reality are no longer programming functionally? Well, who cares? It works well in practice.
+
+Now what's that got to do with monads? Just that "done" and ">>" form a monoid while "return" and ">>=" form a monad. Actually, "done" is implemented in terms of "return" and ">>" in terms of ">>=", and "return" and ">>=" are overloaded for different structures that also form a monad. Knowing that, however, doesn't help all that much in understanding IO.
+
+----
+PhilipWadler wrote a bunch of introductory papers on monads (http://www.research.avayalabs.com/user/wadler/topics/monads.html).
+The above link appears to be broken. You can find the same paper at (http://homepages.inf.ed.ac.uk/wadler/topics/monads.html) though. -- IanPhillips
+----
+Beware. Often when somebody explains the usage of a monad to solve some certain task, people ask "how is it different from a XXX?" It might not be, but usually these are just instances of using monads. The monads in themselves are a very rich concept despite their simplicity, comparable to the whole of ObjectOrientedProgramming, in my opinion. Most of the discussion below is totally specific to I/O monads, which themselves are a special case of state monads, which are a special case of transformation monads, which are a special case of monads in general.
+
+One of the best descriptions of what monads are (for the programmer) is this: "Often the value that is the result of a computation and the computation itself can be observed separately. Monadic programming style abstracts away the computation, while allowing to handle values." What this means in the I/O special case is that we abstract away that the computation happens in a world that is passed around as a parameter, while retaining values, like strings input from files or keyboard, etc.
+
+Also note that monads in Haskell's I/O system serve two purposes: they provide a framework to ensure "that there is only one world", as said above, and take away the need of explicitly passing the world around.
+
+-- PanuKalliokoski
+
+----
+
+Think of a monad as a set of rules that enforce linearity on the use of a type. (See also LinearTypes.)
+
+If you have a type that describes ''changeable state'' then just letting that type run loose in a functional program would ruin the concept of a function. A function maps a domain to a range. If the type includes state that can change, then the function would not be able to map a specific domain value to a corresponding and unchanging range value.
+
+Functions can pass the entire state of the program around to each other. Instead of changing state, the function would simply pass a new state in place of the old state.
+
+Monads essentially do the same thing, but the advantage is they hide the state itself so a function is not burdened by passing it around. Once a type is wrapped in a monad, the state can be changed directly because the type system makes the function ''appear'' to be replacing the old state with some new state, when really the computer is executing side effects (setting variables, calling SOAP, writing to a file, etc.
+
+-- PatrickLogan
+
+''I don't get it. Where does it "hide" the state? Is a monad just a glorified global object? A non-functional syntactic hack into a formerly-pure functional language?''
+
+Replies in order:
+
+* state transformation monads hide the state into the workings of the bind operation, not unlike the way unix pipes "hide" temporary files.
+** Just for the record, Unix has never used temporary files for pipes; that's something that less sophisticated systems have done as a kludge. Streams passing through true pipes are unbounded (except for system memory limits) in length; the producer process sleeps until the consumer finishes reading from the pipe, so there is no limit to the amount of total data. Temporary files, on the other hand, are limited to the amount of free disk space/disk quota, and also the consumer process doesn't run at all until the producer finishes, which can be arbitrarily inefficient if only e.g. the first few lines are needed ("produce 1000000000 lines | head -3")
+*** ''Of course, the VirtualMemory system of a Unix implementation may flush the pipe's buffers out to disk as part of it's normal operation. But this is transparent to the user, except for performance, and doesn't affect the semantics of pipes.''
+*** True. Whereas, as explained above, actually using temporary files as the implementation mechanism does indeed change their semantics.
+**** Proof?  --SamuelFalvo
+
+* no, monad is hardly "just" X for any X you're likely to come up with, see above for discussion about monad classes. (What a monad "just" is, is a second-order type with three (or two, depending on the formalization) associated operations that obey certain laws.)
+* monads are not syntactic hacks, and definitely not non-functional. Haskell has syntactic hacks to make monadic code look neater, but these hacks are really syntactic and do not break referential transparency.
+
+----
+
+To repeat the initial question: ''I don't get it. Where does it "hide" the state? Is a monad just a glorified global object? A non-functional syntactic hack into a formerly-pure functional language?''
+
+It doesn't hide the state at all.  It passes it using ordinary function parameters, in what can only be described as ''the ultimate exploitation of closures ever invented by man.''  Look at the top-level invokation of "someFunction" inside a state monad:
+
+ let someResult = evalState someFunction onThisInitialState
+
+someFunction is typically written with either do-notation or with >> and >>= operators, both of which are equivalent (do-notation is just compiler-supported syntactic sugar for using >> and >>= operators.  Think of it as a built-in macro system).  Since the >>= and >> operators both ''construct programs,'' (that is, they ultimately ''return functions'' with a bit of free-variable magic), it follows that the above is equivalent to:
+
+ let someResult = aComputation onThisInitialState
+
+where aComputation is obviously ''a function'' that takes a single formal parameter, the initial state, and produces some result of some kind ''using that state.''  So, as you can see, it's still purely functional.  For more information, you can see my own "epiphany" document when I first understood monads.  http://www.falvotech.com/content/publications/monads/
+
+We can write someFunction like so:
+
+ someFunction :: State Int
+ someFunction = do
+   value <- get
+   put (value+1)
+   return value
+
+The get and put functions might be written like this:
+
+  get   = State $ \s -> (s,s)
+  put x = State $ \s -> ((),x)
+
+Notice that ''we're returning functions'' which are executed ''later.''  Notice also that all results from these functions ''always'' takes the form of (aResult, newState) tuples.  What if we just want to return the result of some computation without affecting the state?
+
+  return x = State $ \s -> (x, s)
+
+And so, now you see, when everything is evaluated, everything is expressed as functions which are eventually executed.  No mutable state is employed at all; "mutation" occurs by way of invoking functions with tail-calls, so that in-place function parameter updates occur.  This is why Haskell doesn't suck memory with monads.
+ 
+You might now state, "But I/O is handled by a monad, but there is no state being passed around!"  Correct, as far as appearances are concerned (and, indeed, that's the whole point!).  The IO monad lacks any ''get'' or ''put'' functions because the definition of the state is kept private (and for good reason).  But, look carefully again at the "main" function -- it's wrapped in the IO monad.  This means, in ''no uncertain terms,'' that main is, like our state monadic example above, run ''inside the IO monad.''  To bootstrap the process, the Haskell runtime has the ''equivalent code'' of:
+
+ uselessResult = runIO main initial_IO_state  -- not real Haskell code; but the effect is the same, and is needed to bootstrap the execution of a program.
+
+The initial_IO_state just happens to be the state of the process as a whole.
+
+I hope this clears up some confusion on "where the state is hidden."  :)
+
+--SamuelFalvo
+
+----
+
+I was able to explain this concept to someone in the following manner: A function gives the same output for the same input. It's some translation from the input to the output that is formulaic and repeatable. A pseudo random number generator routine isn't representable by a function. It must have state of where in the sequence the random number generator is. A pseudo random number function requires that it be passed in the current state of the generator. Imperative languages just use a global variable and don't look back. Now think about a routine that opens a file, it can return success, insufficient privilege, file system error or any number of things. The same input, i.e. the filename, gives different output, so a file open routine is not a function. Hence things like random number generation and I/O has been the bane of functional programming for many years.
+
+The trick of using a monad comes into play. The state of the external world can be made implicit in a monad, e.g. the IO monad. So an I/O routine becomes a function in the context of the IO monad. Since the state of the world matters to the function (but isn't needed for the computation!) the compiler must thread or order usage of the functions in the IO monad in time, because time always rolls forward. The state of the world is never actually accessed or stored, it's just a useful concept that is tracked through putting things in the IO monad.
+
+If nothing in a functional program uses I/O except for the final output, then the execution of the code can take several different paths to computer the answer, it's just a set of computational relationships - ordering is unimportant (well ignoring that pesky possibly of infinite loops in some paths, lookup strict versus non-strict). Within the I/O monad threading or ordering is generated by the compiler and calls to functions in the IO monad must occur in order. Functional programmers can once again rejoice.
+
+----
+
+Noel Winstanley, 1999 says: ''"There's a wealth of publications available about monads. However, much of it is aimed at a different audience than 'Joe Programmer'. Here's a quick summary of some web-accessible documentation:"''
+
+* Theory: PhilipWadler is one of the researchers who introduced the use of Monads to functional programming. He maintains a comprehensive list of his monad-based publications. You may find some of these hard-going: they get advanced quickly, and the notation used varies from that commonly used in Haskell. However, certainly worth a look. http://cm.bell-labs.com/cm/cs/who/wadler/topics/monads.html
+* MonadicParserCombinators: GrahamHutton and ErikMeijer have published a paper on this topic which serve as a tutorial to the subject, and also describes in general the use of monads to structure functional programs. Libraries of the parser combinators are also provided. Definitely one to read. http://www.cs.nott.ac.uk/Department/Staff/gmh/bib.html#pearl
+* The rest: SimonPeytonJones has a fine list of papers published by himself and colleagues. http://research.microsoft.com/Users/simonpj/Papers/papers.html Especially relevant are the sections on...
+** foreign language integration -- http://research.microsoft.com/Users/simonpj/Papers/papers.html#applications
+** monads, state & concurrency -- http://research.microsoft.com/Users/simonpj/Papers/papers.html#monads
+** graphical user interfaces -- http://research.microsoft.com/Users/simonpj/Papers/papers.html#gui
+
+----
+
+The IO monad is actually quite simple to use. Don't let the word "monad" scare you; in fact, things like lists, sets and arrays are also monads. My informal definition of a "monad" is something which, if you kick it in a specific way, produces a value. Take the array monad, well known to all of you: the array monad is a "function of types", i.e. you put a type in (say int) and it turns it into a new type (array of int).
+
+Now if you "kick" a value of type "array of int", then it produces a value of type int. In this case, "kicking" means indexing.
+
+Now there are three operations on an array that qualify it as a monad:
+* if I have an array that contains itself arrays which contain ints, I can flatten it to one array containing ints
+* if I have an array containing ints, and I have a function that turns ints into foogarbles, then I can map this function over my array so as to obtain an array filled with foogarbles
+* if I have a single int, I can create an array containing only that single int
+
+-- StephanHouben
+
+----
+How is a Monad different from the ValueObject idea in something like Java? -- ShaeErisson
+
+''A monad is a set of rules that govern a type, so a monad can be applied to some type of ValueObject. A monad can also be applied to a mutable object (whereas a ValueObject is a constant, immutable) in order to control the use of the mutation commands on such an object.''
+
+----
+What would be really helpful for us FunctionalProgramming illiterates, but probably a lot of work for someone wise in the ways, would be an example of the use of a monad (say an IO monad, for simplicity), written in such a way that we could understand it. Although the obvious way to give an example is to write some ML, it would probably be easier for us to read if it could be rendered into a pseudolanguage with a more Algolish syntax. I hope I'm not asking the impossible! -- TomAnderson
+
+There is a theoretical problem with this, namely that "bind" is a higher order function and is thus very cumbersome to express in languages that lack higher order functions. I could show how to write a state transformer monad in Java, but lack of anonymous functions (and nested scopes) (and parametric types) makes it so cumbersome to use that I don't recommend trying it... besides, I have to replace curried functions with classes. (it's been ages since I wrote Java, so excuse my possible syntax errors and such) 
+
+Would it be asking too much for a functional programmer to add in JavaScript examples of the below samples. JavaScript supports functional programming enough to not bloat the samples like Java, yet has a syntax most of us are familiar with. Looks like the Java Samples are working around shortcomings of Java. AnswerMe.
+
+''I rewrote the original code, using more meaningful names and testing it. AFAIK it preserves the original intent.''
+''-- DanielYokomiso''
+
+ import junit.framework.Test''''''Case;
+ interface Int''''''State''''''Transformer { // int because we don't have parametric types
+	public Result transform(final int state);
+	public class Result {
+	 public final int oldValue;
+	 public final int newValue;
+	 public Result(final int oldValue, final int newValue) {
+		this.oldValue = oldValue;
+		this.newValue = newValue;
+	 }
+	}
+ }
+ interface Int''''''State''''''Transformer''''''Factory { // essentially any function from integer to state transformer
+	public Int''''''State''''''Transformer create(final int newValue);
+ }
+ class Return implements Int''''''State''''''Transformer {
+	private int result;
+	public Return(final int value) {
+	 this.result = value;
+	}
+	public Result transform(final int state) { // no change to state
+	 return new Result(result, state);
+	}
+ }
+ class Bind implements Int''''''State''''''Transformer {
+	private final Int''''''State''''''Transformer computation;
+	private final Int''''''State''''''Transformer''''''Factory factory;
+	public Bind(
+	 final Int''''''State''''''Transformer computation,
+	 final Int''''''State''''''Transformer''''''Factory factory) {
+	 this.computation = computation;
+	 this.factory = factory;
+	}
+	public Result transform(final int state) {
+	 Result temp = computation.transform(state); // call first state transformer
+	 Int''''''State''''''Transformer nextComputation = factory.create(temp.oldValue); // pass the original to client code
+	 return nextComputation.transform(temp.newValue); // and apply the resulting transformer to the new result
+	}
+ }
+
+ //Now, all client code should be implementations of Int''''''St''''''Tr''''''Producer.
+ //You can use Bind to connect them into more complicated transformations.
+
+The abstraction doesn't come before you define how the state can be accessed by providing a basic set of available state transformations, which client code should use to achieve more complicated effects. 
+
+All of the above code can be expressed, in Ocaml, as 
+
+ type 'a st_tr = int -> ('a * int)  (* now result values can be of any type *)
+ let return x = fun state -> (x, state)
+ let (>>=) ma fmb = fun state ->	(* bind *)
+	let (result, newstate) = ma state in
+	fmb result newstate
+Due to lack of curried functions, even the simplest state transformation (setting the state to a new value) is like this in Java: 
+
+ class Update implements Int''''''State''''''Transformer''''''Factory {
+	public Int''''''State''''''Transformer create(final int newValue) {
+	 return new Int''''''State''''''Transformer() {
+	  public Result transform(int state) {
+	 	return new Result(state, newValue); // return old state as result
+	  }
+	 };
+	}
+ }
+ class Fetch implements Int''''''State''''''Transformer { // to get the current state
+	public Result transform(int state) {
+	 return new Result(state, state); // null transformation, as in Return
+	}
+ }
+The same in Ocaml: 
+
+ let update newval = fun state -> (state, newval)
+ let fetch = fun state -> (state, state)
+Finally, some client code that uses the above: we'll set the state to multiply its previous value: 
+
+ class Multiplier extends Bind { // couldn't come up with any other way to do it
+	public Multiplier(final int factor) {
+	 super(new Fetch(), new Update() { // ditto
+	  public Int''''''State''''''Transformer create(int newval) {
+	 	return super.create(factor * newval);
+	  }
+	 });
+	}
+ }
+In Ocaml: 
+
+ let multiplier factor = fetch >>= fun result -> update (factor * result)
+
+And here we have some testing...
+
+ public class Multiplying''''''State''''''Test extends Test''''''Case {
+	public void testDoubling() {
+	 Multiplier doubler = new Multiplier(2);
+	 Multiplier.Result result;
+	 result = doubler.transform(1);
+	 assertEquals(1, result.oldValue);
+	 assertEquals(2, result.newValue);
+	 result = doubler.transform(result.newValue + result.oldValue);
+	 assertEquals(3, result.oldValue);
+	 assertEquals(6, result.newValue);
+	 result = doubler.transform(result.newValue + result.oldValue);
+	 assertEquals(9, result.oldValue);
+	 assertEquals(18, result.newValue);
+	}
+	public void testTripling() {
+	 Multiplier tripler = new Multiplier(3);
+	 Multiplier.Result result;
+	 result = tripler.transform(1);
+	 assertEquals(1, result.oldValue);
+	 assertEquals(3, result.newValue);
+	 result = tripler.transform(result.newValue + result.oldValue);
+	 assertEquals(4, result.oldValue);
+	 assertEquals(12, result.newValue);
+	 result = tripler.transform(result.newValue + result.oldValue);
+	 assertEquals(16, result.oldValue);
+	 assertEquals(48, result.newValue);
+	}
+ }
+No wonder we prefer these languages, huh? -- PanuKalliokoski
+
+''(Honestly, it drives me MAD the way you mathematics types always have to make everything so BLOODY cryptic and complicated!)''
+
+Then it's probably a good thing that we didn't tell you about TheEvolutionOfaHaskellProgrammer. ''...which, strangely enough, does not have a monadic example of factorial! Would any functional expert care to supply one?''
+
+----
+
+This isn't a really good way to implement it in Java. In fact I had no clue, what the java-program did, so I looked at the ocaml program and translated it directly into java. Of course the java code isn't exactly beautiful because of the type-annotations, but it's much more straightforward then the program above. I could've made it generic, but I didn't do it because without syntax-hilighting it's a bit difficult to read then.
+
+//--- Ok, first we need a simple tuple-class:
+
+class Result {
+	public Result(final int value, final int state) {
+		this.value = value;
+		this.state = state;
+	}
+
+	public final int value;
+	public final int state;
+}
+
+//--- Now we can implement the Monad-Code. I put it all in one class, because using static methods is the Java-way to create functions:
+
+class Test''''''Monad
+{
+	//--- before creating a function we need to declare it:
+
+	// function State''''''Tr: State -> Value * State
+	interface State''''''Tr {
+		Result eval(int state);
+	}
+
+	//--- function State''''''Tr: Value -> (State -> Value * State)
+	interface State''''''Tr''''''Func {
+		StateTr eval(int value);
+	}
+
+	//--- now we can create 'return': doReturn = func(state) -> (x, state)
+	//	(I've called it doReturn because 'return' is a keyword in java)
+
+	static State''''''Tr doReturn(final int x) {
+		return new State''''''Tr() {
+			public Result eval(int state) { return new Result(x, state);  }
+		};
+	}
+
+	//--- same for 'bind', really straightforward
+
+	static State''''''Tr doBind(final State''''''Tr ma, final State''''''Tr''''''Func fmb) {
+		return new State''''''Tr() {
+			public Result eval(int state) {
+				final Result res = ma.eval(state);
+				return fmb.eval(res.value).eval(res.state);
+			}
+		};
+	}
+
+	//--- now let's test it:
+
+	public static void main(String[] args) {
+
+		//--- first the 'fetch'-function: fetch = func(state) -> (state, state)
+
+		final State''''''Tr fetch = new State''''''Tr() {
+			public Result eval(int state) { return new Result(state, state); }
+		};
+
+		//--- then 'update': update = func(newval) -> (func(state) -> (state, newval))
+
+		final State''''''Tr''''''Func update = new StateTrFunc() {
+			public State''''''Tr eval(final int newval) {
+				return new State''''''Tr() {
+					public Result eval(int state) { return new Result(state, newval); }
+				};
+			}
+		};
+
+		//--- and finally the 'multiplier': 
+		//	multiplier = func(factor) -> doBind(fetch, func(result) -> update(factor*result))
+
+		State''''''Tr''''''Func multiplier = new State''''''Tr''''''Func() {
+			public State''''''Tr eval(final int factor) {
+				return doBind(fetch, (StateTrFunc) new State''''''Tr''''''Func() {
+					public State''''''Tr eval(int result) { return update.eval(factor*result); }
+				});
+			}
+		};
+
+		//--- That's it, now use it:
+
+		State''''''Tr doubler = multiplier.eval(3);
+		Result res = doubler.eval(1);
+		System.out.println("Test''''''Monad.main: " + res.value + ", " + res.state);	// 1, 3
+		res = doubler.eval(res.value + res.state);
+		System.out.println("Test''''''Monad.main: " + res.value + ", " + res.state);	// 4, 12
+		res = doubler.eval(res.value + res.state);
+		System.out.println("Test''''''Monad.main: " + res.value + ", " + res.state);	// 16, 48
+	}
+}
+
+Doesn't look so ugly now. Not as short as ocaml, but that's just Java's way to tell the programmer to not code this way (because in Java there are better ways to do the same).
+
+----
+
+I'm not sure this is quite what you'd want, but I have written (available at http://sange.fi/~atehwa/omlib/ ) a small library in Ocaml that provides infrastructure for using monads. The file monad.ml has a definition of a monad module type, and e.g. computation.ml has many examples of simple monads. No I/O monads here, because Ocaml has a side-effectful I/O system anyway. -- PanuKalliokoski
+
+----
+
+OlegKiselyov's "Monads in Scheme" web page is probably the most helpful document I've seen on monads so far...
+
+http://okmij.org/ftp/Scheme/monad-in-Scheme.html
+
+Here's the gist of what I've learned by reading that page:
+
+When you work with monads, you add an additional layer of delay to the program execution. You're not writing functions, you're writing function generators. Your parameters, the ones that appear in your code, get gathered up and quietly stuck into closures (which are then returned).
+
+When you invoke these closures, you pass in the "global state" data as parameters; the embedded code passes them along to child closures and so forth. They get passed back along with the "real" result (by combining the two data into a tuple or pair or somesuch). The ">>=" and "return" operations hide the use of these closure parameters, pulling apart the data structure mentioned above and passing the right datum to the right recipient.
+
+All the math terminology pretty much boils down to what you're allowed to do with the closure parameters. The ">>=" and "return" operations restrict the ways you can manipulate them, making it safe to do things like I/O operations.
+
+So from the web page, a sample that looks like this...
+
+	> (pp (runM (build-btree 3) 100))
+	(115
+	(114 . 3)
+	((106 . 2)
+	((102 . 1) ((100 . 0)) ((101 . 0)))
+	((105 . 1) ((103 . 0)) ((104 . 0))))
+	((113 . 2)
+	((109 . 1) ((107 . 0)) ((108 . 0)))
+	((112 . 1) ((110 . 0)) ((111 . 0)))))
+...shows the two stages. The call to "(build-btree 3)" sets up the closure that will create a three-tier binary tree. The "(runM ... 100)" call executes the closure, sending 100 in as the parameter. In the result, the "115" at the top is the counter variable, which went through the system and came out the other side. Everything from the "114" line on down is the result tree.
+
+The definition for BUILD-TREE looks like:
+
+	(define (build-btree depth)
+	(if (zero? depth)
+		(make-node depth '())
+		(letM* ((left-branch (build-btree (- depth 1)))
+			(right-branch (build-btree (- depth 1))))
+		  (make-node depth (list left-branch right-branch)))))
+What you can't tell from this code is that both MAKE-NODE and the entire "letM*" body boil down to monad bindings under the hood. When called in the example above, "(build-btree 3)" returned something along the lines of (ignoring lazy evaluation):
+
+	(lambda (counter)
+	(letM* ((left-branch
+		(lambda (counter)
+		  (letM* ((left-branch ...)
+			  (right-branch ...)
+			(make-node 2 (list left-branch right-branch)))))
+		(right-branch
+		(lambda (counter)
+		  (letM* ((left-branch ...)
+			  (right-branch ...)
+			(make-node 2 (list left-branch right-branch))))))
+	 (make-node 3 (list left-branch right-branch))))
+(I've elided excess nesting in BUILD-BTREE.) Note that "letM*" (a Scheme monad control structure for variable binding) and MAKE-NODE both get expanded as well.
+----
+Is the "Monad" discussed here related in any way to the "Monad" used by Kala (the old database construction kit)?
+----
+It helps to separate the category theory of Monads from the layman's overview from the actual use - they're often really quite disjunct. You don't need to know the category theory of Monads to use them and even understand them to a large degree any more than you need to know computational theory to design algorithms, even good ones. It might help, but ultimately you have other "messier" means of framing the information, which still work just as well.
+
+The category theory has lots of links. If you can follow the theory, you probably didn't need to ask anyway. Monads as they are in Haskell are easy to describe though: They're a wrapper around data that has a type. You can input ("inject" in monad parlance) data into it, dependent on what the inject operator accepts. But anything you try to return ("lift" in monad-speak) will have the monad wrapped around it. So if you return a number from your WizzyMath monad, you're actually returning a WizzyMath number, and only functions that accept a WizzyMath number will accept it, unless you "unwrap" the value explicitly (an easy function to write).
+
+It's like perl's tainting, but generalized. Anything that touches a Monad gets tainted with the Monad until you untaint it. Anything tainted with the monad won't interoperate with anything else unless you explicitly tell it to work with that Monad's type. This is great when you don't want values "escaping" that shouldn't.
+
+What *really* happens BTW is that any time you input data in, you actually get a whole new monad back, parameterized with the value you input, but there's these "sequence" operations that make it feel like you're working with the same monad. Haskell's "do" operator implicitly sticks sequence operators inbetween everything, so when you're using "do", you can assume you're always using the same monad and that you actually have state in a language that actually lacks variables!
+
+The "Maybe" monad is probably the best and simplest example. A Maybe lets you throw around actual NULL values, because you can construct a Maybe with one of two expressions: "Just foo" (where foo is a value), or "Nothing". So if you have a function that accepts a Maybe Int, it'll accept for example Just 5, or Nothing, but will NOT accept a "naked" value of 5. So now you can write your functions to return None on failure, and not worry about "magic" return values. Personally, I prefer exceptions, but those are orthogonal - you can't really store the exception as a value with a compatible type, for one.
+
+All that said, I still find Haskell a pain to do anything stateful in. Ocaml seems a nice compromise, though it lacks the ad-hoc polymorphism that Haskell has.
+
+----
+AnswerMe:
+Hmm, question about Monads and how they relate to Haskell. Let's say I have the following function (sorry for the crappy syntax, if anyone could clean it up... I don't know a iota about Haskell Syntax just the underlying principles.):
+ listofones -> [1] ++ listofones	  (basically that creates an endless listofones)
+Now using Lazy Evaluation I should not be afraid of infinite loops.
+But what if :
+ listofones -> a
+	where  a = 1 ++ listofones
+	print a		 <- Basically force some Monadic action
+Does this cause an infinite loop? Does the monadic force it to compute right away (and in what order?)? -- ChristophePoucet
+
+''I'd like to invite you to the HaskellCafe mailing list (http://haskell.org/mailman/listinfo/haskell-cafe) as a more appropriate forum for questions of this kind.''
+
+''Printing an infinite sequential structure is certainly a way to produce an infinite loop. The fictional function '''print''' used in your example above would have to have some type like '''[a] -> IO ()''' and would map a (possibly infinite) list to a (possibly infinite) sequence of I/O operations. Generally you don't force monadic actions yourself. You determine the order in which your expressions are evaluated by the way you sequence them using the >>= operation, thereby creating an object of type IO (). Think of this object as a script of commands which is then executed by the Haskell runtime system (that's exactly what happens with the function '''main''' which is of type '''IO ()''' and defines the entry point of your program).''
+
+OOps, I just saw I messed up. This trivial example would of course make an infinite loop because I'm printing the whole thing. But what if I have print in uncalled methods, do they get called explicitly? The code would have to be:
+ listofones -> a
+	where  a = 1 ++ listofones
+	print 1		 <- Basically force some Monadic action
+Does the runtime system notice that listofones in a = 1 ++ listones contains sublying prints and thus forces it to be evaluated?
+
+And thank you for the invitation, I'll certainly look into it :). -- ChristophePoucet
+
+''You mean something like''
+
+  listofones :: IO [Int]
+  listofones = do
+ print 1
+ moreones <- listofones
+ return (1:moreones)
+''...and this will print ones ad infinitum.''
+
+''I am not sure if I understand what you mean by "But what if I have prints in uncalled methods". Prints are caused by the evaluation of objects of type IO, i.e. they happen if and only if the IO object is actually evaluated, and evaluation in Haskell is lazy. Execution of a Haskell program will evaluate only those IO objects that are sequenced into the '''main''' object. You cannot initiate the evaluation of an IO object yourself, because you cannot get your hands on the (virtual) object that represents the state of the world that the IO object is working on.''
+
+Ah thank you, that explains it. :) -- ChristophePoucet
+----
+Different people require different analogies to understand monads. Here's one in pseudo-C++ or java 1.5. As usual, it's a gross oversimplification, on the order of saying that OOP is "structs with functions inside them". But just like that OO definition manages to work a lot of the time, this operational definition of a monad works too:
+
+A monad is a datatype that has three different operations:
+
+1. "construct" (or "inject"). Imagine a monad is a class, M<T>. By constructing a monad with your value "a" of type X, you now have a monad of type M<X>. Just like a C++ template, it's not compatible with any value that's a "naked" X, it's been "wrapped up" in a container type. A M<X> is in general going to operate with another M<X>, nothing else, except for functions you write that take that monad - and that's what the next two operations do.
+
+2. "bind". In order to apply any operations to a monad, you need a function that takes that monad, does something with it and returns a new monad of the same type. Being a functional language, we use a function that takes a function; that function itself returns a new function, and ''that'' function takes the monad and returns a new monad. Clear as mud? This takes a lot of reading to really grok, but you think of the function as a sort of pipe, where you tell it what you're piping into, and it returns a function that gives you the output of the pipe, you're on the right track. A functional language that supports defining infix operators makes this look not too horrible, but Haskell goes further and gives you syntax sugar that's a little imperative language, variables and all. Under the surface, it's still just chaining together a bunch of functions in creative ways.
+
+3. "return". This is a function you bind that gives you back the last M<X> from the whole chain of "bind" operators. That is, instead of piping it into another M<X> (monads are indeed a lot like pipes), it just gives you back the last one in the chain as a value. That has the effect of actually calling that whole chain of bind operators as well, in the sequence you bound them in. Calling functions in order isn't necessarily something you can take for granted in a pure functional language. If you can prove there's no side effects, you can pick pretty much any order you want (for example, modern CPU's rearrange instruction order all the time). Since programs that never produce side effects aren't that interesting, Monads exist so you can give operations with side effects a defined sequence (preventing a pair of print statements in the IO monad from outputting "world! Hello," for example).
+
+You may be asking, "how do I turn that M<X> into a value of type X?". The short answer is, '''you don't'''. Long answer, you can write a function to do it, but the actually stateful stuff like I/O won't return a value you can actually use, and if you use a "naked" value, you can't bind it in a sequence. Since the ONLY way you can control flow in a Haskell program is by chaining functions together (either yourself or with the syntax sugar of rule 2's 'bind' operator), you get sort of stuck in the monad, you're either all in or all out. And that's also part of the idea of monads (though the sequencing is the more important part).
+
+If you read a string from the keyboard, you have an IO String (or IO<String> in the templateish syntax), and almost nothing you do can get it out as a plain string, not in a sense that can effect the program later. You can write a function to get the string out, but if you ever want to return it from the monad, or even pass it on to the next operation, it has to go back into the monad, otherwise you can't bind it for the next operation. Monads are in that sense, little typing jails from which "tainted" types (in a sort of similar sense to Perl's tainting) cannot easily escape (sort of like encapsulation).
+
+''Thanks! For this C++ programmer, that was the easiest explanation to follow so far.''
+
+''I concur. The PERL tainting analogy works for me, an imperative-type of programmer''
+
+Another way to think about how monads structure your programs is to imagine it as a shell script that's all one pipeline, no semicolons or anything. Unlike unix pipes, each pipe is typed - it only takes a certain type and returns a certain type (not necessarily the same type). So you start with the "IO" type (which thankfully can wrap up a lot of things - files, strings, even GUI widgets), you're going to end with the IO type, but you might turn it into a "number" type if you're going to do math with it, for example. But handing it off from pipe to pipe is still the only way to go - no variables, just piping.
+
+Interestingly, Microsoft's new Longhorn command shell, which does use typed pipes, was originally called Monad. Considering they employ Haskell's lead developer, this is probably not a coincidence. Being an interactive shell, it's not quite as strong a discipline as FP though, since they support some amount of automatic type casting to strings, much like the clipboard.
+
+For a C++ illustration of monads, see CeePlusPlusMonadsExample.
+
+----
+
+Clarity does improve in the lower half of this page, I second that. Thanks to the last few authors, I think I'm making inroads into monads, if slowly. Being more of a programmer and less of a mathematician, the first half of the page was completely opaque to me - after a couple of paragraphs, I was close to just tossing it. (What kind of an explanation is "The list is a monad which represents non-deterministic computations", with the term "computation" being defined as "can mean different things"?)
+
+I'd like to share a thought that came to me while reading, although I feel it's only vaguely connected to monads. The point is that maybe it can be used as a well-defined starting point from which imperative programmers can journey into the topic of monads. So let's assume the following hypothetical implementation of undo/redo capability, although it's immature in several respects and probably 60,000 people have invented it before me: (I'm writing a description in prose and one in code; you can read whatever you like better.)
+
+Certain objects get flagged as representing the program state, which are pretty much all interesting model and controller objects in the program. The point about flagged objects is that they are observed for changes - if they change, the program's state has changed, and that's an undoable operation. The "flagging" could happen by passing them to a sort of registry:
+
+ public T registerAsUndoable(T objToEnchant);
+The point of this method is that it takes an object objToEnchant of an arbitrary class and returns a proxy object for it, i.e., an instance of a generated class that implements all methods that objToEnchant implements. (This step is a bit demanding, but let's assume we are working with a sufficiently dynamic language that offers enough introspection mechanisms.) Each method in the proxy would have two jobs: 1. forward the call to its worker object (objToEnchant), 2. notify the registry that it - the proxy method - was called, and what the parameters were. The registry can therefore maintain a "transaction log" of every method call (incl. parameters) that modified program state. An undo after a sequence of N such changes to the program state would be done by reverting to some initial state, then rolling forward N - 1 transaction from the log. (That's probably inefficient in many cases, but it's easy to enhance it using state snapshots and other means. Also, we're not taking into account objToEnchant's possible public variables.) The upside for the end-developer would be that this undo/redo is probably as transparent as it gets: An existing program could be enhanced with undo capability by nothing more than adding a couple of initial registerAsUndoable() calls. Also, the transaction log could be helpful for debugging under some circumstances.
+
+Now if we imagine we use a language that supports it, the transaction log could be done as an array of closures: Each call to a proxy method would create a closure of the corresponding worker method with its parameters bound to the current values of the proxy method's parameters. The closure would then be executed and stored in the registry's transaction log.
+
+For those who like reading code more than prose, here is a completely untested sketch of this whole thing in JavaScript:
+
+ // library code:
+ var transactionLog = [];
+ 
+ function registerAsUndoable(objToEnchant)
+ {
+ 	var proxy = {};
+ 	for (var it in objToEnchant)
+ 	{
+ 		if (! (objToEnchant[it] instanceof Function))
+ 			continue;
+ 		// create the proxy function to shadow objToEnchant's function
+ 		proxy[it] = function () {
+ 			var proxysArgs = arguments;
+ 			// encapsulate call + its args
+ 			var transaction = function () {
+ 				return objToEnchant[it].apply(objToEnchant, proxysArgs); };
+ 			// log + exec
+ 			transactionLog.push(transaction);
+ 			return transaction();
+ 		};
+ 	}
+ 	return proxy;
+ }
+ 
+ function undo(howManyTransactions)
+ {
+ 	// vital TODO: some magic to revert to the initial state, i.e. to when we 
+ 	// initialized the transactionLog
+ 	
+ 	transactionLog = transactionLog.slice(0, -howManyTransactions);
+ 	for (var it in transactionLog)
+ 		transactionLog[it]();
+ }
+ 
+ // client code:
+ myFunnyObject = {
+ 	// ... define arbitrary functions here ...
+ };
+ 
+ myOtherFunnyObject = {
+ 	// ... define arbitrary functions here ...
+ };
+ 
+ myFunnyObject = registerAsUndoable(myFunnyObject);
+ myOtherFunnyObject = registerAsUndoable(myOtherFunnyObject);
+ // beyond this point, the transactionLog tracks all calls to myFunnyObject 
+ // and myOtherFunnyObject, which are all undoable
+What I'm getting at is: Would any aspect of the array of closures "transactionLog" be parallel to the monad concept? I think the above sketch is possible to digest for imperative programmers (I'm happy to elaborate if not), so that could be a well-defined starting point from which people (incl. me) could embark into the monad thing, if anyone would care to point out what the relation between monads and the above is. Thanks in advance.
+
+-- Hendrik Krauss (mailto:c2AThendrikDASHkraussDOTde)
+
+----
+
+'''True or False?''' Monads are useful for handling cases where order of evaluation (i.e. side-effects, mutations, &c.) matters in a purely functional language. Therefore, they are of little use in languages that explicitly support order of evaluation. (Unless you're specifically trying to stick to a purely functional subset of the language.)
+
+
+''False.  I'm just getting into Monads, but I'd reckon the answer is false - to quote from the Haskell wiki book: ''Monads capture the pattern of "Do X followed by Y in the context of Z". Conventional programming languages can do the "X followed by Y" bit alright, but they have a single context built in.''  Imperative languages only support '''one''' order of evaluation.  Monads are useful where you want to be able to support alternative ways in which the 'result' of one 'statement' is passed to the next 'statement', with little or no change to your code. (Statements don't exist in Haskell, but in the 'do' syntax they almost do, and it is the 'bind' function of the Monad being used that puts the statements together).''
+
+A great example of this is:
+
+ -- This code runs in the _list_ monad.  Take a guess at what
+ -- you think it ought to do before reading on.
+ printList = do
+              eachItem <- [1, 2, 3, 4, 5, 4, 3, 2, 1]
+              return (print eachItem)
+
+ -- This code runs in the IO monad.  We use sequence_ to reduce
+ -- everything into the "IO ()" type.
+ main = sequence_ printList
+
+The output is not to print a list of integers on a single line, like you'd expect in a language like Python.  The output is ''one integer per line,'' thus demonstrating that '''print''' is being called for each and every item in the list.  Indeed, the similarity between do-notation for lists and ''list comprehensions'' is not accidental:
+
+  aListOfIO = [ print x | x <- [1, 2, 3, 4, 5, 4, 3, 2, 1] ]
+  main      = sequence_ aListOfIO
+
+For this reason, monads can take the place of macros in many respects, and moreover, has been dubbed ''programmable semicolons'' by Don Stewart, a prominent Haskell coder.  It proves that sequential execution ''isn't always'' the result of the use of monads.  :)
+
+--SamuelFalvo
+
+''False.  Consider the '''Maybe''' monad; one '''Nothing''' value in Monadic function composition will cause the final result also to be Nothing, but it is often completely unimportant which was the first Nothing value to be encountered.  In fact, much of the '''point''' of the Maybe monad is to free your code of that worry.  Where you have an interest in the precise point of failure, you probably want the '''Either''' Monad, which can return a specific error message (or you could mix in the '''Writer''' monad to log the sequence of success and failure).''
+
+''Sequence is important to the '''IO''' Monad but that monad is a very special case, whose special properties are '''far''' too often mistaken for general monadic principles.''
+
+--BruceRichardson
+
+Small nitpick: the ability to ''conviniently'' define custom evaluation orders is '''orthogonal''' to being pure and functional. Haskell makes easy to hide boilerplate code ''for monads'' thanks to type inference and operator overloading.
+----
+
+As an imperative programmer trying to understand what's it all about with monads, with a little bit of Ruby, Lisp or Haskell, having read lots of introductory articles, this one got me nearest to an understanding:
+
+*** http://sigfpe.blogspot.com/2006/08/you-could-have-invented-monads-and.html 
+
+I like this constructivist approach very much. And as always everything becomes TrivialOnceUnderstood.
+
+----
+See also MonadsInRuby & MonadicProgramming.
+----
+Page started on the counterpart of monads:  CoMonads and also HaskellArrows.
+----
+Has BrokenLink''''''s
+CategoryFunctionalProgramming CategoryHaskell

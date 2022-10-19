@@ -1,0 +1,141 @@
+In NullObjectPerformance
+''(and, I'm sure other places)''
+it was mentioned that...
+
+	 :	'''''"In Smalltalk, message sends are often more efficient than conditionals. The more SpecialCase's involved, the greater the gain."'''''
+
+	'''A Response:''':	''"That's interesting to know.  Of course in many other languages conditionals are more efficient than calls."''
+
+-----
+
+Actually, I think you'll find that it's more efficient when you get the right behavior into the leaves. It tends to take code that would have looked like
+
+ self isLeaf
+	ifTrue: [self leafAction]
+	ifFalse: [self nodeAction]
+
+into just leafAction or nodeAction as appropriate. The conditional is generally completely eliminated, and there is not an additional send, or at most one. Recall that the conditional executes at every level. If I can find or generate an example, I'll put one up ... other readers please beat me to it if you have one at your fingertips.  --RonJeffries
+
+-----
+
+I kind of feel like I was at cross purposes to those answers.  I understand the point.  -- MartinPool
+
+-----
+
+If the ''normal'' case is, that an action is taken and it is seldom, that the Null-Case is to take, then it may be worthwhile to eliminate the checking. You will save time in most cases - and so in the long run. -- JuergenLindemeyer
+
+-----
+
+In the SmalltalkLanguage, I can see how conditional logic could be slow:
+The #ifTrue: or #ifTrue:IfFalse: message is a message send, all by itself.
+Fetching the value to test is probably another message or two.
+And, after computing the result, Smalltalk must set up and tear down the context for executing the true or false block.
+
+''Some Smalltalk compilers take advantage of true and false being distinguished singletons, and optimize away the actual message send by using special byte codes that compare against true and false by doing identity comparisons. --DaveSmith''
+
+On the other hand, in conventional compiled languages, like C++, conditional tests translate directly into machine language, while method calls tend to be relatively expensive.
+Conventional wisdom in C is that "function calls are expensive:"  The system has to push segment registers and parameters onto the stack and make the call ''(clearing the instruction prefetch queue)'', and then it has to clean up after the call.
+However, a test for NULL (typically zero) and a local jump tend to be fast -- '''''very fast'''''.
+
+C++ virtual function calls make method calls even more expensive because of indirection:
+The system must (1) dereference the pointer to get to the object, (2) dereference the "vtable" pointer in the object to get to the array of function pointers, and (3) dereference at an offset from that pointer to to get the function pointer.
+Dereferencing through three levels of indirection tends to slow things down a little more.
+''(...and is not "good" for locality of reference  ;-)''
+
+So, in conventional languages, conditional logic is "much faster" than polymorphic message calls.
+
+The cost of a virtual function call, however, stays constant no matter how many derived classes there may be.  With if logic, the cost grows with every added conditional evaluation.  It should also be noted that cost 1 from above, dereferencing the object pointer, reduces the cost of data accesses within the function.  Table jumps have long been recognized as the most efficient way to do multi-way branching.  --WayneMack
+
+But, to inject a bit of rationality into this discussion:
+	'''''None of this really matters.'''''  ;->
+'''Write your programs to be correct and maintainable.'''
+Then, if needed, measure them to determine where performance improvements are needed.
+If your application touches a relational database or communicates across a network, you probably have much bigger performance issues to deal with than the cost of virtual function calls.
+-- JeffGrigg
+
+----
+
+With a smart linker, a message send may be implemented a series of "if" statements. This is how SmallEiffel does it, for example, and the same technique should work for C++.
+
+To put it another way, the core difference between "if" and a message send is that "if" knows its possible targets statically. A smart linker can recover that information for message sends, too, and so the difference disappears.
+
+----
+
+'''You can do anything in C++'''
+''(even if it's dumb ;-)'':
+
+Lacking a smart linker, one could do tricky things with "inline" functions calling private virtual functions that would end up putting a select/case statement, and possibly even method code, into the calling function.
+However, this tends to complicate things and increase dependencies -- and so shouldn't be done unless you're desperate.
+-- JeffGrigg
+
+Ah but can you - and what is allowed? C and C++ allow a '''Conditional Operator''' (See Ellis and Stroustrup, ''The Annotated C++ Reference Manual'' Section 5.16 p 78 on DefinitiveCeePlusPlusBooks). 
+
+I have just met a case like this:
+
+  bool t;
+  string s = t ? "XYZ" : Name().c_str();
+where in the context of the StandardTemplateLibrary, Name() is a function returning a string, and c_str() returns a char* pointer to the data of a string. This blows my compiler (SymantecCpp), which when t is false returns rubbish. That is a compiler problem, but is this valid code or not?
+
+This works, so it is a question of the various type conversions going on.
+
+  string s = t ? string("XYZ") : Name();
+
+-- JohnFletcher
+----
+To make things even more complicated, all this depends also heavily on CPU type. On Risc processors, function calls are cheap, even in C, because there is a large number of registers. Therefore it becomes feasible to split registers into caller-save and callee-save groups. This means that for small functions, no registers have to be saved. On the other hand, for processors with a long pipeline, mispredicted branches can be very costly. Also, most processors cannot predict across a call or jump to a ''computed'' function, which makes method calls through a method table more expensive than statically computed method calls. Note that many Smalltalk implementations cache the last method to which a certain message was dispatched. As far as I know, conditionals do not receive this optimisation.
+-- StephanHouben
+
+I've done this sort of thing in assembly and as soon as you get multiple levels of calls, it becomes very difficult to keep your register sets straight.  I think it is beyond the bounds of a compiler to hanlde that.  Even just passing parameters via registers gets pretty complicated without a very defined calling path through your program, and it is very easy to break when you make changes.  --WayneMack
+
+On modern processors, the function calls not only cheap, sometimes they are free. Alphas (not so sure about ix86, though) can predict even indirect calls (and returns, of course), stack stores are deferred, and parameters are in the same (or equal) registers where they would be put to perform the same operations inline. And mispredicted calls costs are almost exactly the same as for mispredicted branches.
+
+Sometimes functions work even faster than inlines. That's usually because they have smaller code footprint, so they consume less I-cache space. And sometimes there are some strange CPU pipeline problems that slow down the inlined code but not non-inlined functions (although some additional NOPs may fix inlined code). -- NikitaBelenki
+
+----
+
+Why not get the compiler to do the work?  Most of the places I've seen NullObject, there's no confusion as to which type it is, so a SufficientlyCleverCompiler could recognize NullObject''''''s, replace all instantiations of them with null references, and inline all the methods called on them to do null-checking.
+
+How can you recognize a NullObject?  Well, if B is a subclass of A, all its methods are final (non-virtual, in C++), and it never changes or examines its state (even in its constructor), then:
+	* there's no point distinguishing between different instances of B -- so the compiler can use null or some other distinguished value
+	* any method on B will always have the same behavior -- so inlining them all is safe, and doesn't require referring to any instance; you'll just be checking for null everywhere you call any method on A that B overrides
+
+I think this is all you need.  Are these criteria sufficient?  Do they in fact include things not generally regarded as NullObject''''''s?
+
+Do we need the restriction that B never ''examine'' its state?
+
+Would hints to the compiler add anything?  I imagine they'd get you out of having to explicitly subclass A, in return for peppering A's code with special "ifnull" variant methods.
+
+Incidentally, I'm thinking of the compiler route because in Java, linking is very late, so you'd have to do something analogous to JIT method-call conversion to get the same effect as a "smart linker" in C++ or Eiffel (I think).  Also, it seems to me all the information necessary to optimize away the NullObject is available at compile time.
+
+''You can look at NullObjectAndRefactoring to see the design that this optimization will break. --nb''
+
+It's the design on NullObjectAndRefactoring there that's broken, not
+the optimization above.  Nat should have followed
+option #2 (separate classes).
+
+''OK, I've not clearly said what I meant. This sort of optimization will break working code. "Never examines its state" is wrong criteria for the NullObject.''
+
+----
+Method dispatch is about the '''most optimized''' area of the Smalltalk machinery. Automagic inlining, various caching strategies, generating machine code on the fly, and literally hundreds of similar improvements have been done in the 25 or so years that people with high SAT scores have been attempting to make Smalltalk run faster. The first comment by RonJeffries pretty much sums up the resulting learning.
+
+Parenthetically, the attempt to explain why conditionals might be slow in Smalltalk is well-intended and accurate for extension methods added to True and False, such as #ifNil:, #ifEqual:, and so on. In the case of #ifTrue:, #ifFalse: and #ifTrue:ifFalse:, however, the Smalltalk compiler has always special-cased these methods and generated specific bytecodes that allow the VM to do the right thing without extra context overhead -- specifically,
+
+ 152-159 10011iii Pop and Jump On False iii+1 (i.e., 1 through 8)
+ 168-171 101010ii Pop and Jump On True ii*256+jjjjjjjj
+         jjjjjjjj
+ 172-175 101011ii Pop and Jump On False ii*256+jjjjjjjj
+         jjjjjjjj
+
+This is an example where idiomatic habits derived from CeePlusPlus lead to '''pessimization''' of Smalltalk code. Method calls, in Smalltalk, are '''faster''' than conditionals -- not because the local call is faster, but because the surrounding context (no pun intended) is usually better-optimized by the compiler and VM. Choosing conditionals over method calls '''slows down''' Smalltalk code.
+
+In short, the most effective way to write fast Smalltalk code that works is to:
+
+* Make it work
+* Profile it
+* Refactor to work around the slow parts
+* Loop until no more refactorings suggest themselves
+* Optimize the '''measured''' bottlenecks
+
+''I draw your attention to JeffGrigg's comment earlier on exactly the same point.''
+----
+CategorySmalltalk CategoryCpp

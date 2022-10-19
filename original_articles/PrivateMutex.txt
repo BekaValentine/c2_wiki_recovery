@@ -1,0 +1,118 @@
+One of many JavaIdioms.
+
+'''Problem'''
+
+When writing a class with thread-safety in mind, the convenient "synchronized method" declaration comes to mind:
+
+  public class Safe {
+    //...
+    public synchronized Object[] getValues() {...}
+    public synchronized void putValue(Object o) {...}
+    public synchronized boolean isEmpty() {...}
+  }
+
+This certainly guarantees that invocations of the two methods on the same object will never overlap harmfully, as a method declared as
+
+  ''access'' synchronized ''return-type'' ''foo''(''args'') {''yadda''}
+
+is equivalent to
+
+  ''access'' ''return-type'' ''foo''(''args'') {
+    synchronized(this) {
+      ''yadda''
+    }
+  }
+
+(the synchronization is on the Class object for methods declared "static synchronized").  However, if two well-meaning threads, knowing that the class is advertised as "thread-safe" (and thus not needing synchronization on their part when using it), synchronize on it for other purposes, deadlock can easily result:
+
+  //shared:
+  Foo t;
+  Safe s;
+  int shared;
+
+  //in thread 1:
+  synchronized(s) {         //''s'' guards ''shared''
+    synchronized(t) {
+      while(!t.ready())
+        try {t.wait();}
+        catch(Interrupted''''''Exception e) {}  //resume waiting
+    }
+
+    s.putValue(t);
+    shared++;
+  }
+
+  //in thread 2:
+  Object[] stuff=s.getValues();
+  synchronized(t) {
+    t.setValue(stuff.length);
+    t.notify();
+  }
+  //We have to wait until ''t.notify()'' to synch on ''s'':
+  synchronized(s) {
+    shared=stuff.length;
+  }
+
+This is in fact a simple (and contrived) example of excessive synchronization; thread 1 synchs on ''s'' and waits on ''t'', and thread 2 synchs on ''s'' (in the getValues() call) before it notifies on ''t''.  In fact, the code will work fine if we simply separate the needlessly-nested synchronizations in thread 1.  But the point is that, without reading the source (or ''javap''-ing the class) for Safe, the programmer of these threads will have no idea why thread 2 hangs before it calls ''t.notify()'', particularly since he was so careful as to wait until after calling it to synchronize on ''s''!  (Note that JavaDoc, since version 1.1, has not listed the '''synchronized''' modifier on methods in its output, since they are (quite truthfully) an "implementation detail".)
+
+An additional problem is demonstrated by the following (malicious) code:
+
+  Safe s=your_safe;
+  synchronized(s) {while(true);}
+
+Then any thread calling a synchronized Safe method will block forever.  Of course, malicious code can lock any object indefinitely, but careful threads are free to synchronize on objects referenced only by local variables or private member variables.  By using your relevant class as the synchronization object, such careful threads must be inconveniently careful with references to the object in question -- and that's if they know the danger.
+
+A third problem is the use of notify().  If the object on which your code synchronizes is visible outside your code (as it must be if you use synchronized methods and your class is to have clients), you can never guarantee that notify() will wake up a thread it makes any sense to wake up.  A client may be wait()-ing on your object for its own reasons, and they are just as likely to get the notification as is the thread you had in mind.  Of course, the simple solution is to use notifyAll(); however, then must you (and your clients!) not only add code to put all the other threads back to sleep, but you get the overhead of many threads waking up and sleeping again -- locking and unlocking monitors, blocking and unblocking each other, and generally context-switching as much as possible.
+
+----
+
+'''Solution'''
+
+The solution, fortunately, is much simpler than any of the problems.  Any object which needs to synchronize on itself for thread-safety should instead declare a private (final) member variable holding an object on which to synchronize, and then explicitly synchronize on it in the relevant functions:
+
+  public class Independent {
+    private final Object lock=new Object();
+
+    public void wouldBeSynchronized() {
+      synchronized(lock) {
+        foo();
+      }
+    }
+  }
+
+(Who says that unadorned Objects have no use?)  The variable may of course be static to replace synchronizing on the publicly-available Class object:
+
+  public class Hands''''''Off {
+    private static final Object classLock=new Object();
+
+    public static void wouldBeSynchronized() {
+      synchronized(classLock) {
+        new Hands''''''Off().bar();
+      }
+    }
+  }
+
+With the private object as the synchronization point, you are guaranteed that no other code's synchronization can clash with yours (accidentally or deliberately), and that (if you wish) you can use the simple notify() without fear of signal loss and deadlock.
+
+----
+
+At risk of being controversial here, I will state that this pattern (although it is a useful pattern and one worth documenting in this Wiki), arises ONLY in Java, because it is nothing more than a way of working around a "wart" in the language. The "wart" was making each and every object be a mutex. Mutexes are a great idea, but Java was the first language (that I am aware of) to make each and every object a mutex, rather than creating a separate Mutex class and letting objects that needed synchronization hold Mutex instances. I would say that the experiment was a failure, and that designers of new languages would be wise to avoid having each object be a mutex. The motivation section of this pattern is only a minor reason why I believe the experiment was a failure, the main reason is the difficulty of implementing each-object-is-a-mutex without ridiculous overhead for most objects. 
+
+(Since it may be controversial, I will sign this one -- originally written by MichaelChermside. But feel free to revise it.)
+
+----
+
+And, further, at least in all JVM's I've worked with, the performance difference between the two approaches is huge... synchronizing on an object is generally about 10x slower than calling into a synchronized method, because the common case has been very highly optimized. --AdamBerger
+
+Well, you could then wrap your synchronized methods in that object (i.e, private class), and delegate the appropriate method calls.
+
+----
+
+I'd note that the original problem could as easily be used as an argument to use only synchronized methods and not synchronized blocks as the opposite.  That particular problem arises only when you mix the two idioms.
+
+The more general problem of deadlocks is not prevented by either - if a synchronized method in A calls a synchronized method from object B, and in another thread a synchronized method in object B calls a synchronized method in object A, there is a potential for deadlock.  The same can happen if you only use synchronized block and private mutexes, if code within a synchronized block in object A calls an object B method that has a synchronized block and vice versa.  The real solution is to make your code simple enough and think about it hard enough to make sure that your synchronization never causes deadlocks.  Using utility classes that are entirely thread safe - because they use a private mutex AND do not make any calls outside the class - can help.
+
+Warren Dew
+
+----
+CategoryJava

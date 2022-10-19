@@ -1,0 +1,149 @@
+This is a formal semantics of the C programming language, using state transition semantics. The state transitions are typed ([byte] -> state -> state) -> state -> state. Each denotation takes a continuation, and produces a state transition. The notation is Haskell.
+
+  [[ expr ? thn : els ]] C = [[ expr ]] (\x -> (if x == 0 then [[ els ]] else [[ thn ]]) C)
+
+  [[ if (expr) thn; else els ]] = [[ expr ? thn : els ]]
+
+  [[ while (expr) stmt ]] C = [[ expr ]] (\x -> if x == 0 then C 0 else [[ stmt; while (expr) stmt ]] C)
+
+  [[ do stmt while (expr) ]] = [[ stmt; while (expr) stmt ]]
+
+  [[ for (stmt;expr;stmt2) stmt3 ]] = [[ stmt; while (expr) { stmt3; stmt2 } ]]
+
+  [[ { stmt } ]] = [[ stmt ]]
+
+  [[ stmt, expr ]] C = [[ stmt ]] (\_ -> [[ expr ]] C)
+
+  [[ stmt1; stmt2 ]] = [[ stmt1, stmt2 ]]
+
+  [[ return expr ]] _ = [[ expr ]] (\x -> lookUp (\(_, C) -> C x))
+
+  [[ x = expr ]] C = [[ expr ]] (\y -> C y . update x y)
+
+  [[ *x = expr ]] C = [[ expr ]] (\y -> [[ x ]] (\p -> C y . updateAt p y))
+
+  [[ *x ]] C = [[ x ]] (\p -> deref p (sizeof (ptrType x)) C)
+
+  [[ &x ]] = address x
+
+  [[ f(x1,x2,...,x_n) ]] C = foldr
+        (\x c xs -> [[ x ]] (c . (:xs)))
+        (\xs -> [[ f ]] (\(args, body) -> [[ body ]] (\_ -> C' 0) . push (zip args xs, C')))
+        [x1,x2,...,x_n]
+        [] where
+        C' z = C z . pop
+
+  [[ x ]] C = lookUp (\(dict, _) -> C (lookup' x dict))
+
+  [[ T x, x2, ..., x_n ]] C = C 0 . define [x,x2,...,x_n] (sizeof T)
+
+  [[ T x = expr, x2 = expr2, ..., x_n = expr_n ]] = [[ T x, x2, ..., x_n; x = expr; x2 = expr2; ...; x_n = expr_n ]]
+
+This concludes the formal semantics. I left out a few things, such as the break and continue keywords. I used a few functions that still need to be defined. They manipulate memory, which describes a stack, static memory, and heap:
+
+  Let state = ([([(Name, [byte])], [byte] -> state -> state)], [(Name, [byte])], [[byte]])
+
+Now I can define the functions:
+
+  Let lookUp C st@(stack, static, heap) = let (dict, c) = head stack in C (map ((,) 0) dict ++ map ((,) 1) static, c) st
+
+  Let lookup' x dict = fromJust (lookup x dict)
+
+  Let update' x y (z:zs) = if fst z == x then (x, y) : zs else update' x y zs
+      update' x y [] = [(x, y)]
+
+  Let update x y (stack, static, heap) = if isJust (lookUp x stack) then (update' x y stack, static, heap) else (stack, update' x y static, heap))
+
+  Let push pr = update' (\(stack, static, heap) -> (pr : stack, static, heap))
+
+  Let pop (stack, static, heap) = (tail stack, static, heap)
+
+  Let define ls sz ((dict, c) : xs, static, heap) = ((map (\x -> (x, replicate sz nasalDemons)) ls ++ dict, c) : xs, static, heap)
+
+  nasalDemons is a fixed value that you don't know what it is.
+
+A pointer is defined as a triple (Word2, Word, Word30). The first entry is 0 for the stack, 1 for static memory, or 2 for the heap. The second entry is the index of the block, and the third entry is number of bytes into the block.
+
+  Let updateBlock b i y blocks = take b blocks
+    ++ (take i (blocks !! b) ++ y : drop (i + length y) (blocks !! b))
+    : drop (b + 1) blocks
+
+  Let updateAt (n, b, i) y (stack, static, heap) = case n of
+    0 -> (updateBlock b i y stack, static, heap)
+    1 -> (stack, updateBlock b i y static, heap)
+    2 -> (stack, static, updateBlock b i y heap)
+
+  Let derefBlock b i sz blocks = if b >= length blocks || i + sz > length (blocks !! b) then
+      error "Segfault"
+    else
+      take sz (drop i (blocks !! b))
+
+  Let deref (n, b, i) sz C (stack, static, heap) = case n of
+    0 -> derefBlock b i sz (concatMap (map snd . fst) stack)
+    1 -> derefBlock b i sz (map snd static)
+    2 -> derefBlock b i sz heap
+
+  Let address x C = lookUp (\(dict, _) -> let (i, (n, _)) = fromJust (find (\(i, (n, (y, _))) -> x == y) (zip [0..] dict)) in C (n, i, 0))
+
+----
+
+Memory representations:
+
+*Integers are two's complement, with system endianness and a size determined by their type.
+*Floating point types are IEEE standard.
+*Pointers are represented in memory using an unknown mapping. All you know is that pointers to bytes in a block are contiguous, and there is no allocated byte at 0x0.
+
+The behavior and layout of arrays, structs, unions, and enums can be built using these primitives.
+
+Also notice that, since to the semantics pointers are just lists of bytes, you can form invalid pointers, and cast and alias freely.
+
+----
+
+I can also define the standard library:
+
+  Let hPutChar hdl c C = C 0
+
+  Let hGetChar hdl `c C = C c
+
+The backtick denotes a variable that is filled in by the environment. When considering a pair of programs communicating through a handle hdl, I use the following reduction:
+
+  (hPutChar hdl c C st, hGetChar hdl `c C2 st2) ~~> (C 0 st, C2 c st2)
+
+Fork produces two processes the states of which evolve independently:
+
+  Let fork C st = (C 0 st, C 1 st)
+
+I promise never to let the states interact except at memory barriers. The two memory barriers are defined thus:
+
+  Let readBarrier C = C 0
+
+  Let writeBarrier C = C 0
+
+When the two processes are like this, their states are ready to interact:
+
+  (writeBarrier C st, readBarrier C2 st2) ~~> ?
+
+I reduce this by:
+
+1) Figuring out which memory cells the first process touched.
+
+2) Applying those changes to the cells of the second process.
+
+3) Adding blocks created by the first process to the state of the second.
+
+4) Fixing up pointers to point to those blocks.
+
+  Let exit n _ st@(stack, _, _) = let (_, C) = last stack in C n st
+
+  availableBlocks is a number between 0 and 2^32-1
+
+  Let malloc sz C (stack, static, heap) = if length heap >= availableBlocks then
+      C 0x0 (stack, static, heap)
+    else
+      C (2, length heap, 0) (stack, static, heap ++ [replicate sz nasalDemons])
+
+  Let free p C = deref p 1 (\_ -> C 0)
+
+By JamesCandy
+
+CategoryCee

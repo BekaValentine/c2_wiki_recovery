@@ -1,0 +1,143 @@
+Describe TimeSeriesInSql here.
+
+A sorta kinda MicroArchitecture production.
+
+'''Prologue:'''
+
+Time series data is data with a series of times. It effectively adds a timestamp to the primary key.
+
+For example, I wish to record a stock price throughout a day. So I have a table with a key of <stock symbol> <timestamp>, and I add records as I go.
+
+For various reasons people do time-series badly in SQL, to the extent that special database systems exist to handle it efficiently. This is mostly unnecessary if it is done correctly.
+
+--RichardHenderson
+
+Some notes:
+
+* data is often "gappy", you typically don't have prices for weekends and holidays
+* if no point is available for a particular time, you often want the next-best record
+* "next best" is typically the record closest to this in time, but before it...
+** the best price for sunday is friday
+
+--MauryMarkowitz
+
+-----
+
+The first basic principle is that there should be a table per meaningful primary-key fragment.
+
+In the stock-ticker example, we need more than just a <stock symbol><timestamp> keyed table. We also need a <stock symbol> keyed table. This has a unique row per <stock symbol>.
+
+The <stock symbol> rows provide room to store time-series information, like the <timestamp> of the 'latest' row. The information is usually updated as rows of time-series data enter. This doesn't hurt performance significantly unless you are already on the ragged edge for insertion speed. Then you've got problems anyway.
+
+Given that we have a table row for each primary-key fragment, we can guarantee ACID transactional behaviour against that fragment. Thus we can guarantee that when the 'latest' row is inserted, it is done in strict order from the most recent 'latest' row. Furthermore nasty and unreliable aggregate max() functions are avoided. This approach is both more reliable and extremely quick since only one row needs to be queried to get the 'max()'.
+
+-------
+Part II:
+
+Sometimes the above is not enough. A perfect data system would never physically delete anything. It would also be able to repeat a query's results no matter how long ago the original query was made. The way to do this is by using continuous versioning with an effectivity span.
+
+An effectivity span starts when a record is entered, and ends when the record is replaced. Therefore one adds to a row '''two''' timestamps. One for the beginning of the row's vailidity, and another for the end. When a row is entered it must update the preceding row. A new row needs a sentinel value for its enddate, I usually use a huge date in the future as it works nicely with point queries.
+
+Queries now need to supply a query time/date which is used to find records effective at that date. An effective record will have a start timestamp <= query timestamp and an end timestamp > query timestamp.
+
+This organisation works well with relational indexes if one is a little careful about ordering etc. Specifically there shouldn't need to be an index-scan for any particular point in time.
+
+A record's status now depends only on the date of a query. No more 'status' flags. Data volumes may increase markedly, but disk is cheap, and records can be physically deleted/archived as required.
+
+This technique also tends to remove the need for aggregate functions, particularly the 'minimum after this date' or 'maximum before this date' type processing which tends to make reporting crawl along.
+
+----
+Part III:
+
+After having tried three different solutions to this problem, the conclusions suggest that Part II is provably the worst possible solution, and the unnammed Part I a good idea but could be better implemented.
+
+But before I start, the best solution would actually be a spanning index type in the database, combined with a "CLOSEST TO" syntax for the WHILE/HAVING. Illustra had this, but is now dead, I believe Oracle also supports some sort of spanning index. This seems like a VERY good upgrade to postgres. Anyway...
+
+There are typically three solutions to the "get the latest record from this list" in SQL
+
+# use MAX to find the highest-dated entry before the date-of-interest
+# use a subselect, (SELECT TOP 1 securityId ... GROUP BY securityId ORDER BY date)
+# use start/end dates, maintained with triggers
+
+I first worked on a solution like 3, what is outlined in Part II. The developer argued that it would have the best performance for a number of reasons...
+
+* WHERE's only use one index at a time, so there's going to be a lot of data to process and MAX will be slow
+* the ORDER BY uses the temp table, so the subselect will be slow
+* with indexes on both the start and end, spanning selects would be fast
+* triggers are slow, but you do few inserts for lots of selects, so no real issue
+
+In reality all three of these assumptions are wrong. I actually built examples of all three using a 1.5 million-row prices database and then benchmarked them using the SQL performance monitors. The results were...
+
+# MAX looked at the indexed date AND the indexed secid, hashmatched them, done.
+# subselect did almost the same thing, but then did one more select into the table to get the data referred to by the ID returned from the inner query. The order by does not really cause a temp lookup if the data is in the index, which it is.
+# the startDate/endDate query was 100 times slower than the other two, NOT including the trigger performance. In total this was about 1000 times as slow overall. Why? Because in this case it could only use one index due to the AND in the WHERE, so it had to select all the rows for a particular security and then rowscan them for ones where the endDate matched.
+
+Lesson learned: the only way to know is to try it!
+
+Other considerations:
+
+Part I suggests having a separate table to store pointers into the data. Given my benches, I doubt this will help at all, in most cases I saw one page hit on the index, and one more on the data table. With a lookup/join I would guess this would be slower. However there is the issue that the "latest data" is what people actually want 99% of the time. For this reason it might be worthwhile storing it into the security master table itself (ie, if you look up IBM, you'll likely want to do so to know it's price).
+
+Finally there is a clustering consideration. Clustering on date will give you the best lookup performance given lots of data points for any particular instrument -- ie, 100 instruments, 1000 prices per instrument. The opposite is true for the case where there are more instruments than data points (although for stocks/prices this would be rare, for other types of data YMMV).
+
+However this has a downside that inserts will be locking the same pages of the index. This might cause problems if you have multiple updaters. It was not a consideration for us so I went this way, but again, the only way to know for you is to try it.
+
+--MauryMarkowitz
+
+----
+Time Series is related to Version Info ?
+
+The company I work for has a database of configuration variables for software they manufacture.  As the software develops, new variables appear, old ones are retired and some variables change slightly, the default values change, or their legal values change.  ''Q: What is it used for?  A: It is used to generate web pages which can then configure the device.''
+
+Currently each time a new software version is released all the existing data is copied and the ''version field'' in the copy updated.  This has, to say the least, rather got out of hand.  However an earlier system which had a start-validity and end-validity field for each variable seemed to suffer from very very slow queries.  In hindsight the problem may have been that when a configuration variable changed slightly it had to be deleted and then re-instated again.
+
+Can using a time series help here?  I think probably yes.  Each configuration variable would have a start validity entry, an entry for each change and (optionally) an end validity entry.  Effectively there is a time series for each configuration variable.  A single query should be able to efficiently determine what configuration variables belong to a particular version without massive duplication of data.
+
+: Indeed, the issue is identical -- get the "latest record" for "this thing".
+
+------
+
+Well its been a while since I came here. I'm tempted to challenge Maury's results.
+
+A 'select max(thing) where thing < boundary' statement requires an aggregate of some sort, usually an 'order by and take the first/last' so Maury's subquery case really is pretty much the same as the max() case, with some differences in the optimizer. 
+
+More interesting is the fact that his ranged case is so slow. My experience was with Sybase and Oracle which can do a range query against a compound index. With care this results in a minimal lookup (about the depth of the index tree structure) with a single record to be found. For a million rows, say a tree depth of 5, that's 5 page io's, probably in-cache. No way this can be beaten in the general case because it really is the minimum possible.
+
+Without the actual results (data plus page i/o's) its difficult to be sure. Nevertheless I would still recommend the ranged alternative as being more correct, easier to lock, and generally higher performance if you've got an enterprise class rdB.
+
+I agree about the 'latest' data in the upper level record, it is the same principle of avoiding aggregates by storing them.    -----RIH.
+
+:Actually the ranged query was on Sybase (the first time, but not in this example). 
+:I did _not_ use a compound index for this example, however. I would be more than willing to re-test that case for you, given the same data set (ie, real-world stock market prices, several million rows). If you have suggestions on the exact setup, please pass them on -- ie, three-way with start,end and security, or two-way of just start,end?
+:Just one note, yes, the subselect and MAX really do pretty much the same thing. The difference is that it doesn't have to do one more lookup into the table. IE, the subselect does the query and returns the id, then does another select to get the row for that id. The MAX does all of that work on the indexes, which returns the matching row ID directly and fetches it. It's exactly one less op, and faster by only a tiny amount.
+:As to the exact timing, let me see if I still have them. I see them in my notes here (you all keep a notebook, right?) but they seem rather suspicious.
+--MauryMarkowitz
+
+Maury, I cancelled out the "MS product" stuff  (if only we could edit in life as in here). Do try the compound index. It is essential to get the point-query behavior in the index. When I first programmed it (with a few million rows) it was tricky to get it working, but once it was right it was robust and quick. Much, much quicker than using a 'max()' function on a sub-select. I got reports down to seconds from hours.  --RichardHenderson.
+
+------
+
+Just a small side-note: I've found quota queries to be a helpful means of formulating queries like those described on this page. Although not part of standard SQL, many dialects provide them, and it's a very useful logical concept. Executing a quota query still boils down to an "order-by and take first/last" strategy, but they're usually a succinct way of expressing this that's very likely to take advantage of indexes. -- DanMuller
+
+''Ooh Dan, you tease, can you give an example/reference? I tried but didn't find 'quota query' on the wooly web.''
+
+:Quota-queries are a term introduced by Fabian Pascal in his ''excellent'' SQL-comparison charts. He makes them distinct from TOP n, which returns the first n rows, in that a quota-query will return ties. IE, a TOP 3 will always return 3 rows (well, depending on the DB I guess), whereas a quota-query of three might return 4 rows if two have the same value of some determinant field.
+:As Dan notes, they really do the same basic thing as a TOP/ORDER BY, but in some versions of SQL they can look a lot nicer.
+:See http://troels.arvin.dk/db/rdbms/#select-top-n
+--MauryMarkowitz
+
+Ah, I didn't realize that Pascal coined the term. Chris Date also uses the term in his books, e.g. TheThirdManifesto. FWIW, even Microsoft's Jet database engine supports quota queries in the form of a TOP <n> clause on a SELECT, and it works just as it should, returning more than <n> records if there are ties. -- DanMuller
+
+Maury: Thanks for referring to my page. In my vocabulary "top-n" queries and "quota" queries are the same thing. I don't have a word for what you call "top-n", other than "first n rows from ...". And I don't see Pascal making a distinction between "top-n" and "quota" queries in his ''Practical Issues in Database Management''.
+Dan: In MSSQL, at least, "SELECT TOP n ..." will not return ties but perform an arbitrary (de)selection of rows. If you want ties included (no arbitrary situations), you need to do "SELECT TOP n WITH TIES ...".
+-- TroelsArvin
+
+How does this solve the 'max() from a range' problem?
+
+------
+
+
+Here's a ref:
+http://martinfowler.com/ap2/timeNarrative.html ( BrokenLink )
+
+CategorySqlProgramming

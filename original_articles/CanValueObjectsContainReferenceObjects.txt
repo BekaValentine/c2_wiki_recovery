@@ -1,0 +1,67 @@
+In ValueObjectHypotheses, the following is proposed:
+
+
+"ValueObject''''''s can only contain references to other ValueObject''''''s. (If a ValueObject referred to a ReferenceObject it would not be truly immutable.)"
+
+I would modify this statement to say that the logical ''state'' of a ValueObject cannot include the state of a ReferenceObject.  One could go further and add: unless the ReferenceObject is fully encapsulated by the ValueObject.  However, I'm not sure if this would really occur in practice -- typically, if a ValueObject encapsulates a mutable object that object should have been an immutable ValueObject in the first place.
+
+A ValueObject can contain a reference to a ReferenceObject as long as the state of the ReferenceObject is not treated as part of the state of the ValueObject. E.g. the state of the ReferenceObject cannot be tested in the comparison operators of the ValueObject.
+
+For example, one might define an Address ValueObject that represents the network-wide address of a ReferenceObject.  An Address object could hold a reference to the ReferenceObject it refers to if the Address and ReferenceObject is in the same address space.  The ''reference'' affects the state of the Address -- it could be tested  by an isLocal method -- but the state of the ReferenceObject does not.
+
+-- NatPryce
+
+Can anybody think of a good reason for holding a reference to a ReferenceObject within a ValueObject? ''perhaps a ValueInterface?''
+
+''What about this:''
+
+'''transaction log attributes'''
+	date:	value object
+	customer:	Is this a reference to a reference object?
+	quantity:	Value object
+	commodity:	Is this a reference to a reference object?
+
+'''problem:'''
+The customer attributes can change over time if the customer is seen as a reference object. The same is true of the commodity. (If you have traded with A Co. and then A Co. calls itself B Co., the history of transactions should remain unchanged - i.e. listing transactions will still reveal entries containing the customer named "A Co.".) Also, if the commodity is discontinued, the transaction log entries relating to that commodity would exhibit the DanglingReferenceProblem.
+
+'''possible solution:'''
+Use the momento design pattern to store a fixed, value object representation of the customer and of the commodity in the log. 
+
+''Overall idea with the solution:''
+The customer and commodity database information reflects the ''current state'' of affairs, but the log refers to distinct points ''in history'' - i.e. different values so we choose to record those significant past values needed for reference in the momento.
+
+Is this plausible?
+
+Can you think of other examples? 
+
+How about java.lang.String?  The String object (I assume), refers to an array of chars, which by definition is a ReferenceObject in Java.  Since the array is never exposed to the outside world, it is effectively a value object. -- CraigPutnam
+
+In LifeTech we have a timestamp ValueObject that contains a posting date, an effective date (both ValueObject's) and a business task (definitely a ReferenceObject). The task is only compared for identity inside the timestamp (that is, no behavior of the timestamp depends on state of the task). --KentBeck
+
+Another -- perhaps unfortunate -- example, is when you already have a non-value object class that you wish to use in composing a value object class. The transaction log above would be an example of this using the java.util.Date class. Date is not immutable, but the transaction log class could treat it as if it were. A getter for the date would have to provide a clone and not the actual component.
+
+Alternative approaches: wrap java.util.Date in an immutable date class, roll your own immutable date class, or don't provide a getter. -- KielHodges
+
+----
+
+Part of the reason for wanting to exclude ReferenceObject''''''s from ValueObject''''''s (and for having ValueObject'''''''s in the first place) is to make sure invariants stay invariant.  Many bugs are introduced when an object is subject to an invariant (needed for it to be used within some context, or an internal invariant) and subsequently changed, violating the invariant.
+
+With that in mind, here is another idea.  Currently, the literature (both academic and practical), as well as WikiWiki, is flush with the concept of "accessors" and "mutators".  Accessors are functions which do not change the state of an object; "mutators" are those which do.  Obviously, a ValueObject cannot have mutators; mutators are of no further interest to us in this discussion.
+
+However, accessors can be subdivided further; and I need good names for these two classes:
+
+* Accessors which are ''pure functions'' in that if invoked on the same set of arguments, they always return the same value.  Things like "hashcode", identity tests, and tests for semantic equivalence ought to be "pure" in this function.
+
+* Accessors which are "impure" in that consecutive calls to the same argument may return a different result.  An example would be a call to query the size of a resizeable container; a call to get the system time (depends on a volatile property), or a call to query a global variable.  Impure accessors depend somehow on state which may be changed by mutators (or by some other process).
+
+It should be easy to see that pure accessors can only call other pure accessors.  (It might be possible for them to call impure accessors and still remain pure themselves; however this might be impossible to prove).  Likewise, pure accessors can only refer to immutable fields in any object.
+
+With this taxonomy in mind; here is a proposal to relax the "no reference objects" rule:
+
+* ValueObject''''''s may contain pointers/references to reference objects (these pointers may not be rebound over the life of the ValueObject)
+
+* All member functions on a ValueObject must be pure accessors.  Such functions may invoke pure accessors on any ReferenceObject''''''s referred to by the object, ''but not impure accessors.''  In other words, state changes in the ReferenceObject are not "visible" to the pure accessors of the containing ValueObject--preserving the invariance of the pure accessor.
+** Note that object identity is a pure accessor; so this proposal subsumes the proposal above of "you can reference the pointer but not call the methods".
+** We might allow impure accessors in a value object; however things like equality testing, hash generation, invariants, etc. should be pure.
+
+

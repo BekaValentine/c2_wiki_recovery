@@ -1,0 +1,173 @@
+Top's Query Language (TqlRoadmap) '''Example 1''' (and variations there of)
+
+This example returns the top 6 earners in each department based on this table schema:
+
+  table: Employees
+  ----------------
+  empID
+  dept
+  empName
+  salary
+First Version of Query:
+
+  srt = orderBy(Employees, cols("dept, salary"), "order")
+  top = group(srt, cols("dept, max(order) order"))  // footnote [1]
+  top2 = calc(top, cols("(dept) dept2, order"))
+  result = join(srt, top2, "a.dept=b.dept2 and b.order - a.order < 6")  // see quote note
+  // a shorter version is given later
+Here is a description of each step:
+
+* "srt" - Create ordering sequence numbers based on salary, but numerically grouped by department also.
+
+* "top" - Find the maximum order number for each department.
+
+* "top2" - Create an alias department name so that it does not get wiped out during the join. (Joins default to first table if overlapping column names.)
+
+* "result" - Join the maximums with the sequenced table. Only those matching will be left over. Only the top 6 in each department should have join matches. Note that we have to also match on department in case a department has less than 6 people, causing the number range to "drift" into neighboring departments.
+
+Simplifications of the query are described below.
+
+-- TopMind
+
+----
+
+This example shows a variety of statements.
+It does not minimize the code.
+In particular, the top and top2 statements can be combined,
+as shown below.
+
+Even with the comments, this TQL code is much shorter and easier to understand than the corresponding SQL code.
+
+''Note that SQL usually does not include ordered sequence number generation, which makes these kinds of problems trickier. It would be interesting to compare TQL and SQL for the same problem if sequence number generation is not used. However, sequence generation was included because sorting by itself is not part of formal relational, but generating a sequence column is conformant as far as I know. --top''
+
+----
+'''The commented example'''
+
+ // The code actually returns the top 6 salaries in each department.
+ // If there are fewer than 6 rows in a department,
+ // it returns all of the rows in the department.
+ // If there is a tie for sixth place in a department,
+ // the tied row with the greatest primary key is returned.
+
+
+ // Start with the Employees table.
+ // Sort the rows by department, 
+ //             with salary as the first tie-breaker,
+ //             and  the primary key as the second tie-breaker.
+ // Create an "order" column to store the sort-order.
+ // The values in the "order" column range between 
+ //                  1  for Astronomy 1111 and 
+ //             and  the number of rows in the Employees table
+ //                     for Zoology  99999.
+ // Even though TQL does NOT necessarily assume 
+ // a "typed" relational database,
+ // this comment assumes that 
+ // department names can be sorted as strings,
+ // and salaries can be sorted as numbers.
+ // See also:  DoesRelationalRequireTypes
+ // Because we are using the default ASCending sort order,
+ // the "Astronomy" department comes before the "Zoology" department.
+ // Within each department,
+ // because we are using the default ASCending sort order,
+ //                 small salaries (like  1111)  come  before
+ //                 big   salaries (like 99999).
+ // Output the result to the "srt" temporary table.
+
+  srt = orderBy(Employees, cols("dept, salary"), "order")
+
+
+ // Start with the srt temporary table.
+ // Group the rows by department.
+ // For each group (that is, for each department)
+ //             output the department name 
+ //                and the maximum of the "order" column.
+ // In effect, this gives the index (within the srt table)
+ //                of  the highest salary in each department.
+ // Output the result to the "top" temporary table.
+ 
+  top = group(srt, "dept", cols("dept, max(order) order"))
+
+
+ // Start with the top temporary table.
+ // Alias the dept column to be "dept2",
+ // so that it does not get wiped out during the join. 
+ // (Joins default to first table if overlapping column names.)
+ // Output dept2 and the corresponding maximum order number.
+ // Output the result to the "top2" temporary table.
+
+  top2 = calc(top, cols("(dept) dept2, order"))
+
+
+ // Start with the srt and top2 temporary tables.
+ // Within each department, choose the rows (from srt)
+ // that have the 6 highest salaries.
+ // If there is a tie for sixth place in a department,
+ // the tied row with the greatest primary key is returned.
+ // If a department has less than 6 rows,
+ // choose all of the rows in the department.
+ // Note that we have to match on department 
+ // in case a department has less than 6 people, 
+ // causing the number range to "drift" into neighboring departments.
+ // Output the result to the "result" temporary table.
+
+  result  = join(srt, top2, "a.dept=b.dept2 and b.order - a.order < 6")
+
+--AnonymousDonor
+
+--------
+
+Reader exercise: Modify salary example to ensure that all ties are also included. Hint: find a way to use salary to do the final comparing instead of position.
+
+----
+'''Refactoring TQL Code'''
+
+The top and top2 statements can be combined, like so:
+
+  top2 = group(srt, "dept", cols("(dept) dept2, max(order) order"))  // [1]
+
+This refactoring (and related discussion) earned the first ever TQL certificate.
+
+''Note that the original was meant to illustrate a variety of statements (four) rather than necessarily strive for brevity.''
+----
+Here is the example reworked using the shortcut mentioned, revised simplified "group" parameters[1], and "native" column syntax (still under consideration, see TqlOverloading). Note that parenthesis are needed whenever there may be ambiguity between actual parameters and column specifier commas.
+
+  srt = orderBy(Employees, [dept, salary], order)
+  top = group(srt, [(dept) dept2, max(order) order])
+  join(srt, top, a.dept=b.dept2 and b.order - a.order < 6)
+
+And, we don't need the last table alias ("return") because it is implied.
+
+--top
+-----
+'''Discussion'''
+
+Because the join syntax has been clarified to default to the first table
+(even when an unqualified field name is only in the second table),
+the result line now has fully qualified field names.
+
+With fully qualified field names in the join,
+a different refactoring can be used.
+Instead of combining the top and top2 lines,
+we can combine the top2 and result lines, like so:
+
+  result  = join(srt, top, "a.dept=b.dept and b.order - a.order < 6")
+All of the "a." qualifiers are optional.
+On the other hand, all of the "b." qualifiers are mandatory. See TqlPrefix.
+
+{I suppose. Note that due to the ambiguity rules, the result would select the first table's 'dept' column, although in this case it may not matter. Sometimes it may matter for capitalization and padding issues. Passing equality tests and being fully the same are not always the same thing. Normally I try to avoid getting into such a situation by creating aliases, but if it creates lots of code, then maybe it is not worth it.}
+
+Comments about natural joins moved to TqlLacksaNaturalJoin.
+
+------
+
+'''Temporary Vs. Virtual'''
+
+Re ''Output the result to the "srt" temporary table.''
+
+Technically it should be "temporary or virtual table". There is no requirement that a table actually be generated as long as the final result is returned as expected. An optimizer engine can perhaps find shortcuts that don't require actual physical temporary tables to achieve the expected result. However, if we allow "dump" or trace options that export or display intermediate tables, then such optimizations may have to be bypassed when such statements are present. --top
+--------
+''Footnotes''
+
+[1] The Group statement has since been simplified and one parameter has been removed. Some of the related examples and commentary may still show the deprecated parameter.
+----
+CategoryTql, TqlRoadmap

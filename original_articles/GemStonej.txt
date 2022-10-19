@@ -1,0 +1,64 @@
+The GemStone/J application server from GemStone Systems, Inc.
+
+A container for running Java 2 Enterprise Edition application components (e.g., EJBs, JSPs, Servlets) that provides persistent object caching, HotSpot integration, an ObjectTransactionMonitor, JavaSecurityArchitecture implementation, and ORB access.  Its core persistent object caching technology has been shipping since 1987.  Technology partners integrate complementary solutions in the areas of workflow and legacy system access (including O/R mapping).
+
+----
+It seems that GemStone has pretty much given up on their EJB-container to concentrate on the persistent cache architechture (basically the ObjectOrientedDatabase I guess?) http://www.gemstone.com/news_events/gsj_faq.html
+
+----
+Is there a place I can find some sample code that demonstrates how GemStonej is actually used ? I downloaded the eval, titled "Developer's Guide to iCommerce Success", but it seems to focus more on EJBs; what I want to check out is how one goes about instantiating some objects, putting them in the box, then getting them out of the box again, and whether there is anything special I need to do before, after or during these operations. (Such as running a preprocessor, updating a mapping configuration file, or whatever.)
+
+----
+By default when you install the GemStonej eval license and the FoodSmart application that comes on the Developer's Guide CD, FoodSmart uses GemStonej's Persistent Cache Architecture (which is what I assume you mean by "how GemStonej is actually used" and "instantiating some objects, puttin them in the box, and getting them out of the box again").
+
+Here's how it works.  Persistence is orthogonal to type; you don't have to subclass or implement anything to persist objects.  Objects persist by reachability from other objects that are already persistent.  So when you create a GemStone "system" (akin to an "instance"/"database" in Oracle parlance), there is a default set of root persistent objects.  These happen to be JNDI contexts.  When you deploy an application into GemStonej, a new subtree is bound into the persistent tree of contexts.  One of the contexts in the new subtree for your application is named "Objects".  You can see all this if you launch the GemStonej Console and drill into the tree view on the left.
+
+Anyway, in a FoodSmart installation's "Objects" node there is an instance of DomainRegistry, which has a hashtable of DomainObjectRegistry instances (one for each "root" domain object class whose instances need to be externally findable - instances of subobject classes are reached by navigation from instances of these root classes).  Each DomainObjectRegistry has a couple of hashtables to register objects by primary and secondary key.  The DomainRegistry object is transactionally bound into the "Objects" context by an "initializer" or "loader" program - see com.gemstone.gps.egrocer.admin.Loader, if memory serves.
+
+So, when a new Recipe or Food is added at the user interface, what happens is that new entries are transactionally put into the appropriate DomainObjectRegistry's hashtables.  The transactions are controlled by the EJB container.  That's it.  No more to it than that.  No pre-processors, no config files, etc.  Getting objects out of PCA just involves invoking JNDI lookup methods and navigating from the looked-up object.
+
+To get a sense of the interactions, look at, say, com.gemstone.gps.egrocer.services.RecipeManagementServiceBean, which ultimately causes invocations on com.gemstone.gps.egrocer.persistence.PCAPersistencePolicy.
+
+Note that FoodSmart can be made to switch to relational persistence by changing properties in a config file (persistence.properties, if I remember correctly).  That just causes a RelationalPersistencePolicy to be used instead of a PCAPersistencePolicy.
+
+Incidentally, these design choices about what to bind into JNDI, what kinds of objects to register in registries, etc., are just that - design choices.  In a persistence-by-reachability scenario (as opposed to a table-for-every-type scenario), I've found the strongest heuristic for what kinds of objects need to be registered to be "what kinds of objects need to be externally findable".  These you register; their subobjects you reach by navigation.
+
+-- RandyStafford
+
+----
+Thanks, Randy. This is immensely useful. I'm trying to convince management that we ought to give GemStonej a shot, if only because of the HammerTruism thing with SQL; the answer in a nutshell was "everybody uses JSP and SQL/JDBC, with maybe a pinch of EJBs thrown in, so that's what we'll do too". To which my own knee-jerk reaction is to learn more about the alternatives, and determine to my own satisfaction what actually works.
+
+''I wish you good luck.  GemStone is way cool.  It can save you a lot of development time and response time for complex domain models, to not O/R map them. --RS''
+
+----
+''Do you know if GemStonej guarantees that Object.finalize() is called when persistent objects are garbage collected?''
+
+That's actually a really interesting question.  No, I don't know off the top.  GemStonej actually has multiple garbage collectors.  There is one for each JVM, of course.  Just the standard HotSpot stuff.  I'm sure it calls finalize().  Then there is one for the extent file on disk, to get the objects that were once written into the extent file but then became disconnected from persistent roots as part of some later transaction.  For these I don't know the answer.  I'll see if I can find it, and post it. -- RS
+
+Oy. I'm still struggling. I uninstalled and reinstalled the FoodSmart sample, checked that it seems to work OK, toured the sample from the console as suggested above; then I created a new "system" and "application" from the Console. Now what... I'm still looking for the "Hello World" equivalent of GemStonej; the minimal amount of code that can run in a UnitTest to tell me that things are indeed working. Can Randy, unless I've abused his patience, or anyone else help me fill in the blanks below ? I'm running this under JUnit in "my own" VM (not GemStonej's), with access to all of GemStonej's jars.
+
+	// This seems to work
+	SessionManager sm = new gemstone.services.SessionManagerImpl(systemName);
+	// The following fails with "access denied admin.credentials"
+	GsSessionIF = sm.getSessionForCurrentThread();
+	// 
+
+Laurent- On the assumption that you're using GS/J 4.1, there are some system properties you need to pass to the VM running the test case.  And I believe you need to use a GS/J VM to interact with GsSessions.  The system properties are:
+
+	 :	-Dgsj.systemname=(your system's name)
+	 :	-Dgsj.launcher.appname=(your application's name)
+	 :	-Dgsj.credargs=boot
+
+As an aside, there are probably better places than the WikiWikiWeb to discuss very specific GemStonej matters such as these.  For example, the following forums exist:
+
+* GemStone's support site at http://support.gemstone.com
+* The GemStone/J Customer forum email list, whose web interface is http://earth.lyris.net/cgi-bin/lyris.pl?enter=gemstone-java
+* The newsgroups at GemStone's "Java''''''Success" site - news://edemo.gemstone.com/javasuccess.general
+
+Best Regards, RandyStafford
+
+----
+In our shop, we've had performance problems with GS/J.  We have one app that uses a database predominantly for reads, and GS/J does fine in that space.  But in another application requiring a high volume of update transactions against a large data store, it turns out to have problems with performance and stability.  Beware using this product in a high-volume environment.
+
+----
+CategoryJava

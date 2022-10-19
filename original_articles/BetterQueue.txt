@@ -1,0 +1,52 @@
+An example of how MicroArchitecture makes a difference.
+
+A typical queue synchronizes on its access routines.
+
+A better queue synchronizes implicitly.
+
+The typical queue mistakenly assumes that locking must occur to update the tail/head structures safely. This is true in a multi-access queue, but in a normal single-client queue (e.g. a process pipe) this is not the case. The potential problems are:
+
+    Putter overwrites good entry.
+    Getter gets non-good entry.
+
+These only occur if the tail and the head collide. This can be prevented without locking.
+
+Pseudocode :
+
+ int Q.put(Object myItem) {
+ if putPoint != getPoint {
+    addItem(myItem, putPoint);
+    nextPutPoint();
+    return SUCCESS;
+ }
+ else
+    return FAIL;
+ }
+
+ int Q.get(Object yourItem) {
+ if getPoint != putPoint {
+    getItem(yourItem, getPoint);
+    nextGetPoint();
+    return SUCCESS;
+ }
+ else
+    return FAIL;
+ }
+
+This can be broken by an optimizer changing the sequence of op's, but that can be avoided by creating a dummy sequence dependency on some value e.g.:
+
+ int dummy;
+ dummy = addItem();
+ nextPutPoint(dummy);
+
+Obviously the particular SUCCESS/FAILURE channel may be implemented differently. Here I'm using the return code Unix style.
+
+In a high-speed buffer this approach is significantly quicker, and collision frequency may be varied by changing the length of the buffer. It works because the tail isn't moved until it is pointing at a non-empty entry. Similarly, the head isn't moved until the entry is consumed. The only trick involved is the starting point. We don't want a get on an empty queue but we do want a put. We can set the head and tail to equal indexes, and test for an empty queue in the put() routine so it can write.
+
+A multiAccessQueue has a sharing issue in that there is a delay between reading the value of the tail/head, and writing it again. This can cause phantom reads or overwrites.
+
+Rewriting get() to be safe for multiaccess. We need to isolate getPoint and update it successfully. This implies we need to synchronize the get() function on getPoint, and synchronize the put() function on putPoint. '''They should not both synchronize on the same monitor, as this may result in processes missing a relevant notify.''' It is simple to apply the synchronization as a strategy. Alternatively a LockAdapter may be grafted onto each function.
+
+Where this is till too much synchronization, a MultiQueue may be more appropriate (consumer consumes from many queues). -- RichardHenderson.
+----
+Deary me. Please see the bad patent: 6304924.

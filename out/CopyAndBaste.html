@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Copy And Baste
+      </h1>
+      <p>
+        Making a sub-domain-specific subset copy of corporate or "master" databases and adjusting it to reflect local needs. This pruning, tuning, and re-translating for local needs has been nicknamed "basting" here, making a play on words surrounding <a href="CopyAndPaste.html">CopyAndPaste</a> (with a "P").
+      </p>
+      <hr/>
+      <p>
+        <em>From </em><a href="DepartmentInfoMirroring.html">DepartmentInfoMirroring</a>...<em></em>
+      </p>
+      <p>
+        If a way can be found to automate a copy process, it can be a <strong>very powerful tool</strong> when the "copy" can be reprojected in a way that better fits the <strong>local</strong> (section-specific) users or needs. For example, your particular department may only need a small subset of all available info (columns), and the translation step can replace convoluted coding schemes, such as product, service, or status codes, with something more meaningful or simpler for local needs by tossing out idioms or layers meant for other departments but not useful to yours. This can make for simpler and faster queries and data usage. It's customized data abstraction.
+      </p>
+      <p>
+        As an example, I once worked for a big subscription provider that provided several products and services. However, my particular section, which dealt with mostly marketing research and junk mailing/spam (sorry about that), usually only cared about general categories of products instead of individual products. The raw customer product table resembled:
+      </p>
+      <code>
+        Customer_Products<br/>
+        .<br/>
+        customerID|productID<br/>
+        ----------|---------<br/>
+      </code>
+      <ol>
+        <li>
+          ....|......324
+        </li>
+        <li>
+          ....|.......87
+        </li>
+        <li>
+          ....|.....1653
+        </li>
+        <li>
+          ....|.......87
+        </li>
+      </ol>
+      <code>
+        Etc...<br/>
+      </code>
+      <p>
+        (Dots to prevent <a href="TabMunging.html">TabMunging</a> and a wiki spacing bug.)
+      </p>
+      <p>
+        There were others tables, not shown, that mapped specific products into categories. The early programmers kept using the raw table and manually coded product-to-category translations[1] because the joins for obtaining categories was too slow because of the complex relationships in that system. Eventually a smarter set came along and produced a bi-weekly table for our section that resembled:
+      </p>
+      <code>
+        Customer_Product_Categ_Table<br/>
+        .<br/>
+        customerID|categ_A|categ_B|categ_C|Etc...<br/>
+        ----------|-------|-------|-------|------<br/>
+      </code>
+      <ol>
+        <li>
+          ....|...1...|...0...|...1...|...0..
+        </li>
+        <li>
+          ....|...0...|...0...|...1...|...1..
+        </li>
+      </ol>
+      <code>
+        Etc...<br/>
+      </code>
+      <p>
+        A "1" indicated a given customer has at least one product/service that falls into the given category, and "0" means does not have. (Integers were used instead of Boolean or Character to simplify aggregate counting). This simplified queries immensely, and we could still join with the raw table for those occasional queries that needed info about specific products. (This is a somewhat over-simplification for illustration purposes.)
+      </p>
+      <p>
+        One could argue that one should put each category on a different row (columns: customerID, categCode, hasFlag) to make the Customer_Product_Categ_Table more stable such that one doesn't have to change the schema for each new category that came along. However, this would complicate the most common type of queries we did. Further, new categories only came along about once every 3 years on average. It was decided to live with the once-per-3-year change spike to have simpler production queries for everyday work. -t
+      </p>
+      <p>
+        <em>This looks like accidental complexity - working around inadequacies in your technology. Now, that's understandable (you must </em><a href="MakeItWork.html">MakeItWork</a>), but do this often enough and it's time to refactor the solution into your database technology. One possibility: lightweight 'views' that are maintained automatically during relative down-time for the database?<em></em>
+      </p>
+      <p>
+        What do you mean by "lightweight" views? Views are usually immediately generated based on live data, not cached or copied.
+      </p>
+      <p>
+        <em>I mean views that are cached and copied, and thus distinct from the 'usual' views generated by expensive joins on live data before being expensively delivered across the network at each request. Was this unclear in context? The name 'lightweight' alludes to lightweight directory access protocol (LDAP), which is designed for read-mostly work.</em>
+      </p>
+      <p>
+        I do find a common pattern where the "master" data has a good many elements, too many for timely "deep" queries that are exploratory or research in nature. Different parts of the organization may only want to see a subset of roughly 5% to 20% of the total organization domain data, along with some customized re-calculated columns to simplify certain common needs similar to the categories described above, or maybe give semi-meaningful abbreviations to numeric status codes that make more sense to local staff but wouldn't necessarily for other sections, etc. If you extract 10% of the data that your local group needs, queries will typically run roughly 10 times faster.
+      </p>
+      <p>
+        {I think the term y'all are looking for is "materialized view".  A materialized view is a table that caches live data, typically the result of a query.  It may be updated manually or automatically.}
+      </p>
+      <p>
+        Because Oracle (and DB2) licensing can be expensive, many organizations I've worked with use MS-Sql-Server, <a href="MicrosoftAccess.html">MicrosoftAccess</a>, and/or <a href="MySql.html">MySql</a> for the reprojected tables. Since such tables are usually read-only, they are not really playing to Oracle's strength of transaction reliability, and thus Oracle is considered overkill. Therefore, a formal MATERIALIZED VIEW command may not be used.
+      </p>
+      <hr/>
+      <p>
+        <strong>Knowing what changed</strong>
+      </p>
+      <p>
+        If the master dataset is too large to rely on a full copy per update cycle, then some sort of incremental approach is needed. If each table or entity group (such as product or customer) has a "last-updated" column, that can be used to know what changed. If not, then one can use a "round-robbin" approach whereby the local dataset has a "last-updated" date and the oldest in a virtual queue get updated next using a result-set size limiter such as Microsoft's "TOP X" or <a href="MySql.html">MySql</a>'s LIMIT clauses, as illustrated below. Detection of new records will likely require domain-specific analysis, but often relies on "customer-since-date" or the like. -t
+      </p>
+      <code>
+        /* select a chunk of the "stalest" ID's to process */<br/>
+        SELECT TOP 5000 customerID<br/>
+        FROM myLocalCustomerTable<br/>
+        ORDER BY last_updated ASCENDING   /* oldest first */<br/>
+      </code>
+      <hr/>
+      <p>
+        Reasons for <a href="CopyAndBaste.html">CopyAndBaste</a> include but are not limited to:
+      </p>
+      <ul>
+        <li>
+           Having a smaller subset to improve query speed and/or have less info to visually wade through when exploring.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Creating or emphasizing new categories that better fit your local group.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Providing local-group-specific abbreviations or descriptions instead of cryptic codes.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Reducing the number of tables involved to simplify joins and/or improve speed.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Aggregating info (summing, averaging, etc.) to provide a higher abstraction or reduce data set size for speed.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Correcting flaws or historical baggage in original schema design. For example, there may be extra indirection layers in the master data tables that used to serve a purpose but are no longer necessary, and removing them would affect too many systems or is forbidden by the system vendor who has customers who still use that feature.
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        Footnotes
+      </p>
+      <p>
+        [1] To be fair, there were some political and "dumb PHB" reasons for resisting improvement. For one, they wanted <a href="PlugCompatibleInterchangeableEngineers.html">PlugCompatibleInterchangeableEngineers</a>, and a custom table for a small group was seen as against this goal. They first had to be convinced that the simpler table justified a potentially longer learning curve.
+      </p>
+      <hr/>
+      <p>
+        See <a href="DepartmentInfoMirroring.html">DepartmentInfoMirroring</a>, <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryBusinessDomain.html">CategoryBusinessDomain</a>
+      </p>
+      <p>
+        <a href="OctoberTen.html">OctoberTen</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,170 @@
+A GuardClause (one of the SmalltalkBestPracticePatterns, and equally applicable in a whole bunch of languages) is a chunk of code at the top of a function (or block) that serves a similar purpose to a Precondition.
+
+It typically does one (or any or all) of the following:
+* checks the passed-in parameters, and returns with an error if they're not suitable.
+* checks the state of the object, and bails out if the function call is inappropriate.
+* checks for trivial cases, and gets rid of them quickly.
+
+For example ...
+
+  draw() {
+    if (! isVisible()) return;
+    ...
+  }
+
+See also HandleErrorsInContext.
+
+While the judgement call on when to HandleErrorsInContext seems somewhat harder,
+some short sharp guard clauses at the top of a functional block that exit with no side effects seem undeniably to simplify code and improve legibility. As always there is a dissenting view as stated below.
+----
+----
+Here is a sample of code using guard clauses ...
+
+  public Foo merge (Foo a, Foo b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    // complicated merge code goes here.
+  }
+
+Some style guides would have us write this with a single return as follows ...
+
+  public Foo merge (Foo a, Foo b) {
+    Foo result;
+    if (a != null) {
+      if (b != null) {
+        // complicated merge code goes here.
+      } else {
+        result = a;
+      }
+    } else {
+      result = b;
+    }
+    return result;
+  }
+
+This second form has the advantage that the usual case, the merge, is dealt with first. It also has a single exit as the last line of the routine which can be handy with some refactorings. It has the disadvantage of separating the exceptional conditions from their corresponding results which, in this case, makes it harder to see the symmetry of the conditions. It also buries the
+usual, and complicated, case inside a couple of layers of braces, which may
+make it harder to read.
+
+The guards are similar to assertions in that both protect the subsequent code from special cases. Guards differ from assertions in that they make a tangible contribution to the logic of the method and thus cannot be safely omitted as part of an optimization. I borrowed the term ''guard'' from EwDijkstra when naming this pattern. The first form above hints at the elegance of his ''guarded commands'' though Dijkstra manages to save the single exit property in his code as well. -- WardCunningham
+
+Is it done like this?
+
+  public Foo merge (Foo a, Foo b) {
+    Foo result;
+    if      (a == null) result = b;
+    else if (b == null) result = a;
+    else
+    {
+        result = // complicated merge code goes here.
+    }
+
+    return result;
+  }
+
+I believe that you can always write code that effectively has both guard clauses and a single point of return if that is what you desire. -- PhilGoodwin
+
+Albeit at the cost of introducing mutable state. I prefer the early return to spurious mutable state. -- DaveHarris
+
+What's wrong with mutable state? - pg
+
+It's hard to understand. For example, in
+    if (a == null) return b;
+we know the final result as soon as we hit the ''return''. In
+    if (a == null) result = b;
+we can't be sure without checking the rest of the routine for assignments to ''result''.  In fact, there '''are''' assignments so we also have to check the flow of control to make sure they are never executed. For more discussion read StructureAndInterpretationOfComputerPrograms, or FunctionalProgramming. -- DaveHarris 
+
+[The other potential problem is that the unnecessary variable may never be initialized at all.]
+
+But when you want to go back and determine why a particular value is generated, there is no explicit reverse code flow.  You have to scan the routine for every return instead of starting at the end of the routine and working backwards.  Symmetry has its uses! --WayneMack
+
+I don't follow. I can scan for every assignment to ''result'' or I can scan for every ''return''. What significant advantage does the former have? -- DaveHarris
+
+With a single return, the reverse scan follows program structure, with embedded returns it does not.  One does not need to delve into every code block to see if a return has been executed.  Of course, if the code has been refactored well, there should be very few code blocks, so the advantage of the single return diminishes.  --WayneMack
+
+In java, you could make the return-holder final; final local variables can be assigned to only once. If you knew that ''result'' was final, and that the only way out of the method was by ''return result;'', then any time you saw ''result = x;'' you'd know what the return value of the method was. Of course, if the return value is a mutable object, you wouldn't know that the object hadn't been mucked about with later on; if it was a straight return, you'd know this as well. -- TomAnderson
+
+In java, you can't even count on return to avoid mutable state. According to specs, the following code
+  try {
+    return 1;
+  } finally {
+    return 0;
+  }
+returns '''0'''! Might as well have a single exit point then. --AalbertTorsius
+----
+In Dijkstra's version (see EggLanguage), the guard clause (a boolean expression) precedes a block of statements, thus forming a guarded command. The block only executes if the guard evaluates true.
+
+One or more guarded commands forms a gcs (guarded command set).
+
+There are two forms which use guarded command sets,
+''if gcs fi'' and ''do gcs od''.
+
+An ''if gcs fi'' selects one gc from the set whose guard is true, and executes it. It is considered computationally fatal if there isn't one.
+
+  min(a,b)
+
+    if a<=b :: min:=a
+     | b<=a :: min:=b
+    fi
+    return(min)
+
+A ''do gcs od'' selects one gc from the set whose guard is true, and executes it. Then it repeats.  If there isn't one, the loop terminates.
+
+  binarySearch(key,a[])
+
+    { first(a[]) == -inf; last(a[]) == +inf }
+
+    lo:=firstIndex(a[]); hi:=lastIndex(a[]); mid:=(hi+lo)//2
+    do key<a[mid] :: hi:=mid-1; mid:=(hi+lo)//2
+     | key>a[mid] :: lo:=mid+1; mid:=(hi+lo)//2
+    od
+    return(mid)
+
+Dijkstra's version allows formal reasoning about programs (the code is its own proof). Harder to demonstrate with this example, but the idea is we've reduced the correctness proof for ''merge'' to that of proving the complicatedResult:
+
+  merge(a,b)
+    
+    if 
+       a==NULL            :: merged:=b
+       b==NULL            :: merged:=a
+       a!=NULL && b!=NULL :: merged:= { complicatedResult }
+    fi
+    return(merged)
+
+The two key differences in this rendition are the lack of an else clause,
+and the single exit, simplifying the formal derivation of the post condition.
+ 
+JimSawyer
+
+''All of this was anticipated in the PlanKalkuel''
+----
+Some languages (eg the CecilLanguage) have PredicateTypes and MultiMethods, which effectively merge the guard clauses into the general message dispatching. Languages with algebraic types are similar. Effectively you can write:
+
+  public Foo merge (Null a, Null b) { return Null; }
+  public Foo merge (Null a, Foo b) { return b; }
+  public Foo merge (Foo a, Null b) { return a; }
+
+  public Foo merge (Foo a, Foo b) {
+    // complicated merge code goes here. No need to check for
+    // nulls; the type system has done it for you.
+  }
+
+
+In some concurrent languages (eg Eiffel, some versions of Prolog), the guard clause can have the semantics of waiting until its condition is satisfied.  This model originally comes from Hoare's CommunicatingSequentialProcesses.
+
+----
+
+And then there's
+
+ = anObject
+	| clauses |
+	clauses := OrderedCollection new
+		add: [boolean condition1];
+		add: [boolean condition2];
+		yourself.
+	clauses contains: [:guardClause | guardClause value not]
+
+Writing Lisp in Smalltalk has got to be some kind of anti-pattern. I've used the above with 5 clauses.
+
+----
+Also see BouncerPattern.

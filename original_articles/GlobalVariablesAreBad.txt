@@ -1,0 +1,294 @@
+This is something I have a hard time putting in words. I've been bitten by globals in the past, so I 'know' they're 'bad', but for the life of me, I can't explain why. What I'd like is to have some straightforward "Here's why globals are bad" document I can point other people to, preferably with some concrete (if toy) examples.
+----
+
+As with all HeuristicRule''''s, this is not a rule that applies 100% of the time.  Code is generally clearer and easier to maintain when it does not use globals, but there are exceptions.  It is similar in spirit to GotoConsideredHarmful, although use of global variables is less likely to get you branded as an inveterate hacker.
+
+'''Why Global Variables Should Be Avoided When Unnecessary'''
+
+	* '''Non-locality''' -- Source code is easiest to understand when the scope of its individual elements are limited.  Global variables can be read or modified by any part of the program, making it difficult to remember or reason about every possible use.
+	* '''No Access Control or Constraint Checking''' -- A global variable can be get or set by any part of the program, and any rules regarding its use can be easily broken or forgotten.  (In other words, get/set accessors are generally preferable over direct data access, and this is even more so for global data.) By extension, the lack of access control greatly hinders achieving security in situations where you may wish to run untrusted code (such as working with 3rd party plugins).
+	* '''Implicit coupling''' -- A program with many global variables often has tight couplings between some of those variables, and couplings between variables and functions.  Grouping coupled items into cohesive units usually leads to better programs.
+	* '''Concurrency issues''' -- if globals can be accessed by multiple threads of execution, synchronization is necessary (and too-often neglected). When dynamically linking modules with globals, the composed system might not be thread-safe even if the two independent modules tested in dozens of different contexts were safe.
+	* '''Namespace pollution''' -- Global names are available everywhere.  You may unknowingly end up using a global when you think you are using a local (by misspelling or forgetting to declare the local) or vice versa.  Also, if you ever have to link together modules that have the same global variable names, if you are lucky, you will get linking errors.  If you are unlucky, the linker will simply treat all uses of the same name as the same object.
+	* '''Memory allocation issues''' -- Some environments have memory allocation schemes that make allocation of globals tricky. This is ''especially'' true in languages where "constructors" have side-effects other than allocation (because, in that case, you can express unsafe situations where two globals mutually depend on one another).  Also, when dynamically linking modules, it can be unclear whether different libraries have their own instances of globals or whether the globals are shared.
+	* '''Testing and Confinement''' - source that utilizes globals is somewhat more difficult to test because one cannot readily set up a 'clean' environment between runs. More generally, source that utilizes global services of any sort (e.g. reading and writing files or databases) that aren't explicitly provided to that source is difficult to test for the same reason. For communicating systems, the ability to test system invariants may require running more than one 'copy' of a system simultaneously, which is greatly hindered by any use of shared services - including global memory - that are not provided for sharing as part of the test. 
+
+'''Why the Convenience of Global Variables Sometimes Outweighs the Potential Problems'''
+	* In a very small or one-off programs, especially of the 'plugin' sort where you're essentially writing a single object or short script for a larger system, using globals can be the simplest thing that works.  
+	* When global variables represent facilities that truly are available throughout the program, their use simplifies the code. 
+	* Some programming languages provide no support or minimal support for non-global variables.
+	* Some people jump through very complicated hoops to avoid using globals.  Many uses of the SingletonPattern are just thinly veiled globals.  If something really should be a global, make it a global.  Don't do something complicated because you ''might'' need it someday.  ''If a global variable exists, I would assume that it is used.  If it is used, there are methods associated with it.  Colocate those methods in a single class and one has created a singleton.  It really is better to specify all of the rules for use of a global variable in one place where they can be reviewed for consistency.  The veil may be thin, but it is valuable.''
+		Example?
+
+Even in the above cases, it's wise to consider using one of the ''Alternatives to Global Variables'' to control access to this facility. While this does help future-proof the code -- e.g. when your 'small' program grows into a very large one -- it can also simplify more immediate problems such as testing the code or making it work correctly in a concurrent environment.
+
+'''Really Bad Reasons to Use Global Variables'''
+	* "What's a 'local variable'?"
+	* "What's a 'data member'?"
+	* "I'm a slow typist.  Globals save me keystrokes."
+	* "I don't want to pass it around all the time."
+	* "I'm not sure in what class this data belongs, so I'll make it global."
+
+'''Alternatives to Global Variables'''
+	* '''ContextObject''' -- allows you to package up and abstract global dependencies then move them around in a program, effectively operating like global variables but far easier to override and manipulate locally. Unfortunately, most languages provide no support for ContextObject''''''s, which requires one "pass it around all the time". Threading of a ContextObject through the code is aided significantly by DynamicScoping/SpecialVariable''''''s, or by syntactic sugar of the sort used for Haskell monads, or (to far a lesser degree) by use of ThreadLocalStorage. Related: ExplicitManagementOfImplicitContext. 
+	* '''DependencyInjection''' -- the ability to set up complex object graphs in a program greatly reduces the need to pass 'variables' around that carry global/context information. The strength of this approach is visible in paradigms that make much less use of globals, such as DataflowProgramming. Some languages (such as Java) have mature DependencyInjection frameworks that often work in a somewhat static manner (e.g. from a configuration file, or not integrating live objects) - and that alone is enough to match many common uses of 'globals'. FirstClass support for DependencyInjection and construction of dataflow or object graphs additionally allows one to compose complex systems on the fly at runtime (allowing a means of composition for object primitives that is missing in traditional OO languages), and additionally allows an enormous range of optimizations wrgt. dead-code removal, partial evaluation, etc. making this a rather attractive alternative to globals.
+	* '''Hidden Globals''' -- hidden globals have a well-defined access scope, and would include, for example, private 'static' variables in classes and 'static' variables in '.c' files and variables in anonymous namespaces in C++. This solution cages and localizes globals rather than tames them - you'll still get bitten when it comes to concurrency and modularization and testing/confinement, but at least all such problems will be localized and easy to repair, and there won't be linking problems.
+	* '''Stateful Procedures''' -- a global set of setters and getters or operations that act over what is, implicitly, underlying state. These suffer many of the problems associated with globals with regards to testing, concurrency, and allocation/intialization. However, they offer improved access control, opportunity for synchronization, and considerable ability to abstract away the implementation (e.g. one could put the global state into a database).
+	* '''SingletonPattern''' -- construct an object globally, allow access to it via a stateful procedure. SingletonPattern offer convenient opportunity for one-time specialization of a global based on arguments and environment, and thus may serve well enough to abstract 'resources' that are truly part of the programming environment (e.g. monitors, speakers, console, etc.). However, SingletonPattern doesn't offer anywhere near the flexibility offered by DependencyInjection or ContextObject, and are on par with stateful procedures with what they help the programmer control and the problems users will still face.
+	* '''Database or TupleSpace or DataDistributionService''' -- sometimes global variables are used to represent data. This is especially the case for global maps, global hashtables, global lists. To a lesser degree, it is also the case for task queues. For these cases where the data truly is 'global', especially if any part of the program is dedicated to pushing pieces of this global data to external users, using a dedicated system will greatly simplify the program and likely make it more robust at the same time.
+
+----
+Non-locality seems much much more convincing than any of concurrency, namespace, and memory allocation. However, the non-locality issue is much bigger than it seems. I'm thinking of situations when you come back to the code 2 weeks later, look at ''String important = global.getSomeImportantInfo()'', and have to figure out why 'important' is getting the wrong value. Sure, non-locality describes it, but if Bob (above) asks "Why?" and Alice replies "Non-locality", I don't think Bob would learn the lesson.
+
+''Non-locality can be EssentialComplexity, which is among the reasons one might need global variables or an alternative to them (I'm fond of ContextObject and some other facilities). That you find it more or less convincing than concurrency or namespace issues mostly reflects the problems you've encountered before.''
+
+----
+Would you consider singletons global variables? What about static variables within a namespace?  
+
+''Yes and yes; though both are less obnoxious than a whole pile o' globals lying around.  Static variables within a namespace are limited to that namespace (unless someone exports 'em somehow); in general when I see a static variable I look for a way to turn it into an object. Singletons are a necessary evil - in some case, there is only one of something, so providing a way of accessing it is useful. Even then, when I use singletons, I prefer to access the get_singleton() (or whatever) method rarely, and pass references to the singleton around. That way, if the singleton ever multiplies, I have less code to ReFactor.''
+
+I would not consider a singleton as a global variable unless the singleton exposed its internal variable through an accessor. Absent accessors, a singleton provides controlled access to the variable, greatly reducing the programming problems. Also, although a static variable within a namespace probably is not a global, it exhibits the same problems as a global variable within a reduced scope. Personally, I would probably replace the static variable with a singleton, just to control the access. [Note: I am using the C++ definition of static rather than the C definition.]
+
+''Agree, most of the problems stated is possible with any construct that allows the same data to be accessed globaly. Singleton is a broken solution to avoid global variables for this reason. However namespace pollution and implicit coupling does not seem to be about data, but more about identifiers - it is not much better with global functions, you almost always have to end up with some globals anyway.''
+
+[[ Perhaps I have a mental block...what's the difference between C "static" and C++ "static"? ]]
+
+''Static in C has the following uses: 1) Declare a function/variable to be at file scope - in other words, the opposite of extern. 2)  Declare a variable within a function to be common to all invocations of the function, the opposite of automatic.''
+
+''In ANSI C++; use 1) is deprecated and replaced with anonymous namespaces; though much C++ code still uses static in this manner (and as a result, it likely won't disappear from the language for a long time). Use 2 is still valid.  C++ also adds 3) indicates that a variable class attribute (data member) is to be common to all objects of the class; and 4) indicates that a class method doesn't have a this pointer - instead, it acts like a free function rather than a member function.''
+
+''For completeness, Java has uses 2-4; it does not have use 1.''
+
+''Use 2 (common to both) and use 3 (C++ only) are the meanings of "static" which make sense in this context.'' Original poster, what was your intended meaning for the question?
+
+----
+
+I know lots of programmers who start working on a problem and their first instinct is, "I need that list in a lot of different places. No problem, we'll just add a global variable... et voila!". When the number of globals starts to get unmanageable, they sometimes put all the globals into one big global list of globals.
+
+'''Problem:''' Adding globals is really easy. It's easy to get in the habit of declaring them. It is much faster than thinking of a good design.
+
+'''Compounded:''' In some simple circumstances, it really is the simplest thing to do.
+
+'''Even worse:''' Once you have a global variable, it's much harder to get rid of it as time goes on.
+
+'''Question:''' How does a programmer learn to avoid this temptation except in the simplest of cases?
+
+''For experienced programmers, there is little temptation.  Using a local or the SingletonPattern is usually easy, even if it does take a few extra seconds to type.  After you get burned a couple of times, you will forget the notion that globals would make things easier.''
+
+But SingletonsAreEvil. But besides that contentious fact, could you give a toy example of how using a local or parameter would be fairly easy (remember, the list is being used 'in a lot of different places').
+
+Perhaps SingletonsAreEvil, but SingletonsAreBetterThanGlobals. Wouldn't that mean that GlobalVariablesAreBad is an understatement?
+
+''A toy example is unlikely to demonstrate any problem with globals.  How about we start with you giving a real example of code that you think is simplest with globals, and then somebody can show equivalent global-less code?''
+
+I currently don't have any real examples, since I avoid globals like the plague, and any examples I may have come across in the past are not mine to publish (and would take up lots of space anyway).
+
+''Well, here's a toy example, which I'm sure will convince nobody.  Say you have to write a program that reads a bunch of strings from files and then does things with that list of strings.  Here's the globals-are-simplest approach:''
+
+ list<string> myList;  // global
+
+ void read_strings() { /* read strings into myList */ }
+ void print_strings() { /* write contents of myList to stdout */ }
+ void sort_strings() { /* sort contents of myList */ }
+ void sort_strings_reverse() { /* reverse-sort contents of myList */ }
+ void unique_strings() { /* remove duplicate strings */ }
+
+ int main()
+ {
+	read_strings();
+	sort_strings();
+	print_strings();
+	sort_strings_reverse();
+	print_strings();
+	unique_strings();
+	print_strings();
+	return 0;
+ }
+
+''Here's the globals-are-unnecessary approach:''
+
+ class String_List
+ {
+ private:
+	list<string> m_List;  // member
+ public:
+	void read_strings() { /* read strings into m_List */ }
+	void print_strings() { /* write contents of m_List to stdout */ }
+	void sort_strings() { /* sort contents of m_List */ }
+	void sort_strings_reverse() { /* reverse-sort contents of m_List */ }
+	void unique_strings() { /* remove duplicate strings */ }
+ };
+
+ int main()
+ {
+	String_List myList;  // local
+	myList.read_strings();
+	myList.sort_strings();
+	myList.print_strings();
+	myList.sort_strings_reverse();
+	myList.print_strings();
+	myList.unique_strings();
+	myList.print_strings();
+	return 0;
+ }
+
+''Which is better?  I think the global-less one is better, but if anyone disagrees, I can't explain it to them.''
+
+''Any time you find that you need a particular thing in 'a lot of different places', chances are that all those places are conceptually related, and so you can create a class, a namespace, a function, or some other higher-level organizational unit to represent that relationship.  This makes the program easier to understand.''
+
+Well this is a very limited example, and perhaps in this case (if you're never going to reuse the code) the globals are not bad.  However if you're ever planning on extending the software, you'll have to start moving things around.  And it's handier to have a class to move around, than a set of functions.  Also if you ever change the structure of m_list, it's easier to look up which methods (just look in the same class) than go through all the sources to see if anyone else besides the -intended- functions are using that structure.  -- ChristophePoucet
+
+For non-globality to be useful, it has to allow extendability or give some other benefit. For programs that won't be extended, globals are fine. Allow me to rewrite the toy example to be extendable and replaceble. There are probably syntaxic errors.
+
+ class String_List
+ {
+ public:
+	list<string> m_List;  // member
+ }
+
+ class String_List_Manager
+ {
+ private:
+	list<string> m_List;  // member
+ public:
+	String_List_Manager ( String_List m_List )
+	{
+	this.m_List = m_List; 
+	}
+	void read_strings() { /* read strings into m_List */ }
+	void print_strings() { /* write contents of m_List to stdout */ }
+	void sort_strings() { /* sort contents of m_List */ }
+	void sort_strings_reverse() { /* reverse-sort contents of m_List */ }
+	void unique_strings() { /* remove duplicate strings */ }
+ };
+
+ int main()
+ {
+	String_List myList;  // local
+	String_ListManager myListManager = new myListManager(myList);  // local
+	myListManager.read_strings();
+	myListManager.sort_strings();
+	myListManager.print_strings();
+	myListManager.sort_strings_reverse();
+	myListManager.print_strings();
+	myListManager.unique_strings();
+	myListManager.print_strings();
+	return 0;
+ }
+
+This way it is very easy to replace the list with new list for debugging purposes, or replacing the methods without replacing the list, when you want different results. You only have to replace the content of the local variables. Other parts of the program using the String_List class are unaffected, because they are still invoking the old classes in their own local variables.
+
+	////String_List myList;  // local
+	////String_ListManager myListManager = new myListManager(myList);  // local
+
+	String_List myListTestValues;  // local
+	String_ListManagerPerfected myListManager = new myListManagerPerfected(myList);  // local
+
+At some point on the future, if the program gets more and more extended, the code may become this.
+
+	String_List myList;  // local
+
+	if	( condition("avaluators" ) myList = listFactory.getAvaluatorList();  // filled from a file
+	else if ( condition("teachers"	) myList = listFactory.getTeacherList();	// filled from a file
+	else if ( condition("pupils"	) myList = listFactory.getPupilList();	// filled from a file
+	else if ( condition("DB"	 ) myList = listFactory.getList(myDB);	// pull data from DB
+	else if ( condition("again"	) myList = formerList;			// passed by argument
+	else				myList = listFactory.defaultList;	 // hardcoded inside the class
+
+	//rest of code is not modified at all
+	String_ListManager myListManager = new myListManager(myList);  // local
+	etc...
+
+Of course, listFactory is global, so '''you ought to start the de-globalizing process all over the same again''', because you hace created new globals somewhere to deal with the new extensions. I have found that at any random point of the program, I always need/have some global variable or other. I just try reducing them to the minim. For this example, probably listFactory can be left as global. I would only convert it to local if I foresaw some need for ''n'' different List_Factory methods in the future. -- Enric Naval October 2005
+
+----
+'''Basic OO Concept - Cohesive Methods'''
+
+One of the major arguments against global variables is that they defy the basic OO concept of cohesive methods.  With a global variable all of the accesses and operations on the variable are scattered around the code.  By pulling all of the methods into a single class or module, they can be evaluated and maintained as a unit.  
+
+Pervasive use of accessors for loading and storing at least moves problems from "state" space into "behavior" space, where they can be addressed more straightforwardly. Mechanisms for limiting the visibility of methods are more mature and are more effectively supported by various language alternatives.
+
+----
+
+You're RefactoringLegacyCode, you see a global, you want to get rid of it. How do you do this? What are the steps?
+
+''Exactly what to do depends on how the global is used.  The first step is to find all uses of the global throughout the code, and get a feel for what the significance of the variable is and how it relates to the rest of the program.  Pay particular attention to the "lifetime" of the variable (when it gets initialized, when it is first used, when it is last used, how it gets cleaned up).  Then, you will probably make the global a data member of a class (for OO languages), or you will write some get/set functions.  Converting to the SingletonPattern is common, but you may discover that it makes more sense for the data element to be a member of an existing singleton, or maybe even an instance variable.''
+
+The following steps work for me.
+	1. Create a basic read method, either as a class or a global function.  Replace all reads with the access method, but leave the variable defined as a global.
+	1. Review each of the writes to the method and extract action functions one at a time.  Unless two operations are coded identically in the original code, extract each write access separately.
+	1. Change the variable scope from global to local.
+	1. Analyze similar action functions to determine if any can be merged, i.e., there are no functional differences in the results of the function, just differences in the implementation details.
+	1. Review the calls to the read method and see if a more complex functionality should be applied.  Follow the approach for writes and unless implementations are identical, create separate access functions.
+	1. Analyze the access functions for duplication.
+
+''Ah, it's step #2 which I was missing.''
+
+----
+A discussion about whether databases are depositories of "global variables" or not is under DatabaseNotMoreGlobalThanClasses.
+
+''An interesting idea for consideration is what if the database stored the current object, i.e., data and code instead of just the data?  Difficulties include multiple language use and disk and memory size on the database.''
+----
+
+See the article "Global Variables Considered Harmful" by W.A. Wulf, M. Shaw.
+GlobalVariablesConsideredHarmful
+
+EditHint: Consider moving '''all''' the text at GlobalVariablesAreBad to GlobalVariablesConsideredHarmful, leaving only a pointer to GlobalVariablesConsideredHarmful .
+
+Or not: GlobalVariablesConsideredHarmful discusses a paper that objects to global variables on the grounds that "LexicalScoping is bad" -- which is a highly dubious argument, best separated from the arguments made on this page. In the ObjectCapabilityModel, LexicalScoping is considered good, but global variables are to be avoided at all costs.
+----
+
+'''Forced Categorization?'''
+
+A good example of a global variable is LoginId (or NetworkId) whereby the app is making a lot of security or role-based calls and must pass this all over the place nearly everywhere. Also constants and enums make for a lot of good global variables. Things like colors and their hex values, provided they are used almost everywhere. 
+
+''Disagree: 1) constants/enums are '''constant''', not variables, 2) they still often are better defined in a scope or namespace (such as color::red) if for no other reason than to avoid name collisions.''
+
+Login-ID is not a constant in a language sense. The program likely will need to change it at run-time (near start-up). And even colors can change at run-time because some browsers render them slightly wrong when one is trying to match GIFs.
+
+Another problem with grouping them is "changing responsibilities". For example, you may associate something with a "security" name-space or object, but later decide to move it to a "user" name-space/object because it is a better fit there. If you group stuff, you may have to visit each usage to change the grouping. If it is simply a global variable, then you don't have to change anything; it just gets a different value. 
+
+A variable "user_is_a_newbie" will always be a valid variable to reference. It is Popeye-style K.I.S.S.: "I yam what I yam and nothing else". But if we start out with "security.user_is_a_newbie" (or security::user_is_a_newbie) and later change it to "user.user_is_a_newbie", then we have to visit and change each usage.
+
+Perhaps this is related to ResponsibilityDrivenDesignConflictsWithYagni. I am not saying that grouping them into the likes of "user", "security", "environment" structures/objects is summarily bad, but it does have its downsides in that something may belong to multiple or none or need to change between them. Packaging them forces you to choose categories, and the cost of putting it in the inappropriate category or changing it later is fairly large. The lines between categories such as "user", "security", and "environment" are blurred and situational.
+
+Thus, I won't complain if somebody leaves those kinds of things in old-fashioned global variables. The trade-offs don't decisively favor grouping over non-grouping. The scale does not tip heavily any one way.
+
+A '''compromise''' may be to make them global function calls. Or perhaps methods of a class called "app_environ", a kind of catch-all dumping ground for such critters. These offer enough indirection for future change handling, but not too much premature "forced" abstraction.
+
+----
+
+It seems to me that it's impossible to avoid global variables altogether. Even if you have no explicit globals and no singletons, the types themselves are global, are they not? As are the highest-level namespaces. If Service.instance() is a disguised global, isn't it because Service is itself a global? I just took a look at YouCantEncapsulateEverything, which seems to come to a similar conclusion. I'd go a bit further and say that even if the class in question were not a singleton, the statement "new Service()" would refer to the global Service. Of course, the arguments here for minimizing globals apply nonetheless.
+-- ThomSmith
+
+''The arguments here are for minimising global variables. Types, namespaces, and classes are not variables.''
+
+''And yet, when you have class variables, this attempt to distinguish classes (and things that contain classes) from global variables starts failing, though of course complexities remain.  However, as for the the underlying concept, that classes are not '''variable''':''
+
+The distinction perhaps depends on the language.
+
+''Please explain?''
+
+[For some languages (like Ruby and Smalltalk) types and classes are mutable objects and, therefore, variable. Consider MetaObjectProtocol. Namespaces may be variable, too, as in Scheme where the environment is reified.] 
+
+''True, but that's not what ThomSmith or Top meant, is it?''
+
+[I cannot attest to what was meant, only what was said. The distinction does depend on the language. That said, Thom is incorrect. It is not "impossible" to avoid global variables, or even to avoid global references of all sorts. ObjectCapabilityLanguage''''''s are designed around avoiding global references as a powerful security mechanism, and adherence to the principles eliminate the possibility of SingletonPattern (of which 'Service.instance()' seems to be an example) being introduced within the code itself. ContextObject containing object references to things outside the 'program' eliminates the need for Singletons, and design for threading of ContextObject can easily be added to the language (DynamicScoping or ExplicitManagementOfImplicitContext). A function like 'Service.instance()' that always returns the same instance for some type 'Service' may be impossible to write.] 
+
+''I should have said global references, rather than global variables, which makes the issue a bit different from what's discussed on this page. I meant to include the possibilities of types that are not first-class values, such as in Java. I'm not familiar with ObjectCapabilityLanguage, so I can't comment on them. Lacking such knowledge, I was referring to more conventional languages. Of course, when you're talking about something like Java types, many of the disadvantages of global references are not applicable to begin with.'' -- ThomSmith
+
+['static' variables for classes, and access to the OS via 'System', and access to implicit channels via 'print' or 'current time' and such, would certainly qualify as global references. I agree that it is hard to avoid these things in 'conventional languages', which is in part why conventional languages are not particularly secure - they provide very little confinement internally, so one has EggShellSecurity: one breach and everything's rotten.]
+
+----
+See GlobalVariablesConsideredHarmful, SingletonsAreEvil, SingletonGlobalProblems, GlobalVariable
+------
+Just found this in a discussion thread on stack overflow: global variables aren't bad per se. What's bad is globally accessible mutable state. I don't know yet if I should believe this or not, but it sort of rings a bell. -- flj
+----
+For Definition, Comparison and Contrast, See:
+* http://en.wikipedia.org/wiki/Global_variable
+------
+CategoryScope
+------
+Directions! In my view whenever a consumer requires to reference a global variable, it means "it" has a dependency on the global set (singleton / context obj) which means the consumer demands something from the higher layer (lets face it globals are mostly in the app layer)... LawOfDemeter really keeps the code clean here - we provide all the info to the consumer. Sometimes the global variables do provide the simplest / fastest solution but we should watch out for their pollution into the other layers.
+
+-- RishikeshParkhe

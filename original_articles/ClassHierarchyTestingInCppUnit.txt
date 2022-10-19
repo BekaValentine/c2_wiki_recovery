@@ -1,0 +1,180 @@
+BobBinder recently mentioned to me that it is a shame that CppUnit doesn't have some sort of support for automatically running the tests of superclasses on subclasses.  It has tortured me a bit too, I often end up cutting and pasting test case functions from test class to test class.  I think that in JavaUnit, you can just subclass the test class.  In CppUnit it is more difficult because I use a pointer to a member function to dispatch the tests and you can't have those point to member functions in derived classes.  I started to consider whether there might be a better way in CppUnit.
+
+This is what I've ended up with.  If anyone knows of any way to simplify this, please let me know.
+
+Here is a tiny foolish hierarchy:
+
+  class Board''''''Game
+  {
+  public:
+      virtual bool reset () { return true; }
+  };
+
+  class Chess : public Board''''''Game
+  {
+  public:
+      virtual int numberOfPieces () { return 32; }
+  };
+
+And here is a test class for the Board''''''Game class:
+
+  template<class GAMECLASS> class Board''''''Game''''''Test : public TestCase
+  {
+  protected:
+      GAMECLASS	*m_game;
+
+  public:
+      Board''''''Game''''''Test (string name) : TestCase (name) 
+      {}
+
+      Board''''''Game''''''Test (TestSuite *suite) : TestCase ("") 
+      { suite->addTest (new Test''''''Caller<Board''''''Game''''''Test> ("testReset", testReset)); }
+
+      void setUp () 
+      { m_game = new GAMECLASS; }
+
+      void tearDown ()
+      { delete m_game; }
+
+      void testReset () 
+      { assert (m_game->reset ()); }
+
+  };
+
+Notice that I'm using a template here, so I could instantiate with classes other than Board''''''Game, but I'm really only interested in subclasses at this point.  The other notable thing is the fact that I'm abusing a constructor rather than using a static suite method on the class.  The reason will be obvious in a second.
+
+Here is a template class which tests the Chess class.  Note that instances of it inherit Board''''''Game''''''Test instantiated on the same class.
+
+  template<class GAMECLASS> class Chess''''''Test : public Board''''''Game''''''Test<GAMECLASS>
+  {
+  public:
+      Chess''''''Test (string name) : Board''''''Game''''''Test<GAMECLASS> (name) 
+      {}
+
+      Chess''''''Test (TestSuite *suite) : Board''''''Game''''''Test<GAMECLASS> (suite) 
+      { suite->addTest (new Test''''''Caller<Chess''''''Test> ("testNumberOfPieces", testNumberOfPieces)); }
+
+      void testNumberOfPieces () 
+      { assert (m_game->numberOfPieces () == 32); }
+  };
+
+Now we have one other little template class that helps us build up a suite.  Auto''''''Suite calls a constructor of a test class and uses it to fill itself with tests that can be run in the testrunner.  Notice that the call through the constructor accepting TestSuite builds up a list of tests by traversing the inheritance tree.
+
+  template<class TESTCASE> class Auto''''''Suite : public TestSuite
+  {
+  public:
+      Auto''''''Suite () 
+      { TESTCASE testCase (this); }
+  };
+
+
+So, now we can create the following object, which to the world looks like a TestSuite.  It is a suite of tests which consists of all the tests that were defined in the Chess''''''Test template and the Board''''''Game''''''Test template, instantiated for Chess objects.
+
+  Auto''''''Suite<Chess''''''Test<Chess> > chessTests;
+
+Pop it into a testrunner:
+
+  runner.addTest (&chessTests);
+
+
+You can also use templates like these to verify that classes unrelated by inheritance conform to the same constraints.
+
+Does anyone see any way to make this simpler?  The constructor which accepts a suite does seem abusive, not the sort of thing you'd show your mother on mother's day, and it would not be bad to make another function which does this, but somehow it feels right like it is, even though it does not convey intention very well.  I suppose I get concerned about forgetting to call the base, whereas it is rather automatic among C++ programmers to call base constructors with the same signature.
+
+-- MichaelFeathers
+
+-----
+
+I think you could get some additional benefits if you don't create the fixture for each TestCaller, but reuse it between them:
+
+  template <class Fixture> 
+  class Reusing''''''Test''''''Caller : public TestCase
+  { 
+    REFERENCEOBJECT (Reusing''''''Test''''''Caller)
+    typedef void             (Fixture::*TestMethod)();
+  public:
+    Reusing''''''Test''''''Caller (Fixture* fix, std::string name, TestMethod test)
+      : TestCase (name), m_fixture (fix), m_test (test) {}
+  protected:
+    void                    runTest () 
+      { (m_fixture->*m_test)(); }  
+    void                    setUp ()
+      { m_fixture->setUp (); }
+    void                    tearDown ()
+      { m_fixture->tearDown (); }
+  private:
+    TestMethod               m_test;
+    Fixture*   m_fixture;
+};
+
+In that case you could do something like this:
+
+// Get rid of some verbosity
+#define ADD_TEST(theClass, thePointer, theMethod)addTest(new Reusing''''''Test''''''Caller<theClass>(thePointer, #theMethod, theMethod))
+
+class Example''''''Test''''''Case : public TestCase
+{
+protected:
+	double			m_value1;
+	double			m_value2;
+public:
+    Example''''''Test''''''Case (TestSuite *testSuite, std::string name) : TestCase (name) 
+    {
+        testSuite->ADD_TEST(Example''''''Test''''''Case, this, anotherExample);
+        testSuite->ADD_TEST(Example''''''Test''''''Case, this, testAdd);
+        testSuite->ADD_TEST(Example''''''Test''''''Case, this, testDivideByZero);
+        testSuite->ADD_TEST(Example''''''Test''''''Case, this, testEquals);
+    }
+    void			setUp ();
+    static Test		*suite ();
+protected:
+    void			example ();
+    void			anotherExample ();
+    void			testAdd ();
+    void			testDivideByZero ();
+    void			testEquals ();
+};
+
+class Derived''''''Example''''''Test''''''Case : public Example''''''Test''''''Case
+{
+public:
+    Derived''''''Example''''''Test''''''Case(TestSuite *testSuite, std::string name) 
+        :   Example''''''Test''''''Case(testSuite, name) 
+    {
+	testSuite->ADD_TEST(Derived''''''Example''''''Test''''''Case, this, testSilly);
+        testSuite->ADD_TEST(Derived''''''Example''''''Test''''''Case, this, testMostSilly);
+    }
+protected:
+    void			testSilly() 
+        { bool silly = true; assert(!silly); }
+    void			testMostSilly() 
+        { bool silly = false; assert(silly); }
+};
+
+Then
+
+  TestSuite suite = new TestSuite();
+  Example''''''Test''''''Case etc(suite, "Example''''''Test''''''Case");
+  TestRunner  runner;
+  runner.addTest (suite);
+  runner.run ();    
+
+and 
+
+  TestSuite suite = new TestSuite();
+  Derived''''''Example''''''Test''''''Case detc(suite, "Derived''''''Example''''''Test''''''Case");
+  TestRunner  runner;
+  runner.addTest (suite);
+  runner.run ();    
+
+work as expected.
+
+An advantage of this approach is that the base test case runs on a derived test case object if you are testing that derived object. I think this is in agreement with the "JavaUnit way". They don't need the "reuse fixture hack" though.
+
+Hope this helps...
+
+--- ErnestoGuisado
+
+----
+CategoryCpp CategoryTesting
+

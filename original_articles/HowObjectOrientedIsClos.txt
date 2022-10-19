@@ -1,0 +1,159 @@
+I know that in the case of the CommonLispObjectSystem, the claim that it is ObjectOriented is sometimes disputed - indeed, because CLOS uses the GenericFunction paradigm, you can think of it as a generalization of standard OO. When you can get MultipleDispatch on several arguments, it becomes unclear to which class a "method" belongs.
+
+No, it becomes clear that it doesn't belong, and that any such belonging is really just an illusion that is sometimes convenient. See AlternateObjectOrientedProgrammingView.
+
+It's still a great language, though, especially as it meshes so seamlessly with CommonLisp, upon which it is built. You can use as much OO-ness as you need, no more, no less. -- Anon
+
+----
+''This is interesting because I consider [...] Lisp the ultimate FlowerChildLanguage?'' -- AlainPicard, in BondageAndDisciplineLanguage
+
+Is the question "How well does CLOS enforce an object oriented style" or "How well does CLOS enable an object oriented style"? The former question can be answered very simply: "barely, if at all". Here's my answer - which could be shorter - to the latter question.
+
+It's probably a ReligiousWar. CLOS has classes of objects, and it has methods, but unlike, say, Java, the methods don't belong to the classes. Methods belong to generic functions. That has implications for encapsulation: read on.
+
+''I don't agree. See later on.''
+
+Here's some code for people who haven't seen CLOS before
+	
+	(defclass person ()
+	  ((name :initarg :name :accessor person-name)
+		(age :initarg :age :accessor person-age)))
+	
+	(defmethod as-string ((p person))
+	  "Return the person's name and age in a format suitable for inclusion in a newspaper article"
+	  (concatenate 'string (person-name p) ", "
+			(princ-to-string (person-age p))))
+
+	(defclass employee (person)	;subclass person
+	  ((position :initarg :position :accessor employee-position)
+		(salary :initarg :salary)))
+	
+	(defmethod as-string ((p employee))
+	  "Return the employee's position, name and age in a format suitable for inclusion in a newspaper article"
+	  (concatenate 'string (employee-position p) " " (call-next-method)))
+(Note that CommonLisp has superficially weird case-sensitivity settings: code can be written in any case (lowercase is preferred these days) but the compiler converts symbols to uppercase when reading them.  When writing in plain text about Lisp, people often uppercase symbols to distinguish them, which is the reason for all the SHOUTING you see below. You get used to it. That and the parens)
+
+We've defined classes PERSON and EMPLOYEE, and a method AS-STRING with different implementations in each. We've defined accessors for some of the methods in them: this will cause there to be methods called PERSON-NAME, PERSON-AGE, etc.  
+
+	(setf an-employee 
+	  (make-instance 'employee :name "Daniel Barlow" :age 25
+			 :position "Hacker")) => #<EMPLOYEE {482AA695}>
+	(person-age an-employee)  => 25
+	(setf (person-age an-employee) 26) => 26
+	(person-age an-employee)  => 26
+	(as-string an-employee) => "Hacker Daniel Barlow, 26"
+Note that the method call looks just like a function call. It dispatches to the appropriate implementation of the method based on the runtime types of its arguments (these are MultiMethods, so potentially that's ''all'' of its arguments, not just the first one).
+	
+'''Encapsulation'''
+
+5/10. The DEFCLASS form can be used to define accessors for each attribute. If you want a private attribute, don't define an accessor - as in the employee salary slot above. If you want a read-only property - or a write-only property - you can do that by using :reader or :writer as appropriate instead of :accessor.
+
+The wrinkle is that the language has no inbuilt concept of methods belonging to objects. Code - any code - can go around the back of the public interface and get/set slot contents directly using (slot-value instance 'slot-name). Unless it's part of a method which logically should be able to do this, though, this constitutes behaviour on a par with "#define private public" - your CodingStandard''''''s should cover this.
+
+''You raise two issues here. I think the lack of a concept of methods belonging to classes (rather than objects) has nothing to do with encapsulation. If you don't want people to add methods to your generic function, don't export it from your package. In a MOP based CLOS a generic function is itself an object and you can use the package system to control access. The part about SLOT-VALUE is correct but I think SLOT-VALUE is a low level mechanism comparable to cast to char * in C++. It's only meant to be used in the implementation of methods on the class. If it really bothers you, there is a standard way of forcing all access to member values to go through the accessors by using uninterned symbols as slot names.''
+
+Does the package system permit to export, say, a specific instance of the generic method (the defmethod) without exporting the generic method itself, so as to permit callers to call the implementation of one generic function, without being able to define new instances of it? (To emulate virtual-table supported object-oriented languages) Would you export the method as a gensym, belonging to the class and manually funcall it?
+
+''The easiest way is to define a wrapper (non-generic) function that just calls the generic function.  You cane even make it inline to avoid the speed hit.''
+ (defgeneric %as-string (obj))
+ (declaim (inline as-string))
+ (defun as-string (obj) (%as-string obj))
+ (export 'as-string)
+'''Inheritance'''
+
+In spades. Multiple inheritance, even. If you have MOP support (not strictly part of CLOS, but many implementations support it) you can even change the superclass search precedence used for conflict resolution when more than one superclass has an appropriate method.
+
+'''Polymorphism'''
+
+Very much so - I touched on this already. CLOS has language support for ExternalPolymorphism - according to at least some of the definitions on that page (which could use a little refactoring).
+
+And onto the optional features ...
+
+'''Object Identity'''
+
+CommonLisp has had object identity forever; it's not new in CLOS. It's tricky to meaningfully build lists out of tuples without it, after all.
+
+	(setf a 2
+		b 2)
+	(eql a b) => T	; same type, value
+	(eq a b) => undefined ; an implementation can return T or NIL
+From the CommonLispHyperSpec EQL definition: ''eql is the same as eq, except that if the arguments are characters or numbers of the same type then their values are compared. Thus eql tells whether two objects are conceptually the same, whereas eq tells whether two objects are implementationally identical.''
+
+''Heck, CLOS methods can be '''dispatched''' on object or numeric equality.''
+
+  (defmethod foo ((x bar)) ...)	; specialize to bar class
+  (defmethod foo ((x (eql 3))) ...)	; specialize to number 3
+  (defmethod foo ((x (eql :bar))) ...) ; specialize to symbol :bar
+
+  (foo (make-instance 'bar)) ; call first specialization
+  (foo 3)			; call second one
+* Is this an example of PredicateDispatching?
+
+KentPitman explores some of the implications of object identity in his ParentheticallySpeaking columns: 
+
+http://www.nhplace.com/people/kent/PS/Name.html
+
+http://www.nhplace.com/people/kent/PS/EQUAL.html
+
+'''Automated Memory Management'''
+
+Yes. Real GarbageCollection in all implementations.
+
+(Actually, I'm not sure that the standard requires that storage be reclaimed automatically. I do know that it provides no way for the programmer to request that it does manually, though, so any implementation providing the "null GC" is going to fall over fairly quickly when faced with portable programs.)
+
+''There is (declare (dynamic-extent ...)) by which you can indicate that an object won't be referred to after the execution of the lexical scope terminates. Lisp compilers can use this as a hint to stack-allocate the object, or otherwise collect it early without waiting for a full GC.''
+
+When has Garbage Collection become requirement for a language to be OO? If Smalltalk did not have GC, then Smalltalk wouldn't be OO?
+
+'''Classes'''
+
+Yes.
+
+'''Abstract Data Types'''
+
+(um, dunno. What are these, if they're not classes?)
+
+''I think ADTs are basically types and multimethods without inheritance.''
+
+'''Mutable state'''
+
+You just saw it.
+
+'''Anything else?'''
+	* MetaObjectProtocol.  (Examples?)
+	* User defined MethodCombination''''''s
+
+Because the same syntax is used for methods and accessors (indeed, accessors ''are'' methods) you can override accessors in subclasses to do more interesting things, and client code will never notice the difference. This goes for the writer (SETF) methods too.
+
+''You left out some of the features I appreciate the most: :before and :after methods, method combinations and the ability to define your own method combinations. Somebody implemented DesignByContract for CLOS in a few hundred lines as a new method combination.''
+
+'''In summary:''' If you were only asking the former question after all, I've just wasted ''far'' too much time.
+----
+I have seen CLOS, Dylan [DylanLanguage] and Cecil [CecilLanguage] all described as PostObject languages.
+
+''If CLOS is a post-object language, that is ironic, being the first OO language to get an ANSI standard.''
+
+That assumes CLOS is OO, which is disputed. Having most of the features of OO doesn't make something OO. CLOS is based on functions, not objects, the programmer still passes around data structures to methods, not very OO. Method calls in CLOS are not messages, with a sender and receiver, not even conceptually, also not very OO. Methods don't belong to their classes, also not very OO. Multiple dispatch, while superior to single dispatch, is also not OO. OO isn't a list of features, it's a point of view about how things are modeled, a point of view that CLOS doesn't share, it takes OO features without the OO spirit. CLOS is bad ass, but it ain't OO. CLOS is as much OO as Scheme is Lisp.
+
+''As you say, OO is a way of modeling things. Taking this point of view, a generic function can model a message with sender and receiver.  A method conceptually belongs to a class if you choose to organize your code that way. Multiple dispatch can degenerate to single dispatch when appropriate. CLOS enables OO programming, and not in the limited sense that you can "do OO in C" with a bit of extra work. Without doubt, you can easily build programs that clearly and obviously model their domain using an object-oriented model.  This is all illustrated earlier on this page. If CLOS isn't OO, then it's something larger that includes OO modeling seamlessly. ''
+
+Exactly my point, CLOS isn't OO, it's something more general, it does things OO can't.  
+
+''In this sense, CLOS follows CommonLisp's multi-paradigm nature perfectly, encompassing the narrow definition of OO but also allowing other approaches to organizing programs, at the programmer's discretion.''
+
+Again, allowing multi-paradigm mixing of code, just demonstrates that it isn't OO, it simply allows you, if you so choose, to model this way.  CLOS, despite all the focus on OO, is clearly based around the concept of the generic function.
+
+''As to "passing data structures to methods" not being OO, this is only true if one focuses on the subject-verb-object versus verb-noun arrangement of method calls. That would be a mistake, as it is a trivial detail. See e.g. http://www.tfeb.org/lisp/toys.html#SLIP, where it is demonstrated how easily one can program Lisp's reader to allow the more common OO ordering of elements; it's easy exactly because there is no large underlying conceptual difference.''
+
+It's not a trivial detail, it's a marker of the conceptual difference between having a sender who owns a method, vs calling a generic function.  Smalltalk is OO, CLOS is a Lisp pretending to be OO.  Sitting here looking at my copy of "The Art of the Metaobject Protocol", I flip through and don't see OO code, I see Lisp, doing OO Lisp style, which still looks and feels like functional code.  If I dig into it, it's Lisp underneath, not objects.  If I dig into Smalltalk, it's objects all the way down.  Lisp can do OO, but it isn't OO, that's an important distinction.
+
+----
+It's not OO it's Better than OO
+
+----
+Please note that neither strictly enforced encapsulation nor methods belonging to classes are defining features of OO, unless you think they are. Some people think they are, and some do not.
+
+----
+See FpVsOo, ObjectOrientedLanguage
+----
+CategoryLisp

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Help With Java Unit Problems
+      </h1>
+      <p>
+        A place to talk about problems and solutions to various <a href="JavaUnit.html">JavaUnit</a> issues:
+      </p>
+      <hr/>
+      <p>
+        <strong>Should Each Test Method Be Forked?</strong>
+      </p>
+      <p>
+        I'm sure someone else must be having this problem. Is there a version <a href="JavaUnit.html">JavaUnit</a> that runs each test in it's own JVM? I try to tearDown and setUp test state before each test, but the problem I have is with singletons and other static data. As a result, I end up putting a bunch of smelly methods in to reset static stuff when it seems like the proper answer is to run each test in it's own JVM.
+      </p>
+      <p>
+        Has anyone done this?
+      </p>
+      <p>
+        Let me give you an example. Say I have a registry of meta objects that map java objects to persistent storage. Say the registry is a singleton. When I register a new mapping, it looks to see if the mapping has already been cached. If it has NOT, it looks in the database and ensures the DDL for that mapping. I want a fresh database for each test, so I create an Abstract Persistence Test and have it's setup and teardown methods drop and create the database.
+      </p>
+      <p>
+        Well, first problem, the registry is a singleton that caches objects. When I re-register mappings in setup, the registration will be cached but the DDL will not be created because I dropped and recreated the database. So now I have to clear the registry cache on each teardown. Of course, this violates the design because the registry should not be able to be cleared, but what the hell, I add a #clearCache method to the registry (opening up the system to bugs, i.e. if someone calls clearCache in production code).
+      </p>
+      <p>
+        But wait! That's not all! I also have code like this:
+      </p>
+      <code>
+        class MyPersistenceObject extends ....<br/>
+        {<br/>
+        private static final Mapping sm_mapping;<br/>
+      </code>
+      <code>
+        public static final Mapping getPersistenceMapping() <br/>
+        {<br/>
+        if ( sm_mapping == null )<br/>
+        {<br/>
+        sm_mapping = PersistenceManager.registerMapping( <br/>
+        new MyPersistenceObject.Mapping() );<br/>
+        }<br/>
+      </code>
+      <code>
+        return sm_mapping;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        So NOW, I have to add a kludge to each of these classes to reset their static state! Another smell. All these smells when the clean answer is to run each test in it's own JVM.
+      </p>
+      <p>
+        Thoughts? Does anyone have a version of <a href="JavaUnit.html">JavaUnit</a> that runs each test atomically? -- <a href="RobertDiFalco.html">RobertDiFalco</a>
+      </p>
+      <p>
+        <em>Lots of folks have problems unit testing singletons.  I think the most popular solution is to stop using singletons or use a factory that can produce mock objects during testing.</em>
+      </p>
+      <p>
+        Seems like a lot to go through when just running each test in it's own JVM would solve the problem. While singletons may not be an issue, what about resources that should only be allocated on JVM startup? These too would need to be handled. In fact, I'm not even sure how a factory or mock object could help the problem.
+      </p>
+      <p>
+        <em>If it's easier to make JUnit run each test in its own VM, do that.  If not, you can make a factory for the singleton with two modes.  One produces the same object on each call, the other produces a unique object on each call.</em>
+      </p>
+      <p>
+        Okay, here's one example. Say I have a composite structure with a root node. Somewhere I have a method like this:
+      </p>
+      <code>
+        public static Group getSystemRoot()<br/>
+        {<br/>
+        if ( sm_root == null )<br/>
+        {<br/>
+        sm_root = lookupRootInDatabase( .... );<br/>
+        }<br/>
+      </code>
+      <code>
+        return sm_root;<br/>
+        }<br/>
+      </code>
+      <p>
+        The root group is immutable and I don't want to have to look it up each time. Of course, if I kill the database in between test methods, the root may be created with a different unique identity so I can't use the cached version. Now, I could put something fancy into place like this:
+      </p>
+      <code>
+        public static Group getSystemRoot()<br/>
+        {<br/>
+        return ObjectCache.getInstance().lookup( "System.root" );<br/>
+        }<br/>
+      </code>
+      <p>
+        Make sure all my singletons use the object cache and in the tearDown method I could call:
+      </p>
+      <code>
+        public tearDown() throws Exception<br/>
+        {<br/>
+        ObjectCache.getInstance().clear();<br/>
+        }<br/>
+      </code>
+      <p>
+        The only problem is that I have put in a bunch of infrastructure and introduced a hash look up for all cached data for no other reason than to make the system more testable. The overhead isn't required for anything else. Furthermore, I would have to redesign my existing code to use the new object caching facility. Are there other solutions, or is this what most people do?
+      </p>
+      <p>
+        <em>what about resources that should only be allocated on JVM startup?</em>
+      </p>
+      <p>
+        Sounds like something other than a <a href="UnitTest.html">UnitTest</a> if the tests are dependent on that.  With the sort of ubiquitous use of <a href="SingletonPattern.html">SingletonPattern</a> the code is demonstrating, perhaps the smell isn't in the tests?  One of the values of <a href="UnitTest.html">UnitTest</a>s is that they help a programmer discover areas where the design (as implemented in the source, of course) is problematic.  Perhaps the difficulties in testing described here are a hint the code is trying to tell you something? <a href="ListenToTheCode.html">ListenToTheCode</a>.
+      </p>
+      <p>
+        <em>Well, it could also be a smell in the unit testing infrastructure. After all, if you find yourself straying from the simplest thing in order to make things work with a test infrastructure, I would </em><a href="ListenToTheCode.html">ListenToTheCode</a> and suspect the testing infrastructure. Most large, scalable, inter-process systems require a good amount of cached data to perform adequately. This is different than the will-nilly use of singletons. Remember, when all you have is a hammer, everything looks like a nail. When using a system that does not atomically handle static state to test your system, static state ends up looking bad. For what it is worth, how would you handle the code fragment above? Would you just never cache the root node and retrieve it from the database each time?<em></em>
+      </p>
+      <p>
+        I would set the ObjectCache's state at the start of every test. -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <p>
+        <em>So, you would introduce the ObjectCache even though the only thing you needed it for was testing? Why introduce the extra overhead if it would never be used (and in fact never needed) in production? I just want to thoroughly understand this and the rationale.</em>
+      </p>
+      <p>
+        No, I thought ObjectCache was part of the code being tested.  If the code just used a Group, I'd set the state of the Group before each test. -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <p>
+        <em>So something like this?</em>
+      </p>
+      <code>
+        public static Group getSystemRoot()<br/>
+        {<br/>
+        if ( sm_root == null )<br/>
+        {<br/>
+        sm_root = lookupRootInDatabase( .... );<br/>
+        }<br/>
+      </code>
+      <code>
+        return sm_root;<br/>
+        }<br/>
+      </code>
+      <code>
+        public static void resetSystemRoot()<br/>
+        {<br/>
+        sm_root = null;<br/>
+        }<br/>
+      </code>
+      <p>
+        No, like this:  -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <code>
+        protected void setUp() throws Exception {<br/>
+        Group theGroup = Whatever.getSystemRoot();<br/>
+        theGroup.setState(...);<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>Cool. That's better, but my only problem is that each clean of Group would need to know that it was a mock object with a setState method. I guess I'd also have to redesign Group to be an interface instead of an abstract class and create one that simply wraps and delegates to a concrete group.</em>
+      </p>
+      <p>
+        I'm not sure what you mean.  All you need is one or more setState()-type methods on Group (regardless of whether it's a class or interface).  Nothing above shows a need for a mock object, wrappers or delegation.  The rule for unit testing is very simple:  set state to known good values before each test. -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <p>
+        <em>Okay, that seems to be an argument for each test creating a clean context and environment before running. I would think the easy way to do this would be to run each test method in it's own JVM</em>
+      </p>
+      <p>
+        Each test should create a context before running.  Ideally you should be able to do that in a few lines of code.  If forking a VM for each test starts to look like a good idea, you may want to rethink how you manage context. -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <p>
+        <em>Or not. Complex, highly decoupled but interacting systems are not always so simple to create a clean context for each time you start a test. Certainly not in a couple of lines of code. Plus, you have to ask yourself why you are building the infrastructure in your code to do that. If it is to support test, you may have a smell in your code.</em>
+      </p>
+      <p>
+        [Building infrastructure into code to create a clean context to support testing <em>is</em> indicative of a smell. The question is, was the smell already there before adding the test-supporting code?]
+      </p>
+      <p>
+        There are some situations where context management can't be simplified.  If you're working in one of those then a JUnit that forks a VM might be a good idea.  Before you write one, make sure you can't simplify context dependencies.  Also make sure your unit tests aren't really acceptance tests. -- <a href="EricHodges.html">EricHodges</a>
+      </p>
+      <p>
+        <em>I often hit problems testing legacy code that relies heavily on singletons.  This is a smell in the production code, and this problem needs to be fixed in the production code.</em>
+      </p>
+      <p>
+        <em>For more short term solutions, I clear all static state before and after each test.  It's not an ideal situation, but it does provide an immediate solution to a pressing problem.</em>
+      </p>
+      <p>
+        <em>If you </em>'really<strong> want to go down the "separate JVM" route, you can instruct ant to do this.  An alternative, within a single JVM is to run each test in a separate class loader.  With JUnit 3, one can do this by overriding a </strong><a href="TestCase.html">TestCase</a> method in a common abstract base class that you create; check to see if you're running under a new class loader, and if not, load yourself (the current class) in a new class loader; use reflection to set a 'running under class loader' flag there, and then and invoke yourself (IE: the current test method) within the new class loader (using reflection).  Be aware that doing this -- with separate JVMs or with separate class loaders -- will be <strong>SLOW</strong>.  -- <a href="JeffGrigg.html">JeffGrigg</a><em></em>
+      </p>
+      <hr/>
+      <p>
+        <strong>Distributing </strong><a href="JavaUnit.html">JavaUnit</a> or <a href="UnitTest.html">UnitTest</a>s with code licensed under the <a href="GnuGeneralPublicLicense.html">GnuGeneralPublicLicense</a>?<strong></strong>
+      </p>
+      <p>
+        My company is about to release a piece of java software licensed under the <a href="GnuGeneralPublicLicense.html">GnuGeneralPublicLicense</a>.
+        The source tree includes junit.jar and our <a href="UnitTest.html">UnitTest</a>s, but <a href="JavaUnit.html">JavaUnit</a> is distributed under the IBM <a href="CommonPublicLicense.html">CommonPublicLicense</a>, which according to <a href="http://www.gnu.org/licenses/license-list.html">http://www.gnu.org/licenses/license-list.html</a> isn't GplCompatible. It seems to me that we sadly must somehow remove junit.jar from the distribution, but i wonder if we're allowed to distribute our <a href="UnitTest.html">UnitTest</a>s under the GPL, even though they are "based upon" <a href="JavaUnit.html">JavaUnit</a>? Please <a href="AnswerMe.html">AnswerMe</a> -- <a href="ChristofferHammarstrom.html">ChristofferHammarstrom</a>
+      </p>
+      <hr/>
+      <p>
+        See: <a href="JavaUnit.html">JavaUnit</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryTesting.html">CategoryTesting</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,92 @@
+An obvious SecurityPattern.
+
+Unlimited vs limited, parent vs child, upper vs lower, whatever you choose to call them, there are two kinds of capabilities.
+
+Unlimited capabilities give you complete access to the object (e.g., like superuser), and limited capabilities give you only limited access to it (i.e., make you subject to the PermissionFlags).
+
+''Suppose that PermissionFlags are supported primitively. Then, how is an unlimited capability different from a capability with all the flags set to 'allow'?''
+
+* That would depend on how you implement limited versus unlimited. In GrandUnifiedCapabilities, they're the override flag.
+
+* Assuming you want to know how override differs from all the other flags, override controls the setting of permissions on caps. If you've got override for a cap then you can set the perms for other users ''of that cap''. The trick is that "having override" for a cap doesn't mean that the override flag is set on that cap. Rather, it just means that somewhere on its way to that cap your message was forwarded past a cap with override set and that every subsequent cap had override absent.
+
+* Typically, only the initial cap that provides users with access to the system has override set, so once messages lose override, that's it. Additionally, messages can NOT go just everywhere they want since traversing an edge in the graph is an operation upon it. When all is said and done, what this means is that objects can override caps based on their topological relationship to said caps. Some objects can do so and others can't, all based on ''where they are'' in ''relation'' to their target.
+
+* If you draw the graph as a lattice with links that have override absent going downwards and those with override unset go upwards, then an object overrides ''everything below it'' in the lattice. That is its UserDomain.
+
+TwoKindsOfCapabilities refers to having a capability to a raw object versus a capability to a limited proxy, facet, caretaker, whatever. It's a common pattern when using capabilities that you distinguish between the owner of an object and mere users of it.
+
+''Typically, the original creator of an object has full control over it, and may delegate or transfer possibly restricted rights to other users. But this does not necessarily require primitive support for an owner/user distinction in the cap system. The concept of "owner" tends to imply that only one principal "owns" an object, but in a pure cap system there is no attempt to prevent delegation or transfer of unlimited caps (nor should there be).''
+
+* And indeed there is not. You own everything in your UserDomain. And since the system is a lattice, your user domain may intersect with another's. In such a case, all objects in the intersection are owned jointly by both users. And in any practical system, there will always be someone above you in the graph, which means that they own ''you'' and everything that you own.
+
+** ''"own" may be a poor choice of term, then, since in other security models that use that term (in particular AccessControlList''''''s), ownership is exclusive.''
+
+* What building in the owner/user distinction in the caps does (at least if you do it right) is to allow you to use the ''same caps'' for both users and owners. Object A owns B. I own A while you merely use it, and depending on this, we have different relationships to B. We both use capB in object A but it responds differently to us both. This scheme eliminates duplication.
+
+You can implement two kinds of capabilities using the FacetPattern but the concept is much broader and general than that. It in no way requires the facet pattern and in fact it is best implemented without it.
+
+The best way to implement two kinds of capabilities is to make the limited vs unlimited a flag built into all capabilities. This has the advantage of making the two kinds of capabilities EQUAL. They become equally fundamental in the system, just as primitive, just as easy to use. Here on the one hand you have a capability with unlimited set and over there you have one with unlimited unset.
+
+But that's only the most trivial of implementation details. (One that most caps systems somehow manage to do wrong.) Because you only get to the deep issues of implementation when you're dealing with that most primitive of operations, the message send. Specifically, if capabilities are fundamental concepts in your system and the message send is also a fundamental concept, then how do they interact with each other?
+
+The answer is that in a clean implementation the behaviour of a message send has to be based on the ''total history'' of the message send. If A has a chain of unlimited caps to Z then it has an unlimited cap to Z. But the moment that '''any''' cap in that chain is reduced to a limited cap, then A can only have a limited cap to Z. (This implements the UserDomain pattern.)
+
+''This is fine if a link in the chain is only added when a cap crosses a user domain; if done at any finer grain than that, I suspect it would be unmanageable.''
+
+* Perhaps for some implementations but not for mine. Keep in mind that when I say "then it has an unlimited cap to Z" I mean "it might as well have an unlimited cap to Z" and "it could give itself an unlimited cap to Z". But not after the chain is broken.
+
+Discussion moved to BuildSecurityAbstractionsIntoCapabilities.
+
+And why is this all necessary? Because of NameSpace ideals. Because it eliminates the need to maintain multiple parallel hierarchies of objects, eliminates a LOT of capability management overhead, makes it possible for USERS to manage, arrange and rearrange security in ways that programmers can't even imagine. In short, it takes programmers out of the loop.
+
+''It might be "obvious" to the original writer of this entry, but it is totally unclear from the description above what the motivation is, how it is to be implemented (since the description references bits that most capability systems do not have), and how the goal of this pattern differs from, e.g. FacetPattern.''
+
+I've added details above. BTW, you should know that '''I''' (''who?'') am the cutting edge of caps research, not what you can find implemented or in the literature, both of which are decades obsolete.  
+* ''(Are you? Who are you? Maybe it was obvious once...)''
+* {The author here is RichardKulisz. He is a bright fellow, had several interesting ideas (see BlueAbyss), never made anything of them. He was kicked off WikiWiki for being mean to others. He has never been the 'cutting edge of caps research'. (Though I don't keep up with 'cutting edge' caps research so much, I'd be far quicker to offer that title to Mark Miller (see http://www.erights.org) or Nick Szabo (http://szabo.best.vwh.net/).) Richard produced his own variation of 'capabilities' that is based upon an array of permissions being influenced by links between objects. He adds to this an 'unlimited' permission for original owners. All this is remarkably less flexible but more complicated to use and implement than is using FacetPattern with ObjectCapabilityModel, which Richard deprecates mostly because it isn't popular (clearly, if it isn't popular, then people don't want it... that's his logic.)}
+
+''Being invented decades ago doesn't make something obsolete. As a case in point, Lisp isn't obsolete (and current Lisp dialects are no so different from Mc''''''Carthy's original design).''
+
+You won't find any mention of trivalent permission flags in the literature. -- rk
+
+[Is there significant overhead from traversing chains? Does something bound their maximum lengths?]
+
+I'm pretty sure there is and there can't be, respectively. But the system hasn't been implemented yet. -- rk
+
+Realizing that the usual optimization trick will nearly undoubtedly apply: There will be some overwhelmingly common case, and a handful of tricky cases. You optimize for the common case (as alluded to above). If there is some major performance gain to be made by building some part of this on top of another abstraction, it might well be worth it so long as the construct is feasible, and (more importantly) still exactly equivalent to the naive-but-correct implementation. This is not something we will know for a while yet, as you have to have built _and_used_ a prototype before you can accurately judge the hotspots.
+
+Tangentially related, therefore, there are several ways of speeding up the message dispatch/check for the unlimited privilege: First off, simple short-circuit evaluation. Even in this most basic approach, there's still the option of 'from which side do we begin?'. Seeing as it doesn't _where_ the 'unlimited' permission was lost, but only the fact that it _was_ or _wasn't_ lost: the semantics aren't affected for that message call. Now, on a more intricate idea, you could maintain a 'boundary' or 'border', outside which it is trivially known that the user hasn't got the 'unlimited' permission.
+
+An important note on this (and more on topic with semantics instead of implementation) is that this 'border' is not really determined by the owner, but by the owners surrounding it: in practice they'd be the only ones interested in setting boundaries to the objects the owner could affect. A very clear analogy would be the setting of borders between countries. There's Canada, there's US, and there's a thin line of neutral between them, which is in practice governed by the 'pinching force' between the two governments. Likewise, with two bordering owners (/agents/users, although the last has a bit of a double meaning; user-of-resource vs. user-as-owner) they can share as much between them by simply removing the unlimited permission closer or farther away from the point that the other use did.
+
+Going off onto another tangent, I'd imagine that it might be possible to specify "the unlimited cap of all messages through here will revoke 'x' links away, thus allowing a hedge. Somebody might even think that this is useful. Understand why it's _not_ useful, and you'll be much closer to understanding this thing Richard calls GrandUnifiedCapabilities. (Think leash vs wall.)
+
+Questions, comments, observations?
+
+-- WilliamUnderwood
+
+You can't compute a user boundary without a concept of a user, which is not something you want to have.
+
+Long distance unsetting of override is a bad idea, unnecessary, and semantically meaningless. If you own a link to a link (if x is >= 2) then you can create a direct link to the distant object, dragging the subgraph it heads one step closer to you and more into your domain. Additionally, if override can be set on any link you have override for, then you can set override on any downwards link in the "hedge", making it meaningless. This behaviour is legitimate, it's what it ''should be''. Finally, there's already a concept for aggregating permissions, and that's absent flags. So while distance unsetting is a nice idea, it's really just another type of aggregation, one that can't work. -- rk
+
+Hehe, I went back and forth a few times between "_why_ it's useful" and "why it's _not_ useful". I think that decides it for the most part. Next, the concept of 'user' isn't the important thing, the idea is that from any given point, there may or may not be a path to any other node while maintaining override. If there isn't, there's some boundary, which can then be computed. It's a "From this node, how far could we go before we get stopped?" type of thing. As I said before though, this border is uninteresting from a semantic point point of view, it's implicit in the structure of the graph. The point was that it might end up being useful for optimization purposes. It just as likely won't, and hence why any in depth discussion of the matter is irrelevant until an implementation exists,is used, and hotspots identified. Until then, any effort solving problems with this optimization are wasted effort.
+
+Basically, what I was trying to get across is that there are many possibilities for performance improvements if they prove necessary, and therefore there is no apriori reason to think that this will not be implementable.
+
+-- cwillu
+
+Oh, I agree. But I doubt that precomputing an user's boundary is one of them. I also don't see it as a problem though.
+
+The other author on these pages made a couple of very good points. One about not trying to cram everything into the VM. The other about leaving some room to maneuver, to define alternate security abstractions. Like whether unset-unset links should exist, or whether delete should be defined in relation to the cap itself instead of its targets' caps, or the can of worms that's versioning (especially branching and retrieval of deleted stuff). So anyways, it led me to thinking about what to put into the VM vs image vs library. It's a really interesting design problem. So far, I don't have much of a handle on it though.
+
+Also, handling the permissions past every cap is a lot more complicated than just looking up the override flag. For each flag in the cap, you have to check whether it's absent or not. If it is, then the value accumulated in the message is retained. If it isn't it's replaced. And when that's done, then you have to check that either read or override are set in the message for it to proceed through the cap. So the logic is quite complex. Optimizing it will be an interesting problem. For example, I anticipate most caps having all perms absent or all perms (excepting override) present. If this materializes, it could be exploited. -- rk
+
+---------
+
+For another variation of TwoKindsOfCapabilities, see RightsAmplification.
+
+----
+See also CapabilitySecurityModel, ObjectCapabilityModel
+
+CategorySecurity

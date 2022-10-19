@@ -1,0 +1,95 @@
+This discussion on the difficulties of refactoring when using CVS (CyclicCvs) has been moved from the ExtremeProgramming page to here.
+
+I don't really know enough of how Smalltalk works and maybe with the appropriate tools it isn't a problem, but where I work, the package and subsystem structure is mapped into a directory structure that is then placed under source code control, using CVS.  With each class name being reflected in its file name and each package being a directory name, changing the names of classes, moving classes between packages, and renaming packages causes enough heartache with CVS that it would be a major impediment to refactoring.  There must be a better way...
+--JamesCrawford
+
+----
+''James, I've used CVS a fair bit and only ever had trouble with it when trying to rename modules. The other troubles you describe surprise me - can you explain them in more detail? Thanks.'' --PeterMerel
+----
+Take a look at RefactoringWithMetaCvs.
+-- KazKylheku
+----
+Perhaps (hopefully) it is just my ignorance of CVS showing through here but in order to move a file between packages or to change the name of a file I need to do the following:
+ * mv old_file new_file
+ * cvs remove old_file
+ * cvs commit old_file
+ * cvs add new_file
+ * cvs commit new_file
+In addition, because we use a tag to identify which files get included in a system build, the following two steps are also necessary:
+ * cvs tag -d tag_name old_file
+ * cvs tag tag_name new_file
+Is there an easier way that I am missing?  In fact, looking at my description of what has to be done, it looks like a simple shell script could solve most of the pain.  I wonder why I never thought of it before?  However, this solution doesn't preserve any of the history of the file.  To CVS it looks like a brand new file.  I don't know if this would be a problem or not.  
+
+There is another way to move the file that does preserve the history but this involves hacking within the CVS repository and seems even more error prone.
+The following shows how to do this (as plagiarised from the CVS documentation):
+ * cd $CVSROOT/old_module
+ * cp old_file $CVSROOT/new_module/new_file,v
+ * cd ~/work/old_module
+ * rm old_file
+ * cvs remove old_file
+ * cvs commit old_file
+ * cd ~/work/new_module
+ * cvs update new_file
+ * # Now delete all the old tags on the file
+ * cvs log new_file  # So we can see the tag names
+ * cvs tag -d tag1 new_file
+ * cvs tag -d tag2 new_file
+ * etc.
+This seems even more error prone but again a shell/perl script could probably alleviate most of the pain.  I am not sure that I like messing directly with the repository though.  What is your view on this?
+
+--JamesCrawford
+
+----
+One trick for keeping the revision history intact is to first copy the underlying RCS file to the new location/name within the repository, and then to do the cvs remove/commit on the checked out file in the old location. This is not ideal, because it means that if you do a checkout -D "some time within the revision history of the file", and your checkout includes both the old and new locations, then you get a copy of the file checked out under both the old and new names, which could lead to link errors, among other funny things. 
+
+''(Using a BillOfMaterialsFile  in your directory helps with this problem.  The RCS file has been copied, and you check out two versions of the file, under both the old name and the new name, but the BillOfMaterialsFile only contains the old name. If you have a make target that removes all files not in the BillOfMaterialsFile, the extra version under the new name of the file will be eliminated. Nevertheless, CVS's non-support for renaming is a pain. -- AndyGlew, 2002/10/24.)''
+
+So another way it's been done (from a shell script) is to checkout each old revision, move it to the new location/name, and then check it in. This has the effect of collapsing the revision history for the new file into the modern timeframe; again, not ideal, but it doesn't risk introducing historically bogus duplicates and it might be the effect you're looking for.
+
+But the way I usually do it, and I guess its adequacy is the reason why the feature isn't "properly" implemented, is to just do what you're doing above: copy the file to the new location, cvs remove the old one and cvs add the new one. I like this because it preserves exactly what happened. The only information it loses is the fact that one file was copied from the other, which I usually just note in the new file's first commit comment. Why do it any differently?
+
+There's a deeper discussion of all this, and much else besides, in Per Cederqvist's CVS reference manual, which is online at
+
+http://www.loria.fr/~molli/cvs/doc/cvs_7.html#SEC64
+
+and very much worth a look. --PeterMerel
+
+----
+Thanks for the pointer - you were right - definitely worth a look.
+
+After just going through a refactoring process yesterday, I still think that CVS is more suited to an environment where the system structure grows by addition rather than by change.  And don't get me wrong - I like CVS - it has been extremely useful on a number of projects I have worked on.  I am just trying to see how I could apply the principles of RefactorMercilessly to a moderately sized C++ project using CVS.  For example, just to change the name of a class would required the following:
+ * Rename the .hh and .cc files
+ * Do the CVS shuffle as per above
+ * Change the include guards in the .hh file
+ * Change all references to the class to use the new name
+ * Change all includes of the old header file to include the new one
+At least emacs helps with a lot of this.
+
+I would really like to hear of other people's experiences in applying XP to C++ and whether these types of issues were really problems or not.
+
+--JamesCrawford
+
+----
+Yes, the bookkeeping required to support refactoring in C++ is a real pain. But I prefer the pain of the refactoring to the pain of having a misnamed class in the wrong place. Having CppUnit in place helps (Kudos to MichaelFeathers for the port). --PeteMcBreen
+
+----
+Have a look at the new PRCS tool at http://xcf.berkeley.edu/~jmacd/prcs.html, which handles file movements well.  It doesn't have a client-server mode yet, but it seems good enough to use. -- MartinPool
+
+----
+Looks good (from the brief glance I gave it).  Has anyone had any direct experience with it?  Does it make refactoring a lot easier?  If I get any time in the near future I might have a closer look. --JamesCrawford
+
+----
+I have some experience with PRCS.  Indeed it is very nice; save for the client-server mode (which is nonetheless a biggie) and Emacs integration it seems to be a good CVS replacement.  However:
+	* There are tools issues, specifically no TkCVS equivalent, nor any ability to use PRCS from non-Unix machines
+	* It encourages a slightly different style of development from CVS, which is odd to get used to at first
+	* (subjective) It doesn't always feel as ''mature'' as CVS does.  This is difficult to explain, and probably because I don't have my fingers into it all day.
+
+As for what I use day in day out these days, it's usually Aegis. (http://www.canb.auug.org.au/~millerp/aegis.html)  Aegis is very much into the ''bondage and discipline'' side of things, and sometimes the way it runs tests is just too irritating for words, but it does do most of what I want it to do, and is willing to be bludgeoned into doing most other things.  It feels set up for a large C/C++ project in a lot of ways, but I have talked it into using CMU CommonLisp's make-equivalent, and currently have it merrily testing my Perl code. -- GrahamHughes
+
+----
+Have a look at http://www.bitkeeper.com/.  Semi-commercial, but sounds very interesting (no, I haven't tried
+it because it's not yet released). --NealBecker (nbecker@fred.net)
+
+--
+You might also want to keep an eye on http://subversion.tigris.org/
+SubVersion is still in development, but it promises to have all current CVS features and it will handle directory changes, file renames, and permission and other meta-data changes as well. That is, directories, renames, and file meta-data are also version control. --ErinStanfill (elstanfill@bigfoot.com)

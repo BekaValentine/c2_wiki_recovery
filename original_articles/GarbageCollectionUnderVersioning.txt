@@ -1,0 +1,139 @@
+Fine-grained versioning is a GoodThing which should be built into every operating system component. Now obviously, it raises some fundamental questions. Even after you delete the last live reference to an object, there are ''past versions'' of other objects which keep references to that object. So how do you collect garbage when you're keeping previous versions of every object around? It turns out not to be such a problem.
+
+Let's understand fine-grained versioning first. That kind of versioning means that ''every'' object keeps track of previous versions of itself. And refs keep track of which versions of an object they're pointing to. The reason things have to be that way is to prevent an object update from spawning an update of every object that holds a reference to it, and every object that holds a reference to any of them, and so on all the way up the graph.
+
+So here's the algorithm.
+
+* the latest version of the root object is live
+* the latest version of any object reachable from a live version is live
+* any previous versions of a live object which satisfy at least one of the reprieval conditions on the refs to it are reprieved
+* any versions of any object reachable from a reprieved version are reprieved
+* anything else is doomed
+
+In the first pass, mark all live and reprieved objects. In the second pass, kill any doomed objects and cauterize all references to them. ''What does cauterize mean here?  I thought a GC algorithm only collected garbage, which is objects with no references except from other garbage.  In this case, a doomed object might have a newer version, so there might be history links to a doomed object. But there shouldn't be anything else, should there?'' Although refs don't have pointers to old versions, they do "keep track of which versions they have access to". So if a version's going to be deleted, it isn't meaningful to say that the ref will retain access to it. To cauterize is to remove access to a doomed version from any refs that point to the object. You can hold off cauterization until a message goes through a reference though.
+
+This requires two passes.
+
+* ''It doesn't literally require two passes. Other GC algorithms than mark/sweep can be adapted to work here; the garbage collector "just" has to keep track of the strongest reprieval condition that leads to an object, in place of binary reachability. Since reprieval conditions need to be merged whenever an object is reachable by two or more references, they must form a lattice for this to work. -- DavidSarahHopwood (dh)''
+
+* Reprieval conditions don't need to be merged in mark and sweep, nor do you need to keep track of anything beyond "is this object/version reprieved right NOW?"
+
+* ''Maybe I'm missing something, but in the mark pass you don't know the object version until you reach it. (Well, since you have bidirectional links there are other possibilities, but they're no simpler.) --dh''
+
+There are several options for reprieval conditions:
+* no more than X versions from the latest version
+* no older than X seconds from the latest version
+* no older than X seconds from current time.
+
+Obviously this is configurable, and on a per-object basis.  Certainly, there are some objects that are valuable and should have backups kept around for a long time; equally, there are others which are highly transient and which it might not be desirable to have any prior versions lying around.
+
+* ''We must consider resource exhaustion attacks, both direct (an attacker allocates excessive resources) and indirect (an attacker manipulates some other component into allocating excessive resources). Direct resource exhaustion attacks are easy to deal with; indirect attacks aren't.''
+
+* ''Although resource exhaustion is an issue for any system, fine-grained versioning exacerbates the problem because some objects may become vulnerable to indirect attacks even if each version of the object takes bounded resources. --dh''
+
+* This is a general ResourceManagement question. Obviously, if you've got versioning then versions are themselves a resource which should be managed. Reprieval conditions are the way to do that.
+* Resource management, by which I mean uniform, elegant and secure resource management, is unsolved in the general case. It is solved in this specific case so I don't see why you're bringing it up as an issue.
+
+Some notes. Since refs are fairly high level objects themselves (they keep track of which versions of an object they point to) instead of just pointers, it makes sense that this is a CapabilitySecurityScheme. And not just any cap scheme but one with high level capabilities like GrandUnifiedCapabilities. And in that case, only 'override' (ownership) permission allows one to change a ref's reprieval condition.
+
+* ''See BuildSecurityAbstractionsIntoCapabilities for a discussion relevant to whether GrandUnifiedCapabilities are actually needed for this. The range of options for versioning further reinforces my opinion that this kind of thing should be implemented in a separate abstraction layer by use of proxies. --dh''
+
+* [Response moved to BuildSecurityAbstractionsIntoCapabilities.]
+
+Note also that reprieval is inherited. If you set the reprieval condition to 1 second on /a/b/c and 1000 hours on /a/b then objects released by /a/b/c will still be kept around by /a/b.
+
+A version of an object becomes garbage when none of the references to the object grant that version of it a reprieval. If you have an object with three versions, and 2 references to that object, and neither reference has a condition on it that reprieves the oldest version, then that oldest version is garbage and gets collected. In the process of freeing the doomed version of the object, the references to the object get cauterized so that they no longer provide access to the oldest version.
+
+The same thing works for whole objects instead of individual versions. An object can get garbage collected when ''none'' of its versions have gotten a reprieval. Naturally, the object can't be live for that to apply.
+
+What this is is a fine-grained OO ResourceManagement scheme. An admittedly non-deterministic scheme but that's not a major consideration so long as hard drive capacities keep increasing.
+
+* ''The "no older than X seconds" conditions are nondeterministic, but the "no more than X versions" condition is deterministic as long as it is the only condition used. --dh''
+
+* The "no more than X versions" conditions are blatantly insecure (subject to the obvious direct attack) and so should never, ever be used. Deterministic insecurity is for idiots.
+
+** ''I was simply making a statement of fact.''
+
+** ''Whether "no more than X versions" is sufficiently secure depends on what you're relying on the versioning for. If you are relying on being able to revert changes made by authorized-but-untrusted users provided the need to do so is recognised within a given time, then yes, it's insecure. If you are only using the versioning to correct mistakes made by trusted users, then it doesn't matter.''
+
+** re: "I was simply making a statement of fact". And that is why you'll never be an interaction designer. You put implementation determinism ahead of interface determinism. You chose to put an upper bound on how much space an object takes up ahead of ensuring a version the user is interested in exists. Those are cardinal sins of interaction design. Which you've now compounded by refusing to acknowledge, take responsibiity, or seek redemption for them.
+
+** Until today I didn't even understand why you considered "no more than X versions" at all deterministic, I just thought it was stupid, which should give you an idea of how radically different our mindsets are.
+
+** (Do you seriously think you can trust your judgement on security issues when you say something like "blah blah blah then security doesn't matter"?)
+
+** ''I can see very well that our mindsets are different. I make a narrow and precisely stated technical point, and you proceed to assume that I think that something or other is a good idea. When did I say that I thought the "no more than X versions" condition was a good idea? As it happens, I don't.''
+
+** ''What matters is the security properties that users need. You seem to think that you can predict that in advance for all users.''
+
+** ''Are you disputing my statement that the "no more than X versions" condition is deterministic? This is not a matter of opinion, and it has ''nothing'' to do with either security or interaction design.''
+
+** Of course it's not deterministic. And of course it has everything to do with interaction design. If you don't see that without my having to spell out for you the exact relevance and meaning of something I've explained in some detail (in the paragraphs immediately following your comment no less!), you really shouldn't play at OS design, and I really shouldn't waste my time talking to you.
+
+** What I think and don't think is my own concern. You're not in a position to criticize.
+
+** The fact that you even bothered to ''think'' of the "narrow and precisely stated technical point" tells me something about your mindset. Compared to that, it doesn't even matter whether or not you think it's a good idea.
+
+* And even if it ''were'' secure, it wouldn't matter because determinism is a stupid goal to strive for. Apparently the importance of objects "inheriting" (and reprieving) their subparts has completely escaped you. Well it's important because it makes determining what gets freed ahead of time an INTRACTABLE problem. Determinism without tractability does you a fat lot of good.
+* So rather than determinism, people should strive for PREDICTABILITY. This is best achieved by using "no older than X seconds" conditions. With these conditions, you KNOW that old versions of objects will be reprieved according to the most lenient condition found by tracing the graph upwards, from the object to the root of the graph by all of the paths in between the two.
+* What makes this predictable (tractable by a mere human) is the fact that the conditions are independent of the local state of each node in all the paths upwards, and instead are dependent on a single global measure of the current time.
+* (To inject a little note of triumphalism, I'll note that I had a bad feeling about "no more than X versions" from the very start and only included it for variety's sake. As always, my gut feelings trump others' carefully reasoned thoughts. You'd be wise to take this into account when considering the fact that I am ''utterly convinced'' of the need for building security and versioning into object references, exactly as I aim to do.) -- RK
+
+Now, since we're on the topic of versioning, transactions and changesets naturally come up. This is because versioning isn't sufficient to ensure '''reversibility''' in any predictable and understandable manner. Rather, one needs to aggregate changes together (and nest them even) so that users can undo and redo them as a whole.
+
+----
+
+How does an object keep track of the transactions and changesets it belongs to? Who has access to which transaction/changesets? How do they access them? How do you reconcile an OO cap-based model of the data where you have objects and versions with an FP model where you have operations, transactions and changesets? -- rk [Irrelevant discussion of ReferentialTransparency snipped.]
+----
+
+''Well, I'm fairly certain no one else here is that interested in the topic, let alone doing anything about it. So if you're interested in a discussion then take a look at OperatingSystemsDesignPrinciples and tell me what exactly you want for requirements.'' -- RK
+
+Oh, you never know. For instance, I'm interested in these topics, I just haven't had anything to say yet. I even worked on something along these lines last year, although not as ambitious as what I believe you have in mind (and thus probably not interesting to talk about). -- dm
+
+I'd be interested to know if there's a way to do versioning without having references be primitive objects that keep track of multiple versions of containers. And without having to update the entire graph for each write. IOW, whether my solution is unique. Also, I wouldn't mind knowing the extent and breadth of other projects in this area.
+
+I'd also be interested to know how you handled transactions and changesets, if you did. I'm strongly leaning towards making them higher level objects. Mostly that's because an object can be both a movie and versioned, it can be both a movie and secure, but it can't be both a movie and a changeset. That tells me changesets are structure types, not orthogonal attributes.
+
+And I'd be ''especially'' interested in any concept, feature or concern I missed completely. -- rk
+
+Not sure. The general ambition is one that I've thought of as important for a long time, but there are tricky aspects to it that I've never quite settled in my own mind, unless one just offers various options rather than guarantees and hopes for the best, which obviously is rather less than ideal. I haven't done a really thorough literature search, but what I have read I tended to disagree with in one or more design details. But I'll let you know if I spot something. -- dm
+
+You've got me intrigued. What do you refer to by options rather than guarantees? At the level of changesets, I offer only options. Any guarantees I'd offer would be illegitimate restrictions. At the level of versions, I don't see any kind of options to offer. But when you're fulfilling over a dozen different design principles, there aren't gonna be any options.
+
+Want to know something neat? My object instantiation method is "link to version 0 of that other object", where "that other object" is any object. Branching is copying and copying is instantiating. Gotta love prototypes!
+
+This is a perfect example of not having options. Because without branching, there ''are'' options, all of them ugly. You can either have caps know what kind of object to instantiate or have objects know what kind of cap to link themselves with. Now there are neither options nor ugliness. And oh how I love it! -- rk
+
+''With any luck, maybe RK will [...] rediscover the material published by Sergiu Simmel and Ivan Godard more than ten years ago in connection with their Kala work (for example, http://www.ipipan.gda.pl/~marek/objects/faq/oo-faq-S-8.14.2.1.html, http://portal.acm.org/citation.cfm?id=117972&dl=ACM&coll=portal, and http://www.omg.org/docs/1992/92-04-05.pdf). The difference, of course, is that they actually '''built''' something. -- AnonymousCoward''
+
+''Thanks for the references to Kala. Some of us do want to build something. --dh''
+
+* http://archive.dstc.edu.au/AU/staff/crawley/papers/PAda.html ''[not sure what the relevance of this is to versioning --dh]'',
+* http://www.cs.newcastle.edu.au/~henskens/papers/ISMM96.pdf ''[hmm, this makes a big deal about the most trivial parts of the problem, and it's not clear why you would need or want to invent a programming language specifically to express locking strategies --dh]'',-
+
+Every reference above to Kala is like that; besides the point. I haven't seen anything there that's at all relevant to anything on this page. -- rk
+
+----
+
+I find this page highly unorganized and seemingly irrelevant for the topic at hand, which is versioning. It seems to focus on one method or dogma and pretend it's the OneTrueWay.
+
+I would have liked to have seen the "irrelevant" ReferentialTransparency discussion, as I'm sure it was eluding to the fact that immutable objects (and purely functional languages) make fine-grained versioning effortless. The only problem with such a system that I can see is how to make things like hash tables and other data structures that require mutability work. I wonder if LinearObjects could fix this, or not.
+
+I get the distinct feeling that the author of most of this discussion has never implemented the dominate system of discussion (fine-grain versioning w/ X seconds version reprieval, etc.). I also don't see any mention of precisely why fine-grained versioning is a good thing. There is a lot of rabble about "interaction designer", yet whoever is making that rant has already made the mistake of discussing fine-grained versioning (an implementation detail, not an interaction or end-user one). 
+
+Versioning is an end-user mechanism. It's a way for humans to understand change through time, branches, requirements (or whatever the criteria may be). All discussion about keeping X versions after the latest (and how "insecure" it is) vs. keeping X seconds after the latest is irrelevant. It's putting the cart before the horse. Those are implementation details and have nothing to do with interfacing issues or versioning that would be meaningful to humans.
+
+I believe a version system should be orthogonal to garbage collection. For an example of what I would consider a good system, imagine this: pretend we have a system that is 100% immutable. When an object is changed it must be copied (not as bad as it sounds since we can share structure). Versioning is completely arbitrary and defined in any way the end-user would like. What versioning means in this implementation is that the end-user/application simply holds a reference to an object, they make a copy (modify the object) and retain however many references (versions) they desire. Versioning is still "fine-grained", but in the sense that the user and application dictate at which level versions are needed. The GC and OS make no assumptions on how long objects should last. The OS simply creates objects and the GC manages memory. Period.
+
+Versioning as detailed previously (where the GC is aware of versions) is, IMO, not a good thing. Certain applications need extensive version history while others need no versioning. The previous system seems like a OneSizeFitsAll type of deal or an arbitrary limit. It would surely complicate the GC and create inefficiency. Plus it does not solve the hash table problem that an immutable system has, either. You can't simply copy hash tables to retain versions as such.
+
+--tw
+
+Sorry but if you think that implementation details don't matter to an abstraction when it's been proved otherwise ... the words 'arrogant' and 'dumb' come to mind. However you might like otherwise, versioning creates leaks through the abstraction layer. The argument above is about whether those leaks should be resource-based or security-based. Since security is very well-behaved in my system and resource management is not, I'd rather there be no security leaks at all. As for you, you obviously have no appreciation for either since the scheme you propose doesn't have any well-defined behaviour.
+
+As for implementation, I've got higher priorities than adding it to my capability framework. Like resolving versioning security conflicts, adding quotas, and adding monads. Compared to any of those, I consider even the "complicated" GC scheme I proposed to be straightforward and trivial. And then again, this entire framework isn't even a priority. What have you done lately? -- RK
+
+----
+See also GarbageCollection, AgingPointer
+
+CategoryGarbageCollection

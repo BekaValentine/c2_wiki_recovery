@@ -1,0 +1,81 @@
+[prev UnitTestingMyLibraryGracefulExit | next UnitTestingMyLibraryPrepareAndExecuteSql | top UnitTestingMyLibrary]
+
+Next up is:
+
+ sub returnError {
+	my $errorMessage = @_[0];
+        &printHeader;
+        # NCSU address hard coded here that is shown to the public
+	# Perhaps a webmaster and address needs to be in the db
+        print qq(<p>ERROR: $errorMessage</p> <address>Email <a href="https://youtubeproxy.org/default.aspx?prx=http://c2.com/cgi/m''''''ailto:eric_morgan\@ncsu.edu">Eric</a>.</address>);
+        &gracefulExit;
+ }
+The new thing here is an explicit argument for the subroutine. This primarily means a change to the way we call the subroutine, which complicates the trap_stdout routine.
+
+ sub trap_stdout {
+    my($unit_ref, $args, $result, $io, $old_handle);
+    $unit_ref = $_[0];
+    $args = $_[1];
+    print STDOUT @args;
+    $io = IO::String->new($result);
+    $old_handle = select($io);
+    &$unit_ref(@$args);
+    select($old_handle);
+    return $result;
+ }
+There are calls to printHeader and gracefulExit that need to be factored out, since we've already done separate UnitTest''''''s.  To do this, all we need to pass is enough to keep errors from occurring. That means passing in a database handle and a CGI object.
+
+ # ---------- tests for &M''''''yLibrary::returnError ----------
+ package returnError;
+ use Test::Unit;
+ require "../M''''''yLibrary.pm";
+ use CGI;
+ use DBI;
+ use IO::String;
+ sub set_up {
+    $error_message = "*** ERROR TEXT ***";
+    $M''''''yLibrary::output = new CGI ("");
+    $M''''''yLibrary::gDBhandle = DBI->connect("DBI:mysql:mylibrary_test:localhost", \"test", "test");
+ }
+ sub tear_down {
+    $error_message = undef;
+    $M''''''yLibrary::output = undef;
+    $M''''''yLibrary::gDBhandle->disconnect;
+    $M''''''yLibrary::gDBhandle = undef;
+ }
+Now we can construct a test and we do a little manipulation on $expected to grab the header from $result.
+
+ sub test_error_message {
+    my $expected;
+    my @args = ($error_message);
+    my $result = &subroutines::trap_stdout(\&M''''''yLibrary::returnError, \@args);
+    $expected .= '<p>ERROR: ' . $error_message . '</p> <address>Email <a href="https://youtubeproxy.org/default.aspx?prx=http://c2.com/cgi/m''''''ailto:eric_morgan@ncsu.edu">Eric</a>.</address>';
+    $expected .= "</body></html>";
+    $expected = substr($result, 0, length($result)-length($expected)) . $expected;
+    assert($result eq $expected, "returnError failed");
+ }
+----
+
+The technique used to trap an exit in UnitTestingMyLibraryGracefulExit can also be used to factor out calls to other subroutines. For instance, the TestSuite for returnError becomes:
+
+ # ---------- tests for &M''''''yLibrary::returnError ----------
+ package returnError;
+ use Test::Unit;
+ require "../M''''''yLibrary.pm";
+ use IO::String;
+ sub set_up {
+    $error_message = "*** ERROR TEXT ***";
+ }
+ sub tear_down {
+    $error_message = undef;
+ }
+ sub test_error_message {
+    my $expected = '*** PRINTHEADER OUTPUT ***<p>ERROR: *** ERROR TEXT ***</p> <address>Email <a href="https://youtubeproxy.org/default.aspx?prx=http://c2.com/cgi/m''''''ailto:eric_morgan@ncsu.edu">Eric</a>.</address>*** GRACEFULEXIT OUTPUT ***';
+    local *M''''''yLibrary::printHeader = sub { print "*** PRINTHEADER OUTPUT ***"; };
+    local *M''''''yLibrary::gracefulExit = sub { print "*** GRACEFULEXIT OUTPUT ***"; };
+    my @args = ($error_message);
+    my $result = &subroutines::trap_stdout(\&M''''''yLibrary::returnError, \@args);
+    assert($result eq $expected, "returnError failed");
+ }
+----
+CategoryTesting

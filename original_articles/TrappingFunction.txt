@@ -1,0 +1,53 @@
+A trapping function is a FunctionObject that is constructed with another function object (the trapped function, or client) and a trap (also a function object).  Calling the trapping function calls and returns a value from the client, but catches exceptions.  If an exception is caught, it calls and returns a value from the trap instead.
+
+The trap can return a default value, throw a different exception, or rethrow the same exception in a new try block to catch only specific exceptions.  It can even be another TrappingFunction.
+
+----
+
+I've implemented this in C++:  <http://nitric.cvs.sourceforge.net/nitric/Nitrogen%20Extras/Templates/TrappingFunction.h?view=markup>
+
+I discovered this pattern while writing a new AppleEventObjectModel implementation for PsyScript.  Here's the problem:  If a scripter requests a property of an object that doesn't exist, the AppleEvent server should throw errAENoSuchObject.[1]  However, if she requests a list of properties, then any that don't exist are replaced by MissingValue and no exception occurs.  At first I had a try block inside a for loop, but I wanted to use the StdTransform() algorithm.  Since std::transform() doesn't catch exceptions, I needed to move the try block into the FunctionObject passed as transform's fourth argument.  Which meant I needed a new kind of function object, which took the other one (the property accessor) as an argument.
+
+[1] Specifically, my code throws a C++ exception, which is converted to an OSErr return value from the event handler, finally resulting in an AppleScript exception for the scripter.
+
+Here's the code that uses a TrappingFunction:
+
+    Owned< AEToken, AETokenDisposer > DispatchAccessToList( AEObjectClass   desiredClass,
+                                                            const AEToken&  containerToken,
+                                                            AEObjectClass   containerClass,
+                                                            AEEnumerated    keyForm,
+                                                            const AEDesc&   keyData,
+                                                            RefCon )
+    {
+        Owned< AEDescList, AETokenDisposer > result = AECreateTokenList();
+        
+        AEDescList_ItemValue_Container values = AEDescList_ItemValues( containerToken );
+        
+        std::transform( values.begin(),
+                        values.end(),
+                        AEDescList_Item_BackInserter( result ),
+                        Trap1( std::bind2nd( PtrFun( CallObjectAccessorWithContext ),
+                                             ObjectAccessContext( desiredClass,
+                                                                  containerClass,
+                                                                  keyForm,
+                                                                  keyData ) ),
+                               TrapException( ErrAENoSuchObject(),
+                                              PtrFun( MissingValue ) ) ) );
+        
+        return result;
+    }
+
+-- JoshuaJuran
+
+----
+
+A similar usage relates to AutoVivification.  Many of my collections classes (Maps in particular) have an option to provide a default value, or a functor.  The default value is used mainly to allow an out of band channel when nulls are allowed (and therefore are not added to the collection);  the object returned by the functor is actually added to the collection.
+
+--WilliamUnderwood
+
+Just to make sure I'm clear, when I said "any that don't exist are replaced by MissingValue" I'm talking about a query result -- a list with 'missing value' values is produced.  I don't refer to some static list of properties that lives somewhere and gets missing keys added to it like a Perl hash.
+
+----
+see also ObjectFunctionalImplementation.
+
+CategoryObjectFunctionalPatterns CategoryCpp

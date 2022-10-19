@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Swing Worker Race Condition
+      </h1>
+      <p>
+        This is the best bug-hunt I've been on so far, full of exciting disassembly of class files and subtly broken language semantics. Since the bug was in widely distributed code, I've always wondered if other people went through the same hunt! I guess someone must have, because Sun already had a fix when I went back to them.
+      </p>
+      <p>
+        Here's the email I sent to my friends bragging about it, dated July 2000: -- <a href="LukeGorrie.html">LukeGorrie</a>
+      </p>
+      <p>
+        I just found a bug that was so cool I have to share it. :-)
+      </p>
+      <p>
+        I mentioned a week or two ago that we had a <a href="RaceCondition.html">RaceCondition</a> under IBM's JDK1.2, and since then I've been trying to pretend it didn't exist since there was no obvious cause.
+      </p>
+      <p>
+        Turns out its a wonderfully subtle one that appears in some code written by Sun that we are using. The "SwingWorker" class is designed to be used for making "anonymous subclasses" of to quickly spin off asynchronous GUI activities, eg:
+      </p>
+      <code>
+        final GuiObject myGuiObject = ...; // local variable<br/>
+        ...<br/>
+        new SwingWorker() {<br/>
+        public Object construct() {<br/>
+        myGuiObject.myGuiOperation();<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        The SwingWorker's constructor will then immediately spins off a thread to call construct().
+      </p>
+      <p>
+        The problem is in how the local variable `myGuiObject' gets passed to the construct() method of the anonymous class. Java doesn't have any nested environments to support this, so a compiler hack is used to pass myGuiObject as a parameter to the constructor of our anonymous SwingWorker subclass. The constructor then saves the reference in an instance variable where construct() will be able to see it.
+      </p>
+      <p>
+        The problem is that a constructor is required to call its parent class' constructor as its very first action, so our anonymous subclass has to call SwingWorker's constructor before it runs its own. This means that SwingWorker's constructor runs first and spawns a thread to run the construct() method before the other constructor gets a chance to copy the required local variables over! So when myGuiObject.myGuiOperation() gets called, myGuiObject can be a null  reference.
+      </p>
+      <p>
+        We never saw this problem previously because most JVMs don't share the CPU between threads enough for the new thread to win the race.
+      </p>
+      <p>
+        Checking Sun's site I see that they've posted a fix (spawn the thread after both constructors have run) for this dated last February. So the bug may have only been confusing the hell out of people running native threads JDKs for a mere year and a half or so. :-)
+      </p>
+      <hr/>
+      <p>
+        Hey Luke, where was that SwingWorker class ? It seems to have disappeared in the later versions (> 1.2.2), probably being replaced by SwingUtilities.invokeLater(Runnable). -- <a href="CostinCozianu.html">CostinCozianu</a>
+      </p>
+      <p>
+        I just did a google and found a really good page that describes the whole thing! <a href="http://java.sun.com/products/jfc/tsc/articles/threads/update.html">http://java.sun.com/products/jfc/tsc/articles/threads/update.html</a> -- but I think you need to disassemble an inner class to get the real flavour. -- <a href="LukeGorrie.html">LukeGorrie</a>
+      </p>
+      <p>
+        So, it wasn't in the JDK, it was a demo example in the tutorial :) You should always be doubtful of tutorials and examples (especially from Sun). Some of them have unbelievable design and coding errors.
+      </p>
+      <p>
+        But I wouldn't blame it on language semantics, instead it's a lack of understanding. By "law" a constructor should not call virtual methods (in Java everything other than static, private or final), and should not pass "this" to outside calls. Virtual method calls on an object in process of being constructed are to be avoided at all costs. But other than that it's common sense you shouldn't do anything "spectacular" in a constructor. This rule is broken quite often. 
+      </p>
+      <p>
+        This is a very good example of why <a href="ObjectOrientedDesignIsDifficult.html">ObjectOrientedDesignIsDifficult</a>, because it shows several things in action: 
+      </p>
+      <p>
+        - Java has no method pointers, and no functions. Therefore we fake these with artificial objects. Most of the time they're anonymous inner classes which have complicated semantics with respect to their enclosing classes and instances, are overly verbose and terribly ugly in the source code, pollute the namespace, and so on. Everything is an object doesn't work very well for things that are not objects. That's why I love C++, because not everything is an object. 
+      </p>
+      <p>
+        - Very little rules (like what you shouldn't do in a constructor) are less known than complicated <a href="DesignPatterns.html">DesignPatterns</a>, especially since they don't have fancy names. And they're ignored all over the places.
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,96 @@
+Does anyone know of an efficient implementation of MultipleDispatch, comparable to Smalltalk's InlineCaching of messages or C++'s vtbl mechanism? What is the best one can do for the common or average case?
+
+----
+The naive implementation is to have a list of class-method pairs to be searched. The same caching strategy as in Smalltalk can be used: store the class(es) of the last dispatch and the selected method next to the call site, and compare these with the classes of the arguments the next time this particular form is called. If they are equal, use the cached method.
+----
+If you only need DoubleDispatch you can implement it using the GangOfFour VisitorPattern.
+----
+AndreiAlexandrescu's book on ModernCeePlusPlusDesign contains a chapter titled "Multimethods" that discusses several schemes to implement DoubleDispatch in standard CeePlusPlus.
+----
+Several years ago, I did the multimethod implementation for a constraint language called Kaleidescope. The strategy we used was to create a FiniteStateMachine for each method name. The arcs contained the possible function parameters, and we used the parameter list from the method we were trying to call as input for walking through the fsm. So, for example, let's say you have defined the following methods:
+
+ f(x), f(x, y), f(x, x, y) and f(z)
+
+where x, y and z are types of arguments, then the fsm looks like this:
+
+ initial state:
+  on x goto 1
+  on z return f(z)
+  on end-of-input or anything else return error
+
+ state 1:
+  on end-of-input return f(x)
+  on x goto 2
+  on y return f(x, y)
+  on anything else return error
+
+ state 2:
+  on y return f(x, x, y)
+  on end-of-input or anything else return error
+
+So suppose you are trying to resolve a call to f(x, y). You start in the initial state and read an x (the first parameter to the function call). The FSM tells you to go to state 1. In state 1, you read a y. The FSM tells you that the function you want is f(x, y), and it actually returns the compiled method to you. Tada!
+
+It's not too efficient compared with, say, Smalltalk method dispatch, but then again it's not too bad either. The analysis we did showed that there was in practice not too much variation amongst the methods, so we could get some compression on the FSMs. Also, the most heavily overloaded methods tended to be the arithmetic ones (eg +, -, *, **), and they only had two arguments, which means that this isn't much traversal to begin with. -- AnthonyLander
+
+----
+
+Does the FSM technique work if actual method arguments can be subtypes of declared method arguments? I'm not convinced.
+
+''Sure. Put all of the subtypes into the fsm.''
+
+----
+
+In the case of single inheritance, there's a simple implementation technique that will allow you to compute the IS-A predicate in constant time. (I.e. it allows you, in constant time, to check if an object is an instance of a class or one of its subclasses.)
+
+To do this, we associate a unique identifier with every class. Now suppose
+we have a root class P with subclasses C1 and C2, while C2 itself has a subclass G. In every instance, instead of storing a pointer to a method table, we store
+a pointer to an array of class identifiers.
+
+For an instance of P, this array has one element:
+  +--+
+  |P |
+  +--+
+
+For an instance of C1, this array has two elements:
+  +--+--+
+  |P |C1|
+  +--+--+
+
+For an instance of G, this array has three elements:
+  +--+--+--+
+  |P |C2|G |
+  +--+--+--+
+
+Now to check if an object is an instance of, say, C2, do the following:
+	* Check if the array has at least 2 elements.
+	* Check if the second element is C2.
+Obviously, this takes only constant time.
+
+-- StephanHouben
+
+''I use a similar technique in TreeInSql. It is time-optimal for lookups. -- RichardHenderson''
+
+''This technique uses up to quadratic space (if the class hierarchy is deep.) You can get by with linear space by assigning preorder and postorder numbers to the classes in the hierarchy. Class A is a superclass of class B iff pre(A) is less than pre(B) and post(A) is greater than post(B). -- PaulDietz''
+
+[However, the preorder/postorder trick has one flaw--it assumes a closed system of classes (in other words, all classes are known at a particular time).  In systems where modules are combined at runtime--especially under the control of the program itself rather than under the control of a language runtime--this constraint is violated.
+
+And of course, it also doesn't work in the case of MultipleInheritance]
+
+''I believe the alleged flaw of the preorder/postorder trick isn't a flaw, and the alleged fixed class hierarchy constraint isn't a constraint. PaulDietz turns out to be one author of a paper giving an algorithm to maintain an order as new elements are inserted arbitrarily. As I understand it (not having read the original paper yet) that paper uses this trick as an example of what the order algorithm is good for. The paper is behind the ACM wall, but see Bender et al., Two Simplified Algorithms for Maintaining Order in a List, http://citeseer.ist.psu.edu/bender02two.html, for a more recent treatment. (Their Final Thought:''
+ Dietz and Sleator is quite influential
+ with its tags and its proofs by potential
+  but to teach it in class
+  is a pain in the emdash
+ so our new result is preferential.
+'') -- WilliamNewman''
+
+----
+The best implementation paper I know of is from the Cecil/Vortex project (see CecilLanguage) at http://www.cs.washington.edu/research/projects/cecil/www/Papers/dispatching.html. It is effectively an FSM, with the transitions between states done by an array look-up, linear search or binary search; it aims for a near-optimal combination.
+----
+Also check out this paper:
+http://citeseer.nj.nec.com/dujardin96fast.html
+
+It provides an algorithm using compressed dispatch tables that dispatches in constant time.  The tables themselves are created in O(n^2) time, but I believe that's a compile-time cost only.
+
+----
+CategoryPolymorphism

@@ -1,0 +1,178 @@
+''[Voting on JavaDesignFlaws page.]''
+
+This Java Design flaw relates to bug 4098033 in the JavaBugDatabase.  The problem is, that you may not cast objects to Cloneable and then clone them, as in the following example, where someone wants to copy an arraylist:
+
+ public static Array''''''List deepCopyOfArrayList(Array''''''List l) {
+   Array''''''List result = new Array''''''List(l.size());
+   for (int i = 0; i < l.size(); i++) {
+     l.set(i, ((Cloneable)l.get(i)).clone();
+   }
+ }
+Why is this?  Because Object.clone() and Cloneable.clone() are both protected, so you have only derived classes of Foo can clone a Foo-object.
+
+As a second example, assume you have a Collection c and want to call function f for every (unordered) pair in c exactly once, that is, you want to call f(o1, o2) exactly n(n-1)/2 times.  The natural way of doing this is the following:
+
+ public static callFForAllPairs(Collection c) {
+   for (Iterator it1 = c.iterator(); it1.hasNext(); ) {
+     Object o1 = it1.next();
+     for (Iterator it2 = ((Cloneable)it1).clone(); it2.hasNext(); ) {
+       Object o2 = it2.next();
+       f(o1, o2);
+     }
+   }
+ }
+This, of course, is not possible because of this problem.
+
+This problem also has many other consequences.  See for example bug 4349858.
+
+----
+
+The Cloneable interface is a TagInterface (like Serializable) meant to indicate that it is ''possible'' to call clone() on the object in question without throwing an Exception: any object '''x''' for which '''x instanceof Cloneable''' evaluates to '''true''' has a method clone() (inherited from ''Object.clone()'') that will perform a field-by-field copy of the object. All other objects will throw a CloneNotSupportedE''''''xception.
+
+The Cloneable interface therefore does not make any assumptions whatsoever about the visibility of the clone() method.
+
+It is ''not right'' for the Cloneable interface to declare clone() seeing as how the interface actually has nothing to do with whether or not the method exists (since the method exists for all Objects).
+
+''BTW: I'm not debating the philosophy behind Sun's decision, I'm just pointing out that the Cloneable interface does what they meant it to do - no more, no less.'' -- IainLowe
+
+----
+
+''But... since clone() is on Object - why is a cast needed ?''
+
+Because it is ''protected''.  If the Cloneable interface defined clone() as a public method, any object implementing Cloneable would export the implementation defined by the Object class as a public method.  However, the public version could not be called an Object, so code would have to cast from Object to Cloneable.
+
+''Indeed. (I'd missed this, ThankYou for teaching me something new today.) This appears to be the same reason, in fact, why Cloneable ''cannot'' declare it. If Cloneable declared a public clone() method, subclasses of Object inheriting from it would have to override it, if only just to make it public. The reason given for clone() being protected is that subclasses might wish to restrict access to it. This does sound downright silly to me.''
+
+Actually, inheriting a method in an interface automatically changes the visibility of a method with the same signature that is defined in a superclass.  So Cloneable ''can'' declare clone(), and it would be the right thing to do.
+
+''That's not what my compiler tells me... This (names changed for clarity)''
+
+  public class Objekt {
+	protected Objekt klone() { return this; }
+  }
+
+  interface Kloneable {
+	public Objekt klone();
+  }
+
+  class My''''''Class extends Objekt implements Kloneable {
+  }
+''yields the message''
+
+ Objekt.java:10: klone() in Objekt cannot implement klone() in Kloneable; attempting to
+ assign weaker access privileges; was public
+ class My''''''Class extends Objekt implements Kloneable {
+Oh!  Well, ThankYou for teaching me something new today as well.  I can see both benefits and drawbacks to the above behaviour, but in general I think it's the right thing to do.
+
+[[This is because My''''''Class should be written
+
+  class My''''''Class extends Objekt implements Kloneable {
+	public Objekt klone() { return super.klone(); }
+  }
+]]
+
+''Well, allowing things to be otherwise would indeed break the protection model. I'm reasonably sure, though, that there's something fishy about using an interface to tag classes which ''should'' implement a given method, without declaring that method in the interface itself, and instead relying on the protection mechanism to enforce compliance - that is the job of the type mechanism. To summarize, it seems to me that clone() should be on Cloneable and '''only''' on Cloneable, and be public; I can't for the life of me understand why the designers thought it should live in Object.''
+
+''Score one point for JavaDesignFlaws, which I initially thought would only rehash well-known gripes with the language, but in fact turns out to be good food for thought.''
+
+----
+
+Why must it live in Object? Because you need a concrete default implementation inside the JVM, which you can call from superclass. If it were only in the interface, you would have to create a copy by hand - and not having to is exactly the reason we have clone. Of course, there could be a static method System.cloneObject(obj), and empty clone() in Cloneable, but Ockham would be angry at that.
+
+''Oh. You're saying that the clone() on Object actually does the shallow copy inside the VM. (I was also unaware of that; this is turning out to be a great day for learning.) I wouldn't think making copies of primitive types by hand is such a big deal - reference types require special treatment anyway since clone() usually implements deep rather than shallow copy, so having a clone() method with different semantics (shallow rather than deep) on the root of the hierarchy would appear to serve little purpose beyond obfuscation. A static System.shallowClone(Object), or a shallowClone() on Object, would do the job quite well. (I must admit that I'm looking at some SmallTalkLanguage images as I type this, and recalling some of the discussion of copying in ObjectOrientedSoftwareConstruction, which makes it easier to grok the whole issue. It's easier to criticize than to implement. But still...)''
+
+Actually, I think that the idea behind Object is that it is a canonical object class. It should represent all the base functionality that an object might have. The ''equals()'' method could in theory be subjected to the same scrutiny as the ''clone()'' method if there were an Equality interface or some such thing. I agree that using an interface to tag classes is perhaps not the wisest thing but it may really be the only way. Let's think this through:
+
+* We need a method on all classes that permits us to make a copy (deep or shallow, it doesn't matter) of an instance of that class.
+* We need to make sure that access to the aforementioned method is controlled by the implementor (this is the part where we create the empty "tag" interface - if the user doesn't need the interface, he never even has to know it exists).
+* We need to make sure that we can mark certain classes as "not copyable" (or conversely, mark certain others as ''being'' "copyable"). In other words, it would be nice to be able to "switch on" and "switch off" "copyable" behaviour in subclasses (this is where the "tag" interface comes into its own).
+* We need to do all of this in a way that is unobtrusive to the user (so that nobody has to do empty method declarations just to satisfy an interface - using the AWT without adapters is hell on earth).
+
+So we put a method in the base class of the whole system. We make the method protected so that any subclass can override it to make it public but by default only the code in the same package can create those copies. We then say that by default the method throws an exception (this is so that nobody has to implement the method if they don't want to). We create an empty interface. We then say that any implementors of the interface guarantee that calling the method on them ''will succeed''. We then provide a default implementation of that success.
+
+I think the important point is that the interface specifies that the method '''will return a copy'''. Not implementing the interface means that although the object has the method, calls to it will fail. The interface does not guarantee the presence of the method (although it is implicit because Object is the root class of the whole language), it simply dictates ''how'' it will function. -- IainLowe
+
+----
+
+I would like to point out, that it is actually quite certainly a design flaw, also accordingly to sun.  I copied the following text from the JavaBugDatabase:
+
+	 :	An alternative proposal was to add a new interface java.lang.Publicly''''''Cloneable to reflect the original intended purpose of Cloneable.  By a 5 to 2 majority, TRC recommended against this.  The main concern was that this would add yet more confusion (including spelling confusion!) to an already confused picture.
+
+----
+
+Making it protected does not actually protect the interface. Someone wishing to thwart the protection system needs merely to place a proxy class in the same package. This is because the 'protected' keyword is broken; actually, the whole protection system is broken. It should be more restricted. 
+
+ class Foo {
+   protected void bar() { System.out.println( "bar" ); }
+ }
+
+ class Bar {
+   public static void main( String args[] ) { (new Foo()).bar(); }
+ }
+Considering that the protection system does less for you than CeePlusPlus's "edit the header if you want something different" system, it's probably just better and simpler to throw protection levels out completely. If a Java class wants to disable clone, it should just implement an empty clone() method. Because of Java's method dispatch system, this will work even if you cast to a superclass that implements clone(). Of course, I have issues with breaking polymorphic dispatch for security reasons, then turning the other cheek and disabling the SecurityManager. -- SunirShah
+
+''At least in java 1.0, I recall that you '''could''' 'cast to a superclass that implements clone()' and thereby get the default behaviour, even if the subclass implemented an empty clone method. While the compiler wouldn't allow this, the bytecodes would, just by using invokespecial instead of invokevirtual. Anyone know if this bug/feature still exists? -- AdamBerger''
+
+----
+
+Actually, I think that the idea behind Object is that it is a canonical object class. It should represent all the base functionality that an object might have. 
+
+Could someone explain why making it public and then throwing exception if it isn't implemented isn't a good strategy? The tagging approach seems very odd. Or why not just use reflection to ask if it has implemented clone?
+
+''The best academic reason is that the Java idiom of throwing exceptions on implemented but not supported methods is totally stupid. Either use dynamic dispatch or be statically typed, but don't be halfway in between either, especially by using a halfway reflection system as your means.''
+
+''And don't bring up SmallTalk. It's also wrong in Smalltalk to do this. It says to me "CircleAndEllipseProblem." But Smalltalk's class libraries do this as a matter of efficiency. Optimizations don't count. It's lying to declare an interface and then optionally throw checked exceptions at the instance's discretion. More practically, it's a CodeSmell. It screams that either you really have two interfaces that need to be broken out or that you have too many magic cases.''
+
+''In the case of Java, Object.clone() should be public and implemented by default. Classes that wish ''not'' to be cloneable can then override clone() to return null. Classes that need to do special work during the clone operation can also override clone(). The clone should be a shallow copy by default that uses magic in the VM.''
+
+''The reason Java does not do this is because people often do not implement cloning correctly when they should. In C++, the RuleOfThree isn't followed very judiciously either. So, because Sun tried to protect the programmer, they made Java harder to use. But Java didn't succeed at protecting the programmer anyway, so they should give up and try to make a usable language. *grumble* *grumble* -- SunirShah''
+
+----
+
+''The best academic reason is that the Java idiom of throwing exceptions on implemented but not supported methods is totally stupid. Either use dynamic dispatch or be statically typed, but don't be halfway in between either, especially by using a halfway reflection system as your means.''
+
+Since the default clone can do something intelligent in Java, unlike CeePlusPlus, then this isn't really the case?
+
+''In C++, all first class objects implement a default copy constructor and assignment operator, which is remarkably ''unlike'' Java.''
+
+----
+
+Suppose a class implements Clonable but the clone() method is protected.  What good does it do?  If you forgot to declare that you're implementing Clonable, who would care? -- BrianSlesinsky
+
+''The visibility of the clone() method has nothing to do with implementing Cloneable. If you '''did''' implement Cloneable and leave clone() protected, you might do it because '''you''' want to be able to clone your object but you don't want other people playing with copies of it. Could you elaborate a bit on your last question?''
+
+The point of implementing Cloneable, as I understand it, is simply to '''advertise''' that you will let people clone your objects.  If you're never going to let others play with your toys, there's not much point in advertising them -- so why implement Cloneable at all?  Just define the clone() method for your own use.  As a corollory, any class that *does* advertise that it's clonable should be clonable, even without knowing anything else.  So ((Cloneable)someObject).clone() should work.  [Note: I am not a Java programmer... these are just my thoughts]
+
+----
+
+I've got to agree with the above comment.
+
+Surely the reason for an interface named ''Xable'' is to notify users of objects with that interface that they can ''X'' it?
+
+Why would have you a class implement Cloneable if ''you'' are going to be the only one cloning it? Why not just give it a clone() method and ''know'' that it had it? Since Cloneable doesn't make any comment about how the class behaves externally, I think it has no business being ''implemented'' by the class.
+
+I view it as roughly akin to having a std::xor_trick virtual class in the CeePlusPlus which developers are encouraged to inherit from if their class uses the XOR trick in some way. It imparts no useful knowledge about the class -- '''what's the point?'''
+
+In addition, since Cloneable ''only'' imparts knowledge about the ''internals'' of the class, into which external consumers have no business poking their noses, surely (x instanceof Cloneable) or ((Cloneable) x) shouldn't be allowed? Of course, Java has no support for non-public inheritance so the only way to prevent somebody from doing the above would be not to implement Cloneable.
+
+	 :	The point of a tag interface is so that an external class can make a decision about a class without having to see the implementation.  It's a way of communicating to the compiler, or other system-type resource.  It's exactly like marking a class as java.lang.Serializable.  It's saying "I don't know how it is you do what you do, but I want you to do it".  Whether this is a good thing, in light of the fact that similar effects can be generated through alternate means, is another matter. -- WilliamUnderwood
+
+----
+
+As was pointed out above by IainLowe, the TagInterface does exactly what it should, namely provide a means to cleanly ''use'' the clone() method of Object. 
+If you want an interface, that defines a means to ''copy'' an Object, you should define your own
+
+ interface Copyable {
+   public Copyable copy();
+ }
+which, when implemented by a class, ''might or might not'' use clone() to do the copying. I.e. use of Cloneable is a practical implementation decision, while use of Copyable is a logical design decision.
+
+Therefore I voted that CloneableDoesNotImplementClone is '''no''' flaw.
+
+-- GunnarZarncke
+----
+The issue seems to be that one concept (the interface, specifically an ''Xable'') is being used for two distinct purposes: the intuitive, conventional, public one ("hey, you can ''X'' me"), and the Java-specific tag one ("hey Java system, please ''X'' me").  This is the design flaw, since the language should use a different construct for the latter.
+
+-- AndrewCouch
+----
+CategoryJava

@@ -1,0 +1,116 @@
+GrokLoops has a lot to do with GrokBranching.
+
+GrokLoops also has extra features.
+
+Loops are frequently important because in many programs that implement sophisticated algorithms there is an (one) inner loop somewhere that virtually occupies all the processing time.
+
+Loops also have the concept of unrolling.
+
+Some compilers have an option to unroll loops. You can compile examples that show how well this works. If you then think that the job is done then in my experience you have just missed the boat.
+
+Many compilers only unroll loops if and only if the loop has a predefined hard
+coded number of iterations (Eg 32 bits in the byte.)
+
+It is possible to efficiently unroll other Loops using a pattern something like
+
+
+ void Sum( int count, int *Data)
+ {
+	int T = 0;
+	if (count &1)
+	{
+		T += Data[0];
+		Data+=1;
+	}
+	if (count &2)
+	{
+		T += Data[0] + Data[1];
+		Data+=2;
+	}
+	count &= ~3;
+	for(  ; (count-=4)>=0; )
+	{
+		T += Data[0] + Data[1] + Data[2] + Data[3];
+		Data+=4;
+	}
+ }
+
+Note even this is not the Best as there are effectively two sets of loop counters. The best trick could compute an end() type ptr that is
+ end = Data + (count &~3);
+ do the unrolled Loop to that point and then complete the last 0-3 cases		 with two Ifs.
+
+And the answer is No sorry compilers are not this clever yet.
+
+In this case the major benefit will be reduction is loop overhead
+which for sum() may be significant. It may actually be more than 50% overhead which could translate to more than doubling the speed.
+
+When the operation is more complicated than sum then the gain may come from improved pipelining in the processor due to fewer branches (see GrokBranching)
+
+AlanChristiansen
+-----
+Once one has been spoiled by an ArrayOrientedLanguage (AplLanguage, JayLanguage) it is hard to rationalize spending coding time worrying about loops! -- JimRussell
+----
+Am I wrong in thinking that this "optimisation" is actually a pessimisation
+if count < 2? This code fragment always does at least 3 comparisons; the
+straight for-loop will do count+1 comparisons. That's probably the reason why it isn't in compilers: the Second Law of Compiler Optimisation tells us that no optimisations should be performed that might actually be pessimisations.
+
+-- StephanHouben
+
+I don't think I believe that law. A compiler should do whatever it thinks will give the best results in typical situations. (And there should be ways of guiding it.) Similarity in order of instructions in the machine code to what's in the higher-level-language code shouldn't be a major concern unless debugging is turned on.
+
+As for the business of unrolling loops, I just did a little benchmark on four implementations of the "sum" function. One counts up naively, one counts down naively, one is very much like the code above, and one uses an 8-way DuffsDevice. The code was compiled with gcc -O6 -funroll-loops on a SPARC machine.
+
+Conclusions:
+	* DuffsDevice is never best here.
+	* For small ''n'', the naive down-counter is best.
+	* For large ''n'', the unrolling here is best and the down-counter is ''terrible'', because ...
+	* For large ''n'', the biggest factor in the cost is the effect of cache misses and other such nonsense.
+	* The difference between the unrolled loop and the ununrolled loop is never very large. At most about 20%.
+	* It's not worth putting a lot of effort into, unless you find something like this in your inner loop.
+
+(Here "best" means only "best out of these four implementations", and "large" means "10k numbers or so".)
+
+Oh, and see NotYet.
+
+--GarethMcCaughan
+
+Thanks for the crunchy numbers. Any discussion of optimisation without either
+assembly listings or numbers is an act of faith.
+
+	* Ooops I guess I never said that this is to be used in SMALL and thus by definition inner loops. Why small? because we are only chasing the loop computation overhead, branching overhead, and perhaps if we are lucky getting better scheduling from the pipeline of the processor. Thus if this loop does anything significant like call anyone else then unrolling will not help enough to even be bothered trying it. 
+
+--AlanChristiansen
+
+As an interesting aside, why is down better? 
+
+Because an up counter must do a compare with the max value the down counter can just decrement and then (branch if positive) without the test. Some compilers only do this with the code	
+	for(int i=11;--i>=0; ) {;}
+which counts backwards from 10. The rule that explains their less than perfect optimisation is whenever the decrement is on the other side of a sequence point ';' the state of the flags is ignored/lost.
+----
+Recall that machine code will also have a cache. When you unroll the loop, you make the loop take more cache space which may push other code out. Thus unrolling may produce slower code overall even if the loop is executed more than 2 times, and even if it is quite short.
+----
+Yes, loop unrolling is a largely discredited idea.  (In code optimization, "discredited" means "out of date".  By the time you read this it might be useful again!)  The cache issue is a biggie and gets worse as CPUs get progressively faster than RAM.  On some pipelined processors [MIPS] it is necessary to loop unroll simply to schedule a loop efficiently.  My rule of thumb is, if you're not already programming the loop in assembly, don't unroll it.
+----
+For the code I wrote it was measurably and measured good idea. Often algorithms can be written in C such that a compiler will generate near optimal assembly for you, if you grok the compiler and its limitations. This probably harder than just writing the assembly for one CPU, but the tricks turn out to be portable!
+
+''This is usually not true, due to the aliasing problem with C.  Which is why Fortran performance is consistently better, if not universally better, for numerics.  With a certain amount of contortions, you can avoid this problem 
+with C++ to some extent, but it is not pretty.''
+----
+If you have a performance problem, measure it and figure out what is needed.  Don't rely on the type of speculation seen above. 
+----
+For the record. The speculations of AlanChristiansen, are generalistaions based on numerous examples where there was a performance problem, it was measured and profiled and what was needed was figured out, and frequently the problem turned out to be in 1 to 3 very small loops that executed >95% of the cpu time and wasted large lumps of time in loop overhead, pipeline  stalls at branches, aliasing issues, etc etc. Each of the Grok pages addresses common problems that found measured and fixed these problems. You could ignore these pages and reinvent the wheel for every performance problem, but I found reusing old wheels improves my performance.
+In other words in the past everything I have suggested has been measured to provide very real benefits and to port to at least two processors architectures. The benfit (speedup) ported not just correctness. If after reading this page you think, "I have some code I will do that magic too", then that it is speculative whether or not you will gain an improvement in speed, the use of Grok in the titles of these pages was not mere whimsy, to utilise GrokAliasing you must indeed Grok Aliasing, I am sure it is said somewhere here you are also going to have to Grok the problem, you will of course have to do all the other sensible things such as profile first, optimise last, etc. If you do All these things then in my experience you will be able to write portable C or C++ code that does indeed go fast. What is Fast? Fast is nearly as fast as hand optimised assembler.
+
+Another question is, how much faster is fast. An example. I once started a program that took some 10hrs to execute. It was in a problem domain with which I was very very familar. I set about the task of optimising the code. I knew what mathematical functions would be in the 3 inner loops (>95% execution time) without profiling. I searched the code found these loops and optimised them. Recompiled the code, and started the optimised program, it finished first. The optimised code ran nearly 2 times faster than the original. What optimisations did I perform, GrokAliasing, GrokBranches and GrokLoops. 
+
+What is also true is that I know, many of you have been burnt by prorgammers who write convoluted code all over the place because, they say it runs faster, and they didnt profile first and they did all sorts of bad evil things. I know this because I have been burnt too. Yes, it is true optimising code that does not need optimising is evil. It is also true that fast portable C and C++ code can be written, if you understand the limits of what an ANSI compliant compiler, and you understand how processors do and dont work work well. As has been pointed out, I have no page titled grok cache misses, perhaps I should, but I have in my experience found cache thrashing to be problem far less often than these issues. People working in other problems domains may have different experience. 
+AlanChristiansen
+
+These pages need refactoring. There needs to be a page GrokOptimisation that deals with the general issues of
+profile first, the cost benefit analysis of optimising, the seduction of writing fast code.
+AlanChristiansen  (12 sep 2005 I will try to get the time soon, ...)
+
+
+
+----
+CategoryOptimization CategoryLoops

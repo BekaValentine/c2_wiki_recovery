@@ -1,0 +1,127 @@
+An InterProcessCommunication variation of SendReceiveReply that returns a '''promise''' for a reply (related: FutureObjects, PromisePipelining). This allows the caller to immediately continue operations and decide later whether or not to actually look at or wait upon the reply. This maps more closely to ActorsModel, is suitable for use in potentially distributed computations, and is used (with variations) in EeLanguage. 
+
+	* Process 1 does a "Send" to Process 2. The "send" immediately returns a '''promise''' for a later reply. Process 1 can continue concurrent operations.
+	* Process 2 does a "Receive" and begins to handle the message from Process 1; while doing so, it may do other Sends (and possibly other receives with associated replies). In the meantime, Process 1 can continue concurrent operations.
+	* Process 1 '''eventually''' decides it needs the reply from Process 2, and blocks on the promise. At this point Process 1 is '''reply-blocked'''.
+	* After a while, Process 2 does a "Reply" to Process 1. Process 1 unblocks and can immediately process the message.
+
+It is also possible (and likely) that Process 1 won't decide to wait on the reply until after the reply, in which case there is no wait. It should be clear that SendReceiveReplyEventually offers considerably more concurrency than SendReceiveReply, and makes it easy for programmers to do work (such as calling several other services) in the time it takes for Process 2 to respond. It also admits to the IPC TailCallOptimization mentioned in SendReceiveReply. But this does prevent some optimizations enabled by SendReceiveReply (such as the ability to use ThreadControlBlock''''''s as entries in the MessageQueue, ability to guarantee finite space requirements for MessagePassing).
+
+When the reply is required, the programmer may either '''block''' on the promise or must offer some other mechanism to describe a computation that waits for the promise to be completed. Blocking on promises allows deadlock to occur in the same manner as SendReceiveReply. 
+
+In case of communications error (e.g. dropped message, send to killed process) or deadlock, promises may be ''broken''. A broken promise will throw an exception when later forced. If forced more than once, it will throw the same exception every time. 
+
+----------------------
+
+Whereas SendReceiveReply claims to be motivated by ThreadsAreComputationalTasks, SendReceiveReplyEventually is more motivated by SplitOperatingSystemIntoServices, treating each 'process' as a service that can be invoked to perform useful operations. Like SendReceiveReply and CommunicatingSequentialProcesses, but unlike pure ActorsModel, support for replies allows that these invocations include '''queries''' (requests for data or advice) that one may wait upon prior to continuing operation.
+
+------------------
+
+Note that SendReceiveReplyEventually does not imply PromisePipelining. In particular, PromisePipelining requires the ability to explicitly receive promises. Whether or not processes are allowed to receive promises from other processes is another design decision for the InterProcessCommunication, but a great deal of caution is merited because PromisePipelining can lead easily to cyclic dependencies in messages:
+
+  Process A:
+    p1 = B <- Mab
+    p2 = C <- p1
+    force p1
+  Process B:
+    reply C <- Mbc
+  Process C: 
+    receives p1 first, stores it, 
+    replies later to Mbc with 'p1'
+  End result: p1 = p1.
+
+Even without PromisePipelining (the ability to receive promises), one could put some useful semantics on '''sending''' promises. For example, the semantics could be to ''asynchronously'' force the promise if necessary to complete the send. And if promises are sent but not received ''explicitly'', especially if there is no guarantee that one will wait on the promise if it turns out the value is unnecessary, then PromisePipelining becomes viable as a safe optimization for FirstClass process configurations.
+
+-------------
+
+Note also that SendReceiveReplyEventually also does not imply FutureObjects. That is, the ability to "send" a message ''to'' a promised object or actor, with the implicit effect being that the message will be delivered the moment said promise is resolved, should be considered a separate feature of the language. FutureObjects reduce program latency even further than do regular promises because the outgoing messages can be emitted even before the process that received the promise is aware that the promise has been resolved, the promised messages return their own promises, and one can then send messages to those as well. EeLanguage provides FutureObjects and calls this "Eventual Send".
+
+While other programming paradigms might optimize latency even further (especially DataflowProgramming, rules-based, FunctionalReactiveProgrammming, and related analysis), it is difficult to beat E''''''ventuallySendReceiveReplyEventually for laziness and latency optimization while working in a procedural paradigm where most behaviors a program specifies are implicitly sequential.
+
+----------------------
+
+Extracted from SendReceiveReply:
+
+'''SendReceiveReply and Asynchronous Operations'''
+
+I was thinking about how to make SendReceiveReply converge with ActorsModel. Some thoughts:
+
+SendReceiveReply converges with ActorsModel if every actor simply follows a pattern: 
+
+  1 recv msg
+  2 reply with unit
+  3 do something with msg
+  4 loop 1
+
+However, step 3 cannot 'send' to other actors without blocking, which is a problem for many ActorsModel patterns. So, make a slight change to 'Send': Instead of becoming "send-blocked" when actor A sends message to actor B, actor A receives a '''promise''' for a reply. Actor A becomes "send-blocked" only upon calling for that promise, and even that only if a reply has not yet been received. Actor A may also be permitted to 'force' a promise in order to explicitly enter a send-block.
+
+The following optimizations apply:
+* If an actor always immediately replies with '''unit''', this fact may simply be stated as part of the Actor's handle, type, or both. In this case, the return message can simply be optimized out of existence, which is useful in distributed systems. From a coding POV, one can also treat 'actors' that simply don't reply as being processes that always (and immediately) reply with '''unit'''. 
+* If a compiler can demonstrate that a promise is simply dropped/ignored/etc., then an automated optimization can very easily be applied where one simply delivers a 'nul' handle for the reply. In this case, too, the reply is dropped by the sender of the reply, which optimizes operations in a distributed network. Thus 'send <actor> <message>' without assignment of the return value will be the same as it was for plain ActorsModel.
+* Local optimizations that apply to ActorsModel continue to apply (i.e. a stateless actor that only forwards messages and never waits on replies may be processed as a synchronous procedure call).
+* Use of replies integrates nicely with TransactionalActorModel if one drops the receive^n reply^n pattern for n > 1.
+* Actors may be allowed to specify any actor handle as the recipient for the reply, transforming it into a non-local continuation.
+
+The following optimizations are lost:
+* Compared to SendReceiveReply without lazy replies, number of outgoing messages is no longer bounded by number of processes. Cannot simply queue up linked-lists of TCBs for purpose of message sends and waiting replies.
+* Compared to ActorsModel, may suffer deadlock and thus need to include extra processing to detect and handle it.
+
+If the main goal was to achieve the message resource limits optimization, this approach is harmful to that purpose; one would need to further implement something ''atop'' this model (like DataflowProgramming) to really achieve it. But if the goal is to simplify IPC or improve concurrency, this SendReceiveReply''''''Lazily approach offers significant advantages over both the pure ActorsModel when it comes to coordination and the SendReceiveReply when it comes too cooperative interactions. The ability to 'query' an expert system, get the reply, and use that reply in making a decision... is '''hell''' to write in pure ActorsModel, but relatively straightforward with SendReceiveReply. And while this comes at cost of the ability to enter deadlocks while waiting on promises in any sort of call cycle (A sends to B, B sends to C, C sends to A, and all of them force the promise), the risk is greatly reduced  and several classes of interaction are possible that couldn't be done with regular SendReceiveReply due to the ability to lazily 'tie the knot' with cyclic references. For example: 
+
+ Regular SendReceiveReply would break:
+  A sends to B, waits on B
+  B sends to A, waits on A (note: not a 'reply' to A)
+  Deadlock!
+
+ SendReceiveReply''''''Lazily, however:
+  A sends to B, drops a promise into a bucket, enters 'recv' state
+  B sends to A, asking for some extra information, waits on promise
+  A replies to B, enters recv state
+  B processes promise, replies to A, enters recv state
+  A now in recv state with fulfilled promise in bucket
+
+ and ActorsModel style using SendReceiveReply''''''Lazily
+  A sends to B, ignores promise, goes on its merry way, enters recv state
+  B sends to A, asking for extra information, ignores promise, enters recv state
+  A replies with unit, sends answer to B, continues operations
+  B receives message, replies with unit, continues operations  
+
+While one can still deadlock even with lazy replies in SendReceiveReply by forcing promises in a cycle, far fewer interactions will cause deadlock, and deadlock risk is greatly reduced and readily controlled by programmers of individual components. 
+
+When deadlocks do occur, they can be heuristically guessed at by an environment (i.e. after noticing a send waiting on a process that is waiting on a reply for a while) then verified and handled.  Problem is figuring out what the heck to do with it. An advantage of plain SendReceiveReply is that one could simply toss an exception at the point where the process issued a 'send', but with the lazy SendReceiveReply such an exception might not occur until the 'promise' is located someplace like a collection value. One ''could'' translate it to a special 'error' value, but that's probably not the best universal choice.
+
+In any case, while there are a few more details to iron out, this lazy form of SendReceiveReply seems like a mechanism I feel I could stand behind as "a synchronous InterProcessCommunication mechanism that more OperatingSystem''''''s ought to be based on" for both local and distributed operating systems (I'm currently aiming to support a distributed system). I feel it resolves most of the complaints I described above. 
+
+--------
+
+'''From SendReceiveReply:'''
+
+''The idea that ThreadsAreComputationalTasks is of fundamental importance here: since the thread has ''no other responsibilities'' at the moment besides the one computational task it is carrying out, it is perfectly okay ''and proper'' for the thread to be blocked''
+
+Disagree. Using ThreadsAreComputationalTasks as a reason or excuse to support SendReceiveReply mostly indicates a narrow view of what can constitute a computational task.
+
+A Computational Task involves communication by nature. The fact that you've listed it in the context of SendReceiveReply is one indicator of this, but communication is such a fundamental component to computation that you can't avoid it even when solving a simple math problem in your head (where neurons communicate with one another) or a complex one on paper (where you read and write to paper). However, a computational task '''doesn't imply''' communication with '''just one''' other entity, be it the operating system, a cell represented within a memory service (like RAM), or a remote server of web-pages. A computation can require initiating communications with many different agents, and SendReceiveReply would make this extremely difficult. Similarly, a computational task doesn't necessarily require a reply as a consequence of every communication - the example you're probably most familiar with being the communication to store a value into a memory cell (e.g. store the value '3' into RAM) so that the computation can return to that value at a later time; however, it's just as legit for a computational task (esp. of the non-deterministic sort) to start a bunch of other computational tasks, and wait for replies about successes or failures.
+
+''... synchronous InterProcessCommunication mechanism '''that more OperatingSystem''''''s ought to be based on'''''
+
+Disagree. OperatingSystem''''''s ought to be designed as a collection of services, not as a collection of computational tasks. Applications and Processes that run on an OperatingSystem aren't really separate from the OperatingSystem; they're just user-defined or user-initiated services. Services (and processes) don't need any threads at all unless they are actively computing, but when they are computing their computations and operations can easily require communication with a large number of other services.
+
+Better for OperatingSystem design is to block ONLY when a computation can't continue without receiving a message, or WaitForMessage. Sending never blocks. If one wishes something like SendReceiveReply as an -optimization- for the common case where one can't continue the computation prior to receiving the reply, then that is acceptable... but it shouldn't be what OperatingSystem''''''s are based on.
+
+---------------
+
+For me, SendReceiveReply(Lazily), leaves one sticky issue that I'm not particularly fond of: ''"Process 2 may do other Receives in the meantime"''. One might call this Receive^N Reply^N capability, since one can receive more than once then reply more than once.
+* On the plus side, Receive^N Reply^N capability readily allows a variety of mechanical synchronization patterns to be implemented using SendReceiveReply... in particular, one can implement semaphores, mutexes, bounded buffers, etc.
+* On the minus side, use of the Receive^N Reply^N pattern forces Process 2 to ''explicitly'' track which processes require a reply, complicates reasoning about the call graph, localizes all decisions on process progress (i.e. semaphores local rather than priority-preempted transactions, bounded queues rather than intelligent scheduler), pretty much eliminates ability to integrate process model with any variation of TransactionalActorModel, harms ad-hoc composability of system services (mashups), runs contrary to driving notion of processes being "computational tasks" (because now some 'processes' become 'synchronization primitives'), and makes simple notions of correctness for individual processes (i.e. that each receive is matched with exactly one reply) ''far'' more difficult to verify (since the callee data can be stored in collections or variables while awaiting replies).
+
+Many workflow patterns are still readily possible without Receive^N Reply^N. For example, if an actor needs ten 'pieces' to continue its work, it can query ten different actors, fetch those parts, force the promises, then continue. Alternatively, it can simply enter the 'recv' state ten times, gathering the ten pieces before continuing (albeit this latter approach is not nearly so amenable to transaction). Actors may also subscribe to signaling messages by passing their handle to an observer that can later call them when relevant events have been observed. But, without Recv^N Reply^N, it becomes quite difficult to implement semaphores, mutexes, bounded buffers, etc. It may still be possible, but if it is it will some roundabout mechanism that involves internally queuing messages while ''waiting'' on a ''specific'' event that will ultimately be caused by some other transaction. 
+
+Does anyone see something I'm not seeing regarding Recv^N Reply^N? Any patterns, other than mechanical synchronization, that greatly benefit from it? I'm trying to get the correct information before making a language-design decision with it.
+
+It seems JoinCalculus (a modification of PiCalculus) relies heavily upon the Recv^N Reply^N pattern. I'll discuss this calculus in another page.
+
+----
+
+The XCB library is built on this model. The XwindowProtocol has a stream of commands from the client and a stream of replies, events, and errors back from the server. Only some of the commands have replies, and asynchronous events and errors are mixed in the response stream, so a pure RPC model won't be very efficient.  The XCB library models this by separating commands and replies using a "cookie", which represents a promise. This gives the client the freedom to send a batch of commands obtaining a bunch of cookies, and then forcing the cookies later. This ends up reducing latency a great deal, most notably at X client startup.
+
+The designers of XCB are fans of HaskellLanguage and its LazyEvaluation, and it shows.

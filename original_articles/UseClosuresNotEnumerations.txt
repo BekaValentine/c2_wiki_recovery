@@ -1,0 +1,481 @@
+''I was really disappointed when this turned out not to be referring to enums...''
+
+This is one of the JavaIdioms, a response to UseEnumerationsInsteadOfForLoops. Smalltalk people will take it for granted. The examples have been updated to use Iterator (the preferred ExternalIterator class in Java2) instead of Enumerator.
+
+By '''use closures''' I mean replacing a loop like:
+
+	Iterator it = collection.iterator();
+	while ( it.hasNext() ) {
+	Object each = it.next();
+	//...
+	}
+with AnonymousInnerClass''''''es, for instance:
+
+	collection.forEach( new Closure() {
+	public void exec( Object item ) {
+		// ...
+	} } );
+This requires some supporting code like the following:
+
+	public interface Closure {
+	void exec( Object item );
+	}
+
+	public class Collection {
+	//...
+	public void forEach( Closure closure ) {
+		// Sample implementation to show the semantics.
+		Iterator at = this.iterator();
+		while ( at.hasNext() )
+		closure.exec( at.next() );
+		}
+	}
+Why bother? Well, one reason is that the iteration body is now an object - a FunctorObject. This object may be an AnonymousInner specialization of the interface Closure or the instance of any ordinary class that implements the closure interface (see BlocksInJava). By turning the body of the iteration into a FunctorObject, it opens possibilities for reuse. Contrast this to the VisitorPattern which is a more complex Closure interface.
+
+Another reason is that the ''forEach'' function is a lot easier to write than an Iteration, especially if the collection is something not inherently flat, like a binary tree or an M-way tree. The natural way to visit every node of a binary tree is with a recursive routine like:
+
+ public void forEach( Closure closure ) {
+	leftBranch.forEach( closure );
+	''closure.exec( this );''
+	rightBranch.forEach( closure );
+ }
+Notice how similar the above is to the following use of the VisitorPattern:
+
+ public void accept( Visitor closure ) {
+	leftBranch.accept( closure );
+	''closure.visit( this );''
+	rightBranch.accept( closure );
+ }
+This sort of traversal is much harder to write when using ExternalIterator''''''s such as ''Iterator'' or ''Enumerator''. 
+
+Smalltalk collections also support variations, for example ways to iterate over two collections at once, or to filter or otherwise process the contents. Take a look at EssentialJavaStyle or BlocksInJava for more detailed information on using closures with InternalIterator''''''s.
+
+----
+''Contributions welcomed'' -- DaveHarris
+
+Dave, you may want to take a look at ''EssentialJavaStyle -- Patterns for Implementation''. He's taken a lot of SmallTalk idioms (such as InternalIteration) and KentBeck'''''''s Patterns for SmallTalk and put them into Java. I'm not crazy about just putting enumerations into an InternalIterator, but its better than not having them at all. I think one is better creating their own collection hierarchy. Then, in addition to the various benefits of InternalIteration, one would also have efficiency that could never be touch by an ExternalIterator. After all, InternalIterator''''''s are '''bounded''', so you never have to call a ''get'' method which must on each invocation check to see if the passed index is within the valid range. BTW, another benefit of InternalIteration is synchronization, especially for distributed data structures. It's pretty much impossible to use an ExternalIterator for distributed systems.
+----
+Good idiom! This is a situation where I have frequently used variations on the GOF Visitor pattern to achieve the same thing (and then written inner classes which implement the required interface) as you've written here.
+
+Another good design feature you get from doing this is you can enforce type checking in the class (i.e., in the Collection class above) that knows what the "real" type of the objects returned by the Enumeration object. -- NicholasJacobs
+
+Absolutely. Indeed, the example which prompted me to write this involved a Visitor. I had to iterate over quite a complex structure with lists of items some of which were lists of other kinds of items... I was mildly astonished at how simple these patterns made it. -- DaveHarris
+
+About enforcing type checking: Yes, although you can do it in the Collection class, the Closure implementation is back to dealing with Objects. So, I think don't we've gained anything on the typing front. -- RobbShecter
+
+I read in a recent performance tuning book that inner classes hava a ram footprint of about 3K each before they are even instantiated. Compare this to two or three bytes per (latent) block in Smalltalk and you get a feeling for why each language has its own conventions. -- WardCunningham
+
+Ward, this may be true, but for what it is worth, I did timings between internal iterators and external iterators in Java and the internal iterators where about twice as fast depending on the operation. For synchronized access, the different was HUGE. I suppose the memory used to create the ExternalIterator object and all of its many required levels of indirection outweigh the few bytes of overhead associated with the anonymous inner class. As an aside, I think this overhead is only for non-static inner classes, which doesn't matter here since the anonymous inners are almost always non-static. However, I will say that I do place important algorithms as static objects to avoid recreation on every call to the enumerator function. -- RobertDiFalco
+
+------
+
+I agree that this is a good idiom. In smalltalk closures (called Blocks) are objects; that's why this idiom will probably be more meaningful to a Smalltalk programmer than to your standard C/C++ programmer, unless they've had exposure to LISP or CLOS. ''(Or RubyLanguage, which uses blocks like SmalltalkLanguage, with similar idioms for dealing with collections.)''
+
+I would use this all of the time, since it is so powerful and familiar to me, IF VisualAge for Java supported inner classes - which it doesn't. *SIGH* Looks like I'll have to keep using Enumerations and While loops spread throughout my code until the next version comes out...
+
+-- KyleBrown
+
+(misunderstanding edited out)
+--------
+	Nit:	Why would I ever want to create an instance of Closure? Shouldn't it be abstract?
+
+As you say, a Nit. Use a class or interface, abstract or instantiable, as your circumstances require. Patterns are intended to be adapted, in my view.
+
+I expected this to be used as an anonymous inner class, which meant that multiple inheritance wasn't an issue, so I saw no need to use an interface. A default do-nothing implementation might conceivably be useful for a routine which requires a Closure argument but we don't have anything for it to do. Sometimes passing an empty "exec" is preferable  to passing a null object reference.
+
+In some circumstances you might have several layers of named subclasses, which did partial processing. Then a specific subclass might need to call super.exec() to invoke its base class. Having a default exec() in the base class then removes a special case.
+
+Type-checking makes life harder - in practice, you might want ClosureInt, ClosureFloat etc classes. Another approach is to use a single Closure class but with execInt(), execFloat() methods and you override the one you want. The others would need default implementations.
+
+None of these arguments are compelling. By all means make it abstract if you want.
+-- DaveHarris
+
+''Perhaps more useful would be default implementations for doBefore() and doAfter() methods which are called before and after the iteration''
+-- RomanStawski
+
+----
+''Because closures can contain data, e.g. for counting tree nodes while you are iterating. -- AamodSane''
+
+'''Yes, but unless class Closure declared that data and implemented exec() in precisely the way that you want to use it, you have to subclass it anyway. Closure should be abstract so that you can create an anonymous inner class. (You can always create a named subclass if that meets your needs.) -- KielHodges'''
+
+''Oh sure. In fact, you would probably have '''interface UnaryFunction { exec(Object) }''' or somesuch'' -- AamodSane.
+
+Note: a class can have an anonymous subclass without having to be abstract. -- DaveHarris
+----
+In a slightly broader vein - this idiom looks like the "fold" function one sees in languages like ML. The fold construct does not "merely" iterate over the objects in a collection, but retains the structure of the collection in the structure of the computation. The key to doing this is by making the exec method return something.
+
+For example, with a binary tree, you really want to be able to do something like:
+
+	public Object fold (Closure block) {
+		return block.exec(left.fold(block), this, right.fold(block));
+	}
+When you start doing this, Closure is no longer a class, but more of a MarkerInterface, because the arguments to exec depend on the structure of the Collection. On the other hand, this scheme (is it yet a pattern?) works well in an object-oriented language because the folding can work across collections whose subcollections are different types. A fold over a TwoThreeTree, for instance, might use a closure like:
+
+	new Closure() {
+		public Object exec(Object this, Object left, Object middle, Object right) {...}
+		public Object exec(Object this, Object left, Object right) {...}
+	}
+-- BillTrost
+
+''See FoldFunction for more information about fold.''
+-----
+C++ people call these things Function objects. STL uses them extensively. 
+
+Re: structure of the collection:
+
+Functional languages encode structure dependent processing very well using PatternMatching, which works as follows: length of a list is written as three equations,
+	length nil = 0
+	length atom = 1
+	length [head|tail] = length head + length tail
+Here, nil, atom and [head|tail] are three possible shapes of list. You would do something similar for two three trees.
+I sometimes wish OO languages had LetBinding and PatternMatching -- AamodSane
+
+This appears to be incorrect in most functional languages including ML & Haskell, since the language differentiates between elements of a list and the list itself. It should be -
+
+	length  nil	= 0
+	length (a::x) = 1 + length x
+where a::x means a list with head element a and tail x -- JonHanson
+
+''Probably this requires an explanation for those who don't know ML. [head|tail] is a list made of the concatenation of 2 lists: head and tail. a::x is a list made of the concatenation of the atom a and the list x. This means [head|tail] = a::x, but when this expression is in the left side of the equal sign, the pattern matching works for a::x and doesn't work for [head|tail]. The reason being that given a non empty list, a::x can be mapped in exactly one way, while [head|tail] can be mapped in n ways, if n is the length of the list.'' [Can you rephrase that to resolve the obvious ambiguities?]
+----
+As a Java newbie, I'd be helped by a couple of examples elaborating what goes inside the Closures. Thanks. -- RonJeffries
+----
+In the sense used above, Closure is a just an object you pass to the Container to do stuff.
+
+But the idea of closure is actually similar to Smalltalk blocks.
+
+In java, you can have
+	class foo { 
+		int i; 
+		Object aFun() { 
+			final int j = 10;
+			class bar { int bFun() { return j+1; } };
+			return new bar();
+		}
+	}
+Here j is ''free'' (not locally defined) in bFun(), and is captured from the the surrounding context, the function aFun() (Java requires you to mark the captured variables as ''final''). ''bar'' here is an inner class (functional programmers
+would call it closure).
+ 
+In addition, in bFun, you can also refer to the surrounding object ''foo'' by saying ''foo.this.i'' to refer to the ''int i'' from ''class foo''. You can also say '''new Object() { ... }''' instead of explicitly naming the class ''class bar''.
+
+I believe this is similar to a Smalltalk block, but I seem to remember blocks do dynamic instead of static scope, so that a block [j+1] would refer to the ''j'' from the executing context.
+
+I hope this is the explanation you were looking for. :-)
+-- AamodSane
+
+Smalltalk has static scope. A block [j+1] refers to the ''j'' in the context that created the block.
+
+-- RalphJohnson
+
+-----
+'''Pipes, filters, and lazy collections'''
+
+While I like and HaveThisPattern, it does not work well if you are trying to make PipesAndFilters, methinks. I think the problem is there is no good way to suspend the state. For instance, imagine you have (OK, I have) a command interpreter for a spaceship simulator that ultimately uses turtle graphics to draw the spaceship on the screen.
+
+You need a series of pipes like:
+
+	lex -> parse -> interpret -> turtle
+If you were to do this using closures, you would have to do something like:
+
+	TokenCollection tokens = System.in.collect(lexer);
+	CommandCollection commands = tokens.collect(parser);
+	TurtleMotionCollection motions = commands.collect(interpreter);
+	motions.forAll(drawer);
+The trouble here, of course, is that you have to have all the tokens before you start parsing, all the parsing done before you start interpreting, etc. In this case, you probably want to UseEnumerationsNotClosures. The lexer can read the input stream to produce a new token on each call to nextElement (possibly reading multiple characters in the process), the parser can read the token stream to produce a new command on each call to nextElement(possibly reading multiple tokens in the process), etc.
+
+So when is this pattern appropriate? What is the right context here? For one, you probably should be expecting to iterate over the collection more than once, and you shouldn't be expecting to be receiving the collection interactively.
+
+I guess what I am really trying to say here is that enumerations aren't just for iterating through collections.
+
+-- BillTrost
+
+You can fix this with CurriedObject''''''s, LazyObject''''''s, or just good old LazyEvaluation. -- RobertDiFalco
+
+Closures used with collections are definitely cleaner when applicable. Perhaps Bill's example could be done with some sort of lazy collection. But isn't that trying to make a collection look like an Enumeration?
+
+Anyone care to try UseClosuresWithEnumerations? The idea is an extension of Enumeration with a method that is applied to each object returned from the collection. I have one I called FilteredEnumeration (maybe that should have been FilteringEnumeration) that proved to be handy at times.
+
+-- KielHodges
+
+Yes, the problem can be solved by using StreamObject''''''s to represent your collections. StreamObject''''''s use LazyEvaluation to extract elements. So in Bill's example the turtle would ask its StreamObject for the next motion, which would cause the interpreter to ask for commands from the parser until it could create the next motion object, each requested command would cause the parser to ask the lexer for tokens and so on. The TransfoldPattern deals specifically with this issue. 
+
+InternalizeExternalIterators is about writing InternalIterator''''''s based on ExternalIterator''''''s the purpose of which is to allow you to UseClosuresWithEnumerations. -- PhilGoodwin
+
+----
+'''Using composition instead of collections and closures''' ''[ExtractMe]''
+
+I think Bill's example could be composed using objects like this:
+
+  // lex -> parse -> interpret -> turtle
+  turtle.obey(interpreter.interpret(parser.parse(lexer.lex(input))))
+where lexer is an instance of a class that takes some input a produces some lexical tokens; parser is an instance of a class that takes some lexical tokens and produces a parse tree; interpreter is an instance of a class that takes a parse tree and interprets it, producing some instructions for a turtle; and turtle is an instance of a class that acts like a Turtle when given some instructions for a turtle.
+
+This is all independent of whether or not the particular instances are closed over some lexical scope.
+
+An issue brought up by Bill is that he wants these objects to act as co-routines rather than as a sequence of steps where step N is completed before step N+1 begins. I think this example could be expressed like this:
+
+  lexer = new Lexer(new Parser(new Interpreter(new Turtle())));
+  lexer.lex(input);
+where the lexer is given a parser, which is given an interpreter, which is given a turtle. When the lexer has a complete token (ok, plus or minus lookahead, etc) that token is given to the parser. When the parser has a complete expression, it is given to the interpreter. When the interpreter has a complete instruction it is given to the turtle and the turtle obeys the instruction.
+
+This is also independent of whether or not the instances are closed over some lexical scope.
+
+-- PatrickLogan
+
+The Java class java.awt.AWTEventMulticaster is an example of this idiom in action. It is also an interesting example of how implementing a collection class as a ValueObject makes it easier to share between threads. -- NatPryce
+----
+'''Producers, consumers and coroutines'''
+
+I see what Bill means. It is a matter of push versus pull. Values are pulled through an Enumeration by the consumer; the producer has to act as a CoRoutine. Values are pushed through a Closure by the producer, and now the consumer has to act as coroutine.
+
+So which is better depends largely on which end finds it easiest to act as coroutine. Closures often work well when the consumer doesn't have much state (related to the enumeration) beyond what can easily be held on the stack (and to a lesser extent, in instance variables). I find this to be the common case, with the parsing example being an exception.
+
+Making the producer a coroutine is easy for simple collections, like Vector, but gets harder when you need to traverse more complex structures like trees, especially if the nodes have different types and collections of their own. Then you want to use recursion and routine calls, and spread the state over several stack frames, and turning that into a coroutine is hard. This explains why Closure combines so well with Visitor pattern.
+-- DaveHarris
+
+----
+'''Locking and InternalIterator''''''s'''
+
+Two other points: it's easier to be clear about the locking for a complex data structure with a closure as the locking is done by the structure. This is not obvious with enumerations, as the methods for returning an enumeration from the default collections are synchronized, but the caller has to know what to lock (if anything) while using it. Secondly, closures are easier where each node in the data structure has multiple elements that you want to refer to. With enumerations, you have to wrap them up in some containing object because the next() method (or whatever) can only return a single value, whereas in a closure, you just have more parameters in the closure method.
+
+On a recent project, I found an interesting tension between using closures and visitors. Closures protect you from the details of the data structure, but that structure has to provide you with the navigation route you need (e.g. depth-first vs. breadth-first), whereas Visiting locks the data structure down more but allows you to write ad-hoc navigations.
+
+-- SteveFreeman
+
+''InternalizeExternalIterators was written to address this exact problem -- PhilGoodwin''
+----
+'''Standard containers, practices, and genericity'''
+
+There is a practical point being missed, though. However great closures might be (and I firmly believe they are), they're not the standard Java practice. This doesn't mean that we should compromise any innovations for "standard practice", but in this case it's important. You see, Java collections suck anyway, and closures only make them suck a little less, but make them less readable to most people. For this closure thing to be useful, you need either higher-order functions or some syntactical sugar, like SmallTalk blocks. In either case, you need generics (parameterized types, templates) to make collections suck a little less. Meanwhile, JavaGenericLibrary is a good escape.
+
+-- BrunoBozza
+
+I definitely don't agree. I think closures (FunctorObject''''''s) in general and their use with InternalIteration in specific, are increasing their popularity in the Java world. However, I ''do'' believe that to get the full ''value'' of InternalIteration, you need to write your own collection hierarchy. This allows your InternalIterator''''''s to be much more efficient than even Iterators alone. After all, (a) they are bounded operations so no range checking is required and (b) they are just another method of the collection class and can therefore share implementation details. For example:
+
+ public class I''''''temArray implements I''''''temsSequenced
+ {
+	private Object[] m_contents;
+
+	''...''
+
+	public void detect( U''''''naryPredicate aBlock )
+	{
+	 for ( int at = 0, stop = count(); at != stop; ++at )
+		if ( aBlock.is( m_contents[ at ] ) )
+		 return m_contents[ at ];
+
+	 return null;
+	}
+
+	public void apply( final U''''''naryProcedure aBlock )
+	{
+	 detect( new Block() {
+		public boolean is( Object each ) {
+		 aBlock.run( each );
+		 return false; } } );
+	}
+
+	''and so on...''
+ }
+I mean, which do ''you'' think is going to perform better. The above code or the following code:
+
+ Iterator at = array.iterator();
+ while ( at.hasNext() )
+ {
+	Object each = at.next();
+	if ( each ''expression'' )
+	 return each;
+ }
+Because the ExternalIterator must be generic and decoupled from the collection, it has to do 10 or 20 message sends ''for each time through the loop''! When you InternalizeExternalIterators you lose many of these benefits. [That is, if
+you just implement an InternalIterator using an ExternalIterator, you lose the performance benefit, because you're sending dozens of messages again. You get the performance benefit from the knowledge the InternalIterator has about how the collection is stored.] I suppose I can see doing this if you are trying to provide a common interface using the AdapterPattern as a temporary step on your way to creating actual InternalIterator''''''s. Fortunately, most people end up writing their own abstract data types anyway - just because the Java Collections Framework performs so badly -- so when doing this one should definitely avoid the urge to support internal iterators. -- RobertDiFalco
+
+I do indeed see a twofold speedup in iteration between an ExternalIterator (10ms) and an InternalIterator (5ms); unfortunately, it's more than erased by the cost of creating a Functor (15-75ms) to pass to the InternalIterator. The static Functor''''''s mentioned above would help, and the creation cost would be made up for if my collection were roughly 3-15 times as large. But be wary
+of touting the performance advantage of closures when dealing with small collections. I guess this is just more evidence for ProfileBeforeOptimizing.
+-- GeorgePaci
+
+'''More on efficiency and number of messages'''
+
+I don't understand. They look about the same. Each has two calls per iteration: the InternalIterator calls is() which calls run(), and the ExternalIterator calls hasNext() and next(). I'm not seeing the 10 or 20 message sends that you are talking about. -- PhilGoodwin
+
+''As Dave points out, you are just looking at the top level of message sends for ExternalIterator. Also, as Wayne points out, performance shouldn't be the only deciding factor but I do want to respond. With the internal iterator, you have pretty much counted all the messages when you include ''is'' (or ''is'' and ''run'' if you build each on top of ''detect''). However, with ExternalIteration, you have missed a bunch in the implementation of the Iterator class. Let's consider the Iterator implemented in the Abstract''''''List class. This is the base class for ''A''''''rrayList''. It is an inner class, so it has a reference to the list's ''this''. First, lets inspect ''hasNext''. Since external iteration cannot be a bounded operation, it performs an internal boundary check by sending the ''size'' message to the collection's ''this'' and checking its result: 
+
+ public boolean hasNext() {
+	return cursor != size();  // the ''this'' of the outer
+ }
+The ivar ''cursor'' is just an integer kept by the iterator implementation to track where it is in the unbounded iteration. We don't know how the list implements ''size'' since it is an abstract member but we'll assume that it performs no further message sends. Now, lets take a look at the implementation of ''next'':
+
+ public Object next() {
+	try {
+	 Object next = get( cursor );
+	 checkForComodification();
+	 lastRet = cursor++;
+	 return next;
+	} catch( I''''''ndexOutOfBoundsException e ) {
+	 checkForComodification();
+	 throw new NoSuchElementException();
+	}
+ }
+Is this starting to become clearer? Wow. We are really starting to see a big difference now! First off, we are basically embedding a try...catch block '''with in''' a while loop when we use the ExternalIterator. On each iteration, a new try..catch block must be created. Then, after that (essentially a message send), the first thing we do is send the ''get'' message to the ''this'' object of the collection class. Let's take a look at how ''A''''''rrayList'' implements this:
+
+ public Object get( int nIndex ) {
+	RangeCheck( nIndex );
+	return elementData[ nIndex ];
+ }
+So far we have five message sends and now ''get'' adds another for ''Range''''''Check''. In A''''''rrayList, this member only makes calls to private instance variables. We'll be charitable and not count these. We also won't count the call to ''this.elementData'' in the ''get'' implementation. After calling ''get'', the iterator calls ''checkForCoModification''. This call relies on a protected member of the collection class called ''modCount''. I hope I'm conveying the amount of complexity here. Also note that ''modCount'' is a protected data-member of ''A''''''brastractList'' and not ''A''''''rrayList''! So, you can screw up the Iterator in ''A''''''brastractList'' if your subclass does not correctly deal with ''modCount''. Basically, ''checkForCoModification'' makes sure this value hasn't changed during the course of iteration. After this, we ''store'' the current value of ''cursor'' to another instance variable of ''Iterator'' named ''lastValue''. We then increments ''cursor'' before, finally, returning the answer of ''get'' to the caller of ''next''. So, now consider the total cost of the following:
+
+ try
+ {
+	Iterator it = seq.iterator();
+	while ( it.hasNext() )
+	{
+	 Object each = it.next();
+	 ''do something with each''
+	}
+ }
+ catch ( N''''''oSuchElementException e1 ) {}
+ catch ( C''''''oncurrentModificationException e2 ) {}
+ 
+There is a big difference between this and a collection hierarchy with native internal iterators whose only message sends are to ''is'' and maybe an indirection to ''run''. -- RobertDiFalco''
+
+Next() will throw an exception if you are at the end of the sequence, so must repeat the logic of hasNext() behind the scenes. Even though you have protected the call with hasNext() yourself, the iterator can't rely on that in general. There may also be overhead because the external iterator is a separate object and may be obliged to use a public interface to the collection which also has range checks (however I think Robert is wrong to say it ''must'' be decoupled). The internal iterator can be as low-down and dirty as it likes to get the speed. Obviously some of this depends on how they are implemented and how smart the compiler is. If everything is inlined, the final machine code may be the same for both cases. (In practice, I suspect the closure is less likely to optimized away with current Java technology.) -- DaveHarris
+
+''By decoupled, I mean a separate class. It doesn't really matter to me whether it is an inner or external class. Both internal and external iterators have a closure. In the case of external iterators, it is the iterator class itself. While what you say is true about getting down and dirty, this is not the case with the Java Collection implementations provided by Sun. For example, when using ''A''''''rrayList'' (one of the more popular collection classes), the iterator is an InnerClass of the A''''''bstractList'' class and so uses the public interface of ''List''. -- RobertDiFalco''
+----
+
+'''Does Iterator Efficiency Really Matter?'''
+
+I respectfully wonder what the fuss is all about. Why are people having to iterate through collections so large that performance becomes an issue? Why haven't they chosen an algorithm that lets them use a mapping instead? -- WayneConrad
+
+Well, efficiency is always important if you are an ''end user''. Plus, most application are largely data-structure based. If you are spending 90% of your time in abstract data structures -- why not make them more efficient. Why use a merge sort over a bubble sort? Why put any thought into algorithm selection? Well, because it '''does''' matter. Most of the time spent performing optimizations is spent trying to speed-up the wrong data structure or algorithm. In fact, if you believe Knuth or Jackson about optimization then you will understand why they stress the importance of selecting appropriate algorithms and abstract data types. However, efficiency should not be the only argument. It's more like if InternalIteration is more correct, more robust AND more efficient to boot, why '''wouldn't''' that matter to you?  -- RobertDiFalco
+
+The efficiency question matters to me because I'd like to InternalizeExternalIterators as a general strategy. If one is as efficient as the other (and both are reasonably efficient) then it makes sense to expose the general iteration capability of a container through some form of ExternalIterator and then encapsulate the particular iteration strategy as an InternalIterator. The only clients of ExternalIterator''''''s should be InternalIterator''''''s and InternalIterator''''''s should be used by all other clients of the container. The primary drawback of this strategy is that it combines the overhead of both InternalIterator''''''s and ExternalIterator''''''s. If that overhead is significant then the strategy becomes unusable. But I don't think that it generally is. -- PhilGoodwin
+
+What matters most to me, as the user of a collection class, is: is the API expressive enough to make what I want to do look natural? I chose the structure, algorithm, and API that makes the code read well. That might mean using a linear search over thousands of items!  Later, ''if'' that turns out to be too slow, I'll think about different algorithms (binary search?) or data structures (mapping?) to speed it up. But efficiency only matters once the code is too inefficient. Until the code is too inefficient, efficiency doesn't matter.
+
+I really like being able to pass closures to collections. This can result in some beautiful and simple code. That is why I think what you're talking about is important -not because of efficiency of execution, but because of beauty (beauty being a word for a different sort of efficiency). -- WayneConrad
+
+More and more for me, I am adding appropriate solutions and elegant algorithms to my list of what is beautiful. Being able to choose ''the'' appropriate algorithm or data structure is as important to engineering as being able to design the most simple interface. One doesn't hold up very well without the other. Slow simple interface are as awful as quick complex ones. Personally, I don't enjoy spending '''any''' of my time optimizing code. I am a simpleton in this regard. I get very annoyed having to spend time hand optimizing code. For me, it is just an invitation to last minute bugs and a rat hole for my time. The more I learn about the performance impact of all the available solutions, the less time I spend  optimizing. (As an aside, I still remember when I used an array for storing text in the very first text editor I ever wrote!! The code may have been easy to read, but the application was not very easy to ''use''!! I still remember the first time I used a ''linked list!!'') Anyway, I've really grown to appreciate the advice of guys like Knuth or Sedgwick - ''choose the right data structure for the problem''. Code beauty is important to me, very much so, but nowadays, I tend to choose based on many factors rather than ''just'' how well the code reads. One of the most recent things I've learned is that using a linear search for a collection with thousands of elements is a ''design'' error and not, as I always thought, an implementation error. -- RobertDiFalco
+
+----
+
+The JakartaProject's Commons subproject has Closure and a number of related utilities for working in and with java.util.*. See http://jakarta.apache.org/commons/collections.html
+
+----
+Java 1.5 introduces enhanced for loops, so this:
+
+ Iterator it = collection.iterator();
+ while ( it.hasNext() ) {
+	Element each = (Element) it.next();
+	//...
+ }
+
+can be simplified to this:
+
+ for ( Element each : collection ) {
+	//...
+ }
+
+Do you still want to use an anonymous inner class, etc., instead of just one simple line of code?
+
+	*  My opinion is that by using Closures you feel motivated to create all closures in advance and then just use them. In other words, if you want to print the elements in a collection:
+
+	class P''''''rintClosure extends Closure
+	{
+	public void exec( Object item ) 
+	{
+	  System.out.println( item );
+	} 
+	}
+Then you use it like this:
+
+	collection.forEach( new P''''''rintClosure() );
+This can be important for writing things OnceAndOnlyOnce. Besides, if the underlying DataStructure changes, it is easier to just reimplement forEach instead of changing all those for loops.
+
+-- GuillermoSchwarz
+
+OnceAndOnlyOnce can still be achieved even with loops:
+
+ for ( Element each : collection ) {
+	printThing(each);
+ }
+-- Chris Mosher
+
+wrong....
+
+ for ( Element each : collection ) {
+	printThing(each);
+ }
+
+ for ( Element each : collection ) {
+	updateThing(each);
+ }
+duplicating the loop variable declaration and brackets... better as 
+
+	collection.forEach(new P''''''rintClosure());
+	collection.forEach(new U''''''pdateClosure());
+That's OnceAndOnlyOnce.... loops are low level stuff, they always violate OnceAndOnlyOnce, and they violate the encapsulation of the collection. If Java were a better language, you wouldn't have to create Closure objects, you could just do this with first class anonymous functions.
+
+	collection.forEach(function(each){printThing(each)});
+	collection.forEach(function(each){updateThing(each)});
+It may seem silly to want to use a higher order function instead of the for statement that the language provides, but once you realized forEach is but one of many possible useful higher order functions closures can work with, you'll start to see the value in it. Other useful functions that take closures would include detect, reject, collect, select, remove, inject, allMatch, anyMatch, matches, etc... forEach is but one of many possible uses. See BlocksInJava for a deeper explanation.
+----
+This still violates OnceAndOnlyOnce:
+	collection.forEach(function(each){printThing(each)});
+	collection.forEach(function(each){updateThing(each)});
+because the loop call has been copied and pasted.
+A nicer way might be:
+
+	collection.forEach(function(each) {printThing(each) } . function(each) (updateThing)(each) }
+where . composes the functions together.
+
+How about (this shows the clumsiness of java/c# like syntaxes, if they were to support this):
+
+collection.foreach(new [] function(each) {printThing(each), updateThink(each) }.foldr( . ) )
+
+where foldr executes the function composition operator on each element as it iterates through the list.
+
+There are many cases where it would be nice to compose functions, although this is pretty much the same as a closure:
+
+ let f = a.b 
+ f();
+is about the same as let f = function() {a(); b(); }
+
+but a lot less clumsy.
+ 
+-- DougRansom
+
+Or.....
+
+	collection.forEach(function(each){
+	printThing(each);
+	updateThing(each);
+	});
+No need for composing, just put both call's in the same closure, that's why closures are cool. Not that functional composition isn't neat.
+
+----
+
+I agree with the impulse to OnceAndOnlyOnce, but I don't know if I'd agree with doing it by putting both calls in the same loop. I think it was SteveMcConnell who said the fact that 2 loops iterate over the same sequence is not sufficient reason for combining them, and I've come to see what he means.
+
+First off, DefensiveProgramming would suggest that we don't have any way of knowing from the code you presented whether the composed loop actually behaves the same way as the separate loops for practical purposes. For one thing, even though we'd hope that executing updateThing on one object has no side effects on other objects in the collection not yet reached in the iteration, we don't know that doesn't, and that could change the results of the printing. Second, what if the point of printing the items before updating is to have a complete list of original states before performing an update loop that could fail with an exception?
+
+-- SteveJorgensen
+
+----
+19 Apr 2005
+The idea of foreach is good, except when we want to iterate over "2" or more objects, not to treat then separately, but to act on them together. Example:
+ for (int i = 0; i < oThing1.Length, ++i) {
+         oThing1(i).Stuff = oThing2(i).Stuff;
+ }
+Why not this???
+ foreach (CThing o1 in oThing1, CThing o2 in oThing2) {
+         o1.Stuff = o2.Stuff
+ }
+-- Mike Fitzpatrick
+
+in c++ you'd use std::copy here instead of foreach - infact you rarely use foreach at all as it is usually better to pick an algorithm that not only does the loop for you but does the operation for you too.
+
+----
+
+'''See also:''' LexicalClosure, BlocksInJavaScript, InternalIteration, ExternalIteration, InternalizeExternalIterators, TransfoldPattern, JavaAlgorithmLibrary, JavaGenericLibrary, BlocksInJava
+
+CategoryObjectFunctionalPatterns CategoryClosure CategoryCollections CategoryJava

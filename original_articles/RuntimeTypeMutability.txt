@@ -1,0 +1,80 @@
+From BenefitsOfDynamicTyping :
+
+When asked, "does anyone actually change the types of objects after they've been created?", LaurentBossavit raised this point: 
+
+''I'm actually not sure what we mean by the "type" of an object. (WhatAreTypes, he asked, and then washed his hands.) It strikes me that StatePattern, DecoratorPattern et al. are ways to change the type of an object at run-time, without changing either its class or its interface. Or am I being silly?''
+
+So now the question is: "Is it ever useful to, for example, change the language-level type of an object to achieve the same effects as a StatePattern?"  Sounds like a CodeSmell to me... any other opinions?
+
+''I think the question is just backwards. Suppose we '''do''' change the type of an object when we use DecoratorPattern or StatePattern. What need is there to distinguish that type from the "language-level" type ? Now, you can use the DecoratorPattern or StatePattern in languages with so-called "static typing". Thus, it is useful, in these languages, to change the type of an object.''
+
+''The question is, in what circumstances is it useful for the language to go to the effort of preserving the "language-level" types ?''
+
+In those circumstances when you don't want 10 programmers on the project to come up with 10 run-time-typing-with-dynamic-change hacks that don't interoperate with each other. When you change the type of an object, then different methods are dispatched on it everywhere in the program, because the type change is integrated into the object system. This is like asking, in what circumtances is it better to have strings in the language than to hack up your own class library...
+
+----
+''SmalltalkLanguage has the "become:" feature to do something like this. I believe this action is called ObjectSwizzling. Since it's there, I guess someone uses it?''
+
+Taking a wild guess as to why it would be useful:  I suppose it might be more efficient to just change the type rather than copy the data and delete the original... but that kind of PrematureOptimization''''''ish stuff doesn't sound like the sort of thing a dynamically typed language creator wourd be concerned about.  I'm really at a loss here.  Would some kind Wikizen give us some clues?
+
+''I think it is mainly used for growable collections (an array become:s a bigger
+array) and for lazy object creation (i.e. a cheap dummy object is created that hangs around, and when it receives something it doesNotUnderstand, it creates the big expensive object and become:s that object). -- StephanHouben''
+
+----
+CommonLisp also has this capability; it is called change-class.  The programmer may also specify specializations for the methods update-instance-for-changed-class to fine tune what should happen to the object when it changes class.  The instance has full access to all pre- and pos- change slots.  Usage of this is ConsideredEsoteric. -- AlainPicard
+
+----
+The problem with copying the data and deleting the original is that there may be other objects referring to the original that should now refer to the new version.  Smalltalk's #become: takes advantage of the level of indirection provided by having object references be indexes into an "object table" which then points to the actual objects in memory -- #become: replaces the pointer in the object table so that all references to that entry in the table now point to the new object.  There are several situations in which changing an object's class can be useful:
+
+* Objects are being reconstituted from some form of external storage in a procedure that tentatively creates an object of some general type such as DomainObject then changes its class to what the process determines it really should be.  (You might be reconstituting an interconnected group of such objects in a situation where it's useful or even necessary to first reconstitute the interconnections before determing the specific types.)
+
+* An AI-like classification process progressively refines its belief about what an object is: perhaps it starts out as an Incident, then gets classified as an EmergencyIncident, then as a ChemicalSpillIncident, etc. as more knowledge is obtained and further deductions made.  See TypeRefinement
+
+* In the absence of a more appropriate role mechanism, an object's role may be changed by changing its class: Employee --> Manager, e.g.
+
+* An object is replaced by a proxy or vice versa in the course of changing its persistence status.
+
+* Schema migration?
+
+-- MitchellModel
+
+Not all Smalltalk implementations use object tables; in those that don't, #becomes: scans the image looking for references to update in place. It's rather slow. You are better off using some letter/envelope idiom which ensures there is only one reference to the object whose type you want to change. This adds a layer of indirection, but only where it is needed. Object tables add indirection to all objects.
+
+----
+In ObjectiveCee, the generic object type(id) is defined as:
+  typedef struct objc_object {
+               Class isa;
+  } *id;
+So it's probably possible to do something like:
+  (*(struct objc_object *)myObject).isa = [otherObject class];
+But I'm not sure what effects that would have on the environment.  To quote PetiteAbeille, "This is an hack... It will most likely melt your computer and fry your brain. You have been warned!"  Abeille was speaking on a different topic, but it remains valid.
+
+Another similar thing to do in ObjectiveCee is to use +poseAsClass:aClass, but that's limited in that the receiver must be a subclass of aClass which declares no additional instance variables.
+
+It's actually possible to do a lot of crazy things with the ObjectiveCee runtime, but it may be ExcessiveCleverness sometimes.
+
+--JoeOsborn
+
+----
+You can do it in CeePlusPlus as well, with the condition that the objects must be the same size - you just build the replacement class using an in-place constructor where the other object exists. It's a very neat technique. I've used it in the past to get arrays of objects that are polymorphically the same, but not actually the same type. -- KatieLucas
+
+* Of course, if you use this technique to change a Foo to a Bar and have a Foo * pointing to the memory (or a Foo &), accessing the Bar via a Foo */& is quite likely to result in UndefinedBehavior.  C++ won't likely detect you have done this; and given the highly-optimized-but-fragile method CeePlusPlus uses to do method dispatch (hardcoded integer offsets into a VeeTable, typically); you'll get  a rather spectacular crash.  If you're lucky.  
+** On the other hand, if you reference the object ''only'' through pointers to a common base class (common to both the before and after classes); this might work.  Even in this limited case, this hack is '''highly unportable''' and in the realm of UndefinedBehavior.  Were I the project lead, I wouldn't allow this sort of thing anywhere near my project, except in ''extreme'' extenuating circumstances.
+* If you're going to do that, isn't it safer and more flexible to use a Facade with the PimplIdiom?
+
+----
+Similar hacks can be done in CeeLanguage, when the object's size does not change. For example, a freeware library called Austin (http://users.footprints.net/~kaz/austin.html) can change the representation of a container among LinkedList, binary search tree (BinaryTree), AvlTree, Splay and RedBlackTree''''''s. Or a CeeUnion can be used.
+
+----
+PythonLanguage Allows you to change __base__ (superclasses) for some types and __class__ for some other. I don't think it has a become:-like feature. 
+RubyLanguage does not allow it by default, but the EvilRuby module introduces class setting methods, become method, and even MultipleInheritance (which ruby normally prohibits).
+
+----
+See also TypeMigration. There are two separate concepts involved:
+* evolving the types in a persistent system between versions (similar to SchemaEvolution)
+* changing the class of an object within a single version of an application
+
+but both pages concentrate on the latter. EditHint: refactor TypeMigration into this page, and discuss typing issues more on SchemaEvolution.
+
+----
+CategoryLanguageTyping

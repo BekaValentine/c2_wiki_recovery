@@ -1,0 +1,146 @@
+An experimental all-software WikiWithProgrammableContent by ZygoBlaxell.
+
+Currently unavailable to the public until a suitable server host can be found.
+
+General description:
+
+	* Implementation language is a safe subset of Tcl 8.2 or 8.3 (both seem to work) (see TheTclersWiki for more information on Tcl) with "SoftWiki extensions" as described herein.
+	* The content of the Wiki is user-editable Tcl scripts which run inside the SoftWiki interpreter and produce MIME output, including headers.  This allows SoftWiki to host - or generate on the fly - any possible WWW content-type.
+	* HTTP requests are supported via CGI in the usual way.  SMTP requests should be supported via an auto-reply mailbox (SoftWiki generates the reply email headers and text, but cannot alter the source or destination SMTP envelope address), but this isn't implemented yet.
+	* To respond to a request, SoftWiki loads a "boot" script with a hardcoded name ("/boot/cgi") (different scripts for email and web access) from the SoftWiki database into the safe Tcl interpreter and evaluates the script.  This "boot" script in turn does appropriate input parsing (i.e. CGI parsing if via HTTP) and pass control to another script inside the SoftWiki database, based on PATH_INFO, QUERY_STRING, Subject header, etc.
+	* SoftWiki scripts generally have full access to everything from the client a CGI script would have, including file uploads, access to User-agent and Referrer fields, client IP, ability to generate non-HTML output.
+	* SoftWiki scripts can themselves create safe interpreters which are even more restricted than themselves, thereby implementing their own secure wrappers for other SoftWiki scripts in a hierarchical fashion. This can be used to implement access control within SoftWiki itself.
+
+There exist two units of code that are not, and except in unusual circumstances, should not ever be editable through SoftWiki itself. Both units of code exist outside of the "normal" SoftWiki environment:
+
+	* Bootstrap code to create the safe interpreter, set up access to the Wiki database, set resource limits, load the boot page, evaluate it, and attempt to provide an intelligible error report if a fatal error is encountered early in a SoftWiki script's lifetime. Think of this as a minimal "kernel" on top of which everything else runs combined with a "watchdog" that prevents it running too long. This kernel is minimalistic, so hopefully there is no reason to want to change it except to set parameters such as resource limits and interpreter safety.
+	* The persistent database engine. Having the ability to edit this unit is like having the ability to edit an OS's filesystem code while the OS is still running - not useful in most cases. There are reasons to want to change this, e.g. to use a different database module, or to enhance performance, or to support "invisible" features such as backups or replication. Another problem is that the bootstrap code must access this database somehow, and how does one use the database-reading code if it is located inside the database itself?
+
+There are two units of code that may or may not be editable by users because of site-specific policy. Both units of code may exist and even be editable inside the SoftWiki environment if the WikiWikiClone operator chooses to allow it:
+
+	* "Unsafe" Tcl code, which can open socket connections, load Tcl extensions from shared libraries, execute sub-processes, and so forth. Such code can provide proxy services to "safe" Tcl code which implement some kind of security policy. As an example, the "safe" restriction can be simply removed from the bootstrap code, so that the "boot" script in the SoftWiki database is not restricted to a subset of Tcl. The "boot" script in turn can create its own "safe" Tcl interpreter after establishing a new security policy, usually one that restricts write access to itself.
+	* A simple web form and email address for executing Tcl code inside the SoftWiki environment. This hardcoded interface bypasses the "boot" page, and enables examination and repair of the database even if (when) someone accidentally damages the boot script. A "secure SoftWiki" would have to remove or restrict access to this unit, since it can read or modify any database entry.  Think of this as the "debugger".
+	* Another simple web form and email address for accessing the most recent global database transaction log. "Most recent" means whatever the site administrator has left on the machine - they are not part of the database proper, so they can be removed at any time. This form is capable of re-inserting a continuous set of transactions in reverse, effectively acting as a "big global undo button" for reversing fatal changes. SoftWiki itself can access this log and use it to produce more sophisticated functionality (e.g. different forms of RecentChanges or QuickChanges, or restricting the reported set of transactions to those on particular keys).
+
+Hard resource limits are implemented in SoftWiki using a loadable C extension to Tcl which sets limits on a Unix process. These limits cannot be overridden inside the safe Tcl interpreter, but of course are trivial to override inside the boot script. They are:
+
+	* One thread
+	* 15 real-time seconds (not including HTTP data transfer time)
+	* 5 CPU seconds
+	* 8 megabytes rss/virtual/data/stack memory
+	* 8 megabytes maximum I/O, including database transactions.
+	* Stock Tcl 8.2 (8.3 in testing) interpreter core with no experimental features (e.g. threads) enabled. For those who don't know Tcl very well, this means:
+		* simple, consistent, yet powerful syntax (Lisp with simpler syntax)
+		* namespaces, global and local (lexically and dynamically scoped) variables
+		* Perl-style regular expressions
+		* Perl-style binary strings (actually Unicode, as I discovered the hard way -- ZygoBlaxell)
+		* lists, strings, integers, doubles, booleans, associative arrays, and procedures all convertible to a canonical string representation
+		* no reference type (but some reference semantics in the implementations of various types)
+		* sub-interpreters, support for multiple execution contexts
+		* procedures are transparently byte-compiled at run-time for performance (important when you only get 5 seconds ;-)
+		* some introspection capability can examine procedures on call stack)
+		* exception handling
+
+SoftWiki visible features of the database server:
+	* Simple key-value dictionary storage: "softwiki get key" (returns value) and "softwiki set key value" (replaces the database entry for "key" with "value").
+	* Flat namespace for keys, but arbitrary key structure allowed (so "foo bar" and "/home/myself/scripts/homepage.tcl" and "::foo::bar" are all valid)
+	* Sorted key enumeration. Can fetch a list of keys ranging from X to Y (or "/a/b/c/" to "/a/b/d/")
+	* Lock-free transaction support. A transaction consists of two lists of (key, value) pairs. The first list is a list of assertions, while the second is a list of assignments. A transaction is processed by acquiring locks on all of the keys, then verifying all of the assertions' actual values match the values specified in the transaction, then (if all assertions are verified) assigning all of the assignments' values to their respective keys. Transactions are atomic from SoftWiki's point of view.
+	* All keys have metadata in addition to their values (actually, deleted keys have metadata too). The metadata contains:
+		* A string of audit data (IP address of CGI client, Received header for email, authenticated user ID if authentication is used). This might be stored as a simple index into an audit data database.
+		* The transaction serial number of the transaction that most recently changed the key's value.
+		* The timestamp of the last modification.
+	* A transaction log is accessible from within SoftWiki. Each transaction is recorded with a serial number, which increases by one on each new transaction. The transaction log records:
+		* A string of audit data, as in the metadata database
+		* A timestamp, the time the transaction was committed
+		* The previous values of all keys in the assignment list
+		* The transaction serial numbers from any keys that were modified. These can be followed as a linked list to find the history of modifications of a key.
+
+Less-visible features:
+	* Database implementation details are hidden from SoftWiki.  Actually, they're protected in a separate process, since SoftWiki processes are expected to receive a lot of fatal signals from the hard resource limits...
+	* Flat files in a directory sounds like a good place to start.
+	* Sleepycat's Berkeley DB 2.x inside a dedicated Tcl server shared among all SoftWiki clients sounds like a good place to go...or perhaps a combination of the above with "small" objects in the DB and "large" ones in files.
+	* Transparent data compression might be nice, especially if it can avoid Berkeley DB overflow pages.
+	* If a resource limit (e.g. CPU time) is encountered by a SoftWiki script during a transaction, it will not violate the atomicity of a transaction, but it may kill the process that initiated the transaction while the transaction is being completed.
+
+The following are probably good ideas, but there are issues to be worked out first before they become practical:
+
+	* Access to SMTP, HTTP, FTP, NNTP, ...
+		* There's a major potential for abuse here, e.g. port-scanning, email spamming...
+		* Abuse could be mitigated by providing a white-list of URL's that can be accessed via HTTP
+		* SMTP may only be allowed to people who subscribe (with confirmation) to a mailing list.  The mailing list itself would have no traffic, it would only provide a mechanism whereby people can elect to receive mail from SoftWiki, and SoftWiki scripts would only be able to send mail to subscribers.
+		* HTTP access is useful for implementing middleware.
+		* SMTP access is useful for implementing email notification of changes to SoftWiki objects.
+	* Scheduled/deferred execution (similar to at/cron)
+		* LambdaMOO allows this
+		* Could be used for garbage collection, regenerating static pages, etc.
+		* Could be implemented by having someone hit a specific URL at regular intervals, i.e. outside SoftWiki.  
+		* Best implementation is probably another "boot" script which would be a SoftWiki implementation of 'cron'.
+		* Could support queues of commands for "hourly", "daily", "weekly", "monthly", which allows the site administrator to pick the time while allowing the SoftWiki contributor to pick the frequency.
+		* Could allow larger resource limits because the request load is better defined (no SlashdotEffect, since there is only one request per hour/day/week/month). This could allow very expensive SoftWiki scripts such as building an index for a full-text search engine.
+	* Forking (spawning new processes or threads)
+		* LambdaMOO allows this
+		* Vanilla Tcl doesn't (but there is experimental thread support)
+		* would probably have to be "spawn", not "fork" - i.e. evaluate a script in a different process
+		* Creates all-new resource limit and ownership issues - a script has to be tracked to figure out if it was created by the web server, or by another script. Combine with HTTP client access and you have scripts that can get more resources by requesting themselves over network loopback, possibly indirected through another WWW mediator.  
+		* WikiWikiEssence is probably lost when there are "ownership issues."
+		* Perhaps a background priority queue would be useful. A script could specify its priority in the queue in terms of its desired level of resource usage. A script requesting 1 CPU second runs before one requesting 10, and that one runs before a script requesting 100.
+	* Access controls and authority structure
+		* LambdaMOO has access control per member of objects. You can create an object that you don't entirely own, and you can own parts of objects you didn't create. Workable solution to "ownership issues" problem, and they've been doing this much longer than we have.
+		* Can probably be faked with a lot of safe Tcl interpreters and a secure executive. Unfortunately Tcl does not allow safe interpreters to expose and hide commands, not even the safe ones, but it does allow secure command aliases.
+		* In particular, access control to the database can be implemented inside of the safe Tcl interpreter.
+	* Tcl "language" extensions (distinguished from "capability" extensions in that they don't provide new functionality, only new ways to express existing functionality):
+		* Itcl:  object-oriented Tcl extensions - instances, constructors, and destructors.
+		* Expect: features signal handling and an interactive debugger, among other things. Might cause more problems than it solves, though: the ability to set up a signal handler would mean that resource limits could be circumvented.
+		* Modify the Tcl core to implement a command count quota similar to LambdaMOO's per-process "tick" limit. "info cmdcount" in Tcl tells you how many Tcl commands have been evaluated in an interpreter. It should be trivial to implement an extension to the "interp" command ("interp quota"?) which allows setting a limiting value for "info cmdcount" inside a slave interpreter. Once the quota has been reached, any further Tcl commands in that interpreter will return errors, which will unwind the Tcl stack back up to the master interpreter's "eval" statement.
+	* Tcl "capability" extensions (distinguished from "language" extensions in that they give you access to things that cannot be represented otherwise (vastly increased efficiency counts as a capability - LZW compression in pure Tcl is amusing, but SoftWiki imposes hard RAM and CPU limits):
+		* gd: image generation (generate GIFs on the fly, popular in CGI scripts)
+		* ImageMagick: more image manipulation
+		* diff: show differences between revisions of a page (use this to build a QuickDiff feature inside SoftWiki itself)
+
+----
+I've been asked many times "why Tcl?", or more about supporting non-Tcl languages in SoftWiki (Python, Perl, Java, Guile, Lisp, Scheme...). I'd certainly like to be able to use other languages, but there are some issues to resolve first:
+
+	* Language implementation must feature a restricted interpreter and must pass a security audit to protect its host machine from accidents or abuse. This virtually always implies an open-source implementation.
+	* Language must be available and working on Linux.
+	* Language should be interpreted (but Java is a good example of a compiled language that would be acceptable).
+	* Language should be easy to manipulate with a web browser (so if a tab is not syntactically equivalent to 8 spaces, the language may have problems; ditto languages that use non-ASCII-text source code).
+	* Language should allow writing simple scripts quickly by someone experienced in the language (otherwise it's not very WikiWiki, is it?).
+	* Language should be dynamically loadable from a C program.
+	* Language should be easy to extend (positively, by adding new functionality, and negatively, by removing functionality that exists) in C, or a language accessible from C.
+	* Language must respect hard CPU, memory, and I/O resource limits.  Unix makes this easy for small interpreters embedded in a single process per client request; however, if the language is something like LambdaMOO, where a big server process handles all client requests, that server will be responsible for resource managements.
+
+So far, Perl and Guile/Scheme are being considered as SoftWiki's second languages.
+
+The issue of multiple language support raises some interesting (and as yet not entirely resolved) problems:  
+
+	* How do you know in advance what language a SoftWiki object (all of which are simple text strings) will be written (or interpreted) in?
+		* Possible answer: A "loader" script (of course written inside SoftWiki) determines the language using something analogous to "#!" Unix syntax, except with names meaningful to SoftWiki
+	* How do interpreters of language X access interpreters of language Y?
+		* The apparent Lingua Franca is a function for each language which interprets a string of source code in that language and returns some result as a string. Passing more complex objects around, even when they are supported by both languages involved, is less well-specified.
+		* One could use a two-step approach:  the first step creates an interpreter in the called language as an object in the calling language. The second step is to use the object in the calling language to interpret source code for the called language in that language's interpreter. This would allow control over initialization overhead.
+	* How often and under what circumstances do languages communicate?
+		* The most common case is likely to be a simple case of language X loading a string in language Y, interpreting that string in language Y, and then exiting. Call this the "bootstrap" model, where Tcl is used to select a different language, and all the interesting stuff happens in that language.
+		* The worst case is two object-oriented languages doing inherited method calls into each other.
+	* How does SoftWiki internal security work when multiple languages are available?  Recall that Tcl can implement a hierarchical access control mechanism using nested interpreters. This access control mechanism apparently falls apart when interpreters of other languages are created, unless these other language interpreters have exactly identical access control mechanisms implemented themselves.
+		* One solution is to replace "/boot/cgi" (the Boot script) with "/boot/cgi.tcl", "/boot/cgi.pl", "/boot/cgi.guile", "/boot/cgi.py", "/boot/cgi.class", i.e. one boot script for each language. That also implies one debugger for each language, and indeed one complete set of SoftWiki infrastructure per language.
+		* Another solution is to implement access control inside the database itself, outside of any interpreter. Again, what language do you express such controls in...
+		* Perhaps the most elegant solution is to find some way to implement each child interpreter's SoftWiki interface in terms of its parent's. This may require N^2 different implementations for N languages. Ouch.
+
+Thanks for the comments so far. They're really helping me to better understand the problem. -- ZygoBlaxell
+----
+MikeStump suggests SoftWiki as a first step toward a truly global source code management system. It's a nice idea, but all I designed SoftWiki for was to be a maintenance-enhanced WikiWikiWeb.
+
+ProgrammingInWiki?
+
+----
+See XpSystem
+
+----
+I've made a system like this in Perl, based off UseMod. There is a small bootstrap program that runs a community-editable UseMod-like script. It's live and is able to accept modifications in its code. See SelfProgrammingWiki or http://purl.net/net/spw .
+
+-- BayleShanks
+
+
+----
+CategoryWikiImplementation

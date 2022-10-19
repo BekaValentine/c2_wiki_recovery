@@ -1,0 +1,298 @@
+Concurrent programs are hard to test, because of the combinatorial explosion in the state space that must be covered. The state space explodes because of arbitrary context switching by a scheduler. In general, it's impossible to use external inputs to force the program through the states that must be covered,
+because a conventional test harness has no mechanism for influencing the scheduler.
+
+When I find a bug lingering in concurrent code that has been reasonably well tested, I try to determine what test might have been applied to expose the bug. Often there isn't one. This makes me pessimistic about being able to refactor
+concurrent code at an extreme rate.
+
+The heart of the problem is the currently dominant SharedMemoryConcurrencyModel. Other models may be better suited to XP.
+
+-- TomCargill
+----
+Clearly, if the scheduling of the different concurrent tasks is an important part of the test, then the TestingFramework must include some way to simulate concurrent processes in a deterministic way. In other words, make your TestingFramework single step your concurrent processes in some predefined order, such that you are simulating the scheduler. You also need to code your concurrent processes to be single stepped. At this point, you can define specific tests for specific bugs. DesignForTestability can be very important and is why CodeUnitTestFirst is a good idea. Any code you write that can not be tested isn't much good to anyone. No doubt a suite of these tests will require a much longer time to evolve. But they will evolve. -- DonWells
+----
+I don't understand how to achieve this in any kind of conventional TestingFramework. A TestingFramework is usually coded in a conventional programming language, often the same language as the code under test. These languages do not have the expressive power to induce the kind of context switches needed to expose some of the bugs we see in concurrent programs. If a bug only manifests itself because of an effect that emerges at the machine instruction level (or lower), or because of a decision made within the kernel of the underlying operating system, no amount of evolution of test suites in high level languages will help.
+
+Even if we had a tool that allowed us to control the scheduling of concurrent code, the combinatorics are intractable. A brute force approach would require that all possible interleavings of all threads be exercised. I can see how to reduce the number of interleavings a little by determining where interference is impossible, but I'm not aware of any analysis mechanism that can reduce the space to a practical level.
+
+-- TomCargill
+----
+Yes, it does seem overwhelming. Take a step back. Think DesignForTestability. What is it that precludes testing. The context switches? If that is what hurts, then you must either control it or you don't allow it. Every language that has support of multi-threads also has support for atomic operations or protected sections, i.e. this section of code can not be interrupted. Make some design decisions about when to allow context switches. If you make a bad decision at first that is OK.  Experiment. Unfortunately, you will have to go back and build-in testability. I know it is hard to test something that was not designed to be tested, even when it isn't multi-threaded.  
+
+	 :	''The problem I have with this is that quite frequently it completely opposes what I want to do. It's generally when I start trying to make my code more efficient and enable greater concurrency that the bugs start to creep in. So if I "design for testability" in this case, I'm removing the improvements that I wanted along with the bugs they caused.''
+
+Now that you have a plan for specifying sections of code that can not be interrupted you can begin to design a TestingFramework.  Figure out how to make it easy to specify different combinations of pieces of concurrent processes working together.  Some simple sort of description or specification for a test that can also be run directly by your testingFramework.
+
+'''Good news!'''. You do not have to worry about the combinatoric explosion of the test space! Test suites, whether UnitTest''''''s or AcceptanceTest''''''s, evolve over time. The bad news is that if you want to have a good suite of tests next year you must start collecting them today. Make your best guess as to what will give you the most trouble and create a couple dozen tests. That is all it takes to start.  You will be surprised at how useful just 20 tests can be. You will also be surprised at how easy it is to add just one more. -- DonWells
+
+----
+
+Last time I had to do this, I did two things. First, I built a really simple context-switching / semaphoring approach to keeping folks away from what they shouldn't touch at any given time. This gave me a basic confidence that things wouldn't go whacko.
+
+Second, I wrote a separate task that ran in a tight, high-priority loop, triggering interrupts and task switches. I didn't even try to do the combinatorics, I just let it run overnight and such, letting the odds give me confidence.
+
+Another time I had to do this, the machine couldn't fire its own interrupts. So I converted the real interrupts to a list of pseudo-interrupts, then actually scheduled the system on the clock. Testing just meant filling the clock list from a script.
+
+Probably your situation is more demanding, but I was just implementing a multi-tasking operating system, so it worked fine for my purposes. Maybe there'll be a useful idea in it for you.
+----
+
+I understand that some of these ideas work in some settings. I've used
+some of them. However, I don't see that they can be applied sufficiently
+widely. To make this concrete, perhaps someone can show me how to
+modify the following code to make it more testable, and then how to write
+a test that exposes its bug:
+
+	class BoundedBuffer {
+	
+	synchronized
+	void put(Object x) throws InterruptedException {
+	  while( occupied == buffer.length )
+		wait();
+	  notify();
+	  ++occupied;
+	  putAt %= buffer.length;
+	  buffer[putAt++] = x;
+	}
+	
+	synchronized
+	Object take() throws InterruptedException {
+	  while( occupied == 0 )
+		wait();
+	  notify();
+	  --occupied;
+	  takeAt %= buffer.length;
+	  return buffer[takeAt++];
+	}
+	
+	private Object[] buffer = new Object[4];
+	private int putAt, takeAt, occupied;
+	}
+
+-- TomCargill
+
+I have a comment toward the bottom with more details, but to create a test case for this using JUnit or something like that, you would create either a large number of Threads that will call the put method and one 
+Thread to call the take method (or vice versa).  That will uncover the fact that you are missing a "wake up" 
+from Object.notify().  You want create a large number of Threads for testing so that probability works on your 
+side and you have a higher chance of notifying the "wrong" Thread.  To fix the code, use notifyAll() in this example. -- Hope this helps a little, Dan
+
+''Stupid Java concurrency model.  What nitwit decided there should be a 1-1 relation between objects and things to wait and notify on?  Some classes have no use for it, whereas this should have two - each method should notify what the other waits on.''
+
+You can do that by creating another object to wait on.
+----
+
+Just a random dumb idea here: I don't know the semantics of notify() and InterruptedException, but how about if we rewrote thusly:
+
+	void put(Object x) throws InterruptedException {
+	  if ( occupied == buffer.length ) {
+		++occupied;
+		putAt %= buffer.length;
+		buffer[putAt++] = x;
+	  }
+	}
+
+and similarly for take, then exercised put and take for all combinations of 0 <= putIndex <= buffer.length and 0 <= takeIndex <= buffer.length. [At this writing I don't see the defect, so I'm just imagining how I'd test all combinations of sequences. Seems that the behavior is independent of buffer.length, so we could use some small number like 2.]
+
+After testing direct usage like this, and fixing whatever defects turn up, repackage the routines as synchronized with wait().
+
+Would that be productive? -- RonJeffries  
+
+----
+
+Let's ignore the InterruptedException that may be thrown by wait(), for now. It's the semantics of synchronized, wait() and notify() that matter most. It doesn't make sense for me to explain them here; check your favorite Java text, or look at DougLea's http://gee.cs.oswego.edu/dl/cpj/JavaSummary.html. I think Java is the right language to use for this purpose. Would Modula be better? -- TomCargill 'Java's a great choice for this discussion IMO. -- rj''
+
+''AndrewBirrell wrote an excellent introduction to programming with threads [1] for ModulaThree that would apply to Java. -- SteveFreeman''
+
+''There is a discussion of threads in Sun's Java Tutorial at http://java.sun.com/docs/books/tutorial/essential/threads/index.html. -- MartijnMeijering''
+
+''I haven't looked at that tutorial recently, but when I last did I was disappointed to discover that it got parts of the threading model wrong. I don't recommend it. -- TomCargill'' 
+----
+
+DougLea pointer is excellent, thanks. I take it that the two methods cannot co-execute, that wait will hang until someone else notifies (or waits?), that upon a notify the thread chosen to execute will block until the method calling notify exits the sync. Sound about right? -- rj
+
+
+''To be precise, the chosen thread will block '' '''at least ''' ''until the notifying thread releases the lock. In principle, another thread might jump in there and grab the lock before the chosen thread has a chance. -- SteveFreeman''
+
+Including the original thread if it doesn't subsequently block, I assume?
+
+''of course. This is why the usual idiom for this sort of thing is: ''
+
+  synchronized(aLock) {
+	while (notReady()) {
+	try {
+	 wait();
+	} catch (InterruptedException e) { }
+	}
+
+	doSomethingWithinTheLock();
+  }
+
+''you have to test that the condition you're looking for is ready each time you come out of the wait. -- sf''
+
+? but the code here does that ?
+ 
+----
+
+See ExtremeProgrammingChallengeFourteenSmalltalkTest for what I've got so far.
+
+I haven't found a defect using my ST example yet, and all my analysis isn't finding one either. So I'm ready to back into it ... what's the defect, please? -- rj
+''I think we (or at least I) will learn more if I don't discuss the defect''
+''yet -- tc''
+
+OK, but since my ST version seems to handle everything I throw at it, I'm about out of ideas to test. I am assuming there's something I don't know about Java threads, or else I'm just blind to the bug type. But I'll try some more in my copious free time ... -- rj
+
+It depends on the way the JavaVirtualMachine resolves the competition by a family of threads for a synchronization lock. There is no fairness - any competing thread may win the lock. This contributes to the state space explosion, in which an unfortunate sequence of winners leads to a liveness fault, though not a deadlock. -- TomCargill 
+
+''Are you saying that the bug is that Java might never run all the threads doing, say, take()s, and those threads would starve? That's a Java bug, and clearly it could happen if you wrote two hungry threads. I suppose one could code around it, one can in other languages. Probably have to write my own queue? On the assumption that that is the bug, lemme think a while. I see that'd be hard to test for. Correct me if I'm off track, please. -- rj''
+
+It's not that threads are starved. (Java does allow starvation in a
+high contention situation.) [To write your own queue, use techniques like
+those in http://www.sni.net/~cargill/jgf/9809/SpecificNotification.html]
+The bug arises from bursty contention, not long-lived high contention. -- tc
+ 
+''Nice paper. However, I still don't see the defect, and am out of things to test. What I did is already weird enough to agree with you that testing concurrent methods is tough. But I've been able to test everything I tried, and I'd have thought my test on the Smalltalk page was testing bursts. I've convinced myself that the buffer can't over- or underflow or answer the same element twice. I could be wrong. For sure, I'm stuck. -- rj''
+----
+I wish I had more time to actually code this up for you. Maybe later. Anyway, there are obviously a couple of bugs in the individual methods having to do with boundary conditions. We can create unit tests which only exercise a single method in a single thread. We fix all the boundary conditions like buffer overrun, buffer underrun, etc. We might add some code to throw errors. We enhance our TestingFramework to make sure the errors get thrown, etc. Maybe it works now if the two threads are started in just the right order. OK, now we add a test which puts the two threads into the queue in the wrong order... whoops. OK, so how do we test this thing? Well, we can't as it stands. We need to have control over each individual thread to do that. so we create two locks instead of just one. Each thread talks to the other through it's individual lock. Now we can write tests which try things like; what if one thread gets two notifys before the other gets one? How many notifys behind can we get in one thread relative to the other thread before it throws an error?  Now we can test this thing. -- DonWells
+
+''I'm not following you here, Don. FourteenSidebar. -- rj''
+
+Correct as usual Ron.  Now that the unit tests have been written (JavaUnitTestChallengeSolved) I see that there are no bugs. Sometimes unit tests surprise you by telling you that your code actually does work. -- DonWells
+----
+Please show me the obvious boundary condition errors explicitly. The only
+intentional errors are in its concurrency control. 
+
+Assuming we get beyond the sequential part, the kind of tests that you propose start running into exactly the combinatorial explosion that concerns me. Can you
+give me an upper bound on the number of threads that are needed to test the code above? -- TomCargill
+----
+Let me then assume that there are no obvious boundary condition bugs on the
+sequential side.
+
+With respect to writing the UnitTest''''''s, ''somebody'' has to make a decision
+about the scope of those tests. Assume that you and I are PairProgramming
+this task. I say "This concurrent stuff is hard to test. I see how we can
+write tests for the basics. But the best way to check for subtle concurrency problems is a CodeReview." You say, "I know how to do it. Here's what
+we need: ..." What do we need? If you ask me "How many threads will actually be
+used in production?" my answer is "That's determined by the user's input;
+we know that it can exceed 100, but based on other limits in the system,
+it cannot exceed 1000." Does that help? -- TomCargill	
+
+''I would have thought not. But then, I'm stuck. Since there are two methods and buffer.length is 4, I would expect any defect to manifest with 4, 8, or 16 sends, subject to the constraint that the methods can't be reentered. Further, I'd think you could manifest the defect even sooner by setting buffer.length to 1. What am I missing? [BTW, the code review we're getting here isn't finding anything either. What does that suggest?] -- rj''
+----
+Ron's suggestion about using buffer.length==1 makes good sense. It
+reduces the state space combinatorics needed to expose the error. I would
+do it like this:
+
+	class BoundedBuffer {
+	
+	BoundedBuffer(int capacity) {
+	  buffer = new Object[capacity];
+	}
+	
+	...
+
+That's if you can choose the right value for capacity. This extra parameter
+also increases the size of the interface, which makes testing harder in
+some respects. 
+
+A question: Is increasing testability a legitimate reason to
+violate YouArentGonnaNeedIt? The class is being made more general than
+necessary. Is that acceptable? -- TomCargill
+
+''Generally yes, because testing is so important. Whether it applies in this case, dunno.  -- rj''
+----
+
+
+"The heart of the problem is the currently dominant SharedMemoryConcurrencyModel. Other models may be better suited to XP."
+
+''Yes, I think you've hit it right on the nose. Mutual exclusion problems are not easy to test. Using shared memory you're going to have to be continually writing mutual exclusion code. Refactoring it is going to leave the question of whether you've added a bug. The solution used where I work is to create a very small number of subsystems that guarantee the mutual exclusion. These subsystem are then proved out over time. The subsystems are used as tools to make it obvious that the mutual exclusion is guaranteed.''
+
+''For example, our product can use multiple processes to guarantee mutual exclusion by keeping critical data outside of shared memory. So, my solution is to put your mutual exclusion in OneAndOnlyOne place by inventing a tool that fits your project/problem. Another subsystem I've used is single-reader, single-writer pipes. I'm not sure if I'm being clear. -- JohnStoshMuczynski''
+----
+Question: In the code sample you did not initialize the occupied value. What if the occupied value is outside the range 0<=occupied<=max? Both functions believe then they can manipulate the memory I would suspect. Also, I would put in the opposite boundary condition into each function to ensure that I stay in the defined buffer. I may be a little paranoid - but my philosophy is a little (not a lot) idiocy or paranoia goes a long way to a healthy life. Try this:
+
+	class BoundedBuffer {
+	
+	synchronized
+	private Object[] buffer;
+
+	void put(Object x) throws InterruptedException {
+		''if (occupied < 0) {throw An''''''Appropriate''''''Exception}''
+		''if (occupied > buffer.length) {throw An''''''Appropriate''''''Exception}''
+		while( occupied == buffer.length )
+			wait();
+		notify();
+		++occupied;
+		putAt %= buffer.length;
+		buffer[putAt++] = x;
+	}
+	
+	synchronized
+	Object take() throws InterruptedException {
+		''if (occupied < 0) {throw An''''''Appropriate''''''Exception}''
+		''if (occupied > buffer.length) {throw An''''''Appropriate''''''Exception}''
+		while( occupied == 0 )
+			wait();
+		notify();
+		--occupied;
+		takeAt %= buffer.length;
+		return buffer[takeAt++];
+	}
+	
+	BoundedBuffer(int capacity) {
+		buffer = new Object[capacity];
+		occupied = 0;
+	}
+
+	private int putAt, takeAt, occupied;
+	}
+
+After reading some of the other linked pages, I agree.... a timer to allow for reacquisition (thead.sleep) or a better scheduling queue would likely be a major help.
+----
+In C++ testing this kind of code seems to be easier than Java seems to be finding it. This seems to be because C++ has fewer language features, so there are more hoods you can peek under. My approach to testing this kind of code, soon to be implemented, relies on the fact that I wrote the C++ objects that wrap the C functions that actually do the synchronizing. Having already unit tested that lower layer of code, I now need to test the next layer up. To do this, I intend to do something less than ideal but still reliable. I will implement a new more complex version of those underlying objects. I expect they will still pass all the old tests. The greater complexity will be because I can override their behaviour and release any thread from any block any time the test wants to. It will also be able to block threads just before they release blocks (signal events). What this buys me is enough scheduling control to perform all the useful combinations. Even though context switching can theoretically happen at any time, even part way through single machine instructions, most of this is irrelevant to code synchronized by waits, etc. There are just a small handful of critical points in each routine. wait, notify, and if I undertsand the semantic of synchronized function entry. By reimplementing these kinds of critical points, I can make my code stop just after the wait but before any other code and then try and hammer it with any combination of new put and get calls. I can then stop it after the wait and any intervening code, but just before the notify, and test it with a whole bunch of combinations of put and take calls. 
+
+Sometimes, code modifies multiple variables at once and in different combinations, and it would be nice to ensure that a programmer (me) remembers to utilize the locks at all. ie If you later implement takeAll, can you forget to lock things? In C++, I dealt with this by putAt takeAt and occupied variables private. The only way to access them was to construct a smart ptr that locked the variables until its destructor. In this paradigm, it was possible to forget to delete the smartPtr and create a deadlock but this was far more likely to show than forgetting some thread locking that would show up only once a week. 
+In this scenario, the compiler tested my consurency [?] for me at compile time. It found several obscure (to me) bugs I had missed in a quick code review the previous day.
+
+----
+I also have a suggestion for testing concurrent Java code, now that I understand the semantics. grep notify() 
+
+Look every match is probably a bug unless it is on a short list of Ok ones.
+
+The same trick works in C and C++.
+
+grep strncat 
+Look, it is either a bug or a gotcha, (no exceptions).
+
+SourceCodeTests
+
+----
+
+This is my first time posting here, so forgive any obvious mistakes.  I agree that concurrent programs are incredibly hard to debug, fortunately, the one posted above is quite simple to fix, even without a test case.  Simply change all of your notify() calls to notifyAll().  I find it best to never use notify() unless you can be sure that all the Threads waiting are of the same "type".  In the case above, we have two different "types" of Threads, readers and writers.  The way that Object.notify() works is that it will wake up one Thread and one Thread only.  If the wrong Thread is awakened (a reader when you needed a write, for example), the right Thread will miss the notification.  Object.notifyAll() avoids those issues at the cost of some performance. -- Dan
+
+''Stupid Java.  Instead of having wait() and notify() on every Object, it should have a Condition class with wait, notify and possibly notifyAll.  Then any class that actually '''needs''' such things can have a Condition field for each condition it needs to wait on, instead of every Object having one Condition, whether it needs zero, one or more than one.''
+
+Here's the Condition class you want:
+
+class Condition{}
+
+Of course, you can just use Object if you like:
+
+class AnyClass {
+    Object extraCondition = new Object();
+}
+
+''Is this an example of Java being poorly factored?  The concept of an Object seems to me to be quite a separate issue from concurrency control.  Java assumes every Object needs exactly one mutex and exactly one wait-onable condition, but the actual number of each required can be any non-negative integer.''
+----
+It seems that the upshot of this discussion is that you only write unit tests for the simple stuff because you can't test the complicated stuff. In that case, what is the point of unit testing at all? Is the bottom line that XP is only useful for simple projects, use other methodologies for more complex projects?
+----
+I don't think so at all - I'm unit testing complex code, including threads. The bottom line is that you can only write ''simple'' unit tests for simple stuff, and you need more complex unit tests to test complicated stuff. My code is only optionally threaded - it's possible to substitute the controller which creates threads for tasks with a controller that executes tasks one-at-a-time for one iteration each, because the tasks are written with this design in mind. This means that most issues can be tested by using the non-threaded controller - all that remains is timing problems, which can be simulated by using a test version of the controller which executes tasks in weird but deterministic orders. It's not testing the whole state space but it tests the same portion of the space each time, which means when I discover more problems, I can extend the tests. No problem I've encountered so far in this particular project has required actual threaded execution during unit testing (but of course this may not hold true for ever, I have a lot more code to write). -- TorneWuff
+----
+Hi all, please check out http://www.krasama.com/jthreadunit/index.html and let me know what you think. JThreadUnit is a tool to write multithreaded tests that are deterministic, without sleeping to slow things down or repeating tests a bunch of times. I've been grappling with this challenge for a while, and the one thing missing was a way to get under the thread manager's skin and see what's going on. I've been watching and waiting, and I recently noticed that Java 1.5's ThreadMBean does just that, so I took a sleep-based tool I'd written several months ago and rewrote it to be simpler, faster, and more reliable using ThreadMBean. I've included this BoundedBuffer problem as an example, with both broken and fixed versions, and tests for the bug (both the broken behavior and the fixed behavior). -- JustinSampson
+----
+I find that I can simplify my test when testing multi-treaded code by keeping as little code as possible inside the thread(s). For instance, if all the logic that happens inside a worker thread is externalized, it can easily be tested with the tried and true TDD process.
+Once the code is broken out, you can then emulate the threading to a degree.
+There is always something you can't test this way, but the idea is to reduce the number and scope of the complex tests that are required to test a multi-threaded story.
+
+-- BrillPappin
+----
+See ExtremeProgrammingChallengeFourteenSplit, SynchronizationStrategies
+
+ExtremeProgrammingChallenge

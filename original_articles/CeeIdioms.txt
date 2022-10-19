@@ -1,0 +1,169 @@
+Idioms in CeeLanguage. Includes both idioms that only make sense in C (having a better implementation, or not working, in CeePlusPlus) and those common to C and C++.
+* PointerCastPolymorphism. Bletch.
+* TrivialDoWhileLoop
+* IncludeGuard''''''s and RedundantIncludeGuards
+* CompareConstantsFromTheLeft
+----
+''(copied from LargeScaleCppSoftwareDesign)''
+
+"the rule that bar.cpp must include bar.h first"
+
+In general, there are lots of .c files that get compiled together to generate the executable program (.exe on some platforms). Every one of those .c files (except for main.c, the one that includes the main() function) should have a .h header file, to describe the functions that are directly called from main.c (or indirectly from some other .c file).
+----
+It's a common idiom to use "for" statements when you know up front exactly how many iterations a loop will take (at least by the time execution gets to that "for" at run time). Use "while" statements when you don't really know how many iterations it will take until you've done them.
+
+''But someone at UseEnumerationsInsteadOfForLoops disagrees.''
+
+From the point of view of the compiler, "for" statements are exactly equivalent to "while" statements. (Rare exception: Except when the body of the loop contains the "continue" keyword).
+
+The "for" in this loop
+  for (;;) {
+      ... 
+      /* more code here */
+      ...
+  }
+is pronounced "forever". Many embedded systems have this as their "main loop" that starts executing soon after they turn on, and continues to execute until the power is turned off. Some even have several of these as "tasks" that the multitasker switches between.
+----
+When you call a subroutine, you typically want it to perform some operation. However, sometimes that operation cannot be performed. For example, if you want to write a file to a CD-ROM, or create an array that's larger than the remaining free RAM/virtual memory, or ...
+
+Other languages have a "try...catch" idiom for handling this.
+
+In C, most subroutines have a integer "return value" that indicates whether they succeeded or failed.
+
+One might think we would associate Boolean "true" (non-zero) with "success" and Boolean "false" (0) with failure. Don't do that.
+
+Unfortunately, there's 2 somewhat incompatible C idioms for this return value:
+
+The '''"0 is success"''' idiom:
+
+C functions often have many kinds of failure but only one kind of success. These kinds of functions use the return value to indicate precisely which kind of error occurred or 0 to indicate success. This way a program can just check with a boolean op if it just cares whether a function succeeded or failed. Otherwise, it can look at the exact type of failure and do something about it. For example, if a write to disk fails, you may want to do something different when the return value integer indicates "file is locked" vs. when it indicates "file doesn't (yet) exist".
+
+The '''"negative is failure"''' idiom:
+
+Some functions can succeed in several different ways. One common idiom is to set the most significant bit to 1 if there is a error and clear it to 0 if the function succeeded, as follows:
+ if (my_function(...) < 0) {
+     // handle error
+     ...
+ }
+ else {
+     // Success!
+     ...
+ };
+Then the lower-order bits encode the type of success or failure. The most common type of success returns the value 0 (sometimes called "S_OK"). (I hear this idiom is called a "HRESULT" or a "SCODE", and is commonly used in OLE programming and in the GhostScript program). All callers should check for error returns and, in general, propagate errors to ''their'' caller.
+----
+'''Structure inheritance'''
+
+The CeeLanguage guarantees that the address of a structure is equal to the address of its first element. This and PointerCastPolymorphism allows you to implement SingleInheritance of structures, as follows:
+ struct Base {
+     ... base fields
+ };
+
+ struct Derived {
+     Base base;
+     ... extra fields
+ }
+
+ Derived *derived = malloc(sizeof(Derived));
+ Base *base = (Base*)derived; /* guaranteed to point at derived.base */
+
+ void *handle = derived; /* can be passed to any function that expects a Base* or Derived* */
+Similar things can be achieved with CeeUnion''''''s (e.g., X event structures), but the advantage of this idiom is that new "subclasses" can be added to the system without changing existing type definitions.
+
+Objects and classes are often implemented in C by storing a pointer to the class structure in the first element of the base structure. For example:
+ struct Class {
+     void (*destructor)( void* );
+     ... other functions
+ }
+
+ struct Object {
+     Class *class;
+     ... other fields
+ }
+
+ struct ExampleSubclassI''''''nstance {
+     Object base;
+     ... other fields
+ }
+A function that calls a virtual method in the Class structure, such as:
+ void object_destroy(void *handle) {
+     ((Object*)handle)->class->destructor(handle);
+     free(handle);
+ }
+can safely treat an object handle as a pointer to a pointer to a Class structure, like this:
+ void object_destroy(void *handle) {
+     (*((class**)handle))->destructor(handle);
+ }
+Obviously, class structures can also use structure inheritance to define additional virtual methods.
+
+As an aside, because, in the example above, the destructor is the first element of the Class structure, the object_destroy function can be written as:
+ void object_destroy(void *handle) {
+     (***((void(***)(void*))handle))(handle);
+ }
+The black art of the ThreeStarProgrammer!
+
+And suppose we wanted the object_destroy function to clear the handle to zero after destroying the object:
+ void object_destroy(void **handle) {
+     (****((void(****)(void*))(handle)))(*handle);
+     *handle = 0;
+ }
+Four star programming!
+----
+To iterate over every element of an array, use
+ #define NUM_ELEM(x) (sizeof (x) / sizeof (*(x)))
+
+ for( i = 0; i < NUM_ELEM(array); i++ )
+ {
+     /* do something with array[i] */
+     ;
+ }
+See DerivedInformation for more details.
+----
+'''Checking Before Free is Superfluous'''
+
+Occasionally in C and even C++ code, you might see this code:
+ char *p;
+
+ p = (char *) malloc(10);
+ /* other code */
+ if (p) {  /* superfluous! */
+   free(p)
+ }
+In AnsiCee and CeePlusPlus, the check of p is superfluous. In pre-ANSI (KernighanAndRitchie) C, the behavior of free(0) was undefined. ANSI C and C++ both define free(0) as valid and having no effect. 
+
+Some C programmers still check against 0 before calling free, "just in case" some brain-damaged C runtime library implements free() in a broken way, but in general, freeing without checking is the idiomatic way to do it in C and C++.
+----
+'''Don't cast result of Malloc'''
+
+Occasionally in C, you might see this code:
+ char *p = (char *) malloc(10*sizeof(char));
+This should be properly better as
+ char *p = malloc(10*sizeof(char));
+In AnsiCee, the cast of the return of malloc() is superfluous. In standard CeeLanguage, a void * (malloc's return type) can be assigned to any pointer type, or vice versa, without an explicit cast.
+
+In CeePlusPlus, the cast is necessary; but in C++ one should use the "new" operator to allocate memory in a type-safe manner, instead of using malloc(), anyway.
+
+In addition to being redundant and unnecessary code, the cast can also be harmful. It may mask the failure to include the header <stdlib.h>, in which the prototype for malloc is found. In the absence of a prototype for malloc, the standard requires that the C compiler assume malloc returns an int. If there is no cast, a warning is issued when this integer is assigned to a pointer; however, with the cast, this warning is not produced, hiding a bug. On certain architectures and data models (such as LP64 on 64-bit systems, where long and pointers are 64-bit and int is 32-bit), this error can actually result in undefined behavior, as the implicitly declared malloc returns a 32-bit value whereas the actually defined function returns a 64-bit value. Depending on calling conventions and memory layout, this may result in stack smashing.
+----
+Do naming conventions count as idioms? HungarianNotation, UncleBobsNamingConventions?
+----
+'''Using the ternary operator'''
+
+Suppose you would like to figure out if an int is odd or even and have a true/false condition.
+    answer =!(num%2) "Yes":"No";
+..will test to see if the int is dividable by 2 and assign 'answer' to "yes" if true or "no" if false
+
+Obviously, this is not the only case when the ternary operator can come in handy.
+
+--MarkLaBarbara
+
+I suggest looking for examples in other people's code, and then building a simple example for yourself. -- JohnFletcher
+
+Thanks for the suggestion, better?--MarkLaBarbara
+----
+(EditHint: copy idiom from BadVariableNames?)
+----
+See: CeePreprocessorStatements
+
+Parallel: JavaIdioms, CeePlusPlusIdioms, PhpIdioms (CeeIdioms affect C-like languages)
+
+CategoryCee, CategoryIdiom

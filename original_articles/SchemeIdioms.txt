@@ -1,0 +1,198 @@
+Those seeking solutions in Scheme might also want to try the SchemeCookbook (http://schemecookbook.org/).
+----
+Any real schemers want to help out here, this would be valuable info for anyone trying to learn scheme?  AnswerMe
+
+''I'm not sure if I'm experienced enough to be called a 'real Schemer', but I'll try my hand at a few simple things. Whether they would be considered idioms or simply language features depends on your point of view. - JayOsako''
+
+''P.S. - Do you want idioms that apply strictly to the core language, or are ones which use things defined in the SchemeRequestsForImplementation acceptable?''
+
+Anything commonly used by Scheme programmers.
+
+''I've got a question. What is the SchemeIdiom for using syntax-rules macros to embed syntax into code surrounded by a macro? ... That question is muddy, and unclear, let me give an example. Let's say I'd like to make a for-loop construct:''
+
+ (for (x 1 10)
+    (display x)
+    (if (= x 5) (break)))
+
+''Break is syntax that for should introduce into the construct to allow early loop termination. My first cut at this exercise was as follows:''
+
+ (define-syntax forloop
+   (syntax-rules ()
+     [(forloop (sym x y) forms ...)
+      (call/cc (lambda (endloop)
+                 (let-syntax ([break (syntax-rules ()
+                                       ((break) (endloop 'done))
+                                       ((break val) (endloop val)))])
+                   (let loop ((sym x))
+                     (if (= sym (+ y 1)) (break)
+                         ; Body here
+                         (begin forms ...))
+                     (loop (+ sym 1))))))]))
+
+But it seems to fail. I suspect because the (break) in my example doesn't collide with the (break) in the macro. Is the canonical answer to use (define-macro)? The sym we define DOES seem to collide, which confuses me. -- DaveFayram
+
+''I believe that what is happening is the "endloop" symbol introduced by the "break" macro is a different "endloop" than the one introduced by the call/cc.  Here is my stab at it:''
+ (define-syntax forloop
+   (syntax-rules ()
+     ((forloop (sym x y) forms ...)
+      (call/cc (lambda (endloop)
+                 (let ((break (lambda ret
+                                (cond ((null? ret) (endloop 'done))
+                                      (else        (endloop (car ret)))))))
+                   (let loop ((sym x))
+                     (if (= sym (+ y 1)) (break)
+                         ; Body here
+                         (begin forms ...))
+                     (loop (+ sym 1)))))))))
+----
+''Using Named '''Let''' for Iteration''
+
+The general design of Scheme strongly favors recursive techniques, especially given the use of TailCallOptimization. While Scheme has a general iterative form, (do), it is far more common to implement iterative algorithms using tail recursion; tail call optimization converts the function call into a loop. The named 'let' is a way of performing iteration in this manner without defining a new function.
+ (define (factorial n)
+   (let loop ((i 1)
+              (j 1))
+     (if (>= i n)
+         (* i j)
+         (loop (+ 1 i) (* i j)))))
+Usage:
+ >(factorial 5)
+ 120
+ >(factorial 20)
+ 2432902008176640000
+----
+''Association Lists''
+
+An association list is simply a list containing sets of key-value pairs. Each pair is represented by a ProperList, with the key as the first item followed by one or more the values. The functions (assoc) and (assq) can be used to query the a-list; if a match is found, they return the key and values, otherwise they return false.
+ (define language-designers '((C Dennis-Ritchie Brian-Kernighan)
+                              (Pascal Niklaus-Wirth)
+                              (C++ Bjarne-Stroustrup)
+                              (Objective-C Brad-Cox)
+                              (Perl Larry-Wall)))
+usage:
+ >(assoc 'C language-designers)
+ (c dennis-ritchie brian-kernighan)
+ >(assoc 'Perl language-designers)
+ (perl larry-wall)
+ >(assoc 'Pascal language-designers)
+ (pascal niklaus-wirth)
+ >(assoc 'Python language-designers)
+ #f
+----
+''Simple LexicalClosure generator''
+
+A basic way of encapsulating state. The function returns a LexicalClosure, which can be considered to be a function with a static environment (or conversely, as a simple object whose only method is it's own name). This particular case takes a starting value, and generates a function that adds its argument to the last value it held and returns the new value. Based on examples from StructureAndInterpretationOfComputerPrograms. 
+
+ (define (make-accumulator x)
+    (lambda (y)
+      (set! x (+ x y))
+       x))
+usage:
+ > (define a (make-accumulator 10))
+ > (define b (make-accumulator 15))
+ > (a 10)
+ 20
+ > (b 10)
+ 25
+ > (a 5)
+ 25
+ > (b -5)
+ 20
+----
+''Closures with multiple "methods"''
+
+This generates a closure with more than one operation, in which the name of the function is used to call it. This behaves like an object with multiple methods.
+ (define (make-customer-call-record customer phone-number)
+    (let ((calls '())) ; initialize call to nil
+      (define (change-phone-number new-number)
+        (set! phone-number new-number)
+        phone-number)
+      (define (add-call new-call)
+        (set! calls (append calls new-call))
+        new-call)
+      (define (get-record)
+        (list customer phone-number calls))
+      (lambda (method . x)
+        (case method
+          ('change-phone-number (change-phone-number (car x)))
+          ('add-call            (add-call x))
+          ('get-record          (get-record))
+          (else                 "unknown method")))))
+ 
+usage:
+ >(define john (make-customer-call-record "John Doe" "555/555-1212"))
+ >(john 'get-record)
+ ("John Doe" "555/555-1212" ())
+ >(john 'add-call "Order for five vebelfetzers.")
+ "Order for five vebelfetzers."
+ >(john 'change-phone-number "(800) 555-1234")
+ "(800) 555-1234"
+ >(john 'add-call "RMA for defective frobnitz")
+ "RMA for defective frobnitz"
+ >(john 'add-call "Order for 23 fnords.")
+ "Order for 23 fnords."
+ >(john 'get-record)
+ ("John Doe" "(800) 555-1234" ("Order for five vebelfetzers." "RMA for defective frobnitz" "Order for 23 fnords."))
+
+There is also an example of this idiom 1/3rd the way down ClosuresAndObjectsAreEquivalent, that carries it further then what you see here.  Instead of sending the closure a symbol, and then applying the rest of the arguments to a function based on the symbol, it defines a bunch of anonymous functions inside the list, and then themethod names are defined in the main environment as the car, cadr, etc. of the list.  (Other, and arguably better methods might be to store them in a hashtable, record, or other non-positional data structure.)
+
+----
+''Using a continuation as an escape mechanism''
+
+One of the simplest and most common uses of continuations is for escaping out of a deeply nested loop. This version assumes that (call-with-current-continuation) is aliased as (call/cc).
+   (define (continued x) 
+     (call/cc (lambda (return)
+                (let loop ((y 0))
+                  (if (eq? x y) (return)
+                      (begin 
+                        (display y)
+                        (newline)
+                        (display "next? ")
+                        (loop (read))))))))
+----
+''Syntax Macros''
+
+The Scheme hygienic macro system is a very powerful mechanism for redefining the language, and can be used (and abused) in various ways. To give one example, one could define a Pascal-style FOR iterator:
+ (define-syntax for
+   ; a Pascal-style for loop
+   (syntax-rules (:= to downto step)
+     ; rule for complete upwards for loop
+     ((for index := start to finish step modifier expr1 expr2 ...)
+      (begin
+        (define index start)
+        (let loop ()
+          (if (<= index finish)
+              (begin expr1 expr2 ... 
+                    (set! index (+ index modifier)) 
+                    (loop))
+              ; when finished, adjust index to correct final value 
+              (set! index (- index modifier))))))   
+     ; rule for complete downwards for loop 
+     ((for index := start downto finish step modifier expr1 expr2 ...)
+      (begin 
+        (define index start)
+        (let loop ()
+          (if (>= index finish)
+              (begin expr1 expr2 ... 
+                     (set! index (- index modifier)) 
+                     (loop))
+              ; when finished, adjust index to correct final value 
+              (set! index (+ index modifier))))))
+      ; rule for upward loop with default step
+     ((for index := start to finish expr1 expr2 ...)
+      (for index := start to finish step 1 expr1 expr2 ...))
+      ; rule for downward loop with default step
+     ((for index := start downto finish expr1 expr2 ...)
+      (for index := start downto finish step 1 expr1 expr2 ...))))
+ 
+Which can then be used as so:
+
+ > (for x := 2 to 12 step 2
+        (display x)
+        (display " "))
+ 2 4 6 8 10 12
+ > x
+ 12
+The usage would depend upon the defined syntax. This example is intentionally extreme (and very un-Scheme-like) to demonstrate how powerful the macro system is; most Schemers would be appalled by someone mangling the syntax in this manner. However, many things that are considered basic Scheme idioms, or even as part of the language, are implemented with syntax macros.
+
+----
+CategoryScheme

@@ -1,0 +1,98 @@
+This issue of managing resources has been getting a lot of attention in Comp.object recently (early Feb. 1998). Here is a Java idiom for managing precious resources that is at least as good, if not better than the C++ idiom ResourceAcquisitionIsInitialization. It is similar to some of the other suggestions on these Wiki pages, but it has a few added benefits.
+
+	1. It is abstract and reusable.
+	2. It takes more of the burden off of each client of a resource and places the burdon one time on the resource provider.
+	3. It has no policies about how many clients, criteria for granting access, etc.
+
+Here is a quick sketch of the abstract class:
+
+ public abstract class AbstractResource
+ {
+  abstract protected begin(ResourceClient client, Object object);
+  abstract protected end(ResourceClient client, Object object);
+
+  public void consume(ResourceClient client, Object object)
+	{
+	begin(client, object);
+	try {
+	client.consume(this, object);
+	} finally {
+	end(client, object);
+	}
+	}
+ }
+
+ public interface ResourceClient
+ {
+  abstract public void consume(
+	AbstractResource resource,
+	Object object
+	);
+ }
+
+-PatrickLogan
+
+------
+
+But what if an object needs to own a resource for longer than the duration of a single method call?  Would the AbstractSessionPattern (http://www-dse.doc.ic.ac.uk/~np2/patterns) help here?
+
+----
+Somewhere in the system, there is (usually? always?) an object whose ownership of the resource is exactly one method call.  Use the above approach on that object.  When his method finishes, finalize the resource.
+
+Even in an event-driven situation, there's usually some state, somewhere, that corresponds to the life of the object.  The method in question might just look like
+	[self finished] whileFalse: [self waitSeconds: 30]
+while all kinds of other objects are playing with the resource this guy controls.  
+
+--RonJeffries
+
+----
+
+Why isn't the ''begin()'' inside the try block? --BobPasker
+
+''It's outside for flexibility, I believe.  I as the framework user get to decide whether I want all my initialization to occur inside or outside the try{}.  For example, I may want to open a file in begin(), knowing that since I'm outside the try{} block at that point, my end() implementation won't be called, and therefore my end() implementation won't have to handle an unopened file.  Or, if that doesn't meet my needs, I could simply have an empty begin(), and put all my initialization inside ResourceClient.consume (see below for my feelings on the method names).''  -- DavidSaff
+
+----
+
+This is a great idiom, Patrick.  It almost fully fills the void left by ResourceAcquisitionIsInitialization.  But given the new idiom, the old "consume" metaphor seems out of place, since it feels like the client is ''entering'' the resource, rather than ''acquiring'' the resource.  I'd be tempted to replace it with a feel similar to the VisitorPattern (is this a misuse of that pattern?  The current problem doesn't deal with forces arising from a complex data structure.)
+
+ public abstract class AbstractResource
+ {
+  abstract protected welcome(ResourceVisitor visitor, Object baggage);
+  abstract protected farewell(ResourceVisitor visitor, Object baggage);
+
+  public void accept(ResourceVisitor visitor, Object baggage)
+	{
+	welcome(visitor, baggage);
+	try {
+	visitor.visitResource(this, baggage);
+	} finally {
+	farewell(visitor, baggage);
+	}
+	}
+ }
+
+ public interface ResourceVisitor
+ {
+  abstract public void visitResource(
+	AbstractResource resource,
+	Object baggage);
+ }
+
+Two issues with this:
+	1. Naming the extra Object "baggage" gives away my prejudice against such VoidStarCallbackParameters in OO programming.  It seems that the visitor should internalize the baggage.  I'd be curious if others have the same prejudice.
+	2. If anyone can come up with a better method name than "farewell", please update the page.  I wanted a simple verb to offset the verb "welcome", but couldn't come up with a good one. ''dismiss''
+
+-- DavidSaff
+
+----
+
+One other aspect that I can't quite resolve.  What if a given client needs to consume (or visit) more than one resource at a time to accomplish its task?  Is it desirable or possible to package a given set of resources as a single "meta-resource", or is there some other idiom for this?  Say I need a database Connection resource and a remote procedure call? Ignoring for the moment any two-phase commit semantics -- maybe the RPC is simply an audit log.  How does this idiom adapt to that situation? --StevenNewton
+
+----
+
+The RubyLanguage libraries use this idiom very widely.  The idiom is much more convenient when you have a decent syntax for closures.  I expect that Java's inner classes are too verbose and obfuscatory to allow this idiom to catch on, and people will stick with try...finally blocks.
+
+''Been using Ruby for years; never seen this idiom ''once''.  Are you sure you're not confusing this with the ResourceAcquisitionIsInvocation pattern?''
+
+----
+CategoryJava

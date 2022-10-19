@@ -1,0 +1,110 @@
+This is one of the JavaIdioms.
+
+''Problem''
+
+Sometimes you want to know whether, at a certain point, the program is busy constructing a new instance.
+
+''Examples''
+
+	* A class invariant sometimes does not hold inbetween execution of the constructors of a superclass and a subclass.
+	* Some methods are intended to be only called from a constructor, and some should never be called from a constructor.
+
+''Solution''
+
+For every class where you want to know whether the program is constructing a new instance, and for every class below it, do the following:
+	* Add a "private boolean myConstructionFinished = false;" declaration.
+	* Add a statement "myConstructionFinished = true;" at the end of the constructor (but just before the class invariant check, if you use those).
+	* Add a method
+	/** This method may also be protected or package-visible,
+		but it may not be private! */
+	public boolean constructionFinished()
+	{
+		return myConstructionFinished;
+	}
+You can now call constructionFinished() to check whether the current instance (this) is being constructed or not.  You can also call x.constructionFinished() to see whether instance x is under construction or not.
+
+This works because:
+	* Before constructors are executed, all booleans are initialized to false.  (See JLS 15.8.1 and 4.5.4.)
+	* Constructors are executed top-down.  Therefore, all myConstructionFinished fields are set to true, starting with the top one, and so on to the lowest one.
+	* The constructionFinished() method is 'virtual'.  Therefore (and here's the crux!) when it is called, the result is always the myConstructionFinished field ''of the lowest class'', the class that was new-ed.  And that field is set to true only at the end of the lowest constructor...
+
+-- MarnixKlooster
+
+-----
+
+The fundamental problem is that your constructor may be calling a method that you are unsure what may do.  When calling class methods from the constructor be sure that the method is private and/or static.  If you find yourself in the situation where you have to call a constructionFinished() method when creating an Object, whatever the problem, your solution is wrong.
+-Reggie Noble
+
+-----
+Could you give an example of where this is used?  I have never seen this and I cannot imagine ever wanting to do it. What does it give you that can't be done if you EncapsulateMultiStageConstruction behind a factory interface or static method? (The latter is used quite widely in the Java libraries).
+----
+I hit the problem quite often. An example would be:
+	class Base {
+		private String name1;
+		public Base( String name1 ) {
+			this.name1 = name1;
+			assertValid();
+		}
+		public void assertValid() {
+			Assert.assert( name1 != null );
+		}
+	}
+	class Derived extends Base {
+		private String name2;
+		public Derived( String name1, String name2 ) {
+			super( name1 );
+			this.name2 = name2;
+			assertValid();
+		}
+		public void assertValid() {
+			super.assertValid();
+			Assert.assert( name2 != null );
+		}
+	}
+
+This fails in Java because the call to assertValid() in Base reaches the version in Derived before the Derived constuctor has been called. (Note: in C++ it is OK.)
+Similar problems can happen with other routines where the routine is overriden by a version which breaks the invariant, calls the base version, then re-establishes the invariant before returning. It happens with constructors most often because they happen before the invariant gets set up for the first time.
+
+I usually use a related idiom: Don't test your own invariant in constructors. I wait until the object is complete, and then have the creator test it. If necessary I use a factory method to create-and-test.
+
+If I had to, I think I'd use a simpler version:
+	class Derived extends Base {
+		private boolean invariantPurposelyBroken = true;
+		void assertValid() {
+			super.assertValid();
+			if (invarientPurposelyBroken)
+				return;
+			//.. tests as before.
+		}
+
+	}
+
+Then set/reset the invariantPurposelyBroken flag as needed. There is no need to touch other classes or add a constructionFinished() method. The variable can be used for things unrelated to construction. It can be abused, but as all access to it is private, only by members of the same class, not subclasses.
+-- DaveHarris
+----
+It appears to me that the easiest way to solve this problem (and, IMHO, better than the use of the TestWhetherInConstructionPhase pattern described here) would be to avoid doing a virtual method invocation on an assertion that is called from a constructor. Simply mention the name of the class explicitly in this context. I.e. something like this:
+
+class MyClass
+{
+	MyClass()
+	{
+		// do constructor-type stuff, then...
+		Debug.assert(MyClass.invariant());
+	}
+	static boolean invariant() { ... }
+}
+
+Note that 'M''''''yNeatoClass.invariant()' is being called here, rather than 'invariant()' by itself. This means that even when a subclass overrides the 'invariant' function to do additional checks, that the constructor will still call the version that is used in its own class, not one that is inherited from a subclass.
+
+''You don't need to specify the class name; static methods are early-bound (the method lookup happens only at compile-time).''
+
+Also note that it may be necessary to do similar explicit overrides within the invariant function itself, depending on what methods are called.
+
+''Don't you need to pass "this" into method invariant() (since it's static)?''
+
+----
+
+In my classes, there are methods that are called during construction and methods that are called subsequently. However, few methods that are invoked during both time frames, the only situation when you'd want to TestWhetherInConstructionPhase.
+
+----
+See also: IsValid

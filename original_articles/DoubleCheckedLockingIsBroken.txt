@@ -1,0 +1,243 @@
+DoubleCheckedLocking, a common CeePlusPlus and JavaLanguage Idiom for lazy initialization in multi-thread programs, commonly used for implementing singletons, turns out to not work reliably because of issues with optimizing compilers and shared memory multiprocessors.  The definitive paper: <http://www.cs.umd.edu/~pugh/java/memoryModel/DoubleCheckedLocking.html>
+discusses how this is broken in Java; also see
+<http://www-106.ibm.com/developerworks/java/library/j-dcl.html>.
+
+(See the bottom and CppDoubleCheckLock for C++ reference; most of this page discusses Java).
+
+In short, the following code cannot be guaranteed to work:
+
+	private Singleton() {
+	}
+
+	public static Singleton getInstance() {
+		if (_theInstance == null) {
+		synchronized (Singleton.class) {
+			if (_theInstance == null) {
+			_theInstance = new Singleton();
+			}
+		}
+		}
+		return _theInstance;
+	}
+It's an attempt at efficiency, to avoid taking the lock if _theInstance already exists, but as discussed in the paper above, this can break.  The only solution is to synchronize the entire method:
+
+	public static synchronized Singleton getInstance() {
+		if (_theInstance == null) {
+		_theInstance = new Singleton();
+		}
+		return _theInstance;
+	}
+-- StevenNewton
+
+----
+''Why not...''
+	public static Singleton getInstance() {
+		if (_theInstance == null) {
+		_theInstance = this.getInstanceSlow();
+		}
+		return _theInstance;
+	}
+	
+	private static synchronized Singleton getInstanceSlow() {
+		if (_theInstance == null) {
+		_theInstance = new Singleton();
+		}
+		return _theInstance;
+	}
+In other words, delegate the locking to another method.
+
+''This is entirely equivalent to the inline version, and fails for the same reasons.''
+
+(Maybe we need a instance-level (non-static) method, to ensure that the call won't be inlined as 'final?')
+
+''How would that work, given that there is no instance when we first call 'getInstance'?''
+
+----
+There has been a lot coverage of the DoubleCheckedLockingIsBroken issue in the past week (see http://www.javaworld.com/javaworld/jw-02-2001/jw-0209-double.html and http://www.javaworld.com/javaworld/jw-02-2001/jw-0209-toolbox.html).  it seems to me that there are a number of valid options when constructing a JavaSingleton class.
+
+1. If you DO NOT NEED lazy initialization (and you often do not), then simply use a static member and initialize it right there (or in a static block).  The class loader guarantees that only one thread will perform any class's static initialization.  By the way, if the only accessible static field or method is getInstance() and no code directly accesses Singleton.class or invokes Class.forName("Singleton"), you essentially get lazy initialization for free thanks to the class loader.
+
+	public class Singleton {
+		private static final Singleton instance = new Singleton();
+	
+		public static Singleton getInstance() {
+		return instance;
+		}
+	}
+2. If you NEED lazy initialization and you CAN stomach the overhead of always acquiring the mutex (and you usually can), then use this form:
+
+	public class Singleton {
+		private static final Singleton instance;
+
+		public synchronized static Singleton getInstance() {
+		if (instance == null) {
+			instance = new Singleton();
+		}
+
+		return instance;
+		}
+	}
+3. If you NEED lazy initialization and you CANNOT stomach the overhead of always acquiring the mutex (this is the least likely case), then leverage the class loader's behavior to guard the construction of the singleton.  This solution relies on the fact that a class will not be loaded and initialized until referenced.  The static inner class Instance will only be loaded when the
+outer class's getInstance() method references Instance.value.
+
+	public class Singleton {
+		private static class Instance {
+		static final Singleton value = new Singleton();
+		}
+
+		public static Singleton getInstance() {
+		return Instance.value;
+		}
+	}
+
+-- ChuckMcCorvey
+
+----
+Yes the inner class idiom is good.  The Singleton is essentially a Factory and the Instance itself a product of the Factory, so it is a separate abstraction.  The Declaration suggests using a separate class but doesn't mention the possibility of an inner class -- an oversight possibly.  Java inner classes don't get the respect they deserve, they can be quite useful. -- StevenNewton
+
+----
+Nice solution, but is that class loading behaviour guaranteed in the Java specifications? 
+
+''The Java Language Standard states that class loaders can prefetch or otherwise group the loading of classes.  So, no the behavior in option 3 above is not guaranteed.  However, it generally holds true since most class loaders do not prefetch classes.'' -- ChuckMcCorvey
+
+I'd like to add option 4) (slightly tongue in cheek). 
+
+4) Use a synchronized method and cache the result of the call to getInstance () in the code that is called very frequently - like you would for any performance critical section where the semantics of some function called allow you to cache the results.
+
+-- AndySchneider 
+
+----
+I would like to propose another idea, based on the difference between instantiation and initialization. This would only be useful if the class, when constructed using the default constructor, has few memory requirements, but when initialized becomes heavy perhaps due to sub-objects being maintained by it. For example, a class that encapsulates a Hashtable is lightweight as long as the Hashtable is not instantiated and initialized.
+
+Consider the following code:
+
+	public class Singleton {
+	private static final Singleton instance = new Singleton();
+	private boolean initialized = false;
+	private Hashtable lotOfData = null;
+
+	public static Singleton getInstance() {
+	 if (!instance.isInitialized)
+		instance.initialize(...);
+	 return instance;
+	}
+	private Singleton() {
+	 // no-operation
+	}
+
+	protected boolean isInitialized() {
+	 return initialized;
+	}
+
+	protected synchronized void initialize(....) {
+	 if (initialized)
+		return;
+
+	 lotOfData = new Hashtable();
+	 lotOfData.add(....);
+	 // Further initialization
+	 initialized = true;
+	}
+	}
+
+In this example, a lightweight Singleton object would be created by the class loader. Subsequently, if any thread(s) accesses the initialized object, since its "initialized" variable is false, the synchronized method "initialize" would be called, which would set up all the data in the object and set initialized to true. Any threads waiting on this synchronized method would return immediately, since initialized would now be true. Subsequent threads would find initialized "true", thus skipping the initialization step. Since changes to boolean fields are atomic, unless the compiler reorders the "initialize" method to move the setting of the initialized variable before the rest of the steps, the above should work. Am I correct?
+
+-- Anurag Wahi
+
+''It's not working, because you are assuming that initialized=true; will happen at the end of the initialize() function, after all the initialization has been done. In fact it is not unlikely for the processor to rearrange it exactly after if (initialized) return; because locally loks like a very good optimization if lotOfData.add(...) is inlined. Thus another thread might pick the (initialized == true) condition before the real initialization is executed.''
+
+* Maybe this would work if the initialized is set inside code that cannot be shuffled (optimized). Suppose initialized = true is done in a separate method doneInitializing() like this:
+
+	protected synchronized void initialize(....) {
+	 if (initialized)
+		return;
+
+	 lotOfData = new Hashtable();
+	 lotOfData.add(....);
+	 // Further initialization
+
+	 doneInitializing();
+	}
+
+	protected void doneInitializing() {
+	 initialized = true;
+	}
+-- Cristian Baciu
+
+----
+Summarising what has been said elsewhere:
+* The compiler / JVM can rearrange code within synchronized blocks for optimisation.
+* The compiler / JVM can move code '''into''' a synchronized block for optimisation.
+* The compiler / JVM cannot move code out of a synchronized block.
+* Threads can store local copies of variables that are not declared '''volatile''' or protected by a synchronized block so may not see changes made by other threads.  (And '''volatile''' has a known bug - it doesn't appear to actually do anything).
+
+For these reasons you have to ''really'' know what you're doing when trying to avoid synchronisation, and usually the only truly safe approach is to synchronise around the whole thing that needs to be thread safe.  The extra cost is on the order of microseconds, and there are usually far better places to look to improve application performance.
+
+-- DarrenHobbs
+
+----
+Trying to work around this, I just came up with this code for my object cache. ThreadLocalCopyOfGlobalCache
+
+----
+There are two good articles on this subject at JavaWorld.
+Cliff Notes: Never perform unsynchronized access to shared variable.
+
+Double-checked locking: Clever, but broken
+http://www.javaworld.com/javaworld/jw-02-2001/jw-0209-double.html
+
+Java Tip 67: Lazy instantiation
+http://www.javaworld.com/javaworld/javatips/jw-javatip67.html
+
+----
+I smell GreencoddsTenthRuleOfProgramming at work. What is being sought is A.C.I.D. (AtomicConsistentIsolatedDurable)
+
+''Not every attempt at shared-state concurrency means that ACID semantics is needed (nor a database is required).  Double-checked locking is typically an initialization pattern, used to guard a one-shot monotonic state transition (from the "not initialized" state to the "initialized" state), and often the thing being guarded is '''not''' business data.  And it's almost never persistent, for that matter.'''
+
+* What is being sought is Atomic; but none of Consistent, Isolated, or Durable need necessarily apply.
+
+Databases and "persistence" can be viewed as somewhat orthogonal. RAM RDBMS are coming into production, for example. I am not suggesting it is a solution in every case, just ONE to consider if one faces such problems.
+
+''The reason behind DoubleCheckedLocking is a performance optimization--eliminating a wait() operation on a sempahore or a monitor in most cases; the reason it doesn't always work is that it makes some gratuitious assumptions about how objects (and the registers that hold pointers to 'em) are initialized--assumptions that are violated by some aggressive compilers when coupled with concurrent programs.  The "fix" is simple--just wait on the semaphore every time.''
+
+''Unless the data being guarded is persistent business data, no need to involve a database.  If you are guarding persistent business data; you probably have a database present already.  (Or you should).''
+
+''The suggestion--may I dub it TableOrientedSynchronization?--that databases ought to replace lower-level synchronization primitives is a fine example of an AbstractionInversion.''
+
+Languages, memory managers, operating systems, etc. are becoming nearly as complex as databases these days. Thus, saying that one is more or less primitive than the other can get sticky. The DB engines I used in the 80's were roughly 1/30 the size of the Java Run Time Engine.
+
+----
+The above discussion applies to Java, but double-checked locking poses problems for C++ as well.  See http://groups.google.com/groups?selm=MPG.191d9257dfa5ebf79896db%40news.hevanet.com.
+
+----
+How about this:
+
+ private static synchronized Singleton createNewInstance(){
+	return new Singleton();
+ }
+ 
+ public static Singleton getInstance() {
+	if (instance == null)	{
+		synchronized(Singleton.class) {
+			if (instance == null)
+				instance = createNewInstance();
+		}
+	}
+	return instance;
+ }
+
+instance cannot be assigned with a value before the method createNewInstance() has been executed and returned a value.
+Not sure if it can be inlined when it is synchronized...
+
+-- Plamen Parvanov
+
+This has the same issue.
+
+The (instance == null) returning false doesn't guarantee that the instance is initialized completely by the Java Memory Model - http://www.cs.umd.edu/~pugh/java/memoryModel/DoubleCheckedLocking.html provides more details
+
+----
+.NET has System.Threading.Thread.Barrier() which makes this doable. It sounds like Java needs the same thing.
+
+----
+See also CppDoubleCheckLock
+----
+CategoryConcurrency

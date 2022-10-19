@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Call With Current Continuation
+      </h1>
+      <p>
+        The <a href="SchemeLanguage.html">SchemeLanguage</a> as defined by R5RS [<a href="RevisedReportOnAlgorithmicLanguageScheme.html">RevisedReportOnAlgorithmicLanguageScheme</a>] provides a function named CALL-WITH-CURRENT-CONTINUATION (or CALL/CC for short) that captures the current continuation as a first-class object (see <a href="ContinuationExplanation.html">ContinuationExplanation</a>). Several other languages provide equivalent or similar functionality. In Scheme, the captured continuation has unlimited extent: it can be stored in a variable and can be called/activated as many times as desired. If and whenever the continuation is called, the then-current continuation will be abandoned, and the program flow will continue at the point at which the continuation was captured.
+      </p>
+      <p>
+        CALL/CC is almost equivalent to <a href="CeeLanguage.html">CeeLanguage</a>'s setjmp. The procedure given to call/cc is called with the current continuation, whatever would happen next if call/cc returned normally, as its one argument. So by invoking <em>that</em> procedure the procedure given to call/cc can return to the context where call/cc was invoked, just like longjmp. It, or another procedure that gets hold of the passed continuation somehow, can do this at any later time, and more than once. Scheme implementations vary in what happens to any stacks, exception handlers, etc. etc. when this happens.
+      </p>
+      <p>
+        Using CALL/CC one can very easily implement <a href="CoRoutine.html">CoRoutine</a>s, lightweight multi-threading, back-tracking, exception handling, and something like collaborative multitasking, all safely and in-process. The full power of call/cc is not needed to do all of this, and some languages/implementations only provide restricted continuations that can be activated at most once and only if the captured execution context is still valid (single-shot upward-only continuations, see <a href="SingleUseContinuation.html">SingleUseContinuation</a>).
+      </p>
+      <hr/>
+      <p>
+        If your program evaluator/interpreter is implemented using <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a> you get call-with-current-continuation for free. CALL/CC is then a very natural operation since every function is called with the current continuation anyway. This is explained in the book <a href="EssentialsOfProgrammingLanguages.html">EssentialsOfProgrammingLanguages</a>.
+      </p>
+      <p>
+        Here is the corresponding implementation of call-cc using CPS:
+      </p>
+      <code>
+        (define (cps-call/cc k consumer)<br/>
+        (let ((reified-current-continuation (lambda (k1 v) (k v))))<br/>
+        (consumer k reified-current-continuation)))<br/>
+      </code>
+      <hr/>
+      <p>
+        <em>If you're a C programmer, you might find this explanation easier: in C, you can take a pointer to a function. In C, you also have a return statement. Suppose the return statement were a function (which never returned, of course). It would take a parameter of the same type as the return type of the function it was returning from. Now suppose you could take its address. You could store that address in a variable or pass it as a parameter, and allow functions to return on your behalf. That's what call/cc allows you to do. You can use it as a replacement for throw and catch, or you can set up coroutines with it (see </em><a href="ContinuationsAndCoroutines.html">ContinuationsAndCoroutines</a>). -- <a href="EdwardKiser.html">EdwardKiser</a><em></em>
+      </p>
+      <p>
+        I am not sure that I understand this. Am I on the right tracks if I think of it like the Unix setjmp and longjmp? -- ChrisBrooking
+      </p>
+      <p>
+        <em>That's certainly the right track, except that with setjmp/longjmp it is illegal to do a longjmp after the function calling setjmp has returned. With call/cc, there is no such limitation: you can invoke the continuation whenever you like, as often as you like. -- </em><a href="StephanHouben.html">StephanHouben</a><em></em>
+      </p>
+      <p>
+        I used this sort of thing once with some machine code added into a C function so that the return address was faked to return somewhere else. This was used to do cooperative task switching.  --<a href="JohnFletcher.html">JohnFletcher</a>
+      </p>
+      <p>
+        I <a href="HaveThisPattern.html">HaveThisPattern</a> (I used it a similar trick (all in assembler, though) of faking the stack pointer - hence faking the return address and much more . A long time ago now (about 1985, I think)) -- <a href="PaulHudson.html">PaulHudson</a>
+      </p>
+      <p>
+        See <a href="ContinuationsInCee.html">ContinuationsInCee</a>.
+      </p>
+      <hr/>
+      <p>
+        A very simple example:
+      </p>
+      <code>
+        (call-with-current-continuation<br/>
+        (lambda (return)<br/>
+        (begin<br/>
+        (display "One ")<br/>
+        (return #t)<br/>
+        (display "Two ")<br/>
+        #f)))<br/>
+      </code>
+      <p>
+        The lambda-expression evaluates to an anonymous function of one parameter. This anonymous function gets invoked by call-with-current-continuation and the parameter - here called return - gets bound to an escape procedure, i.e. a procedure value that encapsulates the current continuation. The function prints "One " and then returns #t without ever printing "Two " because the second display-expression is part of the abandoned continuation. Note that the activation of the captured continuation appears syntactically as a function call since Scheme conflates continuations with the escape procedures that encapsulate them.
+      </p>
+      <p>
+        Historically, the language construct to capture the current continuation in Scheme wasn't always a function; a special operator called CATCH or LET-CC was used instead. In R5RS Scheme this can be implemented using <a href="DefineSyntax.html">DefineSyntax</a> and CALL/CC:
+      </p>
+      <code>
+        (define-syntax let-cc<br/>
+        (syntax-rules ()<br/>
+        ((let-cc variable . body)<br/>
+        (call-with-current-continuation<br/>
+        (lambda (variable) . body)))))<br/>
+      </code>
+      <p>
+        Using this operator the example would read:
+      </p>
+      <code>
+        (let-cc return<br/>
+        (display "One ")<br/>
+        (return #t)<br/>
+        (display "Two ")<br/>
+        #f)<br/>
+      </code>
+      <p>
+        In this example the continuation was used in an upward-only way, which doesn't demonstrate the <em>full</em> power of continuations.
+      </p>
+      <p>
+        Another example:
+      </p>
+      <code>
+        (call-with-current-continuation<br/>
+        (lambda (exit)<br/>
+        (for-each (lambda (x)<br/>
+        (if (eq? x 'nuclear)<br/>
+        (exit x)<br/>
+        (symbol->string x)))<br/>
+        '(this is a nuclear bomb in your garage))))<br/>
+      </code>
+      <p>
+        This uses a captured continuation to escape from the middle of the "for-each" function. Again, the continuation is used in an upward-only way. However, the poor author of the "for-each" function has to be prepared for the possibility that the (lambda (x) ...) function never returns.
+      </p>
+      <p>
+        Now, the thing that makes Standard Scheme's continuations unique is that the continuation has <em>unlimited extent.</em> What I mean is, you can return it like this:
+      </p>
+      <code>
+        (call-with-current-continuation (lambda (return) return))<br/>
+      </code>
+      <p>
+        ...and it is still valid. This allows you to use it to set up co-routines.
+      </p>
+      <p>
+        See also <a href="SchemeCoroutineExample.html">SchemeCoroutineExample</a>, <a href="ContinuationsAndCoroutines.html">ContinuationsAndCoroutines</a>, <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a>.
+      </p>
+      <hr/>
+      <p>
+        Isn't this a disguise for goto's and JMP instructions?
+      </p>
+      <p>
+        <em>Isn't every high-level (i.e. higher that goto or JMP) flow-of-control structure? Isn't that the point?</em>
+      </p>
+      <p>
+        <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> is a disguise for JMP in the same way that writing down the directions for how you got somewhere and what you had with you when you got there is a disguise for teleportation.
+      </p>
+      <p>
+        <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> is a universal control structure - you can implement any control structure on top of it.  Unlike gotos and JMP it is structured - continuations are values not textual labels in a program.  Call/CC is best used for blowing students' minds, or providing elegant solutions to difficult problems.  For example web transactions can be viewed as suspension and resumption of continuations, which makes handling state on the web a lot easier.  The folks at PLT have done some work on this I recommend their papers.  See <a href="DrScheme.html">DrScheme</a> for URLs. See also the <a href="SmalltalkLanguage.html">SmalltalkLanguage</a> framework <a href="SeasideFramework.html">SeasideFramework</a> and <a href="WebTransactionsWithContinuations.html">WebTransactionsWithContinuations</a>.
+      </p>
+      <p>
+        <em>Actually I would dispute the notion that </em><a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> is a <em>universal</em> control structure. I don't think it is meant to replace if/then/else, or iteration. What it does replace is stuff like throw/catch, coroutines, and backtracking.<em></em>
+      </p>
+      <p>
+        Those are two different issues. It is not meant to be used as a replacement of anything, because it is well known that continuations are pretty confusing. But <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> <strong>is</strong> universal, and can be used to implement if/else, iteration, etc. That implementation ideally is then hidden behind a facade of some sort, e.g. a macro in Lisp.
+      </p>
+      <p>
+        Indeed.  Why do people say they would dispute something and then dispute some other claim entirely?
+      </p>
+      <p>
+        <em>Can you show an example of using </em><a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> to implement if/else?<em></em>
+      </p>
+      <p>
+        Actually, you don't need call/cc to implement if/then/else; first-class functions are enough.  In Scheme:
+      </p>
+      <code>
+        ;;;<br/>
+        ;;; TRUE is a procedure that takes two procedures and invokes the<br/>
+        ;;; first one.<br/>
+        ;;;<br/>
+        (define (true true-k false-k)<br/>
+        (true-k))<br/>
+      </code>
+      <code>
+        ;;;<br/>
+        ;;; FALSE is a procedure that takes two procedures and invokes the<br/>
+        ;;; second one.<br/>
+        ;;;<br/>
+        (define (false true-k false-k)<br/>
+        (false-k))<br/>
+      </code>
+      <code>
+        ;;;<br/>
+        ;;; IF-THEN-ELSE takes a boolean and two procedures, and invokes the<br/>
+        ;;; first one for true, the second one for false.<br/>
+        ;;;<br/>
+        (define (if-then-else bool true-k false-k)<br/>
+        (bool true-k false-k))<br/>
+      </code>
+      <code>
+        ;;;<br/>
+        ;;; Yeah, this definition is cheating.  Pretend KZERO? was a primitive.<br/>
+        ;;; <br/>
+        (define (kzero? n)<br/>
+        (if (zero? n)<br/>
+        true<br/>
+        false))<br/>
+      </code>
+      <code>
+        (define (factorial n)<br/>
+        (if-then-else (kzero? n)<br/>
+        (lambda () 1)<br/>
+        (lambda () (* n (factorial (- n 1))))))<br/>
+      </code>
+      <p>
+        Note that while this doesn't use <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a>, it does use a form of <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a>.  Looking at it this way, booleans are functions that choose between two continuations; truth just means "take the first path" while false means "take the second path."
+      </p>
+      <hr/>
+      <p>
+        A true call/cc method in Smalltalk <em>might</em> look like this:
+      </p>
+      <code>
+        callCc: aBlock<br/>
+      </code>
+      <code>
+        ^aBlock value: [:arg | ^arg]<br/>
+      </code>
+      <p>
+        I tried this in <a href="SqueakSmalltalk.html">SqueakSmalltalk</a> (put the method on Object), and it works,
+        <em>except</em> that continuations cannot escape outside their dynamic extent:
+        trying to do so raises a BlockCannotReturn exception.
+      </p>
+      <p>
+        In principle, this is more an implementation restriction than a language
+        restriction: if this restriction was to be lifted, then we would have
+        full call/cc in Smalltalk. Now that would be cool...
+      </p>
+      <p>
+        -- <a href="StephanHouben.html">StephanHouben</a>
+      </p>
+      <p>
+        No, it's not an "implementation restriction", it's restriction of the language semantics.  Saying "if this restriction was (sic) to be lifted" is the same as saying "if full call/cc were added to Smalltalk", resulting in tautology.
+      </p>
+      <p>
+        <em>Stephan, Wilf </em>LaLonde and Mark VanGulik describe how to build call/cc in Smalltalk in their paper, "Building a Backtracking Facility in Smalltalk Without Kernel Support" in the 1988 (!) OOPSLA proceedings. You can reproduce it quite easily in <a href="VisualWorks.html">VisualWorks</a> or Squeak. --<a href="AnthonyLander.html">AnthonyLander</a><em></em>
+      </p>
+      <p>
+        I'll check it out! Thanks! -- sh
+      </p>
+      <hr/>
+      <p>
+        [From <a href="SchemeLanguage.html">SchemeLanguage</a>]
+      </p>
+      <p>
+        <em>The coolest feature in Scheme is </em><a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a>. -- <a href="EdwardKiser.html">EdwardKiser</a><em></em>
+      </p>
+      <p>
+        Be aware that many view <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> not as a cool feature, but as a fatal flaw.  It's like having a nuclear bomb in your garage. Cool, sure, but do you really want one? Specially when the neighbor's kids might drop in?  Call-cc is the ultimate minimalism; sure, it replaces goto, block, throw, catch, etc, but not in a <em>controlled</em> way.  It makes it impossible to, by inspection, determine how often a piece of code might be executed.  An example of <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a> at the language design level?
+      </p>
+      <p>
+        Actually, no one, not even you, considers call/cc to be "a fatal flaw", and you've contradicted yourself by saying its not cool and then saying nuclear bombs are cool.
+      </p>
+      <p>
+        <em>Is it really important to know how many times a piece of code is going to be executed? How many times has the computer game DOOM been executed?</em>
+      </p>
+      <p>
+        It is important for some compilers. Lisp compilers can sometimes avoid putting a variable inside a heap-allocated frame where Scheme compilers cannot, since a procedure call might return twice. Consider code such as:
+      </p>
+      <code>
+        (let ((x 1))<br/>
+        (do-some-call-that-might-return-twice)<br/>
+        (display x)<br/>
+        (set! x 2))<br/>
+      </code>
+      <p>
+        Now, if the call that might return twice, does indeed return twice, then the second time call to display will have x = 2. This typically means that the location in which x is stored must be heap allocated.
+      </p>
+      <p>
+        However, a Scheme programmer who wouldn't explicitly want to use this particular effect of call/cc, would rebind the second x with let and not use set!.
+      </p>
+      <p>
+        <em>Another reason you would care how many times a bit of code is executed is it's hard to do this bit of code in the presence of call/cc:</em>
+      </p>
+      <code>
+        (let ((file (open ...)))<br/>
+        (unwind-protect<br/>
+        ...<br/>
+        (close file)))<br/>
+      </code>
+      <p>
+        <em>(that is, close the file after you finish using it, regardless of whether you left the code due to an error or anything else)  What is this supposed to do if you save a continuation in the middle here?  You can leave the code and then at any later time, completely unpredictable by the compiler, you can come right back in and use file again.  (Note: dynamic-wind doesn't solve this, because either you'll close the file multiple times or you'll open and close it repeatedly, both of which aren't the right thing)</em>
+      </p>
+      <p>
+        Why doesn't dynamic-wind solve this? Because you can call/cc back in and break it? And the "solution"
+        would be to forbid general call/cc, as in <a href="CommonLisp.html">CommonLisp</a>? Sorry, but the cure seems worse than the problem.
+      </p>
+      <p>
+        Of course Scheme doesn't solve the problem of immediately releasing resources in full generality, since
+        it is equivalent to the <a href="HaltingProblem.html">HaltingProblem</a>.
+      </p>
+      <p>
+        Anyway, if you really really don't want full call/cc to take place, wrap the call in something like this:
+      </p>
+      <code>
+        (define (upward-only continuation)<br/>
+        (let ((first-time #t))<br/>
+        (dynamic-wind<br/>
+        (lambda () (if (not first-time)<br/>
+        (error "Sorry, I can't let you do that, Dave")))<br/>
+        continuation<br/>
+        (lambda () (set! first-time #f)))))<br/>
+      </code>
+      <code>
+        (define cc<br/>
+        (upward-only (lambda () (call-with-current-continuation (lambda (cc) cc)))))<br/>
+      </code>
+      <code>
+        (display "So far so good")(newline)<br/>
+      </code>
+      <code>
+        (cc 'dummy)<br/>
+      </code>
+      <hr/>
+      <p>
+        Someone above compared call/cc with a nuke in the garage.  Should it be <a href="ConsideredHarmful.html">ConsideredHarmful</a>?  The argument for it is that it is a powerful tool with which one can implement lots of cool stuff (coroutines, cooperatively-scheduled threads, most traditional control structures including goto, etc....)  That sounds to me to be similar to the old arguments in favor of goto (who needs if/then or loops when goto does 'em all?)  
+      </p>
+      <p>
+        <em>Perhaps you can only hear strawmen.  No one says "who needs if/then or loops" -- neither advocates of goto nor advocates of call/cc.  Rather, it is you who are saying "who needs call/cc when something else can do that?</em>
+      </p>
+      <p>
+        To ask the question another way--is there anything that can be done with call/cc that cannot be done with a suitable set of higher-level structures?  The death knell for goto was when it was proven that one could indeed transform an arbitrary goto-based program into one using higher-level control structures.  Might a similar argument exist with regard to call/cc--that if a language wants coroutines, etc...it should provide these instead of call/cc?
+      </p>
+      <p>
+        <em>You're asking it there's anything that can be done with call/cc that cannot be done by adding that very thing to the core language, which is point-missingly absurd in the extreme.  Also, your claim about the death knell for goto is a myth -- it was already well known that an arbitrary goto nest could be transformed into a single loop and a state variable -- it's called an interpreter loop. It was Dijkstra's "goto considered harmful" paper that was most instrumental in the shift to structured programming.</em>
+      </p>
+      <p>
+        I don't know the answer, which is why I'm asking the question.  
+      </p>
+      <p>
+        <em>You have actually asked three totally different questions. Should it be considered harmful, is it necessary, should languages provide features such as coroutines -- are quite different. Not knowing the answer is just the beginning of your lacks.</em>
+      </p>
+      <p>
+        -- <a href="ScottJohnson.html">ScottJohnson</a>
+      </p>
+      <p>
+        The comparison to goto is interesting, in that it points us to a feature of Lisp/Scheme culture. Yes, you can implement various higher level structures with call/cc. Indeed, if your Scheme implementation offers those features (as extensions beyond R^5RS), then they will almost certainly be implemented that way, but hidden behind macros. 
+      </p>
+      <p>
+        Here is where the analogy with goto falls down: in every language I can think of where you might be going to implement a higher level control structure with goto you would have no means of hiding or reusing that technique, you'd have to explicitly put it in each time. Oh, I suppose you could jump through a few hoops with the C pre-processor or m4 or something to tidy up a bit. But in Scheme, these new control structures would be defined once, and thereafter would be indistinguishable from the built-in control structures (many of which are macros, in any practical Scheme implementation, anyway).
+      </p>
+      <p>
+        <em>come on, that's silly; if/then, while, etc. can all be implemented via macros using generated labels and gotos.  People have done this numerous times in assembly languages.</em>
+      </p>
+      <p>
+        It should be noted that the developers of the Scheme language themselves claimed that a function call was equivalent to "goto with parameters." This was because of Scheme's ability to recognize tail calls. Since call/cc <em>is</em> a function call, it would also amount to "goto with parameters."
+      </p>
+      <p>
+        <em>Using macros to build higher-level stuff over goto and/or continuations is best way in my opinion. For example, you can see how it is done in some Forth systems; you can just define IF or THEN or whatever to run at compile-time and put stuff into the stack and generate branch instructions and so on.</em>
+      </p>
+      <hr/>
+      <p>
+        Call/cc is important for other things besides coroutines. Call/cc allows a callback-oriented API to be converted back to direct style. Examples of this include externalizing an <a href="InternalIterator.html">InternalIterator</a>, and reconciling traditional "straight-line" code with the event-driven structure of GUI's and callbacks. Every construct that is capable of this can be shown to be at least as powerful as call/cc (i.e. call/cc can be implemented in terms of it). I would argue that call/cc allows the programmer to abstract away from the style of interface, and should therefore be considered a vital language feature.
+      </p>
+      <p>
+        -- <a href="StephanHouben.html">StephanHouben</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>Type/Program Safety and Call/CC</strong>  
+      </p>
+      <p>
+        I've been thinking about safety verification in the context of <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> and <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a> in general, especially in the context of imperative programs.  A <strong>safe</strong> program is one that only performs well-defined operations; in the context of evaluation, 'type'-safety is only performing evaluations for which every evaluation-step is understood, whilst in the context of execution, safety is performing communications only within established protocols.  The most common examples of protocol violations involve the most common communications resources.  E.g, for the memory subsystem, safety failures include failure to eventually release memory once requested, attempting to release it twice, attempting to use memory without first requesting it.  For the filesystem, one must close files once opened, and cannot write to unopened files.  For mutexes, one must eventually unlock the mutex.  These are simple protocols, but protocols can be arbitrarily complex (e.g. TCP, HTTP, FTP, Bittorrent).  A 'finalization' or 'goodbye' step is common to a great many protocols, be they complex or simple.
+      </p>
+      <p>
+        While Call/CC makes it very easy to violate these protocols (to finalize twice, to never finalize, to use after finalizing a resource, to jump back into the middle of code where you're expected to be holding a mutex that was released earlier, etc.), that isn't such a big deal.  After all, <strong>any</strong> programmer can go about violating protocols... it's quite easy even without Call/CC.  Of greater question, however, is whether <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> makes safety-verification too difficult... especially considering that people can put those continuations generated by 'call/cc' just about anywhere (drop them into a list, for example).  
+      </p>
+      <p>
+        And I speak not just of automated safety verification, but also of the sort where a human dives into the code and tries to figure out what the heck is going on.  It's easy enough to get by without Call/CC, but you lose the ability to define entirely new mechanisms to control computation.  But to hear your opinions (especially those of you who enjoy the benefits of automated type checking): would it be worth using Call/CC even if it means giving up static verification of a program?  Or would it be better to favor the creation of new language primitives for program flow control that have well-understood properties and are, thus, much easier to verify?  
+      </p>
+      <p>
+        I do understand that there are those who would argue: <strong>He who gives up freedom for safety deserves neither</strong> (though the proper Franklin quote involves 'temporary' safety).  I'm not particularly interested in such an argument.  I direct this query more to those who already prefer static type-safety.
+      </p>
+      <p>
+        <strong>Continuations with Formally Limited Extent</strong>
+      </p>
+      <p>
+        Program safety analysis would benefit from knowing the extent of continuations in a formal manner.  At the same time, human programmers need the mechanism to be intuitive enough that it is easy to grasp and utilize.  So here's a possibility:  Add a procedural concept <strong>fini</strong>, such that in any <em>procedural block</em> of code, you can specify (at any spot in that block) <strong>fini <X></strong>.  This is similar in concept to Java's "finally", and the same could be used (though I disapprove of the syntax common to Java/C++ for this purpose).  The <strong>fini</strong> specifies a contract that the specified operation will be executed <em>exactly once</em> (at least once, at most once) at the end of the block but before all prior 'fini' specifications, regardless of which forward continuation is ultimately taken (return, throw, continue, break, abort, retry, ignore, anything passed by call/cc, etc. etc. etc.).  Continuation Passing code can then, formally, be considered to possess a procedural-type-error if it can be proven that this constraint is violated (executed twice or never executed), and can be considered <em>unsafe</em> if it cannot be proven that the constraint isn't violated.  Execution-paths that do not possess risk crossing 'fini'-code twice are considered safe.
+      </p>
+      <code>
+        // Pseudocode in <a href="MyFavoriteLanguage.html">MyFavoriteLanguage</a> <br/>
+        procedure {<br/>
+        let x = open-file("whatever.mp3")            <br/>
+        <strong>fini</strong> { close-file x; }<br/>
+        let retry = call/cc return-continuation  <br/>
+        let r = attach-resource("sound-system")<br/>
+        catch(e) { throw exception-with-retry:(e,retry); }  <br/>
+        <strong>fini</strong> { detach-resource(r); }<br/>
+        ... do loops and stuff involving file and audio using <a href="ContinuationPassingStyle.html">ContinuationPassingStyle</a> ...<br/>
+        // implicitly detaches resource here<br/>
+        // implicitly closes file<br/>
+        }<br/>
+      </code>
+      <p>
+        Note that <strong>fini</strong> itself doesn't execute anything and has no risk of throwing an exception.  The procedural operation specified after each <strong>fini</strong> is contractually guaranteed to execute at some point, and to execute -exactly once-.  The compiler might use 'fini' like the Java/C++ stacked-based 'finally', shifting it towards the end of the block.  Indeed, this might be the usual implementation when the semantics are clear unless some more optimal solution is found.
+      </p>
+      <p>
+        However, to provide a more interesting example, I added 'retry', which holds the current continuation at that point (much like a goto label).  Further, 'retry' can be tossed in as part of an exception (neat for when you want something like an abort/retry/ignore exception on a 'foreach' operation).  Supposing the caller catches this exception, the caller might or might not choose to execute the 'retry' continuation, and might even store it in a variable and execute it twice.  Executing it once is a valid operation, as is aborting... and on all the <em>acceptable</em> paths, there must exist a guarantee that the 'finally' (close-file) operation is executed exactly once.  Attempting to execute twice, however, would generally be unsafe because the continuation might execute the 'fini' code twice).
+      </p>
+      <p>
+        ...
+      </p>
+      <p>
+        The ability to guarantee a 'close-file' even if the caller chooses to abort or throw rather than 'retry' implies that not ONLY is 'retry' passed back with the 'throws' operation... so is every other possible continuation upon receipt of the exception (implicitly, 'throw' and 'return').  True CPS doesn't have a stack... it just has continuations being passed around both implicitly and explicitly, which might happen to involve a stack where it is useful as an optimization.
+      </p>
+      <p>
+        <em>This is nothing new. It's called 'delimited continuations'. Please have a look at e.g.</em>
+      </p>
+      <code>
+        <a href="http://lambda-the-ultimate.org/search/node/delimited+continuation">http://lambda-the-ultimate.org/search/node/delimited+continuation</a><br/>
+      </code>
+      <p>
+        Thanks for the link.  I'm checking it out, though I now have a strong impression that the lambda-the-ultimate search engine is worse than even this Wiki's search engine...
+      </p>
+      <p>
+        <em>I can't disagree with that :) The link was not meant as a useful search result, but rather as a mix of site, key word and some results that could steer your further search.</em>
+      </p>
+      <hr/>
+      <p>
+        Worth noting that <a href="RubyLanguage.html">RubyLanguage</a> has <a href="CallWithCurrentContinuation.html">CallWithCurrentContinuation</a> too, but it just named #callcc.
+        Ths usage is actually identical to <a href="SchemeLanguage.html">SchemeLanguage</a>: 
+      </p>
+      <code>
+        callcc do |cc| .<br/>
+        ..<br/>
+        end<br/>
+      </code>
+      <p>
+        (blocks are lambdas in ruby) 
+      </p>
+      <p>
+        <em>unfortunately, Ruby's callcc is currently incredibly slow, implemented via stack copying</em>
+      </p>
+      <p>
+        Also of interest: <a href="AmbInRuby.html">AmbInRuby</a>
+      </p>
+      <hr/>
+      <p>
+        Of course, not having actually sat down and hacked at this in a good Scheme implementation, I am struggling with this whole idea. I understand what a continuation is, I think, but not entirely why. But to address the what for a moment, it seems to me that continuations seem to imply a <a href="MetaObjectProtocol.html">MetaObjectProtocol</a>-like system-- I'd call it a <a href="MetaObjectProtocol.html">MetaObjectProtocol</a> personally, but others may have their own definitions. Anyway, it seems that they imply that in that they formalize the stack into objects that you deal with-- continuations-- rather than leaving the stack as an implementation detail that you aren't supposed to rely on, but that sufficiently-complex C programs will tend to take advantage of anyway. Is this a more or less apt comparison?
+      </p>
+      <p>
+        <em>Not really, although it isn't completely confused. The </em><a href="MetaObjectProtocol.html">MetaObjectProtocol</a> is not particularly related. The comments about stacks is an implementation issue through and through, and hence that is far too concrete, but probably captures some of the idea. Continuations are an abstraction of control flow, and can be used to implement any kind of control flow at all.<em></em>
+      </p>
+      <p>
+        <em>Objects in Simula 67 were somewhat like continuations (each was a thread) but not as general, most language objects are not much like continuations (since in general they do not have autonomous control; their methods are called synchronously and those methods run to completion; and they do not and cannot represent the existing control state, and if they did, would not be able to modify it).</em>
+      </p>
+      <p>
+        <em>Ponder "engines" in Scheme.</em>
+      </p>
+      <p>
+        <em>continuations don't formalize stacks -- that's already done by the semantic model that establishes what happens when you return from a function.  And on the contrary, continuations /prevent/ you from relying on a stack implementation, by violating the stack discipline.</em>
+      </p>
+      <hr/>
+      <p>
+        CALL/CC can also be seen as Peirce's law, which is a rule added in intuitionistic logic to make classical logic. But you can also make a "law of excluded middle" operator with continuation, which makes a function, that when called, goes back to where the function was made and becomes the value it was called with. (You can also define CALL/CC in terms of this operator, or vice-versa; just like you can in logic.)
+      </p>
+      <ul>
+        <li>
+           <a href="http://en.wikipedia.org/wiki/Peirce%27s_law">http://en.wikipedia.org/wiki/Peirce%27s_law</a>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        <a href="CategoryFunctionalProgramming.html">CategoryFunctionalProgramming</a> <a href="CategoryScheme.html">CategoryScheme</a> <a href="CategoryLanguageFeature.html">CategoryLanguageFeature</a> <a href="CategoryContinuation.html">CategoryContinuation</a>
+      </p>
+    </div>
+  </body>
+</html>

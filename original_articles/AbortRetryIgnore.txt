@@ -1,0 +1,122 @@
+This page mostly discusses ExceptionPatterns (a particular one) in the presence of ContinuationPassingStyle.  However, there are digressions.
+
+You may remember ye'old MS DOS where where failure to read a media device resulted in the exceedingly vague error message 'Abort, Retry, Ignore?' (Abort, Retry, Fail? in MS DOS 3.30 and above).  When a program encountered a read error, the programmer would receive this prompt; '''abort''' would quit the whole operation, '''retry''' would attempt to read the device again, and '''ignore''' would continue the operation using whatever garbled data it did manage to acquire (which, very often, would have only a few bad bytes).  Ignore's eventual replacement, 'Fail', will attempt to continue the operation without the data on the media.
+
+This was, essentially, an exception handling pattern with continuations: normal processing would stop, control would move to the programmer, and the programmer would choose how to continue the operation (based on very little data indeed).  The minimal data available to the user was a failing of this approach, but the basic idea is worth exploring: when an exception is thrown, it should offer paths to take for further processing.  This makes it much easier to handle exceptions meaningfully even when you don't know the exact context of its creation.
+
+Exception handling in 'state-of-the-art' programming languages like C++ and Java don't really allow for continuation passing exceptions (mostly because ContinuationPassingStyle isn't truly feasible in such languages).  In these languages, the available continuations are, essentially, '''continue''' (do whatever happens after the exception block), '''return''' (pass control back to whomever started the operation), and '''throw''' (throw another exception or re-throw the same one).  You possess no opportunity to simply continue the operation.  If you wish to continue the operation, you need to (a) know where the exception came from (so you know the context for the data), and (b) have enough information to rebuild that circumstance almost exactly.  Where programmers do wish to handle exceptions elegantly, this ''forces'' the programmers to code exception-handling very close to the site where the exception would be thrown, making the decision hard-coded into the operation, or face the burden of attempting to rebuild the circumstances of the operation (to the point it can be continued).
+
+'' How about we call it: Propagate, Redo, Continue?
+Propagate:  propagate exception
+Redo:  invoke continuation created BEFORE the error
+Continue:  invoke continuation to state AFTER the error (returning whatever garbled result that operation had, like NAN for ZeroDivisionErrors. ''
+
+''The first time I read about exceptions supporting this was here:''
+* http://portal.acm.org/citation.cfm?id=3318.3320&dl=GUIDE&dl=ACM&idx=J783&part=periodical&WantType=periodical&title=ACM%20Transactions%20on%20Programming%20Languages%20and%20Systems%20(TOPLAS) 
+* pdf: http://se.uwaterloo.ca/~dberry/FTP_SITE/reprints.journals.conferences/YeminiBerry1985Mechanism.pdf 
+''-- GunnarZarncke''
+
+That was quite thick, but it was a good article.  Thanks for recommending it.  It's good to see other people think it's a good idea, but I must admit to some curiosity that nothing like this has been seriously implemented in 20 years.
+
+''I'm not sure what claim is being made above, if any.''
+
+The fundamental claim is that modern exception handling styles (as you see in Java and C++) lack the necessary flexibility to gracefully recover from errors without tight code-coupling, and that another approach - one that harkens back to the days of MS DOS's infamous 'Abort, Retry, Ignore' - is both more general (in the literal sense - capable of doing everything the modern approach does plus some) and worthy of further exploration in fixing this 'problem' - one that I've found quite irritating in the occasions where it's prevented me from writing higher-level code.  If you can attest to a familiarity with, say, Java exception handling and ContinuationPassingStyle, I'll discuss it with you in greater detail.  I'm afraid I lack the patience to get you up to speed in the basics.  The article GZ provided is also worth a look (it says the same thing, says it better, and precedes my statement by two decades), but is rather thick.
+
+------
+
+'''Lisp had it first (yawn)'''
+
+As usual, Lisp already has a mechanism along this line - the CommonLispConditionSystem (condition + restart) mechanism - albeit not implemented with continuations. See: http://en.wikipedia.org/wiki/Exception_handling#Condition_systems
+
+But just because Lisp had it first doesn't mean other languages should go without! In this comment http://lambda-the-ultimate.org/node/1544#comment-44584 I explore what seems to be a very feasible solution regarding how to implement CommonLispConditionSystem/ResumableException/AbortRetryIgnore in C++/Java/C# family of languages. I seriously believe it can be done.
+
+----
+
+''The description of "fail" is not clear to me here. How does it differ from Abort? What does pressing Fail return to the program?''
+
+Your confusion is not uncommon... 'Abort, Retry, Fail' were usually presented to untrained users who had no context whatsoever by which to understand it.  
+
+Suppose you were reading a line from a file containing "Funky funky foobar", the media was corrupted, and your program came back with 'Abort, Retry, Fail, Ignore'.  Here are the results of the action:
+* Abort: quit the program immediately.
+* Retry: attempt to open the file again, read it again, and cross your fingers and hope it works this time.  If it doesn't, expect to see the prompt again.
+* Ignore: continue running the program with whatever was read from the file.  It might be corrupted.  E.g. line read might be: "Funky punky Poobear".  The corruption can sometimes be detected if the file contains a CRC, but isn't always fixable.  In any case, you're basically saying: "bad data?  oh well.  Just roll with it."
+* Fail: use nothing, which might (or might not) result in the program providing a reasonable default.
+
+If you were writing a file, 'Ignore' would ignore write-errors and 'Fail' would continue without writing to file.
+
+MS DOS 3.30 traded 'Fail' for 'Ignore', which some people considered a mistake (since often there'd only be a few bytes with errors when reading the file, and many files are rather insensitive to that sort of error.)  Nowadays, it's less a problem - media corruption is much rarer.
+
+--------
+
+(Adapted from MaskInterrupts)
+
+''That I''''''nterruptedExceptions don't have much in the way of useful data other than the traceback anyway.''
+
+Ah, I see...  I must admit the fact that exceptions are treated as excuses to carry backtraces has always pissed the heck out of me. Give me ''continuations'', not backtraces! Allow inspection on continuations if I need them for debugging! Allow me to resume behavior directly after an interrupt. Further, interrupt exceptions really could, perhaps should, carry more information including source, privilege/capability/authorization, and a message indicating purpose, such as timeout, alarm, kill signal, etc. 
+
+''In Java, both exceptions and interrupts are lower-level than what it sounds like you're wanting; the interrupt is merely a tool to allow another thread to reconsider what it's waiting on.  Nothing stops you from supplying data (like your purpose message) to the thread before you interrupt it; you just have to write the thread's code to know about the message and consult it when it wakes up.  Menawhile, it's certainly true that ResumableException''''''s would be nice, but where it's really important to have them you can introduce a state machine (perhaps within the CommandPattern) that remembers where the exceptions were thrown and then provide a retry() method that does the right thing without having to involve the client in the details of the resumption logic.''
+
+Yes, one can always Greenspun a solution with enough hacking, building a virtual machine within the virtual machine. Doing so sort of defeats the purpose of working in the host language, though, and usually hinders interoperability. Solutions need to be standard or idiomatic if they are to also be modular. Exceptions and interrupts ''could be'' higher level in Java with interrupts still serving the purpose you stated: allowing another thread to reconsider what it is doing. The ''fundamental purpose of exceptions'' is to allow programmers to separate error-handling policy from the code that identifies the error; use of ResumableException''''''s is one solution that makes doing so truly feasible, especially if multiple options for resumption with standard semantics (abort, retry, ignore, fail, return, etc.) are made available and can be wrapped and/or added to by intervening exception handlers. With modern Java-style exceptions a decider of error handling policy (who picks the path to take after an error) is often limited by not knowing how to accomplish it unless placed very close to the error itself, which in practice forces exception-handling to occur close to the exception, which requires integrating error-handling policy with the code itself, which ultimately defeats ''the fundamental purpose of exceptions''. Providing backtraces is pointless for this purpose.
+
+----
+
+CategoryException, CategoryContinuation
+
+See Also: ExceptionPatterns, ContinuationPassingStyle, YouDontWantAnExceptionYouWantaTransaction (for some examples), 
+
+WikiPedia "Abort, Retry, Fail?"  (http://en.wikipedia.org/wiki/Abort%2C_Retry%2C_Fail%3F)
+
+------
+
+'''Abort, Retry, Ignore?''' -- Anonymous
+
+ Once upon a midnight dreary, fingers cramped and vision bleary,
+ System manuals piled high and wasted paper on the floor,
+ Longing for the warmth of bed sheets, still I sat there doing spreadsheets.
+ Having reached the bottom line I took a floppy from the drawer,
+ I then invoked the SAVE command and waited for the disk to store,
+ Only this and nothing more.
+ 
+ Deep into the monitor peering, long I sat there wond'ring, fearing,
+ Doubting, while the disk kept churning, turning yet to churn some more.
+ But the silence was unbroken, and the stillness gave no token.
+ "Save!" I said, "You cursed mother! Save my data from before!"
+ One thing did the phosphors answer, only this and nothing more,
+ Just, "Abort, Retry, Ignore?"
+ 
+ Was this some occult illusion, some maniacal intrusion?
+ These were choices undesired, ones I'd never faced before.
+ Carefully I weighed the choices as the disk made impish noises.
+ The cursor flashed, insistent, waiting, baiting me to type some more.
+ Clearly I must press a key, choosing one and nothing more,
+ From "Abort, Retry, Ignore?"
+ 
+ With fingers pale and trembling, slowly toward the keyboard bending,
+ Longing for a happy ending, hoping all would be restored,
+ Praying for some guarantee, timidly, I pressed a key.
+ But on the screen there still persisted words appearing as before.
+ Ghastly grim they blinked and taunted, haunted, as my patience wore,
+ Saying "Abort, Retry, Ignore?"
+ 
+ I tried to catch the chips off guard, and pressed again, but twice as hard.
+ I pleaded with the cursed machine: I begged and cried and then I swore.
+ Now in mighty desperation, trying random combinations,
+ Still there came the incantation, just as senseless as before.
+ Cursor blinking, angrily winking, blinking nonsense as before.
+ Reading, "Abort, Retry, Ignore?"
+ 
+ There I sat, distraught, exhausted, by my own machine accosted.
+ Getting up I turned away and paced across the office floor.
+ And then I saw a dreadful sight: a lightning bolt cut through the night.
+ A gasp of horror overtook me, shook me to my very core.
+ The lightning zapped my previous data, lost and gone forevermore.
+ Not even, "Abort, Retry, Ignore?"
+ 
+ To this day I do not know the place to which lost data go.
+ What demonic nether world us wrought where lost data will be stored,
+ Beyond the reach of mortal souls, beyond the ether, into black holes?
+ But sure as there's C, Pascal, Lotus, Ashton-Tate and more,
+ You will one day be left to wander, lost on some Plutonian shore,
+ Pleading, "Abort, Retry, Ignore?"
+----
+'' whoever wrote that just made my day. that was awesome.'' --EvanSizemore

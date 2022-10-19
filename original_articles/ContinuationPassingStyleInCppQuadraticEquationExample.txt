@@ -1,0 +1,258 @@
+One of the inspirations for ContinuationPassingStyleInCeePlusPlus was some work in HaskellLanguage referred to on ContinuationPassingStyle. On one of the Haskell pages at http://haskell.org/hawiki/ContinuationPassingStyle there is an example of solution of a quadratic equation.
+
+Here is a solution of that problem using FunctoidsInCpp.
+
+ void  zero_roots( )
+ {
+  std::cout << "zero roots" << std::endl;
+ }
+ void one_root(double a, double b)
+ {
+  double x = -b/(2*a);
+  std::cout << "one root " << x << std::endl;
+ }
+ double sign(double b)
+ {
+  if (b < 0.) return -1.;
+  else return +1.;
+  }
+ void two_roots(double a, double b, double c, double disc)
+ {
+  double t = -b - sign(b)*sqrt(disc);
+  double x1 = t/(2*a);
+  double x2 = (2*c)/t;
+  std::cout << "two roots " << x1 << " and " << x2 <<  std::endl;
+ }
+ void output_quad(double a, double b, double c)
+ {
+  std::cout << a << " " << b << " " << c << " : " ;
+ }
+ void solve_quad (double a, double b, double c)
+ {
+  // Make these functoids taking the addresses of the functions above
+  // so that they can be assigned.
+  // Each will be bound to its arguments so that the common functoid here 
+  // is a Fun0<void>.
+  Fun0<void> zero = ptr_to_fun(&zero_roots);  
+  Fun2<double,double,void> one = ptr_to_fun(&one_root);
+  Fun4<double,double,double,double,void> two = ptr_to_fun(&two_roots);
+  Fun3<double,double,double,void> output_abc = ptr_to_fun(&output_quad);
+  // These are variables which can be assigned.
+  Fun0<void> choice;
+  Fun0<void> resultf;
+  Fun0<void> output;
+  double disc = b*b - 4*a*c;
+  if (disc < 0 ) choice = zero;
+  else if (disc == 0) choice = curry2(one,a,b);
+  else choice = curry4(two,a,b,c,disc);
+  output = curry3(output_abc,a,b,c);
+  resultf = before(output,choice);
+  // resultf could be a return value as a functoid for further processing,
+  // or passed to a continuation call.
+  resultf();
+ }
+
+This shows alternative choices of output by choosing different functoids. -- JohnFletcher
+
+''John... as a didactic example derived (explicitly) from the Haskell solution, it'd be far clearer if you specified handlers for the resulting solution rather than handlers that must -compute- the resulting solution.  I.e. '''one(x)''' instead of '''one(a,b)'''.  It certainly wouldn't hurt if you also used all the same output strings as the Haskell example, either.''
+
+   // '''Weak CPS'''
+   void solve_quad(Fun0<void>& onZeroRoots, Fun1<double,void>& onOneRoot, Fun2<double,double,void>& onTwoRoots,
+                   double a, double b, double c);
+   struct cps_quad_test {
+      struct norun_t{};
+      cps_quad_test(){main();}
+      cps_quad_test(const norun_t&){}
+
+      static void fn_zero_sln() { std::cout << "No Solutions."; }
+      static void fn_one_sln(double r) { std::cout << "One Solution: " << r;}
+      static void fn_two_sln(double r1, double r2) { std::cout << "Two Solutions: " << r1 << ", " << r2; }
+      void main() {
+         Fun0<void>               onZeroSln = ptr_to_fun(&fn_zero_sln);
+         Fun1<double,void>        onOneSln  = ptr_to_fun(&fn_one_sln);
+         Fun2<double,double,void> onTwoSln  = ptr_to_fun(&fn_two_sln); 
+         solve_quad(onZeroSln,onOneSln,onTwoSln,1,4,2);
+         solve_quad(onZeroSln,onOneSln,onTwoSln,1,6,3);
+      }
+   };
+   #ifdef RUN_TESTS
+      static cps_quad_test theCpsQuadTest;
+   #endif
+
+   void output_quad(double a, double b, double c) { std::cout << a << " " << b << " " << c << " : " ;}
+   void solve_quad(Fun0<void>& onZeroRoots, Fun1<double,void>& onOneRoot, Fun2<double,double,void>& onTwoRoots,
+                   double a, double b, double c)
+   {
+      double d = b*b - 4*a*c;
+      output_quad(a,b,c);
+      if(d < 0)       return onZeroRoots();        // proceed with zero roots
+      else if(d == 0) return onOneRoot(-b/(2*a));  // proceed with one root
+      else {
+         double t = -b - sign(b)*sqrt(d);
+         double r1 = t/(2*a);
+         double r2 = (2*c)/t;
+         return onTwoRoots(r1,r2);
+      }       
+   }
+
+''Of course, this runs into that issue I was discussing with you on other pages... the '''return onTwoRoots(r1,r2)''' et al.  In true CPS, they might NEVER return because they'd contain the -rest of the program-, so this whole stack frame would be sitting around forever... or until the program terminates.  And you can expect that for a long program, this would happen a lot.  However, it is possible to simulate Tail Recursion:''
+
+   // '''Better CPS'''
+   Fun0<void> solve_quad_md(Fun0<void>& onZeroRoots, 
+                            Fun1<double,void>& onOneRoot, 
+                            Fun2<double,double,void>& onTwoRoots,
+                            double a, double b, double c);
+   struct cps_md_quad_test {
+      struct norun_t{};
+      cps_md_quad_test(){main();}
+      cps_md_quad_test(const norun_t&){}
+
+      static void fn_zero_sln() { std::cout << "No Solutions."; }
+      static void fn_one_sln(double r) { std::cout << "One Solution: " << r;}
+      static void fn_two_sln(double r1, double r2) { std::cout << "Two Solutions: " << r1 << ", " << r2; }
+      void main() {
+         Fun0<void>               onZeroSln = ptr_to_fun(&fn_zero_sln);
+         Fun1<double,void>        onOneSln  = ptr_to_fun(&fn_one_sln);
+         Fun2<double,double,void> onTwoSln  = ptr_to_fun(&fn_two_sln); 
+         Fun0<void> s1 = solve_quad(onZeroSln,onOneSln,onTwoSln,1,4,2);
+         Fun0<void> s2 = solve_quad(onZeroSln,onOneSln,onTwoSln,1,6,3);
+         return before(s1,s2)();
+      }
+   };
+   #ifdef RUN_TESTS
+      static cps_md_quad_test theMdCpsTest;
+   #endif
+
+   void output_quad(double a, double b, double c) { std::cout << a << " " << b << " " << c << " : " ;}
+   Fun0<void> solve_quad(Fun0<void>& onZeroRoots, Fun1<double,void>& onOneRoot, Fun2<double,double,void>& onTwoRoots,
+                   double a, double b, double c)
+   {
+      Fun0<void> print_header = curry3(ptr_to_fn(&output_quad),a,b,c);
+      Fun0<void> print_body;
+      double d = b*b - 4*a*c;
+      if(d < 0)       print_body = onZeroRoots;         // proceed with zero roots
+      else if(d == 0) print_body = curry1(onOneRoot,-b/(2*a));  // proceed with one root
+      else {
+         double t = -b - sign(b)*sqrt(d);
+         double r1 = t/(2*a);
+         double r2 = (2*c)/t;
+         print_body = curry2(onTwoRoots,r1,r2);
+      }
+      return before(print_header,print_body);
+   }
+
+''This simulation of TailRecursion comes with a major caveat: the 'curry' operations MUST perform copy-construction of the values it is passed as opposed to copying a reference to them.  Otherwise the values referenced will be destroyed prior to use.''
+
+The '''curry''' objects are all wrappers around a binder - see ContinuationPassingStyleInCeePlusPlus for an example. I think this meets your requirement.
+
+''Extending this a bit further, into full monadic/CPS style, is what essentially allows one to compile a DomainSpecificLanguage into CPS in C++ without breaking the stack on inner calls.  For example, the '''before''' call, above, makes the stack a level deeper for each step in the program (e.g. with '''before(X,before(Y,Z))()''') despite the fact that most of those stack frames would go unused.  This effectively would prevent the application from growing arbitrarily long (though it'd still be usable to some very reasonably large sizes... it still takes a long program to blow the main C++ stack).  An alternative is to use a procedure that returns a procedure; this allows simulation of TailRecursion because the stack frame is dropped prior to program execution continuing based on what was calculated in that frame.  This, in practice, requires the fixpoint '''\\u.Fun0<u>''' (the '''\\''' syntax for fixpoint is used in MyFavoriteLanguage).  This matches the effective signature of: '''Fun0<Fun0<Fun0<Fun0<Fun0<...>>>>>'''.''
+
+   // '''Practical CPS for C++'''
+   //   given the limits of the C++ calling convention, some optimizations must 
+   //   be performed by hand.
+   
+   // C++ Continuations 
+   //   To allow for effective TailRecursion, a Continuation executes (in its stack frame) 
+   //   only one step in a program, then returns the continuation (the rest of the program).  
+   //   This allows very easy simulation of Tail Recursion where possible.  It is essentially 
+   //   monadic.  However, to be speedy, the Fun0 copy constructor would need to be very fast... 
+   //   likely using copy-on-write semantics with reference counting or garbage-collection 
+   //   for heap-allocated innards.
+   class Terminate{};   // thrown by programs that are finished.
+   class Continuation : public Fun0<Continuation> {
+      typedef Fun0<Continuation> base;
+   public:
+      Continuation(const Continuation& c) : base(c) {}
+      Continuation(const Fun0<Continuation>& c) : base(c) {}  // execute, return continuation
+
+        // The following sets Continuation to a program that ignores
+        // the return value T then promptly throws Terminate().
+      template<typename T> Continuation(const Fun0<T>& c);  
+   };
+   inline Continuation fn_terminate(void) {throw Terminate();}
+   inline Fun0<Continuation> do_terminate() {return ptr_to_fun(&fn_terminate);}
+
+   // Sequencer: Builds program that runs one program, then runs another...
+   Fun0<Continuation> build_sequence(const Continuation& first, const Continuation& rest);
+   // description 
+   //   implementation not detailed here because I don't know the constructors for Fun0
+   //    try { // execute first (one step)
+   //       Continuation rest_of_first = first(); 
+   //       return build_sequencer(rest_of_first,rest);
+   //    } catch(Terminate&) {}  // first is done
+   //    return rest;
+
+   // Could also add parallelizers, etc.
+
+   // Full Program Execution:
+   inline void execute(const Continuation& c) {
+      Continuation prog = c;
+      try {while(1){prog = prog();}}
+      catch(Terminate& t) {}  // all done!
+   }
+
+   // ...Call solve_quad_cps with current continuation...
+   // NOTE: the explicit 'current_continuation' SHOULD be merged into HOF return 
+   //   values from onZeroRoots, onOneRoot, on TwoRoots... and might not even
+   //   be the same for each (e.g. three fully different rest-of-program paths
+   //   based on number of roots).  For the moment, though, that hasn't been done 
+   //   because I've never looked up the structure or constructors for FC++ 'Fun' 
+   //   types.
+   Continuation solve_quad_cps(
+                            const Continuation&             current_continuation; 
+                            const Fun0<void>&               onZeroRoots, 
+                            const Fun1<double,void>&        onOneRoot, 
+                            const Fun2<double,double,void>& onTwoRoots,
+                            double a, double b, double c);
+   struct full_cps_quad_test {
+      struct norun_t{};
+      full_cps_quad_test(){main();}
+      full_cps_quad_test(const norun_t&){}
+      static void fn_zero_sln() { std::cout << "No Solutions."; }
+      static void fn_one_sln(double r) { std::cout << "One Solution: " << r;}
+      static void fn_two_sln(double r1, double r2) { std::cout << "Two Solutions: " << r1 << ", " << r2; }
+      void main() {
+         Fun0<void>               onZeroSln = ptr_to_fun(&fn_zero_sln);
+         Fun1<double,void>        onOneSln  = ptr_to_fun(&fn_one_sln);
+         Fun2<double,double,void> onTwoSln  = ptr_to_fun(&fn_two_sln);
+         Continuation program        = solve_quad(do_terminate(),onZeroSln,onOneSln,onTwoSln,1,4,2);
+         Continuation bigger_program = solve_quad(program,onZeroSln,onOneSln,onTwoSln,1,6,3); 
+         execute(bigger_program);
+      }
+   };
+   #ifdef RUN_TESTS
+      static full_cps_quad_test theFullCpsTest;
+   #endif
+
+   void output_quad(double a, double b, double c) { std::cout << a << " " << b << " " << c << " : " ;}
+   Continuation solve_quad(const Continuation& current_continuation,
+                   const Fun0<void>& onZeroRoots, const Fun1<double,void>& onOneRoot, const Fun2<double,double,void>& onTwoRoots,
+                   double a, double b, double c)
+   {
+      Fun0<void> print_header = curry3(ptr_to_fn(&output_quad),a,b,c);
+      Fun0<void> print_body;
+      double d = b*b - 4*a*c;
+      if(d < 0)       print_body = onZeroRoots;         // proceed with zero roots
+      else if(d == 0) print_body = curry1(onOneRoot,-b/(2*a));  // proceed with one root
+      else {
+         double t = -b - sign(b)*sqrt(d);
+         double r1 = t/(2*a);
+         double r2 = (2*c)/t;
+         print_body = curry2(onTwoRoots,r1,r2);
+      }
+      return build_sequence(Fun0<void>(before(print_header,print_body)),current_continuation);
+   }
+
+''Better yet would be to provide C++ Continuations that accept parameters, and possibly return parameters.  This is more difficult for C++ directly, given the need to explicitly optimize the CPS to avoid blowing the stack (as seen in the examples above).  It is most easily done by sharing references to heap values and objects between continuations, and collecting those when they are no longer necessary.  It is also easily done if there is a common type for every input value (e.g. 'World').  It is possible to handle BOTH the necessary optimization AND the return values by returning a pair or tuple that contains both the program description AND any return values.  This would make '''callcc''' more meaningful and usable in the C++ environment.''  
+
+Wow that is amazing. I have the first two running by adding the headers for FC++. At present I have a few compiler errors with the last one. It just shows that two minds work better than one. Thank you for the creativity. -- JohnFletcher
+
+''Eh?  I didn't actually run any of that through a compiler since I don't have any of the FC++ library headers.  I just typed 'em up on this page in my browser.  Anyhow, it seems these are problems with non-const temporaries by reference (not entirely standard), so changing the inputs to solve_quad to 'const T&' should fix them.  It also seems I need to explicitly construct a Fun0 from the Full0.  I've made the changes above, so you can give it another try.''
+
+Thanks for that, I knew that you could not be running it unless you had gone to get the FC++ headers, and the version I am using is not yet in the public domain. The changes sort out that level of problem but leave some errors which are all coming from the call to '''build_sequence'''. It looks as though the problem is that I need to put together a body for '''build_sequence'''.
+
+Thank you again for all this, which is a great help to me in developing these ideas. To move things forward as to what is possible I have put together this FunctoidsInCppExperiment. -- JohnFletcher
+----
+JuneZeroSeven
+
+CategoryCpp CategoryFunctionalProgramming CategoryCodingConventions CategoryContinuation

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Hmac User Authentication
+      </h1>
+      <p>
+        HMAC, or Hash Message Authentication Code, provides an easy mechanism for verifying both user authenticity and that a message hasn't been tampered with, without the overhead of encrypting the data... and, indeed, without much more overhead than a secure hash.  Do note that HMAC doesn't offer <em>privacy</em>.
+      </p>
+      <p>
+        The basic idea of HMAC is that, for any secure cryptographic hash H: H(APPEND(KEY,MESSAGE)) will be extremely difficult to create without the key.  So, by delivering APPEND(MESSAGE,H(APPEND(KEY,MESSAGE)), someone with the key on the other end can both verify the message contents (that nothing has been altered) AND verify that the message was created by someone with the same key.  
+      </p>
+      <p>
+        The actual HMAC algorithm is only slightly more complicated, performing a hash twice in order to resist some forms of cryptographic analysis.  It is:  
+      </p>
+      <p>
+        <strong>HMAC Algorithm</strong> (<a href="http://en.wikipedia.org/wiki/HMAC)">http://en.wikipedia.org/wiki/HMAC)</a>
+      </p>
+      <code>
+        <strong>HMAC(H,KEY,MESSAGE) = </strong><br/>
+        let PKEY = PAD(KEY) with ZEROES to BLOCKSIZE(H)<br/>
+        IPAD = VECTOR(0x5c, BLOCKSIZE(H)) XOR PKEY<br/>
+        OPAD = VECTOR(0x36, BLOCKSIZE(H)) XOR PKEY<br/>
+        in H(APPEND(OPAD,H(APPEND(IPAD,MESSAGE))))<br/>
+      </code>
+      <p>
+        And the delivered result is APPEND(MESSAGE,HMAC(H,KEY,MESSAGE)).  Note that 'H', in practice, is most often SHA1 or MD5, and BLOCKSIZE(H) is the obvious (64 bytes for MD5 or SHA1).  
+      </p>
+      <p>
+        Use of HMAC by itself doesn't prevent <strong>replay</strong> attacks.  To prevent replay attacks, a unique message-identifier must be part of each message.  One can do this in the typical fashion by having the server create a unique (nonce) server-session-ID and having the client create a unique (nonce) client-session-ID (or more than one) and then having the client number its delivered messages.  The server can allow the client to open any number of sessions under the server-session-ID (the ability to open more than one is very convenient for client scripts across multiple browser frames) and simply tracks the last message send by each one, ensuring that it is not identical to any previously received message id (usually by requiring increments and ensuring a greater-than relationship, possibly with some small buffer to allow for for delayed messages).
+      </p>
+      <hr/>
+      <p>
+        <strong>HMAC Sessions Example</strong>
+      </p>
+      <p>
+        HMAC starts by assuming secret shared keys are already held.  This could be a plaintext password, but I'll assume that the server is storing something like a table:  PASSWORDS(USERNAME,REALM,PASSHASH,SALT).   The USERNAME is unique.  Other data, such as e-mail and whether a password reset is required could also be denormalized into this table, but such isn't required.
+      </p>
+      <p>
+        The use of 'SALT' protects against dictionary attacks on the password file.  One could use a pseudorandom string as 'SALT', or could use something like a URI for an image (e.g. a particular smiley face from smiley central).  Or it could be a combination of the two (e.g. <img uri="smiley.gif" alt="salt=qxZz3y9"/>).  There is no <em>real</em> security advantage in using an image URI to a random string (since it is vulnerable to Man in the Middle attacks), but the ability to present the image to the user is a nice flavor touch and does raise the bar just slightly for potential spoofers.  (Bank of America uses something similar, called a 'SiteKey', that offers no protection whatsoever but does offer a fine illusion of protection.)  The use of SALT does have a cost, in that the server must be the first to provide authentication information (since the client isn't going to remember the SALT), but, as will be seen, that suits my purposes just fine, because in this example <em>the server is authenticated first</em>.
+      </p>
+      <p>
+        The 'PASSHASH' is a secure, cryptographic hash, created by a very predictable formula... such as:  SHA1(USERNAME + "@" + REALM + ":" plaintext password + ":" + SALT)... or even HMAC(SHA1,plaintext password,(USERNAME + "@" + REALM + ":" + SALT)).  Keeping passwords hashed in this manner is also protection against abusers of the PASSWORDS table itself, since it keeps them from seeing the password.  Assume secure user creation, e.g. via a fully encrypted connection like SSL, possibly with validation of user through paypal or a credit-card service.  This gets the PASSHASH into the remote database in a secure manner.  Technically, the plaintext password never needs to leave the client machine.
+      </p>
+      <p>
+        Anyhow, since the server only knows 'PASSHASH', 'PASSHASH' will be the secret key between the client and the server.  PASSHASH must never be delivered across the network in unencrypted form, but CAN be used to encrypt and decrypt small random blobs (e.g. a session key).
+      </p>
+      <p>
+        <strong>The Full Web Login Process:</strong>
+      </p>
+      <ul>
+        <li>
+           Starting Conditions:
+          <ul>
+            <li>
+               <strong>Client</strong> is browsing pages in non-authenticated mode.  A small form allows name entry.  Javascript will take over if stuff is entered into that form. Hopefully, form should be designed such that browser can remember username and password if client desires it.
+            </li>
+            <li>
+               <strong>Server</strong> is serving pages in non-authenticated mode, offering a small login option on each page
+            </li>
+          </ul>
+        </li>
+        <li>
+           <strong>Client</strong> sends a Authentication Request identifying only USERNAME (or some analog, like email address) and REALM.  Password is not sent, even if client already has entered it.
+        </li>
+        <li>
+           <strong>Server</strong> sends back: <strong>let</strong> MESSAGE = (USERNAME,REALM,SALT,SESSIONID,ENCRYPTED_SESSION_KEY) <strong>in</strong> auth:(MESSAGE,HMAC(SHA1,PASSHASH,MESSAGE)).  If an analog <a href="UserName.html">UserName</a> was used, the server sends back the primary <a href="UserName.html">UserName</a> (the one used as part of the passhash).  If <a href="UserName.html">UserName</a> is not known, the Server will send back an alternative message relaying the client to the registration page.
+        </li>
+        <li>
+           <strong>Client</strong> parses this message, possibly displays any image or messages drawn in the salt, and asks for or checks the user's password.  
+        </li>
+        <li>
+           User can start entry of password at any time .  <a href="JavaScript.html">JavaScript</a> can perform SHA1(USERNAME + "@" + REALM + ":" + password + ":" SALT) (or HMAC(SHA1,password,USERNAME+"@"+REALM+":"+SALT)) and inform the user (visually) of a successful match.  Note that no information is delivered back to the server at this point.
+          <ul>
+            <li>
+               For the real nerds, this can involve a rolling hash comparison between the one provided by the server (the HMAC) and the one being produced by the password.  I know I'd love it, and it would help teach newbies some of the security basics in a non-invasive manner.  ;-)
+            </li>
+          </ul>
+        </li>
+        <li>
+           The user succeeds (if they know the password for the Username they provided).  At this point, the client has authenticated the server, since only the server knows the user's secret key.  If the rolling hash is used, even users may feel comfortable with it.   
+        </li>
+        <li>
+           SESSION_KEY is decrypted using (SHA1(APPEND(PASSHASH,SESSIONID)) XOR ENCRYPTED_SESSION_KEY) or some other simple but unguessable encryption.  And at this point, the <a href="JavaScript.html">JavaScript</a> has all it needs for authenticating communications:  a SESSIONID, a SESSIONKEY.   The password can and should be dismissed from memory immediately, so as to resist inspection by future users of the browser (on public machines), and replaced with the session key.  From this point on, one uses HMAC(SHA1,SESSIONKEY,MESSAGE) and has MESSAGE contain SESSIONID, a CLIENT SESSION ID, and a MESSAGE NUMBER.
+        </li>
+        <li>
+           If possible, store the decrypted SESSIONKEY in some sort of client-side 'state' that crosses browser frames, but that is NOT delivered remotely (i.e. some sort of <a href="JavaScript.html">JavaScript</a>-only cookie).  This would allow the user to open multiple frames to different pages on the same site and have each of them initiate a client session without reentry of password.  HOWEVER, If this isn't easily done, simply store a cookie with USERNAME,REALM,SALT and allow the client to create multiple sessions using the fast login process.  It is critical that neither PASSHASH nor SESSIONKEY ever leave the browser's little sandbox, so one should note that other websites shouldn't be able to peak at the state-item in which it is stored.
+        </li>
+      </ul>
+      <p>
+        <strong>Fast Login Process:</strong>
+      </p>
+      <ul>
+        <li>
+           A long-term cookie can be placed for the <a href="UserName.html">UserName</a>.  If one of these is received, the server sends back header information offering a new session ID and providing the salt.  As a consequence, the Client starts browsing the page and already has the salt and sessionID and encrypted session key, and just needs to decrypt the session key with his or her own PASSHASH to start operating in authenticated mode immediately (as above).
+        </li>
+      </ul>
+      <p>
+        The Advantages:
+      </p>
+      <ul>
+        <li>
+           Client authenticates Server first.  
+          <ul>
+            <li>
+               (optional) sweet little rolling hash & image 'salt' (no extra security, but pretty)
+            </li>
+            <li>
+               (optional) zero-extra-message 'fast' login using cookie (at cost of some overhead)
+            </li>
+          </ul>
+        </li>
+        <li>
+           Validates message contents between both client and server.  For security purposes, especially for POST, this is critical... and Message Digest authentication doesn't do this.
+        </li>
+        <li>
+           Resists Man in the Middle attacks due to authentication of server.  This is also someplace Message Digest fails, since it allows a Man in the Middle to tell the client to use basic authentication.
+        </li>
+        <li>
+           Resists Replay attacks, due to session IDs and message IDs in messages (which could easily be placed in the headers)
+        </li>
+        <li>
+           Tiny handshake: if you count visiting the website as two messages (a get + response), those could be the only two messages necessary in the fast login process to both authenticate the server and the user.  The user doesn't need to do anything with his or her authentication until choosing to operate with user capabilities rather than anon capabilities.  If there is no cookie, there are an extra two messages to send the <a href="UserName.html">UserName</a> and (possibly implicit) Realm, but this can easily be peformed by a tiny AJAX send/request without any form of page refresh.  This should be <em>very</em> snappy.
+        </li>
+        <li>
+           No need to encrypt whole sessions - more amenable to debugging, and doesn't cost anything where action results are public anyway, but where users must be wholly responsible for their own actions (e.g. in a <a href="WikiIde.html">WikiIde</a>).
+        </li>
+      </ul>
+      <p>
+        The Disadvantages:
+      </p>
+      <ul>
+        <li>
+           Straightforward (albeit still computationally expensive) to do brute-force attacks on passwords of individuals.  Now, these ARE allowed under normal conditions, but they are generally impractical over a network, and can be blocked most of the time by simply putting in a 5 second delay between password attempts for any particular user.  The best resistance to brute-force attack is, of course, to suggest a certain password 'strength' as measured by some javascript-embeddable heuristic or other. 
+        </li>
+        <li>
+           Using javascript entry for passwords is a vector for attack - a cloned site could still use AJAX to send your password and username back to them even if they can't authenticate.  Unfortunately, there isn't much one can do about that... except for use full SSL for the <a href="JavaScript.html">JavaScript</a> login process (which might not be a bad idea even if one still intends to use the HMAC for post-login operations).
+        </li>
+        <li>
+           No privacy.  If you need privacy, you need full encryption: use SSL.  <a href="HmacUserAuthentication.html">HmacUserAuthentication</a> is for security of service provision, not privacy.
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        <a href="CategorySecurity.html">CategorySecurity</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,106 @@
+Attempts to answer by example the question: DoWeWantLispMacros. Where Lisp == Scheme. 
+----
+Look, more incomprehensible examples...  it would be nice if these were explained for people not familiar with the languages. 
+----
+'''A Scheme programmer demonstrates what can be done without  macros'''
+
+Can't you do quite a bit in Scheme without macros? I find lambda expressions to be quite enough. Consider this non-macro:
+
+ (define for (lambda (start end func)
+        (let loop ((index start))
+        (if (> index end) #t
+         (begin (func index) (loop (+ index 1))) ))))
+
+ (for 1 10 (lambda (x) (display x) (newline)))
+
+''This one is even more fun:''
+
+ (define cafor (lambda (start end func) ; conditional accumulating FOR
+        (let* (
+         (a-list (cons 'dummy '()))
+         (a-end a-list)
+         (add (lambda (x)
+                (set-cdr! a-end (cons x '()))
+                (set! a-end (cdr a-end))
+                #t)))
+        (for start end (lambda (x) (func x add)))
+        (cdr a-list))))
+
+  (cafor 1 10 (lambda (x add) (if (odd? x) (add x))))
+        => (1 3 5 7 9)
+
+[Hey! Somebody changed my formatting! -- EdwardKiser]
+
+It makes me wonder what macros are good for in Scheme. Someone offers this example, a  for loop written as a macro.  What's interesting about this is that is accumulates state in a functional manner (no set!) and it binds the counter and state in the environment of the body.
+
+  ;; (for-times (counter iterations) (state initial-value) . body)
+  ;;
+  ;; Execute body a number of times equal to iterations. counter and
+  ;; state are bound locally to the current iteration and the value
+  ;; returned by the previous iteration respectively.  Counter starts
+  ;; at zero and increments to 1 less than iterations.  State starts
+  ;; at initial-value and afterwards is the value returned by body
+  (define-macro for-times
+        (lambda (iterate state . body)
+        (let ((iterator (first iterate))
+                (iterations (second iterate))
+                (name (first state))
+                (value (second state)))
+        `(let loop ((,iterator 0)
+                        (,name ,value))
+                (if (< ,iterator ,iterations)
+                (loop (+ ,iterator 1) (begin ,@body))
+                ,name)))))
+
+'''Some other Scheme programmers respond:'''
+Mostly for avoiding having to write lambda explicitly.  (Which is a good reason - ease of programming is important)
+
+Or for implementing let and let*, which can easily be macros over lambda...
+
+Or for writing your own non-strict forms, Scheme being a strict language. 
+
+Or for just tinkering with the language to please yourself. 
+
+----
+'''An example of language tinkering'''
+
+I'm a big fan of block structure, but I detest the way  the default let family of forms results in programs that seem, to me, upside down and inside out. So I have macros that let me say things like
+ (value-of expression with (name-1 binding-1) (name-2 binding-2))
+rather than
+ (let ((name-1 binding-1)(name-2 binding-2)) expression)
+with-each and with-all serve me for let* and letrec.
+
+The beauty of doing this with macros is that it can be done transparently to codewalkers (that is, to program-handling programs), which simply expand the forms before traversing them.
+----
+For the first time, I found a good reason for a macro. It's like this. Suppose the following functions exist:
+
+  (make-rule <pattern> <proc>) => <rule>
+  (make-parser <rule> ...) => <parser>
+  (parse <parser> <input>) => <output>
+
+Now, '''<proc>''' is a procedure you create with '''lambda''', like this:
+
+  (lambda (stuff-from-parser) ...)
+
+But '''make-parser''' is really catastrophically slow.
+
+The big question is how you make a parameterized parsing function. Like this. You can write:
+
+  (make-my-proc <my-params>) => <proc>
+
+This is probably something like:
+
+  (define make-my-proc (lambda (my-params) (lambda (stuff-from-parser) ...)))
+
+So you can also do something like this:
+
+  (define make-my-parser (lambda (my-params)
+      (make-parser
+        (make-rule <pattern> (make-my-proc my-params))
+        <more-rules-that-never-change>)))
+
+The problem is, the rules do not vary with the params, so '''make-parser''' is generating exactly the same parser tables every time you call it, and wasting a lot of time doing it. The only difference between the parsers is that the action procedures are bound to different variables.
+
+Now suppose '''make-parser''' were a macro which generated the parsing tables on expansion. Then it would generate the tables only ''once,'' no matter how many '''lambda'''s surrounded it. That would speed up '''make-my-parser''' enormously. That is a useful feature of macros.
+
+The bad thing about the macro would be that you could not write functions that made parsers whose rules varied according to the functions' parameters. Those are cases where you ''want'' to make the parser every time you call the function, because the generated parsers would be different. However, you can still leave the function available for those cases.

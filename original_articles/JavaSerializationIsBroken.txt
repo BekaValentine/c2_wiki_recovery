@@ -1,0 +1,81 @@
+The JVM stack may overflow when serializing as few as 1000 objects ''(that implement Serializable rather poorly)''. 
+
+----
+
+Besides serialization should raise exception '''only''' when there's an underlying I/O error, or when it meets a non-transient and non-serializable object in the object graph, or when a custom serialization method throws an exception. Exceptions and JVM crashes due to the poor implementation don't count as specified behaviour.  
+
+''StackOverflow and OutOfMemory and simliar Errors can occur at any time.   That's the nature of Error.  Learn to live with it.''
+
+StackOverflow is in 99.999% of the cases simply a manifestation of bad programming.  Such is the case here. 
+
+----
+
+''The problem is that I've used Java serialization to save and restore thousands of objects at a time, so it's clear that it isn't always broken. Can you describe the conditions that cause serialization to fail as you describe?''
+
+The problems appear when serializing deep object graphs; See JavaSerializationAndTheStack.
+
+----
+
+I've made extensive use of Java serialization and I don't consider it to be "broken".  Yes, one must be careful about class versioning.  By and large, however, most changes to a class' structure won't break the serializer or the deserializer. The most common situation I run into is the removal of a private or public field.  There is a way around this limitation, however, and it doesn't require too much effort.
+
+First, we should all be accessing the internal bits of our objects through public accessors and mutators.  Since you're doing this (you are right?) then, instead of creating a bunch of private fields to represent the objects internal state, create one and make it a HashMap.  I think it's fair to say that Sun will not be changing the internal makeup of HashMap any time in the near future, if ever.  You can now add and remove "virtual" fields at whim and it won't affect serialization one bit.
+
+I find this approach quite flexible.  For those of you that would argue the class is somehow now more complex or that the interface isn't accurate I'd reply: the private bits of a class shouldn't be public knowledge in the first place.  This is the whole point behind the accessor/mutator idiom:  Outside users of your interface shouldn't care that you're storing internal state in a HashMap or fields.
+
+I've also used this idiom in the .NET world extensively and it works very well.  Further, in C# and VB.Net one can expose public properties that access/mutate the private Hashtable, which -- depending on your point of view -- can be a nice thing or a bad thing.
+
+Java (or .NET, for that matter) serialization is not broken. -- JeffPanici
+
+''So how do you know that ? What is your idea of not being broken ? Have you looked at the actual code from Sun ?''
+
+I know this through observation.  My idea of "not being broken" is that it does what I want, in most cases.  I will grant that Java's serialization mechanism isn't the hottest in the industry and .NET's isn't much better but it's what I have to work with.  I can't seem to convince my customers to use Smalltalk so I make do with Java and C#.  And yes, I have seen the code from Sun.  You can look too, if you like, as it ships with the JDK in a JAR.  You can also look at the absolutely horrible way they handle the Serializable interface in their VM.  If you want nightmares, read the C code. This still doesn't change the fact that it works in most cases. -- JeffPanici
+
+----
+
+Java serialization breaks when the JDK changes a serializable class (like AbstractListModel) without fixing the version number.  I had it happen today in code that was using ThePrevayler. -- EricHodges
+
+Sun has explicitly said that serialized Swing classes will not work between different versions. You'll have to work around that by not serializing the GUI of your app. It's unclear why they chose this path for Swing, while the rest of their APIs have forward-compatible serialization.
+
+''But A''''''bstractL''''''istModel isn't the GUI, it's the model.''
+
+Depends on how tightly your business logic interacts with Swing. I wouldn't want my business objects to inherit A''''''bstractL''''''istModel. But, yeah, Sun is causing lots of needless trouble with this.
+
+The models '''are''' part of the GUI. There is no model without a view.
+
+''Sure there are.  The dependency is from J''''''List to L''''''istModel.  You can create ListModel implementations without any views.''
+
+You can, but why would you? There is no point being a model, when there is nobody to view it.
+Don't confuse your data or your domain objects with models. Being a model only makes sense,
+when there is a view. Your domain objects should not be aware that there is something like a GUI, 
+so they shlod not depend on models. Models are part of a GUI, not part of the domain logic.
+
+''So how do you make a JList update when the "domain objects" change?''
+
+Write an adapter which makes your domain objects to models.
+
+''Sorry, I don't understand that sentence.  How does the adapter make the JList update when the domain objects change?''
+
+Adapter implements the L''''''istModel interface. It add the feature "being a model" to the domain object.
+
+''Oh, so your objection is just to using A''''''bstractL''''''istModel and not all L''''''istModels.  I get it now.  What I did was use A''''''bstractL''''''istModel but custom serialization in the owner to store them as A''''''rrayLists.  That way I didn't have to write my own change notification code.''
+
+I don't know your application, so I cannot really comment on it. But my objection is different. Let's imagine, you have a domain object, e.g. an order. Order contains items. You want to visualize it as a list. So it would be nice, if order were a L''''''istModel. '''But''' why should the class Order need to know you want to visualize it as a list? It should not. The class Order belongs to the domain part of the application and not to the GUI one. But since in the GUI we need the Order as a L''''''istModel, we need a class, which makes the Order to a L''''''istModel. Let's call this class an O''''''rderToListAdapter. This class would understand the structure of an Order, the events it fires and the way to manipulate it. It would also implement the L''''''istModelInterface. Perhaps later you decide to visualize the orders as trees (the items might have sub-items). The domain logic of an order did not change, since it does not depend on the way you visualize it. If you want to diplay it as a tree you don't have to make an Order a T''''''reeModel, you should write an O''''''rderToTreeAdapter instead. The models belong to the GUI. 
+
+''I'm familiar with these concerns and have used the same pattern to introduce a zone of shear.  The problem is that something in the model'' '''must''' ''know that a view might need to be updated when the model changes.  You can simplify this to an event that updates any type of view, but you can lose efficiency unless you tell the view which part of the model changed.  Any way to slice it, the model has to send events.  A''''''bstractL''''''istModel is convenient because it has the standard change notification code in place.''
+
+Of course, the domain object (in my example the order) has to send events in its domain specific way. If can send events like "new item has been inserted", "item has been changed", "price list has been changed" etc. The O''''''rderListAdapter should listen to those events and translate them to L''''''istModel specific events, perhaps by being inherited from A''''''bstractListModel.
+
+Use custom serialization for those parts of the system that are affected. Implement it using another serializer (Sun recommends their XML-bean-stuff for serializing Swing objects) or by just not storing the GUI parts.
+
+''Just a note from the 'javax.swing.AbstractListModel' JavaDoc:  "'''Warning:''' Serialized objects of this class will not be compatible with future Swing releases. The current serialization support is appropriate for short term storage or RMI between applications running the same version of Swing."''
+
+----
+
+Who's to say what's "broken" and what's not, but here's something I find annoying: values of inherited instance variables are not serialized with an instance of a serializable subclass, unless the superclass declaring them also implements Serializable.  But declaring that superclass serializable sort of communicates that all its subclasses are serializable, which may not be what you want.  --RandyStafford
+
+''Randy, you'd like .NET then.  The [Serializable] attribute isn't inherited. -- JeffPanici''
+
+A code that crashes the JVM without having that behaviour explicitly specifed in the contract is most definitely broken :)
+
+----
+See also JavaSerialization, AlwaysDeclareSerialVersionUid, JavaSerializationAndTheStack

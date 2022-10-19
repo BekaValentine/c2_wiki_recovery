@@ -1,0 +1,468 @@
+The original significance of having a single entry and single exit for a function is that it was part of the original definition of StructuredProgramming as opposed to undisciplined goto SpaghettiCode, and allowed a clean mathematical analysis on that basis.
+
+Now that structured programming has long since won the day, no one particularly cares about that anymore, and the rest of the page is largely about best practices and aesthetics and such, not about mathematical analysis of structured programming constructs.
+----
+Sorry for placing this necropost at the top here. I find this just the strangest discussion and have created a page to offer a counterpoint, SingleFunctionExitPointPlease. 
+----
+Reasonable exceptions to the SingleFunctionExitPoint rule:
+	* '''GuardClause''' at the top of a function: If parameters are bad, or the bulk of the function is obviously inappropriate, then bailing out at the top, before any meaningful work has been done, can be very clean and direct. ''(Otherwise, you'll need huge if statements that cover the bulk of the function, giving you yet another level of indentation -- yuck!)''
+
+	* Functions that do little else than lots of decision making and returning values: Typical example is a function that is "nothing but" a large switch/case statement, with lots of "return" statements in it.
+
+	* Functions that search a list for something, generally coded as:
+ while(x)
+	if (x->a == y)
+	return x;
+	else
+	x = x -> next;
+ return NULL;
+''[But this particular example is not a good illustration, because the code can be written with a single exit point as follows:''
+
+ while(x && x->a != y)
+	x = x -> next;
+ return x;
+''-- AndrewKoenig]''
+
+''Comment'': +1 to this. Mentioned exceptions are good examples of common sense, that is, when to abandon the single return point principle.
+----
+Don't forget : in a language that supports exceptions, (almost) no function has a single exit point. Any function call might be an exit point, if an exception is thrown. 
+----
+In the case of CeeLanguage programs like the example above, just use goto's :). Cleanup is one of the few acknowledged "good" uses for goto, and makes a reasonable replacement for destructors/try{}catch.
+
+ void doStuff() {
+	void *p, *q;
+	FILE input;
+
+	if ((input = fopen("myfile", "r") == NULL) goto fileFailed;
+	if ((p = malloc(1024)) == NULL) goto mallocPFailed;
+	if ((q = malloc(2048)) == NULL) goto mallocQFailed;
+
+	free(q);
+ mallocQFailed:
+	free(p);
+ mallocPFailed:
+	fclose(input);
+ fileFailed:
+	return;
+ }
+Yes, the error detection still adds noise to the FlowOfControl, but it does mean the clean up is done OnceAndOnlyOnce.
+
+Why not use nesting (and get scoping, too)?
+
+ void doStuff() {
+	if ((FILE input = fopen("myfile", "r") != NULL)
+	{
+		if ((void * p = malloc(1024)) != NULL)
+		{
+			if ((void * q = malloc(2048)) != NULL)
+			{
+				free(q)
+			}
+			free(p);
+		}
+		fclose(input);
+	}
+	return;
+ }
+
+''that's alot of nesting''
+----
+Alternatively:
+
+ void doStuff() {
+	FILE input = fopen("myfile", "r");
+	if (input == NULL)
+		return;
+	doStuff( input );
+	fclose(input);
+ }
+
+ void doStuff( FILE *input ) {
+	void * p = malloc(1024);
+	if (p == NULL)
+		return;
+	doStuff( input, p );
+	free(p);
+ }
+
+ void doStuff( FILE *input, void *p ) {
+	void * q = malloc(2048);
+	if (q == NULL)			{
+		return;
+	doStuff( input, p, q );
+	free(q)
+  }
+
+ void doStuff( FILE *input, void *p, void *q ) {
+ }
+This is a fairly extreme example. The idea is for each function to do one thing, where allocating and freeing a resource counts as "one thing". By separating out the code that, eg, opens the file, we have made it easier to reuse the code in situations where the file is already open, eg the data comes from stdin. In an OO language we can make the doStuff() functions virtual and override them independently. We also avoids over-indenting.
+-----
+Multiple exit points make code more difficult to refactor. A "bail out" point no longer works if the section of code is pushed into a lower level subroutine.
+
+''This is definitely not universally true. GuardClause''''''s and other techniques provide justifiable reasons for multiple exit-points. Multiple exit-points in some cases can make code even easier to read. In fact, once you introduce exception handling, it becomes very hard to rely on a single exit point without wrapping everything in a try..catch. While SingleFunctionExitPoint is very important for modular or structured programming, it has little value in an ObjectOrientedProgramming language. The examples above do not show the weakness of multiple exits but instead show the weakness of the CeeLanguage. Consider the following CeePlusPlus rewrite:''
+
+ template< typename T >
+ class malloc_escort
+ {
+	public:
+
+	malloc_escort( size_t N ) :
+	  m_rep( static_cast< T* >( ::malloc( N ) ) )
+	{
+	}
+
+	~malloc_escort()
+	{
+		::free( m_rep );
+	}
+
+	operator T*()
+	{
+	  return m_ptr;
+	}
+
+	''<..other operators..>''
+
+	T* release()
+	{
+	  T* ptr = m_rep;
+	  m_rep = 0;
+	  return ptr;
+	}
+
+	private:
+
+	T* m_rep;
+ };
+
+ void foo( void ) // throws( bad_alloc )
+ {
+	malloc_escort_<char> p( SIZEOF_P );
+	malloc_escort_<char> q( SIZEOF_Q );
+
+	''// do something with p and q''
+
+	if ( ''something is wrong'' )
+	return;
+
+	''// keep q around''
+
+	save_somewhere( q.release() );
+ }
+''Since ''malloc_escort<T>'' is a stack based object whose destructor will delete its heap allocated contents (if non-null), it doesn't matter where your returns are. This is no reason to go crazy with returns, but relying on a single exit for correctness is a flimsy way to ensure correctness in an object-oriented program. Same thing with the ''fopen'' examples, if these use a stack-based class then there is no reason to worry about a bunch of ''fclose'' calls. Furthermore, using ''escorts'' in this way eliminates the need for try...catch blocks. I mention this only to say that SingleFunctionExitPoint is much more important in a language like C than it is in C++. -- RobertDiFalco''
+
+One advantage of a single exit point is that is simplifies "walking code backwards" to determine how you got to here with this value. Debugging exceptions can be especially difficult because of this; I tend to add a lot of temporary try, catch, rethrow logic. Also, if you cannot use a debugger and must rely on log files, it is often very nice to have a single point to log the return values from each function in question. As with everything, the value of a SingleFunctionExitPoint varies by its context, but I tend to see some slight advantages to this approach and almost no negatives. -- WayneMack
+
+''But that doesn't help any. Even though you can walk back to where the function is returned from, inside the function there will be an if/else statement. And you can't walk back to which leg of if/else is executed more than you can find the exit point in a multiple exit point function.''
+
+Adding a lot of try/catch blocks in CeePlusPlus is usually not a good thing and can lead to complex error-prone code. By using only stack-based objects (or heap-allocated objects only as private details of a stack-based object), one can eliminate the runtime (and complexity) overhead of many throw/catch constructs. As for logging, I think you are better off having the caller of a method that returns a value log that result. However, you can still trace the function execution with something like the following:
+
+ class tracer
+ {
+	public:
+
+	tracer( const char* pszName ) :
+		m_pszName( pszName )
+	{
+	  logout << logstream::indent;
+	  logout << "enter: " << pszName << std::endl;
+	}
+
+	~tracer()
+	{
+	  logout << logstream::outdent;
+	  logout << "leave: " << m_pszName << std::endl;
+	}
+
+	private:
+
+	const char* m_pszName;
+ };
+Then, you can use this and no worry about where your method exits:
+
+ void class_name::method( int arg )
+ {
+	tracer trace( "class_name::method" );
+
+	if ( arg < 0 || arg > MAX )
+	throw invalid_argument();
+
+	...
+ }
+Of course, you can expand the tracer class by adding parameters for line and file name, and creating a macro for debugging:
+
+ #define DBG_Tracer( obj, msg )	tracer __x__trace( typeid( *this ).name(), msg, __FILE__, __LINE__ )
+
+ #define DBG_TracerStatic( msg )	tracer __x__trace( msg, __FILE__, __LINE__ )
+You get the idea. Personally, I think code has a flow. Often times, it can make a function (especially since I know you keep each one very small) more complicated to contort it into a single exit point. In small methods, having an early return after a guard clause can often be more readable than indenting everything around, declaring state variables, and massaging everything into a single return. --RobertDiFalco
+----
+Having multiple exit points simplifies your logic flow. They let you reduce nested if/else clauses, which are difficult to read. They are particularly helpful in a garbage-collected language, like Java, since you don't have concerns regarding freeing memory.
+
+But Java doesn't handle other resources cleanly, so manual cleanup is more important than it is in languages (like C++) with destructors... and the control flow possibilities with try/finally are truly a mess if it is not used economically...
+----
+I certainly do not agree with most people here. Having multiple exit points in SmallMethods? I can always use StructuredProgramming inside any method, so why take any risk? Having MultipleReturns is the 21 century equivalent of GotoConsideredHarmful. 
+
+Throw clauses are a different thing, me thinks.
+
+Using MultipleReturns is like SpaghettiCode.
+
+-- GuillermoSchwarz
+
+''MultipleReturns is the opposite of SpaghettiCode .. to equate them is intellectually dishonest quasi-religious dogma.''
+
+I use multiple returns to handle guard clauses and other trivial cases. In a language that has PatternMatching paramenters (like Haskell, Ocaml, or to some extent Dylan), they ''do'' become separate SmallMethods. But most popular languages do not let you dispatch on a single value or boolean condition, so I handle the trivial base cases first and then bail out of the method so I don't need to think about them.
+
+If I were doing ProofCarryingCode (which is what StructuredProgramming was supposed to enable, wasn't it?) this would actually simplify proofs, as I can impose extra constraints on the variables. I know that certain cases have already been handled by the main body of the method, so I don't need to reason about them.
+
+-- JonathanTang
+
+I've used SML which is very similar to Ocaml. You can define a function by partially defining the output to some example input. So instead of writing one big function that contains all the cases, you write:
+
+  sqrt 0 = 0
+  sqrt 1 = 1
+  sqrt 4 = 2
+  etc.
+That's something totally different from, and I think unrelated to, what I was trying to say. Actually look at the code above, how is that better to writing:
+
+ sqrt x = if x = 0 then x 
+	else if x = 1 then x 
+	else begin
+		let min = x / 2;
+		while min * min > x do min /= 2;
+		let max = x;
+		while max * max < x do max *= 2;
+		while true do
+		  let try = ( max + min ) / 2;
+		  if try * try > x then max = try
+		  elseif try * try < x then min = try
+		  else break 
+		  endif
+		done;
+		( max + min ) / 2
+	  end;
+-- GuillermoSchwarz
+
+(By "code above" I'm assuming you mean the sqrt 0, sqrt 1, etc. definitions. There's a lot of code elsewhere on the page)
+
+The advantage is you have to keep much less context in your head. When you see
+  sqrt 0 = 0
+you know that that's the whole of the function body, and you know that the arguments are constrained to their guarded values. Nothing else can be going on; the whole of the computation is expressed in that one line. When you see an if..., the result could be used farther down in the function. You have to skim through the rest of the clauses to see what's done with the if statement, and then remember preliminary results if there's any remaining computation.
+
+This advantage is shared by early returns. You know that the function is ''done'', and so can forget about that case. It's less to think about when considering the case, and less to think about when considering other cases.
+
+-- JonathanTang
+
+As Jonathan said, but also note that it directly reflects the very old and handy mathematical notation for inductive definition of functions, which for one thing means it has proved itself in a different domain, and for another, facilitates going back and forth between the math of a system and the implementation of a system, either for implementing an algorithm specified mathematically, or perhaps in proofs of correctness of algorithms. -- DougMerritt
+
+If one is using Microsoft .NET's using statement religiously, then you can bail out of your code with no problems. For example, the following VB.NET opens up three files at the same time.
+
+	Public Sub BailOutTest(ByVal arg1 As Integer, ByVal arg2 As Integer)
+		Using file As New System.IO.FileStream("C:\test.aspx", IO.FileMode.Open)
+		If arg1 = 1 Then Return
+		Using file2 As New System.IO.FileStream("C:\test2.aspx", IO.FileMode.Open)
+			If arg2 = 1 Then Return
+			Using file3 As New System.IO.FileStream("C:\test3.aspx", IO.FileMode.Open)
+
+			End Using
+		End Using
+		End Using
+
+	End Sub
+-- Alex
+
+Maybe a solution is to ExtractMethod so that each function either has a SingleFunctionExitPoint '''or''' works as a GuardClause for another function? PseudoCode:
+	function foo(String[] args) : boolean
+	{
+		status = init-foo(args);
+		if (status == no_error)
+		{
+			...
+		}
+		return status;
+	}
+	
+	function init-foo(String[] args)
+	{
+		if (some problem) return some_error_code;
+		if (other problem) return other_error_code;
+		[...]
+	}
+-- VictorEngmark
+----
+Another approach that I've not seen documented in this page so far (at least, not in any recognizable form):
+
+	int withFile_do_(char *filename, void (*body)(FILE *)) {
+	FILE *f = fopen(filename, "r");
+	int result = ERC_CANNOT_OPEN_FILE;
+
+	if(f) {
+		result = body(f);
+		fclose(f);
+	}
+
+	return result;
+	}
+
+Now you can implement a lot of different functions, and just pass them to withFile_do_().
+
+	void countLinesIn_(FILE *f) {
+	int numberOfLines;
+
+	// ... count lines here ...
+
+	printf("There are %d lines in the file.\n", numberOfLines);
+	}
+
+	...
+	withFile_do_("SomeFile.data", &countLinesIn_);
+	....
+----
+Is this an AntiPattern? ''Like ArrowAntiPattern?''
+
+Some programming shops insist the functions should have a single entry point and a single exit point.
+
+''Why should anyone care what "some programming shops" do? Some programming shops are filled with incompetents who make stupid rules because of something they heard or were taught but never thought through or looked into whether there are counterarguments. This is the way of ideologues, not rational people. Rational people can see that there is no value in single exit per se ... its only value is when some operation needs to happen on all code paths. But one can always achieve that with ExtractMethod, refactoring into a subroutine with multiple returns and a caller that performs the final operation.''
+
+''Some shops insist that functions be "Easy to refactor," and then don't hold their programmers' hands or program for them...''
+
+Implementing a single entry point is trivial. You have to jump through hoops in order to do differently. <- ''extremely unintelligent, and false, comment''
+
+Implementing multiple exit points is easy:
+
+  int foo(void)
+  {
+	if(!bar())
+		return 1;
+	if(!baz())
+		return 2;
+	return 3;
+  }
+
+The problem from using multiple exit points is one of cleaning up. If each step of the function allocated resources, bailing out early causes resource leaks.
+
+ int foo(void)
+ {
+	char *p = NULL;
+	char *q = NULL;
+
+	p = malloc(SIZEOF_P);
+	if(!p)
+	  return FAIL; /* OK to bail out here */
+
+	q = malloc(SIZEOF_Q);
+	if(!q)
+	  return FAIL; /* leaked p */
+
+	/* do something with p and q */
+
+	free(p);
+	free(q);
+
+	return SUCCESS;
+ }
+If the allocation of memory fails for p or q, we bail out early. Unfortunately, if allocation of q fails, we don't free the allocation of p. This leads to a resource leak.
+
+''Unfortunately this is bad programming (with a crappy, obsolete programming language). SmallMethods, ExtractMethod, RAII, garbage collection, try/finally are among the ways to deal with this.''
+
+Proponents of the SingleFunctionExitPoint rule would have us do something like this:
+
+ int foo(void)
+ {
+	char *p = NULL;
+	char *q = NULL;
+	int ret = SUCCESS;
+
+	p = malloc(SIZEOF_P);
+	if(p)
+	{
+	  q = malloc(SIZEOF_Q);
+	  if(q)
+	  {
+		/* do something */
+
+		free(q);
+	  }
+	  else
+		ret = FAIL;
+
+	  free(p);
+	}
+	else
+	  ret = FAIL;
+
+	return ret;
+ }
+The problem with this stricture is that it leads to longer functions, which decreases understandability.
+
+In CeePlusPlus, of course, this can all be handled by the constructor/destructor pairing, which makes the code much simpler (see ResourceAcquisitionIsInitialization).
+
+Unfortunately, some programming shops still frown on bailing out early.
+
+''Comment'': Your example is contrived. Even when single return point is "strongly suggested", even "enforced", common sense comes first; it's like writing any text, write what you mean. It should be easier to refactor though because returning early essentially says "screw what comes after this line, I know we're all done here, so we return now". This is correct for e.g. find_particular_item; I found it, so I'll return it. But what if later some further processing needs to be done to the return value? You need to write those loop breaks anyway, or puzzle about where to put that postprosessing (inside the loop the found the item? yuck...)
+
+''Reply'': Though I am not the original author of this section I believe your concern to be unnecessary. In the case of post-processing you can simply push it back to a second function call ie.
+
+ ...
+ if(isFooFound)
+ {
+ 	return FooTransform(myFoo);
+ }
+ ...
+
+Which is eminently readable as "If I've found foo, transform it, and return it." This way also keeps any post processing modular and reasonably separate from your remaining logic.
+----
+Or, just
+
+ int foo(void)
+ {
+	char *p = malloc(SIZEOF_P);
+	char *q = malloc(SIZEOF_Q);
+	int ret = p && q ? SUCCESS : FAIL;
+
+	if (ret == SUCCESS)
+	{
+	/* do something */
+	}
+
+	free(p);
+	free(q);
+
+	return ret;
+ }
+This works in ANSI and ISO C as well as in C++ (see CeeIdioms).
+----
+''There seems to be a bit of confusion over whether'' <- Only among extremely ignorant people.
+
+* free(0) is legal ANSI C and C++ -- it's a harmless no-op. just use "free(p);" <- yes
+* free(0) is illegal. All competent programmers use "if (p) free(p);" <- no
+''Alas, I've loaned out my ANSI C K&R -- could someone look this up for me?'' <- was this written before there was an internet?
+
+''Is this something we should document at CeeIdioms ?''
+
+*''Don't mistake you own ignorance and incompetence for "confusion".''
+
+* free(0) is legal ANSI C and C++ -- it's a harmless no-op. just use "free(p);"
+
+ANSI C K&R 2nd Ed P. 252:
+
+  void free(void *p)
+	free deallocates the space pointed to by p; it does nothing if p is NULL. p must be
+	a pointer to space previously allocated by calloc, malloc, or realloc.
+
+''I see where the confusion came from; people missing the "it does nothing if p is NULL" clause. Clearly, if p is NULL then it isn't a pointer to previously-allocated space. Which it '''must''' be. Says so right there.''
+
+[Yeeeaah, you may have missed the mention of a GuardClause, up above. The free() function is smart enough to not allow the noob to blow his own toes off.]
+----
+I think this is a clear case of AllPanaceasBecomePoison - the original rationale is sound, but taken to extremes it becomes counterproductive. Personally, I'm in favour of bailing out early - but then I'd also say that if a function is so long that you have to worry about it it's probably too long. -- BurkhardKloss
+
+''I think it is more that we've moved on and found better solutions to the problem. The original paper was written in an age of '''goto''' statements. Now we have structure programming, try/finally, destructors and we know the real problem is functions that try to do too much. -- DaveHarris''
+----
+There's enough discussion here to merit the inclusion of this page in C''''''ategoryCodingIssues, but ''not'' in C''''''ategoryDevelopmentAntiPattern, methinks. Calling single exit point coding an anti-pattern is far too strong.
+----
+In my mind, Single Exit Point was less about spaghetti code and more about correct and maintainable resource management in non-garbage-collected languages. Younger developers I've encountered often miss the fact that proficiency in languages like C and C++ was less about syntax and all about thinking in terms of resource management.
+
+If your function/method allocates memory or resources but doesn't return them, then you need to ensure that you've properly cleaned up before exiting, else you have a resource leak. Getting it right and maintaining it correctly through the lifespan of the code is more difficult and error-prone when you have multiple exit points.
+----
+Some LispLanguage''''''s can natively return multiple values from a function. This is still a SingleFunctionExitPoint though may share some traits of multiple exit points. http://rosettacode.org/wiki/Return_multiple_values#Common_Lisp
+----
+CategoryCodingIssues

@@ -1,0 +1,122 @@
+[prev UnitTestingMyLibraryPrintHeader | next UnitTestingMyLibraryReturnError | top UnitTestingMyLibrary ]
+
+The next subroutine for testing presents some new wrinkles.
+ sub gracefulExit {
+        # print the footer
+	&printFooter;
+        # close the html
+        print $output->end_html;
+	# disconnect the handle to the database
+        if ($gSth) { $gSth->finish; }
+	$gDBhandle->disconnect;
+        # quit gracefully
+	exit;
+ }
+One problem is the exit statement here.  If you call this subroutine from a TestSuite, it stops execution of the TestRunner.  This makes it necessary to go into the copy of M''''''yLibrary.pm that's being tested and comment out the exit line.
+
+Another complication is that this subroutine calls another one, so we have to take the needs and influence of M''''''yLibrary::printFooter.  Fortunately, it's easy to factor out this particular subroutine.  If we don't even define the one variable it expects, it executes without complaint and doesn't produce any output.
+
+Furthermore, this subroutine presents new expectations (a database handle and possibly a statement handle) and has other SideEffect''''''s than printing output.  (As an aside, I would say the main reason I prefer the PythonLanguage over the PerlLanguage is not the executable-line-noise saw, but that Perl is ''all'' SideEffect''''''s. -- ChrisGray)  In the absence of a method for setting up MockObject''''''s for the handles it is possible to set up an empty MySQL database and run some inconsequential SQL statement.
+
+So a working TestCase looks like this
+ # ---------- tests for &M''''''yLibrary::gracefulExit ----------
+ package gracefulExit;
+ use Test::Unit;
+ require "../M''''''yLibrary.pm";
+ use CGI;
+ use DBI;
+ use IO::String;
+ sub set_up {
+    $io = IO::String->new($result);
+    $old_handle = select($io);
+    $M''''''yLibrary::output = new CGI("");
+    $M''''''yLibrary::gDBhandle = DBI->connect("DBI:mysql:mylibrary_test:localhost", \"test", "test");
+    $M''''''yLibrary::gSth = $M''''''yLibrary::gDBhandle->prepare("show tables");
+    $M''''''yLibrary::gSth->execute;
+ }
+ sub tear_down {
+    select($old_handle);
+    $io = undef;
+    $result = undef;
+    $old_handle = undef;
+    $M''''''yLibrary::output = undef;
+    $M''''''yLibrary::gSth->finish;
+    $M''''''yLibrary::gDBhandle->disconnect;
+    $M''''''yLibrary::gSth = undef;
+    $M''''''yLibrary::gDBhandle = undef;
+ }
+ sub test_footer {
+    my $expected = "</body></html>";
+    &M''''''yLibrary::gracefulExit;
+    assert(! $M''''''yLibrary::gSth->{Active}, "gSth still active");
+    assert(! $M''''''yLibrary::gDBhandle->{Active}, "gDBhandle still active");
+    assert($result eq $expected, "gracefulExit failed with gFooter given");
+ }
+Oops!  ThreeStrikesAndYouRefactor.  We've repeated the same lines for capturing STDOUT three times.  We need to rethink that.
+
+So using ExtractMethod we add the following subroutine.
+ # ---------- subroutines ----------
+ package subroutines;
+ sub trap_stdout {
+    my($unit_ref, $result, $io, $old_handle);
+    $unit_ref = $_[0];
+    $io = IO::String->new($result);
+    $old_handle = select($io);
+    &$unit_ref;
+    select($old_handle);
+    return $result;
+ }
+And, for instance, the TestCase for M''''''yLibrary::printFooter becomes.
+ # ---------- tests for &M''''''yLibrary::printFooter ----------
+ package printFooter;
+ use Test::Unit;
+ require "../M''''''yLibrary.pm";
+ use IO::String;
+ sub set_up {
+    $M''''''yLibrary::gFooter = "***FOOTER TEXT***";
+ }
+ sub tear_down {
+    $M''''''yLibrary::gFooter = undef;
+ }
+ sub test_footer {
+    my $expected = $M''''''yLibrary::gFooter;
+    my $result =  &subroutines::trap_stdout(\&M''''''yLibrary::printFooter);
+    assert($result eq $expected, "printFooter failed when gFooter given");
+ }
+ sub test_no_footer {
+    my $expected = "";
+    $M''''''yLibrary::gFooter = undef;
+    my $result = &subroutines::trap_stdout(\&M''''''yLibrary::printFooter);
+    assert($result eq $expected, "printFooter failed when no gFooter given");
+ }
+And similarly for the other TestCase''''''s.
+
+----
+
+So within the M''''''yLibrary.pm module the five or so instances of the line:
+ exit;
+get replaced with:
+ &Exit;
+and we add a small subroutine to the file:
+ sub Exit {
+    exit;
+ }
+And the subroutine trap_stdout introduced above and refined in UnitTestingMyLibraryReturnError in the TestSuite becomes:
+ sub trap_stdout {
+    my($unit_ref, $args, $result, $io, $old_handle);
+    $unit_ref = $_[0];
+    $args = $_[1];
+    print STDOUT @args;
+    $io = IO::String->new($result);
+    $old_handle = select($io);
+    local *M''''''yLibrary::Exit = sub { ; };
+    &$unit_ref(@$args);
+    select($old_handle);
+    return $result;
+ }
+and we a version of the module that should run the same as the old version but can be tested without shutting down the TestSuite in mid-test.
+
+----
+
+CategoryTesting
+

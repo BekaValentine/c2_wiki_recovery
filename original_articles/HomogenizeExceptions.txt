@@ -1,0 +1,134 @@
+(An interpretation of OliverBurn's notes in ConvertExceptions.)
+ 
+This is a technique appropriate for languages like C++ or Java. In such languages, you can or must tell what types of exceptions a method can throw. You write the types of exceptions that the method can throw in its "throws clause".
+
+The "throws clause" can become a burden if you habitually propagate exceptions (LetExceptionsPropagate). Methods that propagate exceptions from other methods need to have matching throws clauses. Suppose you add a new exception to a low-level method's throws clause. Now all of the methods that can propagate that exception need to have their throws clauses updated as well! In small projects, this isn't much of a problem. But in larger projects, updating all of the dependent code can be paralyzing.
+
+You can solve the problem by using "HomogenizeExceptions". ConvertExceptions at package boundaries. Create a single type of exception for each package. Only propagate exceptions of that type, or some subtype of it (see RefineExceptions), outside of the package. Then, the throws clause in every method has just one entry - the package's exception type. Preserve exception data by using NestedException.
+
+This technique is similar to UnhandledException.
+
+The primary benefit of this method is that you can change exceptions without forcing clients of the package to edit their methods.
+
+-- originally by PhilGoodwin, text reworked by LionKimbro
+
+We HaveThisPattern. -- NatPryce, MartinPool
+
+Java standard libraries HaveThisPattern too; for example, java.io.IOException - see RefineExceptions.
+
+----
+
+A package, or set of nested packages, will often apply HomogenizeExceptions and RefineExceptions iteratively. For example, a middleware platform I have worked on defines a base exception class for all exceptions thrown by its packages, and refines these exceptions to report errors occurring in the binding, marshalling and transport-protocol subsystems. However, these refined exceptions are themselves refined further within each subsystem to report specific errors, such as the target of a binding being unavailable, the presentation layer being unable to unmarshal a corrupted message or a transport connection failing. -- NatPryce
+
+----
+
+The main benefit of this pattern is to insulate client code from changes in service code. It's not an XP kind of pattern in that it presupposes that changing code is difficult and/or expensive. HomogenizeExceptions focuses on stabilizing the "throws" clauses of methods. RefineExceptions works synergistically with it by allowing a fine-grained approach to trading that stability for type information. A method that propagates platform exceptions in the example above will have a very stable "throws" clause but its clients won't really know what kind of exceptions it throws. My initial suggestion is that exceptions be homogenized to the package level, but in practice I've only very rarely handled exceptions differently based on type. Is there really any use for HeterogeneousExceptions? -- PhilGoodwin
+
+That is true when the service code used by client code only changes during development. However, a great advantage of homogenized and refined exceptions is that their use allows client code to remain stable when service code changes ''dynamically'' at run time.
+
+To continue with the middleware example...
+"''A method that propagates platform exceptions in the example above will have a very stable "throws" clause but its clients won't really know what kind of exceptions it throws.''"
+
+In some cases its clients ''cannot'' know what type of exceptions will be thrown, because (for example) the transport protocol is dynamically loaded at runtime from information in an object reference and used through an abstract interface. However, other code can explicitly use a specific transport protocol and be coded to handle refined exceptions thrown by that protocol.
+
+(In Java, a method overridden in a derived class can be declared to throw a smaller set of exceptions than the method declared in the base class or interface. Alternatively, the exceptions thrown can be documented elsewhere - in JavaDoc comments, for example.) -- NatPryce
+
+----
+''"The main benefit of this pattern is to insulate client code from changes in service code. It's not an XP kind of pattern in that it presupposes that changing code is difficult and/or expensive."''
+
+I think it's not only about changing code, but about OO encapsulation. In principal, no method should ever throw an exception that is in any way implementation specific. Throws clauses shouldn't be taken lightly. Any declared exception should make some sense to the caller. If the caller doesn't know that the service he uses depends on I/O-functionality, he shouldn't see an IOException. For example, a persistence interface must never throw an SQLException or an IOException because the client doesn't care about the physical implementation of the datastore. Thus, if the interface receives an SQLException that it cannot handle it must convert it to its module-specific PersistenceException (or some subclass) that has been declared as part of its contract. Later changes to the implementation won't affect the interface's throws clauses. The original exception should be wrapped in to facilitate debugging and error diagnostics. 
+
+The difficult part is that the exception contract should be decided early in the process, just as the rest of the signature - developers tend to neglect this fact that the throws clause [at least in Java] is an integral part of the signature. Changing a throws clause is as tedious as changing the parameter list. The LetExceptionsPropagate pattern can be used like this: whenever the compiler complains about an unhandled exception, let's add a throws clause. But then we have to change all callers, and their callers as well. LetExceptionsPropagate obviously only makes sense within a defined module. As soon as you transgress module boundaries, you have to ask: what exception really makes sense here? Part of the problem is to identify what constitutes the functional module. Maybe this is only one class.
+
+No method should ever throw an exception that is in any way implementation specific. 
+
+-- ToniMenninger
+
+----
+''"Create a single type of exception for each package and only propagate exceptions of that type or some sub-type out of methods in the package"''
+
+Isn't this at odds with NameTheProblemNotTheThrower? In the application I'm currently working on, I started down this path, and then reversed course under the influence of that idiom. Here is an alternative way to HomogenizeExceptions that seems to be working reasonably well so far - this alternative facilitates NestedException, and allows you to RefineExceptions and ConvertExceptions.
+
+In the spirit of NameTheProblemNotTheThrower I tried to enumerate a homogeneous set of basic problems that can occur in object-oriented code. This set ended up reflecting a set of basic granular behaviors that are invoked in object-oriented code: instantiating, initializing, accessing, assigning, copying, comparing, converting, updating, adding (to a collection or database or system), removing, etc. Consequently I ended up with a corresponding set of checked exception classes (critique of naming idioms welcome):
+
+* CouldNotInstantiateException
+* CouldNotInitializeException
+* CouldNotAccessException
+* CouldNotAssignException
+* CouldNotCopyException
+* CouldNotCompareException
+* CouldNotConvertException
+* CouldNotUpdateException
+* CouldNotAddException
+* CouldNotRemoveException
+* etc.
+
+All of these extend a general ContractFulfillmentException whose semantics mean "this object/method could not fulfill its contract to you, Mr. caller", and which implements the NestedException idiom (facilitating ConvertExceptions), with behaviors like getRootCauseException(), etc. ContractFulfillmentException extends a CheckedApplicationException, which implements behavior for getting the names of method contexts on the stack trace (for example, the name of the context in which the exception was caught, which is useful in composing a new exception message when you have to ConvertExceptions, since Java doesn't have Smalltalk's thisContext pseudo-variable). I have other subclasses of CheckedApplicationException as well; for example, SemanticValidityException, which represents an exceptional condition that is not necessarily a ContractFulfillmentException (maybe I should have named it CouldNotValidateException).
+
+Anyway, so far I've found that these exception class names (that is, the problems they indicate) work equally well for classes in different packages of the application. Note that we're using a PackagePerLayer idiom, so we have a persistence package for the persistence layer, a domain package for the domain layer, a services package for the services layer, etc., and these exception class names work equally well in the different layers. BTW, are there any Wiki pages on JavaPackagingIdioms, perhaps a la BobbyWoolf's PatternLanguageForUsingEnvyDeveloper?
+
+At the risk of violating DontThrowGenericExceptions, this alternative might alleviate ExceptionTunneling if the methods of the generic interface through which the exceptions are tunnelled declare that they throw ContractFulfillmentException or a more appropriate result of RefineExceptions. The thing that bothers me about ExceptionTunneling is ViolatingTheSemanticIntent of RuntimeException, which by the javadocs is "the superclass of those exceptions that can be thrown during the normal operation of the Java Virtual
+Machine", whatever that means.
+
+Note that in EnterpriseJavaBeans, people ViolateTheSemanticIntent of RemoteException all the time, by throwing it or a subclass under various and arbitrary conditions. But RemoteException's semantic intent, by the javadocs, is "for communication-related exceptions that may occur during
+the execution of a remote method call". -- RandyStafford
+
+''"this alternative might alleviate ExceptionTunneling if the methods of the generic interface through which the exceptions are tunnelled declare that they throw ContractFulfillmentException"''
+
+This has the disadvantage that you always have to check for ContractFulfillmentException, even if the implementation of the generic interface will ''always'' fulfill its contract. ExceptionTunneling is aimed at allowing exceptions to be thrown/caught only when necessary, and never when unnecessary. 
+
+(Discussions on the other points about ExceptionTunneling raised by RandyStafford are included on the ExceptionTunneling page.) -- NatPryce
+----
+Do you really use all this information? Suppose every package threw the same, single exception type, namely Exception. What would you lose?
+
+From a debugging point of view, you'd lose nothing because you get the info you need in the stack trace and text string that Exception gives you already. So it only matters if you have catch clauses for different exceptions which do different things. I find that to be rare (and, in my view, it usually amounts to an abuse of the exception mechanism when it does happen). -- DaveHarris
+
+----
+
+Yes, I really use all this information. Consider a hotel reservation system. Maybe the reservation agent user tried to reserve the last available room for some night, but someone else just beat them to the punch, so the persistence layer throws a WriteWriteException on the inventory object representing that night for that room type. Or maybe the agent submitted a reservation that was missing a credit card number for guarantee, so the domain layer throws a semantic validity exception. The application layer has to be able to discriminate between these two cases (root causes), to provide the appropriate response to the user. In both cases I want the transaction aborted (by the EJB container, for example). I don't feel this is an abuse of the exception mechanism - I feel it's compliant with what exception mechanisms were invented for. My only other option is to use some kind of ResultObject pattern, which obfuscates intent and doesn't provide the automatic transaction aborting. And in addition to the
+points made in DontThrowGenericExceptions, if my service-layer method only threw Exception and not ContractFulfillmentException, I couldn't ask the thrown exception what its root cause was. If the root cause was something else entirely (for example, some kind of catastrophic database unavailability), that is yet another different response to the user, all in the spirit of exception handling mechanisms. -- RandyStafford
+----
+
+In my view, this page spotlights some of the difficulties with the JavaExceptionSystem. In my view, the point of having an exception system is to separate the concept of ''raising'' and exception from that of ''handling'' it. This is a key premise of NameTheProblemNotTheThrower.
+
+An exception is, virtually by construction, an OutOfBandEvent. The handling of an exception, therefore, is better handled by a lattice of exception handlers that are separate from the "main" execution thread. This is only practical if an exception handler can obtain, from the exception instance itself, sufficient information to 1) identify the exception, 2) do something reasonable about it, and 3) continue the "main" thread of execution in some predictable and reasonable place. The JavaExceptionSystem lacks this capability (without special extensions to the environment). -- TomStambaugh
+
+I think that there are two issues: ErrorRecoveryVsErrorHandling. You need more information to recover from an error (either roll-back or roll-forward to a sane state usually) than to handle the error (decide what to do next). In general, in Java, you can implement ErrorRecovery in local finally clauses that execute as the stack unwinds and ErrorHandling in a single catch(Exception e) clause near the user interface of the program. That's because you usually handle all errors in the same way: tell the user what happened (and what they can do about it if you're really good) and let them decide what to do next. Are there examples of when this is insufficient? -- PhilGoodwin
+
+This may be personal philosophy, but any exception seen by the user should be viewed as a bug. Usually, an exception to the user just indicates a problem at the UI; the user should never be able to enter incorrect values or the parameter validation should occur as close as possible to the parameter entry. Cases of device failures are more problematic, but the design should have specified upfront what to do in these cases: either fail, or retry the session at a later time, or switch to an alternate device, or whatever. If you, as the developer, don't know what your program should do under error conditions, how do you expect the user to know? -- WayneMack
+
+''Re "any exception seen by the user should be viewed as a bug": If a text editor reports to the user the exceptional condition that it can't save a file because the disk is full, that doesn't seem to be a bug. (True, the user usually shouldn't be shown the text of the raw (Java) IOException that the program code got, but popping up a dialog box to report the exceptional condition (instead of the usual non-exception feedback after successfully saving a file) is effectively throwing an exception to the user.)''
+
+I said "usually". To me, ThrowMeansAbort and abort doesn't usually mean "abort and retry". The applications I write either can do what they are asked to do or they can't - there is almost never more than one option to try for any given operation. So when I throw an exception it means that something beyond the scope of the program has gone wrong. At that point, it's up to the user to fix the problem or to try and get their work done in some other manner. For instance, if the paper jams in a printer it is not reasonable to expect the software to be able to fix it, but it is reasonable to expect that of the user.
+
+''Re "when I throw an exception it means that something beyond the scope of the program has gone wrong": think of units smaller than just "program"; just because a problem is beyond the scope one method, it doesn't mean it's beyond the scope of the calling method, module, or user.''
+
+Sometimes it is possible for the program to actually recover by trying some different strategy, in which case it makes sense to either handle the error locally, without exception handling, or to catch an exception much lower on the call chain than I normally do. In practice, error recovery is pretty difficult; exception handlers don't solve the whole problem although they certainly help. You can still use HomogenizeExceptions to decouple the throw from the catch, but it may be a little more tricky because the exception's type information is more useful in this case. -- PhilGoodwin
+
+Ah, but it is precisely because you're talking about writing '''applications''' that you have had this experience, where error detection and recovery is all fully under your control. The value in using exceptions as part of an error recovery system lies in more complex, more highly partitioned systems, where one large complex module knows potentially of 5 ways to recover from a severe error, but isn't the part of the system that implements the policies about error recovery. So it throws an exception to the calling module, which '''does''' know which of the approaches to recovery is best.
+
+As always, it's important to remember that there are an awful lot of kinds of systems out there, and therefore what works for you may not be ideal for someone else. To me, "throw" is not synonymous with "abort" all of the time; it depends on the division of responsibilities within the system. 
+
+The classic example is perhaps with databases; the server certainly knows one or several ways to recover from failures, but the "business logic" sets policies about desirability of various options, and is widely separated from the DB server layer, as it should be. Although classically this is merely handled with a lot of conditionals, there are also systems that instead propagate exceptions from the DB server to the business logic.
+
+It's also good to keep in mind that the point is to implement out of band control flow: for an abnormal condition to take priority over the normal flow of control and cause different code to be executed somehow to take care of the high priority unexpected condition. If all of that takes place, then I claim that that is an "exception" regardless of whether or not the implementing language's native exception facility was used or not. -- DougMerritt
+----
+
+This is where the new rootCause functionality of the JavaLanguage throwable class comes in handy.
+
+Reporting needs to getBillsFor(theDateRange). Billing needs to getAccount() and getPerson(). getPerson may fail because the person has died, or because the person is secret and you can only get it if you call the special getSecretPerson method. Neither is the same as the ID simply not existing - a serious database integrity problem.
+
+Now, Reporting generally does not care whether billing failed owing to a problem getting the account or the person. Having the two exceptions extend a common subclass is also often wrong, because the classes are determined by implementation necessities. For instance, the "secret customer" problem will typically be some sort of authorization exception having local variables indicating which authorization rule was violated, whereas the "dead customer" problem will be an invalid customer state exception containing a customer number and customer state. Neither of these is specifically a billing problem. But having getBillsFor throw CustomerStateException and also AuthorizationException is also wrong for the reasons discussed above.
+
+Instead, what one Billing typically does is to throw a CannotGetCustomerForBill exception, which is a subclass of BillingException, which it declares on the module facade. The text of the exception typically contains a useful message, and, of course, one includes the root exception so that the stack trace is useful.
+
+So: Homogenize Exceptions at the module facade level. Usually.
+
+----
+
+Wrapping an exception as a HomogenizedException in order to let it propagate violates NoMethodShouldEverThrowAnExceptionThatIsImplementationSpecific
+
+For an alternative, see LetExceptionsPropagateOnlyAsUncheckedExceptions
+
+----
+CategoryException

@@ -1,0 +1,65 @@
+LookBeforeYouLeap extolls the benefits of checking for errors before encountering them.  If this is done in multiple places, it's a maintenance risk because the preconditions may change.  It also exposes the internal dependencies of the leap, which may also change.  Therefore, '''couple the leap with the look'''.  When the preconditions and dependencies of the leap change, the look can be changed in one and only one place.
+
+Here's a Java example of LookBeforeYouLeap:
+
+ client()
+ {
+   if (theCustomer.canWithdraw(amount)) {
+     theCustomer.withdraw(amount);
+   } else {
+     notifyUserOfWithdrawalFailure(amount);
+   }
+ }
+This is good because canWithdraw() is a precondition for withdraw().  This is bad because the precondition must be known and tested before every call to withdraw().  
+
+An even more significant, and potentially fatal, error is that the state of theCustomer could change between the look and the leap.  This is particularly important in cases such as database retrieval (where you don't know what other processes might be doing at the same time), and multithreaded programming (it's not accidental that mutex-using code doesn't check to see if the mutex is held before trying to acquire it).
+
+If we couple leaping with looking (by moving the precondition checks into the withdraw() method), the code looks like this:
+
+ client()
+ {
+   try {
+     theCustomer.withdraw(amount);
+   } catch (W''''''ithdrawalFailureException e) {
+     notifyUserOfWithdrawalFailure(e, amount);
+   }
+ }
+Notice that we use a general failure exception to decouple how withdraw() can fail (and how it works) from the code that calls it.  This exception can be extended with more specific exceptions so that the calling code can distinguish between them if necessary.
+
+Also notice that the synchronization of theCustomer's state can now be handled inside a method on theCustomer, which is preferable to client().
+
+In Python, this is called the "Easier to Ask Forgiveness than Permission" (EAFP) paradigm (DontAskPermission).
+
+----
+
+Unfortunately, in most languages this is not true, in terms of computational expense.  Throwing exceptions in Java and C# a non-trivial expense.  I think the ideal approach is to allow heterogeneous returns.  A method may return multiple different types of objects, however attempts to store the object in a variable of an improper type results in throwing the object (or a wrapped-form of the object if it is not an exception).  Thus, the "throw" does not occur until the user chooses not to handle it at the callsite.  The linguistic construct would be like a mix switch statement with "Catch" blocks in place of the "case" blocks, and the expected result would be just one more "Catch".  Are there any legible, C-style languages with such an approach to exceptions?  That would also clearly delineate specified and unspecified exceptions - specified  exceptions were thrown, unspecified exceptions (the efficient heterogeneous return) are returned.  -mz
+
+''Remember the first rule of optimization: OptimizeLater.  Exceptions that occur only 5% of the time will only consume 0.05*C(exception).  And language-implementations can greatly optimize exception throwing mechanisms if it is deemed worthwhile; the main expense is supporting the debugger via grabbing a stack trace.  I'd like to see how exceptions are handled in a language compiled to ContinuationPassingStyle.''
+ 
+----
+''Unfortunately, in most languages this is not true, in terms of computational expense.  ''
+
+What "this" are you referring to?  Unless there was an inadvertent bad edit somewhere, I don't see anything in the above example that's related to computational expense.
+*My own interpretation was the 'easier' in "Easier to Ask Forgiveness than Permission".  It seems to be the only thing that applies to computational expense.
+*catching an exception used to be up to a thousand times slower than not catching it in C++.  I think C++ was designed so that the cost of normal execution was minimal (in some implementations zero), at the expense of a big jolt when the exception was thrown and caught.  The advice that I learnt was therefore to only use exceptions for truly exceptional circumstances.  I thought it was always a bit like that in compiled languages, different in Python?
+* ''Nowadays, barring non-standard expenses like printing up a call-stack to the debug output, the cost of catching an exception can also be quite low. The implementations I know use static lookup tables of 'catch' types for each call frame indexed based on the return instruction pointer. This does involve examining each stack frame, but the amortized cost is O(1) per stack frame that will later be paid for in terms of unwinding the stack anyway. The relative expense of either LookBeforeYouLeap or examining for error return values (with or without error) would be greater in terms of ''total'' computational cost since you pay for those whether or not an error occurs. The exception handler, when called, needs to deal with the SP being different from the 'old' SP (since the stack hasn't unwound quite yet), but that isn't difficult or expensive at all. So, technically, EasierToAskForgivenessThanPermission is now '''true''' even when discussing computational expense... at least barring non-standard costs incurred by certain debuggers.'' 
+* ''With a ResumableException, the cost of resumption would never be more than the cost of throwing the exception in the first place. However, the ''act'' of resumption does prevent the 'amortizing' of ExceptionHandling costs into the cost of unwinding the stack. So using resumption as a common form of flow control ''is'' more expensive. OTOH, it still meets the CeePlusPlus maxim that you only pay for that which you use, and I expect most programmers would find the advantages of the ResumableException well worth the cost.''
+
+''A method may return multiple different types of objects, however attempts to store the object in a variable of an improper type results in throwing the object (or a wrapped-form of the object if it is not an exception).''
+
+This works only if you assume StaticTyping.
+*The problem is only delayed for DynamicTyping, unless the object so assigned Dynamically checks the Type (as you'd want for StrongDynamicTyping).  If you started interacting with something without checking dynamically or statically, and it wasn't something you expected it to be, you'll either cause an exception or be the cause of some undefined behavior.
+----
+Which, if you think about it, would be nice behaviour in a manifest/static language like Java or C#.  In a manifest/static-typed language the explosion of having object of type A where you expect B would be almost immediate - the moment you tried to store it in a variable of the expected type - then you'd get the "throw" that exception-lovers want.  In a dynamic language, the invalid object can be sleeping away for a long time, so then you start getting errors flying from places totally unrelated to the assignment that caused the problem.
+
+On an unrelated note, does anyone know what the proper approach is for PL/SQL?  CoupleLookingWithLeaping, or LookBeforeYouLeap?  I'm currently dealing fixing a "select into" thing.
+----
+Every procedure has its necessary PreCondition''''''s.  If these preconditions are violated, an exception ought to be thrown.  Hence, this fulfills CoupleLeapingWithLooking.  (Any language that explicitly supports preconditions will make this easy.)  However, ''each precondition ought to belong in its own boolean-valued function,'' thus making LookBeforeYouLeap viable and easy too.  It costs nothing on the part of the developer, so, why not?
+
+In fact, were performance truly an issue, you could release your API with safe and unsafe versions of any given procedure Xyxxy:
+
+  void Xyxxy(Xy *anXY, ...) {
+    if(!canBletch(anXY)) raise Munch''''''Master''''''Exception(anXY);
+    if(!isBlotch(anXY))  raise Foo''''''Man''''''Chu''''''Exception(anXY);
+    unsafe_Xyxxy(anXY, ...);
+  }

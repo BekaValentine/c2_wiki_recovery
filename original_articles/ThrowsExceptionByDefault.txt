@@ -1,0 +1,240 @@
+A JavaIdiom
+
+'''Context:'''
+
+New Java code is being written. We want to use exceptions as our default error handling strategy but we are concerned about the dependency propagation that can be caused by Java's checked exceptions. How can we leverage the strengths of checked exceptions, interact with the exceptions thrown from the standard library properly, and still avoid unnecessary dependencies?
+
+'''Forces:'''
+
+	* Checked exceptions propagate dependencies up the potential call tree.
+	* The type information given by "throws" clauses provides a static check for the rare case that client code can handle an exceptional circumstance that the called code cannot.
+	* There must always be some code that relies on other code not throwing such as in the second phase of a two phase commit, or during the handling of another exception, or for in-line initializers. Knowing that a method can't throw is valuable information (CommitCantThrow).
+	* There will be very few exception handlers and they will all be the same (HomogenizeExceptionHandlers).
+
+'''Solution:'''
+
+Declare all methods "throws Exception". When it is discovered that a particular method must not throw because of client needs, ensure that the method does not throw and remove the entire "throws" clause. Derive all user exception types from Exception so that the "throws Exception" never causes a compilation error. Write, throw, and catch new exception classes as needed but never modify the "throws Exception" clause. Write all code to be exception safe except for code that simply cannot be. Write that code using only non-throwing calls.
+
+'''Resulting Context:'''
+The set of exceptions that can be thrown by a method can be changed at any time without forcing editing or recompilation of any of the clients of the method. 
+This high level of decoupling comes at the cost of a certain type of static error checking that catches the case when an exception should not be allowed to propagate because it can be handled locally. 
+
+See also: JavaExceptionsAreParticularlyEvil
+----
+----
+
+So, what to do about that case when an exception should be handled locally...
+
+----
+'''Rebuttal'''
+
+In general, this practice sounds like an AntiPattern more than and idiom.
+
+First, in short, declaring a method "void foo() throws Exception" gives no information over simply "void foo()", "throws Exception" merely say the method might fail, and that is saying... nothing at all. Saying it is good that you can change the exceptions thrown without changing your client codes can be equally applied to ReturnObjectByDefault. You are just deluding yourself if you think your clients won't need to change when your method throw different exceptions. Your exception list is part of your possible return values, like it or not, your clients will come to depend on it. Hiding it behind a blank throws clause just make it harder to find the dependency before it blows up in your face.
+
+Now, let's go through the pattern in detail, consider how the proposed solution interact with the forces
+
+* ''Checked exceptions propagate dependencies up the potential call tree.''
+
+It actually make it worst, because you are not only forcing your entire call tree to either (1) declare "throws Exception" as you did, or to (2) catch yours and somehow deal with it... which is what they would have done had you declared throwing other Exception subclasses anyway. So the best case of this solution is no gain, but the worst case is everyone declaring throws Exception.
+
+* ''The type information given by "throws" clauses provides a static check for the rare case that client code can handle an exceptional circumstance that the called code cannot.''
+
+And that is how every automatic error recovery handles exceptions, such as automatic retry for network code on IOException. So you are throwing away the possibility of automatic error recovery and an off-band communication mechanism for... what? The possibility of throwing any exception you like?
+
+In many context, throwing exception is simply a mechanism to signal exceptional circumstances, that does not imply the method itself cannot handle the situation, but that it is more appropriate for the caller to decide how to handle.
+
+* ''There must always be some code that relies on other code not throwing such as in the second phase of a two phase commit, or during the handling of another exception, or for in-line initializers. Knowing that a method can't throw is valuable information (CommitCantThrow).''
+
+Any method can always throw runtime exceptions and errors, if your method need to rely on other methods not throwing, you have to catch Throwable anyway. And you don't need to throws exception by default to have methods not declaring any thrown exception. So the solution is really irrelevant to this force.
+
+Also, exception safety is more of a concern in C++ where any exception can mess up your memory management and give you memory leaks, I would like to know why it is a concern in Java. Perhaps you can give some example in Java where one cannot simply catch and ignore any Throwable but instead must rely on the called method not throw any exception?
+
+* ''There will be very few exception handlers and they will all be the same (HomogenizeExceptionHandlers).''
+
+Maybe for stand-alone GUI applications that simply pops an error dialog whatever the error cause, not so for any code that needs robustness. Furthermore, ConvertExceptions and TranslateExceptions can handle this force without the above disadvantages.
+
+This force is actually the context. If this context is true, I do agree this pattern is appropriate, because if you are not going to handle exceptions anyway, why bother to think what should be throw? In the topmost layer of many applications, such as the GUI or the JSP/Servlet layer, it really makes little sense declare different exception types (e.g. Jakarta Struts Action.execute() method declares throws Exception), you will handle them the same way anyway.
+----
+'''Debuttal'''
+
+Declaring that a method throws any Exception says something. It says the method can fail and that failure is not restricted to a specific set of Exception types. It forces the calling code to deal with those facts, either by catching the exception and handling it, explicitly ignoring the exception or throwing the exception up the call stack.
+
+There are three broad categories of exception handling:
+
+* Ignore
+* Report and continue
+* Report and exit
+
+It's the caller's job to decide how to handle the exceptions. The method shouldn't be grouping them for the caller. Unchecked exceptions will have to fall into one of those categories. You might as well throw unexpected checked exceptions in there as well. They have the same impact on the system as a whole.
+
+The benefit of declaring that methods throw Exception by default is that callers must explicitly handle any exception the method may throw, not just check exceptions and not just exceptions thrown by the method today. This makes the system more robust, and that generally benefits the user at some point.
+----
+'''Rebuttal to the debuttal'''
+
+Declaring any checked exceptions, e.g. a custom S''''''ystemException, in the "throws" clause will achieve the all objectives listed in the debuttal. Namely, forcing your caller to explicitly either catch and handle it, or catch and translate then rethrow it up the call chain, or declares in its throws section to pass it up the call chain.
+
+Grouping of exceptions is discussed in the "Classification of failure modes" below.
+----
+'''An example'''
+
+''Consider a method''
+ void storeUserPreference(Preference p) throws Exception
+''Consider the implementation of this method, if the programmer choose to store the preference to a file, he will call various java.io classes, which throws IOException. Well, since storeUserPreference() already declared it can throw anything, the programmer can just let IOException propagate to the caller. So, if the calling method wants to give a warning to the user and go on running when the preference cannot be saved to disk, while letting other types of error propagate, the caller has to look at your source code (or worst, somehow try to reproduce environment to cause that particular exception), see that it throws IOException, then the caller will''
+ try
+ {
+     storeUserPreference(p);
+ }
+ catch (IOException e)
+ {
+     // warn user and go on ...
+ }
+ // let other exceptions propagate
+''Now, for some reason, the programmer wish to store the preference to database instead, so he now uses JDBC in the storeUserPreference method, which now throws SQLException. No problem, because the resulting context of ThrowsExceptionByDefault is that you don't need to change or recompile your clients, because you already declared you can throw anything.''
+
+''But of course, for clients to work properly, they now have to catch SQLException instead of IOException. They still have to change, just that with ThrowsExceptionByDefault, you no longer have the compiler tell you where to change.''
+
+''If, instead, the method is written like this''
+ void storeUserPreference(Preference p) throws S''''''torageException, S''''''ystemException
+''Now the caller can reasonably expect to catch S''''''torageException to deal with storage problems regardless of how the method implements its actual storage. In the implementation of storeUserPreference, you only need to translate IOException or SQLException into S'''''torageException, by adding this:''
+ catch (IOException e) { throw new S''''''torageException("Cannot store preference", e); }
+''When later you change it to use database, the compiler will remind you IOException is never thrown and you need to handle SQLException, so you change it to''
+ catch (SQLException e) { throw new S''''''torageException("Cannot store preference", e); }
+''Now the caller is properly shielded from you implementation change.''
+
+----
+''' Discussion on the example'''
+
+In the example, storeUserPreference() clearly warned the caller that it could throw any exception. Why the caller chose to warn users about IO exceptions alone is beyond me. The user needs to know the operation failed regardless of the failure mode. Changing the signature of storeUserPreference to throw "StorageException" and "SystemException" doesn't change those facts.
+
+What it does change is which code gets to decide how it deals with different failure modes. In your suggested correction, storeUserPreference() groups some exceptions as "storage" and others as "system". The job of grouping exceptions (and grouping handling behaviors) should belong to the caller, not the method.
+
+When code calls a method that throws Exception, it explicitly agrees to handle any exception the method might throw. That's more robust that only handling the list of checked exceptions thrown at this moment in time.
+
+The calling code doesn't have to catch SQLException or IOException. They are both storage failures and should both be treated the same way, as should any exception thrown by storeUserPreference(). If the calling code has a special trick it can perform for a specific kind of exception it is free to catch that exception before it catches the general Exception class. Declaring "throws Exception" neither limits the exceptions that a method can throw nor limits the exceptions that a caller can handle.
+----
+'''Classification of failure modes'''
+
+But the distinction between "storage" and "system" is arbitrary and should be determined by the caller, not the method. You haven't shielded the caller, you've taken away its ability to classify exceptions. What if the caller wants to treat SQLExceptions as "system" exceptions? Methods shouldn't be dictating to callers how exception handling is grouped, just that exceptions might occur. It's up to the caller to group the way they respond to those exceptions. [The caller shouldn't knows how the method implements the storage]. Why should the caller author care that the method author thinks all of its exceptions should be grouped as system or storage exceptions?
+
+''Yes, the storage and system is arbitrary distinct specified by the method, much like user preference is an arbitrary entity defined by storeUserPreference(). Because in both case, that's the interface of the method storeUserPreference(), the 2 exceptions are the 2 failure modes the method expects its caller to deal with.''
+
+''To further elaborate: The method is an abstraction of a certain operation, even though the operation may involve many smaller sub-operations, which set of sub-operations to be grouped into one abstract operation is arbitrarily defined by the method author, with the purpose of making the operation and the abstraction logical and useful. The details of the sub-operations should be invisible to the caller, to maintain the modularity of the operation (i.e. to avoid callers playing tricks because they know the sub-operations involved). In much the same way, the failure modes defined by the method interface is an arbitrary grouping of the possible failure modes of all sub-operations involved. The grouping of such failure modes is part of the abstraction of the operation, and is also arbitrarily defined by the method method author to make the operation logical and useful.''
+
+By throwing Exception, the details of the sub-operations are made entirely invisible. Grouping failure modes shouldn't be part of the abstraction of the operation. It should be part of the calling code. The operation should not try to dictate how it is used, or how its failures are handled.
+
+* Perhaps the wording here is not clear enough; the called code should, of course, do its best to throw as meaningful an object as possible, so it should be an instance of a class carefully '''grouped''' in the way classes always should be. The caller can make different decisions based on different information, but that's a second issue. For instance, the caller may well decide that a divide-by-zero exception arising from calling SQL code should be treated as a system error, but in no way does that absolve the caller from doing its very best to throw the right kind of exception from e.g. an exception hierarchy from '''its''' point of view. Caller and callee views of exceptions can't always be reconciled seamlessly.
+
+** Exceptions should be grouped along the exception class hierarchy, but operations should not regroup them based on their expectations of how calling code should handle those exceptions.
+
+''My standpoint is that such grouping of failure mode is part of the method interface and should be done by the method author, by declaring distinct exception types on the throws list. Declaring "throws Exception" is to not define the abstraction of the operation's failure modes, thus exposing the failure mode of the sub-operations and thereby exposing part of the implementation details to its caller. And therein creates a hidden dependency between the caller and the implementation.''
+
+The failure modes of the sub-operations ''have'' to be exposed in some way or else information is lost. By wrapping them in other exceptions your code is still exposing them.
+
+There is no hidden dependency created by adding a specific catch clause in the calling code. It says nothing about the method, not even that the method may throw that exception. It says something about the calling code and what it can do if that exception is ever thrown.
+
+The caller needs to determine how it deals with failure, not the method. There's no advantage to limiting the caller to only 2 kinds of exceptions. If the method can fail, the method can fail. The caller should be able to deal with any failure.
+
+''Please see the section "How to handle any possible failure modes" for my rebuttal against the idea of "be able to deal with any failure".''
+
+''How should the caller knows to associate SQLException with storeUserPreference() when the interface simply declares "throws Exception", how do the caller knows not to catch, say, N''''''amingException too?''
+
+The caller must catch NamingException (and every Exception) if the method throws Exception. By reading the documentation and testing the code the caller author may decide to handle NamingException separately from Exception.
+
+''After all, the preference may be stored in an LDAP server accessed through JNDI, as far as the caller know. Unless, of course, the programmer of the caller has access to the source code of storeUserPreference(), which is what we don't want to have.''
+
+The caller doesn't have to catch any of those exceptions. It has to catch Exception. That will guarantee that it handles any Exception storeUserPreference() throws today, tomorrow or next year. If the caller has a special trick to perform on N''''''amingExceptions it is free to catch that before it catches Exception.
+
+''How can the caller knows it can do anything for N''''''amingExceptions unless he can see the source of the method?''
+
+The caller author can read the documentation. The caller author can test the method under various expected conditions.
+
+''So let's assume that the documentation for "storeUserPreference() throws Exception" explains that it may throw IOException for failure of the storage device (or any finite list of exceptions in general). Since that is the list of exceptions documented by the method, even if not explicitly declared in the signature, it is not reasonable to expect your caller to know how to deal other undocumented exceptions (but is possible to be thrown due to the "throws Exception" declaration).''
+
+''With the above in mind, can you explain...''
+* ''for the purpose of telling caller your failure modes, how is declaring "throws Exception" and then documenting the type of thrown Exceptions elsewhere different (or better) than  putting the exception list explicitly on the "throws" clause?''
+
+It's better because it decouples the caller from the current list of exceptions the method can throw. It allows the method to throw other exceptions in the future without invalidating the calling code.
+
+* ''for other undocumented exceptions, since your caller will not know how to handle them anyway, how is it different from throwing R''''''untimeExceptions from the method?''
+
+It's different because they are guaranteed to be explicitly dealt with. The calling code will either catch them or tell its caller to deal with them. R''''''untimeExceptions can bubble up the entire call stack.
+----
+Java won't allow code to call foo() unless it explicitly deals with those facts, either by catching or throwing Exception.
+
+''And that is one of the problem as explained above. You are forcing your caller to deal with an exception that can be anything, so there is really no way to properly deal with it except propagating it or ignoring it.''
+
+Not true. The caller can report the exception, abort a transaction, roll back changes, etc. The nature of the exception doesn't always matter.
+
+''That's only true when you cannot recover from the exception at all. I have provided example where the caller does know how to handle a specific failure case, the nature of the exception does matter in that case. Declaring throws Exception precisely prevents the identification of such recoverable cases.''
+
+What example? The user preference example? That isn't recovery, it's notification. Why would you only want to notify users of IOExceptions? Why not notify the user of any exception?
+
+''It is just an example of how you might not want to deal with all exceptions uniformly. If you prefer, you can have the caller try to put the user preference elsewhere (which is known to the caller context but is not known to the storeUserPreference() method) instead of notifying the user. It doesn't matter, it only illustrates case where different exception cause calls for different handling.''
+
+I'm not proposing the caller deal with all exceptions uniformly. I am advocating that the caller deal with all exceptions. The example above doesn't and that may cause problems for the user.
+----
+It's common to execute the same behavior regardless of the exception type. And if special behavior is needed for different types of exceptions, that probably ought to be dealt with by the individual exception types (ReplaceConditionalWithPolymorphism).
+
+''You expect an exception thrown from the innermost method on the call stack to know the context of the call and understand magically how the context should handle the exceptional case? If that's the case, why don't the method handle the case itself, why throw at all?''
+
+No magic required. The code that catches the exception can pass a closure to the exception with relevant context.
+
+''Perhaps you can elaborate what is your idea of "handling" an exception in the section below. I cannot envision an exception that can intelligently determine what to do based on context provided by any possible, arbitrary, yet-to-written calling code, all which is unknown at the time the exception or the method throwing the exception is written.''
+
+In my experience, exceptions are either handled or ignored. Handling the exception consists of logging it, possibly notifying a user about it and aborting the current transaction. All of that can be done by code in the exception given the context of the catching code.
+----
+'''How to handle any possible failure modes'''
+
+In the above discussion, most threads eventually converge to the idea of the caller handling '''any''' exception from the method called.
+
+From the standpoint of arguing against ThrowsExceptionByDefault, I assert that it is not possible to write a caller that can handle '''any''' possible failure mode. Lacking some yet uninvented AI, one can only write a caller that handles only known failure modes, and the exception list is telling what failure modes are known.
+
+Can those who practice ThrowsExceptionByDefault elaborate how you handle an Exception of unknown type, due to unknown cause, coming from a called method?
+
+''Sure:''
+
+    catch (Exception e) {
+        currentTransaction.rollback();
+        log(e);
+        notifyUser(e);
+    }
+I think our main disagreement stems from this. As explained in the end of my initial rebuttal, while this kind of "exception handling" is appropriate for some situations such as GUI applications and web presentation layer (basically user interactive systems), it is not applicable in general. At least not general enough to for this practice to be considered an idiom.
+
+''Remove "notifyUser(e)" if there is no user. The rest is standard for exception handling in the cases listed below.''
+
+Systems not appropriate to use ThrowsExceptionByDefault includes
+* any backend systems with no user interface,
+
+''These typically log the exception and abort the current transaction.''
+
+* systems to needs to decide to between retry-now, retry-later, try-alternate-path, etc, based on different context and different error cause (e.g. network timeout will calls for retry-later, configuration error will may send email to operator, unforeseeable error may trigger panic and system restart),
+
+''Then catch the specific exceptions for network timeout and configuration error, then catch Exception to trigger panic.''
+
+* libraries which may be used in the backend (I still remember one Windows COM library we used in the backend for some processing... whenever it encounters errors, it will popup a dialog on the console on the backend server, holding up the calling process of a poor remote user, until an operator comes and click OK. It's way of "error handling" makes it unusable for the system)
+
+''That has nothing to do with throwing exceptions or their types. If the calling code doesn't need to notify a user, it shouldn't notify a user.''
+
+See DontCatchExceptions for another view on what should be done to caught exceptions.
+----
+''Compilers find it useful to know about exceptions; it can greatly assist optimizers in some cases to know, for instance, that no exception will be thrown.''
+
+In Java, any method can throw a R''''''untimeException or an Error even if no throws clause is declared. Without some benchmark to back up the compiler optimization claim, it is just PrematureOptimization.
+
+''Here are two references for you that include some comments on exceptions interfering with '''Java''' compiler optimizations :''
+
+http://www-2.cs.cmu.edu/~jch/java/text/niklas_gustafsson_970221.txt
+
+http://www.npac.syr.edu/javagrande/ibmgrande.pdf (search for "exception")
+
+Is it my tone or something in my response that annoyed you? As you said, I am not really contradicting you, but given the context of this page, you comment sounds like a support for using ThrowsExceptionByDefault while having no throws declared to mean the method is "exception safe". Against that I just put a reminder that there is no such thing as an "exception safe" method in Java. I will read your references before commenting any further.
+
+''It was the PrematureOptimization comment, which seemed unjust.''
+
+Well, may it is unjust, I have to read your references first. But please consider you comment, when compounded with the solution offered above: "''Write all code to be exception safe except for code that simply cannot be. Write that code using only non-throwing calls''." seems to be suggesting that one advantage of ThrowsExceptionByDefault is better performance.
+
+''I think I see what you mean.''
+
+----
+CategoryException

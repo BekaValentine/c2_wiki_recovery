@@ -1,0 +1,188 @@
+Here is a simple implementation of counted_ptr. I adapted it from the original counted_ptr proposal to the CeePlusPlus Standard. I'm not sure why it was vetoed, probably because AutoPtr was sufficient and they wanted to move on with the process. Personally, I prefer using an explicit reference and referent pair. For example, in CppUtxOverview, the abstract component, utx::ITest would inherit from an abstract IReferent class. Then, all occurrences of counted_ptr<ITest> would be changed to Reference_<ITest>. This requires less overhead since Reference_<T> can count on T already being a referent rather than having to aggregate a pointer into the ''referent'' pointer.
+
+I haven't compiled this for a while so if you find any errors or think of any improvements, simply fix this code.
+
+ /*
+ * Name....: counted_ptr.h
+ * Date....: 07/24/99
+ * Created.: RobertDiFalco
+ *
+ * Implementation of the counted_ptr specification. Uses a ''static 
+ * default'' referent to improve the performance when being default
+ * constructed by an array or collection.
+ *
+ *   #define '''XXX_USE_COPY_ON_WRITE'''
+ *
+ * Define the above constant if you wish to enable the
+ * ''counted_ptr::isolate'' member. This clones the shared pointer
+ * with its copy constructor and then isolates from the rest of
+ * its references. This is useful for using counted_ptr as the
+ * base for a string class that uses ''copyOnWrite'' for its non-
+ * const members.
+ */
+
+ #ifndef __COUNTED_PTR_H
+ #define __COUNTED_PTR_H
+
+ template< class E >
+ class counted_ptr
+ {
+     /// Interface.
+
+     public:
+
+         typedef E       element_type;       ''// counted object type''
+         typedef size_t  size_type;          ''// count type''
+
+
+         ''// assignment ctor: e.g. counted_ptr<Foo> foo_ref = new Foo();''
+         explicit
+         counted_ptr( element_type* ptr = 0 )
+         {
+             ''// NOTE: speeds default creation for arrays''
+             static referent s_rep( 0, 1 ); ''// NOTE: stack gets a ref''
+
+             reference(
+                 ( ptr == 0 )
+                     ? &s_rep
+                     : new referent( ptr ) );
+         }
+             
+         ''// copy ctor: ''
+         counted_ptr( const counted_ptr<E>& rhs )
+         {
+             reference( rhs.m_pRep );
+         }
+
+         ''// assignment ''
+         counted_ptr<E>& operator=( const counted_ptr<E>& rhs )
+         {
+             if ( m_pRep != rhs.m_pRep )
+                 reset( rhs.m_pRep );
+
+             return *this;
+         }
+
+         ~counted_ptr()
+         {
+             release();
+         }
+
+         element_type& operator*() const
+         {
+             return *get();
+         }
+
+         element_type* operator->() const
+         {
+             return get();
+         }
+
+         element_type* get() const
+         {
+             return m_pRep->m_ptr;
+         }
+
+         bool is_unique() const
+         {
+             return m_pRep->m_nCount == 1;
+         }
+
+
+     ''#ifdef XXX_USE_COPY_ON_WRITE''
+
+         void isolate()
+         {
+             if ( is_unique() )    ''// nothing to do''
+                 return;
+
+             ''/* NOTE: if this fails, the state of the object must''
+             ''continue to be sound. The only problem areas are the''
+             ''new operations (and possibly the delete called by''
+             ''::release). Basically, we treat the code like a''
+             ''transaction. */''
+
+             ''// throws out of isolate if error creating element''
+             element_type* ptr = new element_type( *get() );
+
+             try
+             {
+                 ''/* NOTE: This is safe if the new operation''
+                 ''fails. If success, it does a simple release''
+                 ''and reference call. */''
+
+                 reset( new referent( ptr ) );
+             }
+             catch( ... )
+             {
+                 delete ptr;
+                 throw;                     ''// propagate''
+             }
+         }
+
+     ''#endif//XXX_USE_COPY_ON_WRITE''
+
+     /// Implementation.
+
+     private:
+
+         ''// the referenced representation''
+
+         struct referent
+         {
+             referent( element_type* ptr = 0, size_t nCount = 0 ) :
+                 m_ptr( ptr ),
+                 m_nCount( nCount )
+             {
+             }
+
+             ~referent()
+             {
+                 delete m_ptr;
+             }
+
+             element_type* m_ptr;      ''// the actual object''
+             size_t        m_nCount;   ''// number of references''
+         } 
+         * m_pRep;                     ''// this referenced pointer''
+
+
+         ''//..Simple methods to reference and release reps''
+
+         ''/* '''NOTE:''' these should use critical sections */''
+
+         void reset( referent* pRep )
+         {
+             ''// :$: auto_lock< lock_type > lock;
+
+             release();
+             reference( pRep );
+         }
+
+         void reference( referent* pRep )
+         {
+             (m_pRep = pRep)->m_nCount++;
+         }
+
+         void release()
+         {
+             if ( --m_pRep->m_nCount == 0 )
+                 delete m_pRep;
+         }
+ };
+
+ #endif//__COUNTED_PTR_H
+
+''-- RobertDiFalco''
+
+----
+
+There is also the BoostSharedPtr implementation available from the BoostLibraries.  It's been debugged and tested. -- JasonRiedy
+
+''Does this implementation provide any benefits over BoostSharedPtr? Given that BoostSharedPtr has been accepted as part of TechnicalReportOne, it seems like a better long-term solution.''
+
+The use of PolicyBasedClassDesign would make it easy to have a compile time switch to compare implementations.  -- JohnFletcher
+
+'''See also:''' ReferenceCounting, SmartPointer
+----
+CategoryCpp CategoryGarbageCollection CategoryPointer

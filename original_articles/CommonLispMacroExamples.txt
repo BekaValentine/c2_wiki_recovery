@@ -1,0 +1,86 @@
+Answering the question DoWeWantLispMacros by example.
+
+What I'd like to show to people who don't know CommonLisp is macros are not just templating mechanisms. They are code *transformers*, unlike assembler and compilers who are *translators*. Macros receive code and return code (not necessarily whole function definitions). Lisp code is expressed in lists; a data structure which we can manipulate to our heart's content. --MarcoBaringer
+
+----
+
+In PerlSix one may be able to define subs with "auto" args (perl6 is not ready yet, so this may change or disappear in the "final" perl6). Basically the parser looks through the body of the sub code and if it finds any variables whose names start with '^' it assumes these are actually arguments to the sub. the order in which the arguments should be passed is based on an ASCII ordering of the names. here's a lambda which adds it args together:
+
+-> { $^first + $^second }
+
+which when called sums it's first two arguments. $^first will be bound to the first argument since "first" < "second".
+
+Here's a macro which allows you to do just that:
+
+  (defmacro p6sub (&body body)
+    (let ((auto-arg-list ()))
+         (labels ((collect-args (code)
+                    (dolist (element code)
+                            (cond ((listp element)
+                                   (case (car element)
+                                         (quote t)
+                                         (let (dolist (let-item (cadr element))
+                                                      (when (listp let-item)
+                                                            (collect-args (cadr let-item))))
+                                              (collect-args (cddr element)))
+                                         ; ... Insert more cases here for other code constructs.
+                                         (t (collect-args (cdr element)))))
+                                  ((and (symbolp element)
+                                        (char= #\^ 
+                                               (char (symbol-name element) 0)))
+                                   (pushnew element auto-arg-list))))))
+                 (collect-args body)
+                 `(lambda ,(sort auto-arg-list #'string< :key #'symbol-name)
+                          ,))))
+
+So now instead of writing:
+
+	(lambda (x add) (when (oddp x) (funcall add x)))
+
+we can write
+
+	(p6sub (when (oddp ^a) (funcall ^b ^a)))
+
+I've tested this code, and it does work for the cases it handles. To make it into a full-fledged codewalker, you'd need to add support for a few basic forms besides just (quote ...) and (let ...). For those who don't understand what all that complexity is about, consider this snippet:
+
+  (p6sub (if (oddp ^a) '(^c) (funcall ^b ^a)))
+
+Since '(^c) is quoted, it's data, not code.  
+
+''I am a lisp n00b. As I understand, lisp is homoiconic ... code and data are inseparable. This seems to suggest otherwise. Please help!''
+
+The label - that's a type of private subroutine - (collect-args) notices this and doesn't treat ^c as an argument.  The correct expansion of this call to the (p6sub ...) macro is
+
+  (lambda (^a ^b) (if (oddp ^a) '(^c) (funcall ^b ^a)))
+
+rather than
+
+  (lambda (^a ^b ^c) (if (oddp ^a) '(^c) (funcall ^b ^a)))
+
+----
+
+Some fairly common utility macros:
+
+When you have an if and you want to keep the actual value of the condition:
+
+  (defmacro if-bind (var cond &body body)
+    `(let ((,var ,cond))
+          (if ,var ,)))
+
+The thing to notice about this macro is that it introduces a new symbol into the context of the body of the macro. To illustrate its use imagine we have a costly function foo which returns an integer if all went well and nil otherwise. 
+
+  (if-bind thing (foo)
+      (format t "The result is ~D.~%" foo)
+      (format t "It failed.~%"))
+
+''I think you mean this:''
+
+  (if-bind foo (some-predicate-here)
+    (format t "The result is ~D.~%" foo)
+    (format t "It failed.~%"))
+
+----
+
+This was recently posted to comp.lang.lisp. It's a macro which defines a mini language for performing a sequence of operations on data.
+
+http://groups.google.com/groups?dq=&hl=en&lr=&ie=UTF-8&selm=ahnk8t%247d5%241%40luna.vcn.bc.ca 

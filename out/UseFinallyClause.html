@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Use Finally Clause
+      </h1>
+      <p>
+        The idea here is that in many, many cases you always want to use a finally clause to perform cleanup whether or not the try block succeeded or failed. My favorite example of this involves JDBC. One of the things you're always going to want to do is to close any JDBC Connection and Statement objects when you're finished with them. Not closing them is a sure way to resource leaks.
+      </p>
+      <p>
+        So, my code generally always looks like the following:
+      </p>
+      <code>
+        Statement sqlStatement = null;<br/>
+        Connection jdbcConn = null;<br/>
+      </code>
+      <code>
+        try {<br/>
+      </code>
+      <code>
+        // obtain the jdbcConnection and your Statement and do stuff.<br/>
+      </code>
+      <code>
+        } catch (SQLException e) {<br/>
+        // Handle the exception<br/>
+        } finally {<br/>
+        try {<br/>
+        if (sqlStatement != null) sqlStatement.close();<br/>
+        if (jdbcConn != null) jdbcConn.close();<br/>
+        } catch (SQLException e1) {<br/>
+        System.out.println("Exception caught -- failure to close connection");<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <hr/>
+      <p>
+        Or even better:
+      </p>
+      <code>
+        Something x = null;<br/>
+        Something y = null;<br/>
+        // etc.<br/>
+        try<br/>
+        {<br/>
+        x = new Something();<br/>
+        y = new Something();<br/>
+        // etc.<br/>
+        }<br/>
+        finally<br/>
+        {<br/>
+        if (x != null)<br/>
+        {<br/>
+        try<br/>
+        {<br/>
+        x.close();<br/>
+        x = null;<br/>
+        }<br/>
+        catch (Exception e)<br/>
+        {<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        if (y != null)<br/>
+        {<br/>
+        try<br/>
+        {<br/>
+        y.close();<br/>
+        y = null;<br/>
+        }<br/>
+        catch (Exception e)<br/>
+        {<br/>
+        }<br/>
+        }<br/>
+        // etc.<br/>
+        }<br/>
+      </code>
+      <p>
+        This way if one close fails, the following ones still get a chance to run.
+      </p>
+      <p>
+        <em>Good heavens. That looks huge even taking your indentation style into account.</em>
+      </p>
+      <p>
+        Huge, but necessary.
+      </p>
+      <hr/>
+      <p>
+        In Java, I tend to use this pattern:
+      </p>
+      <code>
+        // ...<br/>
+        ResourceA a = ResourceA.acquireInstance();<br/>
+        try {<br/>
+        // ...<br/>
+        ResourceB b = ResourceB.acquireInstance();<br/>
+        try {<br/>
+        // ...<br/>
+        } finally {<br/>
+        b.release();<br/>
+        }<br/>
+        } finally {<br/>
+        a.release();<br/>
+        }<br/>
+        // ...<br/>
+      </code>
+      <p>
+        No need to check for null in the finally. No trys in the finallys. (If an exception gets thrown in the acquire or release they get propagated up to the code that needs to know.)
+      </p>
+      <p>
+        Typically, I don't <em>actually</em> have more than one try/finally in a single method. e.g. The inner part dealing with ResourceB would be wrapped in another method. But that's usually a nature organization of the code rather than something I do to prevent multiple trys in one method. I prefer multiple finallys in one method to trying to put multiple releases in a single finally.
+      </p>
+      <p>
+        Also, note the lack of catches. My catches tend to be as high up the call stack as I can push them. (Unless I'm wrapping/replacing a low-level exception with a more abstract, higher-level one.)
+      </p>
+      <p>
+        -- <a href="RobertFisher.html">RobertFisher</a>
+      </p>
+      <p>
+        <em>The trys in the finallys are there for one reason: if the outermost try (with "etc" in it) throws an exception and then x.close() throws an exception, that second exception will mask the original exception unless it is surrounded with a try/catch. I am assuming the original exception is important enough for us to want to see it.</em>
+      </p>
+      <p>
+        -- ChrisMosher
+      </p>
+      <hr/>
+      <p>
+        <strong>Q:</strong> How does...
+      </p>
+      <code>
+        try { doSomething(); }<br/>
+        catch ( SomethingException se ) { recover(); }<br/>
+        finally { cleanup(); }<br/>
+      </code>
+      <p>
+        differ in operation from
+      </p>
+      <code>
+        try { doSomething(); }<br/>
+        catch ( SomethingException se ) { recover(); }<br/>
+        cleanup();<br/>
+      </code>
+      <p>
+        ? -- <a href="KarlKnechtel.html">KarlKnechtel</a>
+      </p>
+      <p>
+        <strong>A:</strong> In these ways:
+      </p>
+      <ul>
+        <li>
+           If doSomething() throws a Throwable other than SomethingException, then cleanup() won't be called.
+        </li>
+        <li>
+           If recover() throws something, cleanup() won't be called.
+        </li>
+      </ul>
+      <p>
+        (Also keep in mind that javac won't bug you about catching or declaring that you throw exceptions extending RuntimeException.)
+      </p>
+      <p>
+        The other nice thing about finally is that it keeps you covered from early returns as well. e.g:
+      </p>
+      <code>
+        try { return doSomething(); }<br/>
+        catch ( SomethingException se ) { return null; }<br/>
+        finally { cleanup(); }<br/>
+      </code>
+      <p>
+        <strong>Q:</strong> Doesn't the JDBC connection class have a finalize() method?
+      </p>
+      <p>
+        <strong>A:</strong> It might depending on the JDBC driver implementation which will vary. the JDBC API states that you should close connections when you're through with them. Beyond that, you're really taking chances.
+      </p>
+      <p>
+        If the Connection, Statement, & ResultSet object of the driver aren't final, you could subclass them & add finalize() methods to close them. It's generally bad form to write code that is so closely tied to a specific JDBC driver, though.
+      </p>
+      <p>
+        Also, you generally want to free up (non-memory) resources when you're done with them rather than waiting until the GC runs. Especially since there are usually limits on resources like sockets, open files, &c.
+      </p>
+      <p>
+        <strong>Q:</strong> The approach shown above involves acquiring a connection within each site that connect to the database. Unless they're obtained via a connection pool, the performance costs can be ghastly, and either way, you need to replicate the logic for acquiring connections (url, user name, password, etc) into every calling site. Doesn't this violate <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a>?
+      </p>
+      <p>
+        <strong>A:</strong> Yes, you are acquiring a connection within each site that connects to the database. However, JDBC 2.0 Connection pooling now makes that a fairly trivial task from a runtime overhead perspective. And it doesn't necessarily violate <a href="OnceAndOnlyOnce.html">OnceAndOnlyOnce</a> if you call a utility method (in this class or another) that obtains the connection. You're inferring an implementation from too few details :)  In fact, my programs very nearly always obtain a JDBC 2.0 DataSource object and then cache it. Obtaining the connection from the DataSource doesn't even really require a userid and password, although you can optionally pass those in.
+      </p>
+      <p>
+        At that point, you've come about as far as you can in Java. If you had Lispy macros or C++ish automatic (aka stack) objects with dtors then you could <a href="ReFactor.html">ReFactor</a> further.
+      </p>
+      <hr/>
+      <p>
+        Rather than depending on application writers to do all this correctly, I took a different approach in the <a href="http://virtualschool.edu/wap">http://virtualschool.edu/wap</a> [<a href="BrokenLink.html">BrokenLink</a> - perhaps <a href="http://virtualschool.edu/jwaa">http://virtualschool.edu/jwaa</a> now?] infrastructure. Applications receive a Ctx (context) object from the infrastructure that provides access to the application's run-time context. The Ctx object is responsible for obtaining and releasing connections as instructed by the infrastructure. The applicatication is only responsible for closing any statements it creates via ctx.createStatement() or ctx.prepareStatement(sql) and has no responsibility for connections or connection pooling. That's the infrastructure's responsibility. -- <a href="BradCox.html">BradCox</a>
+      </p>
+      <p>
+        <em>That's an interesting design Brad. So what you've done is (in effect) wrapped the JDBC subsystem in a Facade you're calling a Context. That's good because the Context can handle the resource issues you've described. However, I've got a bone to pick with your assessment of the above design.</em> -- anonymous
+      </p>
+      <p>
+        With most connection pool implementations, you still need to return the connection to the pool. Thus, the finally block to do so is even more important without a finalize to back it up. It seems like this may not be the case in Brad's implementation, but the application still needs to use finally to ensure closure of the Statement & the ResultSet objects. -- <a href="RobertFisher.html">RobertFisher</a>
+      </p>
+      <hr/>
+      <p>
+        I love the <a href="ResourceReleasesResource.html">ResourceReleasesResource</a> design. I implemented it extensively as an explicit resource/resource manager pair in a framework at my last employer. All resources could be declaratively specified in a configuration file. The upside is that the application developer (the programmer using the framework) did not have to worry about getting the cleanup semantics right, or even know what the right way was for JDBC. The downside is that there were too many programmers that didn't get the inversion of control at all. They were experienced but very unsophisticated, and expected to declare, acquire and release resource procedurally within their own scope of control. -- <a href="StevenNewton.html">StevenNewton</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>Q:</strong> And <a href="CeePlusPlus.html">CeePlusPlus</a> doesn't have finally. What to do?
+      </p>
+      <p>
+        <strong>A:</strong> Use <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a>.
+      </p>
+      <p>
+        <strong>Note well:</strong> Putting clean up code outside the catch in C++ is <em>not</em> sufficient. You really need clean up to be done in a dtor.
+      </p>
+      <code>
+        bool bad_cpp_example()<br/>
+        {<br/>
+        resource_t resource = acquire();<br/>
+        try {<br/>
+        bool ok = use1(resource);<br/>
+        if(!ok) return false;<br/>
+        use2(resource);<br/>
+        } catch(foo_exception& foo) {<br/>
+        return false;<br/>
+        } catch(bar_exception& bar) {<br/>
+        report(bar);<br/>
+        } catch(baz_exception& baz) {<br/>
+        throw;<br/>
+        } catch(...) {<br/>
+        report_unexpected_exception();<br/>
+        }<br/>
+        release(resource);<br/>
+        return true;<br/>
+        }<br/>
+      </code>
+      <p>
+        The release call won't be called if:
+      </p>
+      <ul>
+        <li>
+           use1() returns false.
+        </li>
+        <li>
+           use1() or use2() throws a foo_exception or a baz_exception.
+        </li>
+        <li>
+           report() or report_unexpected_exception() throws an exception.
+        </li>
+      </ul>
+      <p>
+        An easy solution is to create a sentinel class whose dtor does the cleanup:
+      </p>
+      <code>
+        class sentinel {<br/>
+        resource_t& r;<br/>
+        public:<br/>
+        sentinel(resource_t& resource): r(resource) {}<br/>
+        ~sentinel() { release(r); }<br/>
+        }<br/>
+      </code>
+      <code>
+        bool better_cpp_example()<br/>
+        {<br/>
+        resource_t resource = acquire();<br/>
+        sentinel s(resource);<br/>
+        try {<br/>
+        bool ok = use1(resource);<br/>
+        if(!ok) return false;<br/>
+        use2(resource);<br/>
+        } catch(foo_exception& foo) {<br/>
+        return false;<br/>
+        } catch(bar_exception& bar) {<br/>
+        report(bar);<br/>
+        } catch(baz_exception& baz) {<br/>
+        throw;<br/>
+        } catch(...) {<br/>
+        report_unexpected_exception();<br/>
+        }<br/>
+        return true;<br/>
+        }<br/>
+      </code>
+      <p>
+        The code is now exception & early return safe.
+      </p>
+      <p>
+        Best would be to wrap the resource completely in a class with release() called in the dtor rather than having a separate sentinel class.
+      </p>
+      <p>
+        <strong>Note well:</strong> This kind of thing is needed to keep your C++ code exception safe even if there wasn't a try or catch in the example function!
+      </p>
+      <p>
+        <strong>FWIW:</strong> It wouldn't hurt C++ to have finally. Those who want to use <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a> everywhere all the time still could & the rest of us would be able to choose the best option in each case.
+      </p>
+      <p>
+        <em>Arguably, this page is about Java & I've said too much about C++ here. I could've just said, "See </em><a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a> & the answer to Karl's question above." I thought it was worth going through, though.<em></em>
+      </p>
+      <p>
+        -- Robert Fisher
+      </p>
+      <hr/>
+      <p>
+        In C#, one can use a UsingBlock, which is <a href="CsharpLanguage.html">CsharpLanguage</a>'s impersonation of <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a>. That is
+      </p>
+      <code>
+        using (MyManagedClass mnObj = new MyManagedClass())<br/>
+        {<br/>
+        …<br/>
+        mnObj.Use();      //use the mnObj object<br/>
+        …<br/>
+        }        //The compiler will dispose the mnObj object now<br/>
+      </code>
+      <hr/>
+      <p>
+        I've tried to do some clean up of this page. Hope I didn't do anything wrong. -- <a href="RobertFisher.html">RobertFisher</a>
+      </p>
+    </div>
+  </body>
+</html>

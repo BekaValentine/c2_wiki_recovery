@@ -1,0 +1,57 @@
+[JavaProblems]
+
+Java method calls are polymorphic - they always invoke the method defined by the most derived class.  This even happens in constructors.  If a base class constructor calls a method, the implementation defined by the most derived class  is called even though the derived class state has not yet been constructed!
+
+Solutions?  You can TestWhetherInConstructionPhase or EncapsulateMultiStageConstruction.
+ 
+----
+
+It depends what you think ought to happen in a constructor. One point of view is that construction should just set up the instance to be valid (e.g. creating collection objects for fields) and that anything exotic should be in another method. This is why the ModulaThree designers chose not to support constructors. Their solution was to have good field initialisation and establish a convention that such initialisation is done in an init() method that returns the instance. This gives you:
+
+VAR Thing thing = NEW Thing.init();
+
+(or something like that, I can't remember the syntax). If it's complicated, most likely you wrap the whole thing up in a factory method.
+
+-- SteveFreeman
+
+-----
+The introduction says that ''if a base class constructor calls a method, the implementation defined by the most derived class is called even though the derived class state has not yet been constructed'' with the implication that this is a bad thing.  However, this can also be a feature -- in particular, when some of the derived class construction is done by a method called by the base class constructor, rather than in the derived class's constructor.
+
+For example, consider classes that are composed of properties rather than simple instance variables.  For example, a class that needed an "int" instance variable would actually have a reference to an "int property" object.  This scheme can provide most of the advantages of reflection but it also provides a way to handle property change notification (properties and/or property containing classes can be subscribed to for change notification).
+
+We used a scheme like this in Microsoft Liquid Motion 1.0 which was used to implement the undo system among other things.  However, it was both a hassle and error prone to manage the properties in a class.  In order to simplify things, I set things up so that subclasses of the base property container class just had to add a single method that "registered" each property in the class.  Here's a simplified example of how it worked:
+
+class Foo extends PropertyContainer
+{
+    public Property propX;
+    public Property propY;
+
+    protected void registerProperties( int code )
+    {
+       super.registerProperties( code );
+       propX = registerProperty( code, "propX", TYPE_INT );
+       propY = registerProperty( code, "propY", TYPE_INT );
+    }
+}
+
+PropertyContainer's constructor would call the registerProperties() method with one code, and its clone method would call it with another code.  The registerProperty() method could tell by the code whether it needed to construct a new property, or clone an existing one.
+
+In a simple case like the one above, a PropertyContainer subclass didn't need to declare a constructor or a clone method -- it just needed a registerProperties() method.  (PropertyContainer was also capable of detecting when a registerProperties() method failed to super).
+
+This whole scheme was only possible ''because'' Java calls the most derived method from a constructor.
+
+--CurtisBartley
+
+I have since seen the idiom of calling methods in the derived class from the base class constructor used in the Swing library.  The JFrame class has a protected createContentPane method that is used to create the panel that contains the contents of the window.  Derived classes can override the method to create panels that are different from the default type.
+
+The semantics of Java constructors are really only a problem for those of us who are used to C++ or are converting code from C++ to Java. --NatPryce
+----
+No, the original comment was right - it's bad! That you can write code which relies on a language quirk does not make the quirk good.
+
+The purpose of a constructor is to set up the class invariant. Methods other than the constructor should be able to rely on the class invariant being true if they want to. It's harder to reason about code if you can't trust that. -- DaveHarris
+----
+I disagree that this qualifies as a language quirk.  The way Java handles polymorphic method calls in constructors is no more weird than the way C++ does it, and in my opinion it's less so.  Then the statement that methods other than the constructor should be able to rely on the class invariant seems overly dogmatic to me.  In particular this precludes having ''any'' method whose purpose is to aid in object construction!  -- CurtisBartley
+
+I weakened my comment by adding "if they want to". Does that help?
+
+If not... there's a difference between allowing for a relaxed invariant for a specific method, and a mechanism which allows ''any'' of your methods to be called before you're ready. It's especially insiduous where the base class gets changed after the derived class was written, so that the author of the derived class wasn't expecting the call. -- DaveHarris

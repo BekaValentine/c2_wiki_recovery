@@ -1,0 +1,164 @@
+An example of the ThisOrThatFallacy?
+
+----
+
+For those who don't know, message maps are are a set of macros for associating a windows message (such as button push) with a C++ member function. They are used something like this:
+
+ // from the header file...
+ class CMainFrame : public CFrameWnd
+ {
+ // ...
+ // Generated message map functions
+ protected:
+    //{{AFX_MSG(CMainFrame)
+    afx_msg int On''''''Create(LPCREATESTRUCT lpCreateStruct);
+    afx_msg void On''''''Sys''''''Command(UINT nID, LPARAM lParam);
+    afx_msg void On''''''Close();
+    afx_msg void On''''''Destroy();
+    //}}AFX_MSG
+
+    DECLARE_MESSAGE_MAP()
+ };
+
+ // from the CPP file...
+ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
+    //{{AFX_MSG_MAP(CMainFrame)
+    ON_WM_CREATE()
+    ON_WM_SYSCOMMAND()
+    ON_WM_CLOSE()
+    ON_WM_DESTROY()
+    //}}AFX_MSG_MAP
+ END_MESSAGE_MAP()
+
+----
+
+The argument for message maps is that they are more efficient and use less space  then virtual functions. The fallacy is that we are given the choice between virtual functions and message maps.
+
+The thing is that it is true that I do not know of any way to handle such events using either a set of virtual methods, or a set of registered call backs (which is what the macros hide). It is not true that there are no cleaner way to implement registered call backs. Thus we see the ThisOrThatFallacy.
+
+Do you know of other examples?
+
+----
+
+I always thought they did message mapping because the VC++ compiler, at the time they developed MFC, was really lame.
+
+''No, the reason that they did it this way is that there are more than 350 messages in the Windows API. This is a very large vtable. It's also a waste to have this in every class, whether the class cares about the messages or not. But, yes, they opted for this because Windows at the time was very lame, and memory was expensive.''
+
+The question was not "Why message maps instead of virtual functions". The question was why message maps. That's the fallacy. Get it? -- ThaddeusOlczyk
+
+''No. As I understand it, TheThisOrThatFallacy comes down to unnecessarily limiting oneself to a set of choices, without considering alternatives. I don't see how "Why message maps?" is a fallacy. There are reasons for any decision. A decision is only a fallacy (in error) when the context is considered. -- RogerLipscombe''
+
+The problem is that the conventional vtable implementation will give each class its own copy of the entire block of 350 function pointers, if it overrides just one of them. This allows you to use a single indirection for method dispatch. It gains speed at the cost of memory.
+
+Another approach is to store just the differences between vtables. That reduces the memory at the cost of slower function calls (slower because they have to search many tables and they can't use direct addressing. Which is best depends on the situation, but the C++ linker model requires you to know at the calling site which makes it relatively hard to use different implementations for different classes.
+
+''I believe Borland tried to do something like this and was lambasted for violating the ANSI C++ standard. They then released OWL 2 which did not rely on this and got lambasted again for not releasing a backward compatible library. Sometimes you can't win.'' -- ThaddeusOlczyk
+
+Yes, I remember this. They extended the pure virtual syntax of C++. You could use a non-zero constant (which indicated a message?). Funny, I think that this burned MS also. They saw what happened to Borland and took it to heart. I think if they hadn't they might have eventually mutated C++ to something like COM. -- MichaelFeathers
+
+If you think about this you can probably see some reasonably clean solutions (eg using #pragma to influence the compiler's choice). The MFC macros are a fairly unclean solution. -- DaveHarris
+
+OberonLanguage had a cool hack for this: at compile time they could calculate how far up in the inheritance hierarchy the method to call was. They used this difference as an index in a lookup table (associated with the instance or the class's vtable, I don't remember) to get to the vtable pointing to the method. This meant constant time method lookup (most of the time) without duplicating function pointers. Does anybody remember this better?
+-- ThomasMaeder
+
+----
+
+As for message mapping vs virtual functions, here are some alternatives:
+	* Use member function pointers explicitly -- no macros.
+	* Do a virtual function call to a function in the base class that can be overridden in child classes:  Standard implementation uses the message mapping tables, but your override could use any other method.
+	* Use switch statements instead of hand/macro-crafted static tables.
+
+----
+
+You can also put FunctorObject''''''s in a hash table. If you have a good hashing algorithm you should get similar or even better performance than you'd get with a giant switch statement (which is how the registered call backs hidden by the macros are implemented) anyway.
+
+''Actually, they're not. They're implemented as a table of member function pointers. The table at a given class level is linked to the base class. To find the function to call, MFC traverses the linked list of tables, examining the table at each step. This is why BEGIN_MESSAGE_MAP lists the base class. Entries found are stored in a hash-table-based cache.''
+
+I fail to see how any table driven approach that does not require you to search the table one element at a time ( I consider searching the table element at a time as algorithmically similar to switch statements ) as better than virtual functions, which after all use vtables. -- ThaddeusOlczyk
+
+Vtables and element-at-a-time searching are at opposite ends of the space/time tradeoff continuum. There are things in the middle, like having a hash table for each class. (Or a tree of some sort, but I don't know whether you'd consider that not to be "searching the table one element at a time".) Since both space and time matter, some approach in the middle might be a win. I don't know enough about Windows and MFC to know how likely it is to be so. -- GarethMcCaughan
+
+It's hard for me to ever defend MicrosoftCorporation, but I have to here. There are 350+ methods. You plan to override (say) ten of them. You care about space and time. You have a range of choices from the simple to the complex. One option is to duplicate the un-overridden method address in the vtable. Another is to use an ordered, tagged list of overridden methods, and point to the base class. Anything else would be hard to explain, and thus be later to market and more bug-prone. Now there is the question of your vtable-scanning method, in the second case. You could use BinarySearch, which is good for large lists, or LinearSearch, which is good for really small lists. The more complex algorithm needs a larger N to realize a performance benefit. At this point you are saying "Let me hash the method signature into, say, 13 buckets, which have a list of overridden methods with that hash and a pointer to the base-class (bucket). The hashing could be precomputed. You've just invented a significantly more complex solution with questionable benefits. Yes, it's a middle solution, and it could possibly work, but I don't think it's the simplest.
+Have I simply duplicated TheThisOrThatFallacy? Perhaps, but at some point you have to stop making up alternatives and do something. I propose that MS did just this.
+
+----
+
+''The problem is that the conventional vtable implementation will give each class its own copy of the entire block of 350 function pointers, if it overrides just one of them. This allows you to use a single indirection for method dispatch. It gains speed at the cost of memory.''
+
+So what? Bear in mind that this big vtable (not ''that'' big, about 1.5KB, assuming pointers are 32-bit) only has to be carried around for objects that receive window messages. How many windows do you have in your applications? -- MikeSmith
+
+Even at the dawn of Windows (in the late 1980s, when PCs had about 2 MB of memory), a typical Windows application (like Word) had dozens (if not hundreds) of window classes. The main memory was just 640 kB.
+
+100 classes * 1.5 kB/class = 150 kB = a lot.
+
+A typical Windows application has a surprising number of window classes.
+For example, a scrolling text box (like the one used to type this text) has 7 classes:
+
+	1. The scroll index (aka the slider).
+
+	1. The up arrow.
+
+	1. The down arrow. (Possibly the same class as the up arrow, just with a different image and a sign change.)
+
+	1. The background of the scrollbar.
+
+	1. A class containing the 4 sub-windows of the scroll bar.
+
+	1. The text display box itself.
+
+	1. A class containing the text box and the scroll bar. (Possibly omitted, by forcing the programmer to manually keep the text box and the scroll bar lined up.)
+
+''Yes, but most of these are not actually being represented by CWnd-derived objects in the application code, and therefore would not have these message maps associated with them - just the WndProcs given to them within USER32.DLL (or USER.EXE in the olden days.)'' -- MikeSmith
+
+----
+
+Everyone is still stuck in the "either-or" fallacy. What if you don't have to have 350 virtual functions in any one class... but you group the 350 messages into, say, 35-ish classes. If you want to override 5 messages, that all happen to defined in the class that handles resizing messages, you only subclass one class.
+
+Yes, I know you still need to translate from 350 message numbers down into one method of one class, so you'll still want to use some mapping via hash-tables (possibly only one table that is combined from all the classes you inherited from).
+
+Implementation is left as an exercise of the reader.
+
+----
+
+There is one very significant problem with a C++ vtable-based approach to this problem: practically every new version of Windows has new window messages. This would mean that whenever a new version of Windows came out, you would need a new version of MFC with new class definitions . The message-map approach (or any other non-vtable approach) has the benefit of being able to handle new OS-specific messages without requiring changes to any MFC classes. This is a good illustration of the OpenClosedPrinciple.
+
+BTW, why is this called a "fallacy"? You can certainly disagree with Microsoft's design decisions, but I fail to see how MFC's message maps are fallacious. -- KrisJohnson
+
+----
+
+I think the fallacy here is that you're comparing MS's specific implementation (which sucks) to vtables in general. There's several benefits to using message mapping instead of vtables:
+* The aforementioned size benefit (which can be alleviated by compiler optimization, but then you're tied to a specific compiler)
+* Binary compatibility
+* Extensibility - can add new messages without recompiling application + libraries + defining new functions etc.
+* Runtime modification/extension of the message table, which also means you don't necessarily have to subclass to modify behavior.
+
+----
+One point that has been missed is that Windows has an extensible set of messages.  Applications and Windows subsystems define their own message types, and message types can be defined ''dynamically''.  Thus, handling messages with a static vtable will never work.
+
+''Actually, message types are not defined dynamically; they are statically defined at develop time.  It is no more difficult to extend a vtable through inheritance than to add to the message map.''
+
+Sorry, I wasn't very clear.  MFC message maps are defined statically at develop time.  However, Windows message types can be defined dynamically.  If I upgrade a DLL that is part of the "OS" or install a third party application, it can start sending new messages to my application.  So, a fixed mapping from message type to vtable entry cannot work.  Whenever a new message type is introduced by an install, the vtable would have to change and so break my derived classes.  The MFC message map defines a mapping from message type to member function that is more flexible than a vtable, because it doesn't affect the type signature of the class.
+
+''Okay, I see your point.  If a new message type is added to the base operating system (not an application defined message), the MFC message map allows a default operation to be called without rebuilding a target application.  If the message map was implemented via a vtable, the default operation would not be part of the application until it was rebuilt, and it is really unclear how the calling task would fail in the interim.  Solutions based on vtables could be designed, but they would probably have a higher degree of complexity than the MFC message map.  Am I on track?''
+----
+My biggest annoyance with the MFC Message Map is that it is merely a preprocessor macro for a standard switch/case statement.  Why make me learn a new syntax when an existing one works just as well?
+
+Hiding a standard switch/case statement in a preprocessor would make the code more neat and readable. This is a good choice if your application needs to handle more messages and events. When you need to add more complex features to your program, the more switch/case statement you have to write and sometimes, you need to use nested switch/case statement. One good example is when you need to handle events like double-clicking an item in a list box as shown below:
+
+          case WM_COMMAND:
+                   switch(LOWORD(wParam))
+                   {
+                    case IDC_LIST1:
+                          if(HIWORD(wParam) == LBN_DBLCLK)
+                              OnSelectItem();
+                         break;
+
+                   }
+
+This code works well but, as it gets bigger, you'll end up into a spaghetti-like code. Using a preprocessor macro would make this code more neat and easier to maintain as shown below:
+
+          COMMAND_ID_HANDLER(WM_COMMAND , IDC_LIST1 , LBN_DBLCLK , OnSelectItem)
+
+This preprocessor macro would automatically associates the event handler OnSelectItem(), whenever your program receives the WM_COMMAND message, the components like the resource id and notification code is already unpacked. In this case, the list box resource id is IDC_LIST1 and since it was double-clicked, a notification code LBN_DBLCLK has been received by its parent window and the associated handler OnSelectItem would then be called. In this code, you noticed that you don't have to use nested switch/case statement like the one shown above. Using preprocessor macros makes your code clearer and easier to maintain.
+
+Good programmers should also practice good coding and good coding not only means neatness but also ease in maintaining the code as well.

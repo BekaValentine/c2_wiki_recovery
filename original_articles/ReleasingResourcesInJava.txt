@@ -1,0 +1,64 @@
+Many objects hold references to system resources (files, memory, database locks, etc.) which need to be released in a timely fashion when they are no longer needed.
+
+In C++, the ResourceAcquisitionIsInitialization idiom is widely used for this, which works because of explicit object lifetimes (objects have destructors which are called when they go out of scope or are deleted; those can release resources at that time).
+
+Java automates the reclamation of memory, but not other resources.  A finalize() method can help ensure that resources are released ''eventually'' but not in a timely fashion.  It appears that this has been handled ad-hoc in various Java classes -- some have close(), some dispose(), some destroy(), and probably others.  
+
+I haven't come up with an elegant general solution to this, and wonder if anyone else has.
+
+-- JimPerry
+-----------
+I think this is a concern for all objects with semantically determined lifetimes. I suggest, therefore, that we consider this as a specialization of ReleasingResourcesOfObjects.
+
+TomStambaugh
+----
+A first step is to use the finalize() method detect errors, for example by asserting(false) (if you have an assert mechanism).
+
+If an attempt to allocate a resource fails, it may be worth requesting a GC and calling finalizers, and trying again.
+
+Slightly more interesting is to protect your resource with inner classes. Like:
+    interface Closure {
+        void exec();
+    }
+
+    class Resource {
+        private abstract void acquire();
+        private abstract void release();
+
+        public void withDo( Closure c ) {
+            acquire();
+            try {
+                c.exec();
+            }
+            finally {
+                release();
+            }
+        }
+    }
+    void test( Resource r ) {
+        r.withDo ( new Closure() { void exec() {
+            System.out.println( r ); // or whatever
+        } } );
+    }
+
+Now acquires and releases are guaranteed to be paired.
+-- DaveHarris
+
+----
+
+The example by DaveHarris above is similar to one I came up with a couple of days ago in a discussion in the Comp.object news group. The difference is that ResourceReleasesResource attempts to be abstract and reusable by multiple resource providers. Any object can be a resource client if it implements the ResourceClient interface. (This seems more general than an inner class.)
+
+-PatrickLogan
+-----
+For what it's worth, standard practice in Java is to give the resource a close() method and call it within a finally clause.  (See: java.io, java.net, java.sql.)  The use of a Closure inner class seems like a nice way to do too, but you'd need to write your own adapter classes.
+
+-BrianSlesinsky
+----
+Finalizers don't actually ''ensure'' that your resources will be eventually freed.  Some VM's don't call finalizers on exit by default, and some refuse to at all.. plus there's always the chance you'll crash the VM (I average about a crash a week.. 98% of them are my fault).  Furthermore, be careful what you expect out of gc() and runFinalization().. Different VM's act very differently, and some seem to act unpredictably with large numbers (ie >10,000) of free objects.  For reference, HotSpot seems to be quite predictable, and gc()'s free objects very quickly.. however, that isn't the behavior I want for my current project, so I'm using Symantec's JVM.
+
+To me, close(), destroy(), etc have different meanings.  In most cases, I think close() is appropriate (open files, sockets, db connections, etc).  I do have cases where I use something else instead.  For instance, destroy() to me means that some object (ie an object that has a temporary file) actually has to go out and free resources from somewhere else.
+
+-GeorgeGruschow
+
+----
+CategoryJava

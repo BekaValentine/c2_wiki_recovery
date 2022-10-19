@@ -1,0 +1,615 @@
+This is another PayrollExample, intended to be a realistic illustration of the use of ObjectOriented programming for business applications.  The code shown here is a simplified re-implementation (in Java) of C++ code used in production.  It would be interesting to compare and contrast this code with the same functionality implemented using ProceduralProgramming and TableOrientedProgramming.
+
+It is an implementation of Canadian tax deduction calculations found in the ''Payroll Deductions Formulas for Computer Programs'' document at http://www.cra-arc.gc.ca/E/pub/tg/t4127-jan/t4127-09e.pdf  
+
+''The PDF spec document link appears to be invalid. Is there a new home? I did find this, which may be a later version:''
+http://www.cra-arc.gc.ca/E/pub/tg/t4127-jan/t4127-13e.pdf
+
+Yes, it changes every six months.  The document from which this example was built was dated January 2009 and no longer exists.
+
+For the sake of brevity, only Alberta, Ontario, and Quebec are included here.
+
+Please note:
+* The Canada Payroll document is updated twice yearly.  Anything can change.  Hence, the formulae have been minimally refactored, in order to maintain reasonable correspondence with the document. 
+* This Java code does '''not''' follow Java naming conventions, in order to match the naming convention used in the Canada Payroll document.
+* Certain literals appear frequently, which would suggest the use of a named constant.  For example, 0.15 appears throughout the Federal calculations.  Whilst this implies a single constant and it might even be one (e.g., the base tax rate of 15%), the Canada Payroll documents make no attempt to "constant-ize" this figure, as future variations can and will occur on a formula-by-formula basis. 
+* Inheritance is used to specify province-specific values and override formulae.
+* Pay and Employee classes are merely stubs.  In a production implementation, these are fleshed out with relevant constructors, setters, etc., as needed.
+
+By the way, the C++ version of this is employed in two distinct payroll products.  One is written entirely in C++, and uses a custom, integrated object-relational DBMS.  The other is written in Access/VBA and uses the Microsoft JET Engine for its DBMS.  The same payroll code is statically linked into the C++ product and compiled as a DLL for use in the Access/VBA version.  Every six months, payroll updates are deployed as one .EXE for the C++ version and one .DLL for the Access/VBA version.
+
+This is also a characteristic example of business logic and a clear justification for separation of business logic from presentation logic.  (See BusinessLogicDefinition and BusinessLogicDefinitionDiscussion.)  As noted above, the same payroll calculations are used in two different products.  In other words, the same business logic supports two different implementations of presentation logic.  If business logic and presentation logic were blended -- say, if the payroll code below prompted the user for input at some point (it doesn't) -- it would, at least, be more difficult to deploy the same code in multiple products and be more complex as well. 
+
+''Commentary on this sample can be found at PayrollExampleTwoDiscussion.''
+----
+'''Employee.java'''
+
+ package ca.mb.armchair.examples.payroll.taxcalc;
+
+ /*
+  * Employee information for payroll purposes.
+  */
+ public class Employee {
+
+	private int payPeriods;
+	
+	public Employee(int payPeriods) {
+		this.payPeriods = payPeriods;
+	}
+	
+	// The number of pay periods in the year
+	public int P() {return payPeriods;}
+
+	// The number of pay periods remaining in the year
+	public int PR() {return payPeriods;}
+
+	// "Total claim amount" reported on federal Form TD1.  -1 means not indicated
+	public double TC() {return -1;}
+
+	// "Total claim amount" reported on the provincial or territorial TD1 form.  -1 means not indicated
+	public double TCP() {return -1;}
+
+	// Annual deduction for living in a prescribed zone as indicated on Form TD1
+	public double HD() {return 0;}
+	
+	// Annual deductions such as child care expenses and support payments, etc.,
+	// authorized by a tax services office or tax centre
+	public double F1() {return 0;}
+
+	// Federal tax credits, such as medical expenses and charitable donations authorized
+	// by a tax services office or tax centre
+	public double K3() {return 0;}
+	
+	// Other provincial or territorial tax credits, such as medical expenses and charitable
+	// donations authorized by a tax services office or tax centre
+	public double K3P() {return 0;}
+
+	// Amount for acquisition of shares in prescribed labour-sponsored venture capital 
+	// corporations
+	public double Invest() {return 0;}
+
+	// Number of disabled dependents from TD1ON
+	public int getDisabledDependents() {return 0;}
+	
+	// Number of under-19 dependents from written request
+	public int getDependentsUnder19() {return 0;}	
+	
+	// YTD EI contributions
+	public double EIYTD() {return 0;}
+	
+	// YTD CPP contributions
+	public double CPPYTD() {return 0;}
+ }
+
+'''Pay.java'''
+
+ package ca.mb.armchair.examples.payroll.taxcalc;
+
+ /*
+  * Payroll per-period payment information.
+  */
+ public class Pay {
+
+	private double I;
+	
+	public Pay(double I) {
+		this.I = I;
+	}
+	
+	// Gross remuneration for the pay period
+	public double I() {return I;}
+
+	// Insurable earnings for the pay period including insurable taxable benefits, bonuses,
+	// and retroactive pay increases (Quebec)
+	public double IE() {
+		return I();
+	}
+	
+	// Union dues for the pay period
+	public double U1() {return 0;}
+
+	// Payroll deductions for employee contributions to a registered pension plan (RPP),
+	// a registered retirement savings plan (RRSP), or a retirement compensation
+	// arrangement (RCA)
+	public double F() {return 0;}
+
+	// Alimony or maintenance payments required by a legal document to be
+	// payroll-deducted authorized by a tax services office or tax centre
+	public double F2() {return 0;}
+	
+	// Additional tax deductions requested for the pay period
+	public double L() {return 0;}
+ }
+
+'''Federal.java'''
+ 
+ package ca.mb.armchair.examples.payroll.taxcalc;
+
+ /** 
+ * Canada Payroll provincial and federal tax, EI & CPP/QPP deduction 
+ * calculator. 
+ * 
+ * Based on http://www.cra-arc.gc.ca/E/pub/tg/t4127-jan/t4127-09e.pdf
+ * 
+ * Using Option 1.
+ * 
+ * NOTE: Commissioned employees are _not_ handled, nor are bonuses,
+ *       retroactive pay increases, or other non-periodic payments.
+ */
+ public abstract class Federal {
+	
+	protected Employee employee;
+	protected Pay pay;
+	
+	public Federal(Employee employee, Pay pay) {
+		this.employee = employee;
+		this.pay = pay;
+	}
+	
+	public static double notLessThanZero(double v) {
+		if (v >= 0)
+			return v;
+		return 0;
+	}
+	
+	public static double notMoreThan(double v, double maximum) {
+		if (v > maximum)
+			return maximum;
+		return v;
+	}
+	
+	public static double theLesserOf(double v1, double v2) {
+		if (v1 < v2)
+			return v1;
+		return v2;
+	}
+
+	// Maximum EI contribution per year
+	public double MaxEI() {
+		return 731.79;
+	}
+	
+	// EI rate
+	public double EIRate() {
+		return 0.0173;
+	}
+	
+	// Maximum QPP or CPP contribution per year
+	public double MaxC() {
+		return 2118.60;
+	}
+	
+	// CPP or QPP rate
+	public double CRate() {
+		return 0.0495;
+	}
+	
+	// Employment Insurance premiums for the pay period
+	public double EI() {
+		return notLessThanZero(theLesserOf(MaxEI() - employee.EIYTD(), EIRate() * pay.I()));
+	}
+
+	// Canada (or Quebec) Pension Plan contributions for the pay period
+	public double C() {
+		return notLessThanZero(theLesserOf(MaxC() - employee.CPPYTD(), CRate() * (pay.I() - (3500 / employee.P()))));
+	}
+
+	// Annual taxable income
+	double A() {
+		return (employee.P() * (pay.I() - pay.F() - pay.F2() - pay.U1())) - employee.HD() - employee.F1();
+	}
+	
+	// Federal non-refundable personal tax credit
+	double K1() {
+		double TC = employee.TC();
+		if (TC == -1)
+			TC = 10100;
+		return 0.15 * TC;
+	}
+	
+	// Estimated annual CPP contribution
+	double PtC() {
+		return notMoreThan(employee.P() * C(), MaxC());
+	}
+	
+	// Estimated annual Employment Insurance contribution
+	double PtEI() {
+		return notMoreThan(employee.P() * EI(), MaxEI());
+	}
+
+	// Federal Canada (or Quebec) Pension Plan contributions and Employment Insurance
+	// premium tax credits for the year
+	double K2() {
+		return 0.15 * PtC() + 0.15 * PtEI();
+	}
+
+	// Canada Employment Credit
+	double K4() {
+		return theLesserOf(0.15 * A(), 0.15 * 1044);
+	}
+
+	// Federal tax rate applicable to the annual taxable income A
+	double R() {
+		if (A() <= 38832)
+			return 0.15;
+		else if (A() <= 77664)
+			return 0.22;
+		else if (A() <= 126264)
+			return 0.26;
+		else
+			return 0.29;
+	}
+	
+	// Federal constant
+	double K() {
+		if (A() <= 38832)
+			return 0;
+		else if (A() <= 77664)
+			return 2718;
+		else if (A() <= 126264)
+			return 5825;
+		else
+			return 9613;		
+	}
+
+	// Estimated federal and provincial or territorial tax deductions for the pay period
+	public double T() {
+		if (A() < 0)
+			return pay.L();
+		return ((T1() + T2()) / employee.P()) + pay.L();
+	}
+
+	// Annual federal tax deduction
+	double T1() {
+		return notLessThanZero(T3() - LCF());
+	}
+
+	// Annual provincial or territorial tax deduction
+	double T2() {
+		return notLessThanZero(T4() + V1() + V2() - S() - LCP());
+	}
+
+	// Annual basic federal tax
+	double T3() {
+		return notLessThanZero((R() * A()) - K() - K1() - K2() - employee.K3() - K4());
+	}
+
+	// Annual basic provincial or territorial tax
+	double T4() {
+		return notLessThanZero((V() * A()) - KP() - K1P() - K2P() - employee.K3P() - K4P());
+	}
+
+	// Federal labour-sponsored funds tax credit
+	double LCF() {
+		return theLesserOf(employee.Invest() * 0.15, 750);
+	}
+	
+	// Provincial or territorial Canada Pension Plan contribution and Employment Insurance
+	// premiums tax credits for the year
+	double K2P() {
+		return PtC() * V() + PtEI() * V();
+	}
+
+	// Provincial or territorial labour-sponsored funds tax credit
+	double LCP() {return 0;}
+
+	// Provincial or territorial tax rate for the year
+	double V() {return 0;}
+
+	// Surtax calculated on the basic provincial or territorial tax
+	double V1() {return 0;}
+
+	// Additional tax calculated on taxable income (applies to Ontario Health Premium only)
+	double V2() {return 0;}
+	
+	// Ontario or British Columbia provincial tax reduction
+	double S() {return 0;}
+
+	// Provincial or territorial constant
+	double KP() {return 0;}
+
+	// Provincial or territorial non-refundable personal tax credit
+	double K1P() {return 0;}
+	
+	// Provincial or territorial Canada Employment Credit (applies to Yukon only)
+	double K4P() {return 0;}
+ }
+
+'''Alberta.java'''
+
+ package ca.mb.armchair.examples.payroll.taxcalc;
+
+ /*
+  * Alberta provincial & federal tax deduction calculator.
+  */
+ public class Alberta extends Federal {
+
+	public Alberta(Employee e, Pay p) {
+		super(e, p);
+	}
+	
+	// Provincial tax rate
+	double V() {
+		return 0.10;
+	}
+	
+	// Provincial non-refundable personal tax credit
+	double K1P() {
+		double TCP = employee.TCP();
+		if (TCP == -1)
+			TCP = 16775;
+		return 0.10 * TCP;
+	}
+ }
+
+'''Quebec.java'''
+
+ package ca.mb.armchair.examples.payroll.taxcalc;
+
+ /*
+  * Quebec provincial alterations to federal tax deduction calculator.
+  */
+ public class Quebec extends Federal {
+
+	public Quebec(Employee e, Pay p) {
+		super(e, p);
+	}
+	
+	// EI rate
+	public double EIRate() {
+		return 0.0138;
+	}
+	
+	// EI yearly maximum
+	public double MaxEI() {
+		return 583.74;
+	}
+	
+	// Federal Canada/Quebec Pension Plan & Employment Insurance premium
+	// tax credits for the year.
+	double K2() {
+		double IE = notMoreThan(employee.P() * pay.IE() * 0.00484, 300.08);
+		return 0.15 * PtC() + 0.15 * PtEI() + 0.15 * IE;
+	}
+	
+	// Annual federal tax deduction.
+	double T1() {
+		return notLessThanZero(T3() - LCF()) - notLessThanZero(0.165 * T3());
+	}
+	
+	// Provincial tax calculations obtained separately from Quebec.  Not provided here.
+	double T2() {
+		return 0;
+	}
+ }
+
+'''Ontario.java'''
+
+ package ca.mb.armchair.examples.payroll.taxcalc;
+
+ /*
+  * Ontario provincial & federal tax deduction calculator.
+  */
+ public class Ontario extends Federal {
+
+	public Ontario(Employee e, Pay p) {
+		super(e, p);
+	}
+	
+	// Provincial non-refundable personal tax credit
+	double K1P() {
+		double TCP = employee.TCP();
+		if (TCP == -1)
+			TCP = 8881;
+		return 0.0605 * TCP;
+	}
+	
+	// Provincial Canada Pension Plan contribution and Employment Insurance
+	// premiums tax credits for the year
+	double K2P() {
+		return PtC() * 0.0605 + PtEI() * 0.0605;
+	}
+
+	// Provincial tax rate
+	double V() {
+		if (A() <= 36848)
+			return 0.0605;
+		else if (A() <= 73698)
+			return 0.0915;
+		else
+			return 0.1116;
+	}
+		
+	// Provincial constant
+	double KP() {
+		if (A() <= 36848)
+			return 0;
+		else if (A() <= 73698)
+			return 1142;
+		else
+			return 2624;		
+	}
+	
+	// Surtax calculated on basic provincial tax
+	double V1() {
+		if (T4() <= 4257)
+			return 0;
+		else if (T4() <= 5370)
+			return 0.20 * (T4() - 4257);
+		else
+			return 0.20 * (T4() - 4257) + 0.36 * (T4() - 5370);
+	}
+	
+	// Additional tax on taxable income (Ontario Health Premium)
+	double V2() {
+		if (A() <= 20000)
+			return 0;
+		else if (A() <= 36000)
+			return theLesserOf(300, 0.06 * (A() - 20000));
+		else if (A() <= 48000)
+			return theLesserOf(450, 300 + 0.06 * (A() - 36000));
+		else if (A() <= 72000)
+			return theLesserOf(600, 450 + 0.25 * (A() - 48000));
+		else if (A() <= 200000)
+			return theLesserOf(750, 600 + 0.25 * (A() - 72000));
+		else
+			return theLesserOf(900, 750 + 0.25 * (A() - 200000));
+	}
+	
+	// Ontario provincial tax reduction for dependents.
+	double S() {
+		double Y = employee.getDisabledDependents() * 379 + employee.getDependentsUnder19() * 379;
+		return notLessThanZero(theLesserOf(T4() + V1(), 2 * (205 + Y) - (T4() + V1())));
+	}
+	
+	// Provincial labour-sponsored-funds tax credit
+	double LCP() {
+		return theLesserOf(1125, 0.15 * employee.Invest());
+	}
+ }
+
+----
+Tests for the above, using JUnit 4.  Test values were obtained from examples in the Canada Payroll document.
+
+'''T''''''estTax.java'''
+
+ package ca.mb.armchair.examples.payroll.tests;
+
+ import static org.junit.Assert.assertEquals;
+ import org.junit.Test;
+
+ import ca.mb.armchair.examples.payroll.taxcalc.*;
+
+ public class T''''''estTax {
+	
+	@Test 
+	public void testABTaxP12() {
+		Employee julie = new Employee(12);
+		Pay juliePay = new Pay(1800);
+		Federal calculator = new Alberta(julie, juliePay);
+		assertEquals(144.46, calculator.T());
+	}
+
+	@Test 
+	public void testABTaxP26() {
+		Employee julie = new Employee(26);
+		Pay juliePay = new Pay(2300);
+		Federal calculator = new Alberta(julie, juliePay);
+		assertEquals(475.24, calculator.T());
+	}
+
+	@Test 
+	public void testABTaxP52() {
+		Employee julie = new Employee(52);
+		Pay juliePay = new Pay(2500);
+		Federal calculator = new Alberta(julie, juliePay);
+		assertEquals(712.03, calculator.T());
+	}
+
+	@Test 
+	public void testABTaxP52_2() {
+		Employee julie = new Employee(52) {
+			public double TC() {
+				return 26467;
+			}			
+			public double TCP() {
+				return 33550;
+			}
+			public double Invest() {
+				return 2000;
+			}
+		};
+		Pay juliePay = new Pay(1100) {
+			public double F() {
+				return 50;
+			}
+			public double U1() {
+				return 20;
+			}
+		};
+		Federal calculator = new Alberta(julie, juliePay);
+		assertEquals(113.98, calculator.T());
+	}
+
+	@Test 
+	public void testQCTaxP12() {
+		Employee julie = new Employee(12);
+		Pay juliePay = new Pay(1800);
+		Federal calculator = new Quebec(julie, juliePay);
+		assertEquals(95.58, calculator.T());
+	}
+
+	@Test 
+	public void testQCTaxP26() {
+		Employee julie = new Employee(26);
+		Pay juliePay = new Pay(2300);
+		Federal calculator = new Quebec(julie, juliePay);
+		assertEquals(267.12, calculator.T());
+	}
+
+	@Test 
+	public void testQCTaxP52() {
+		Employee julie = new Employee(52);
+		Pay juliePay = new Pay(2500);
+		Federal calculator = new Quebec(julie, juliePay);
+		assertEquals(416.94, calculator.T());
+	}
+
+	@Test 
+	public void testOTTaxP12() {
+		Employee julie = new Employee(12);
+		Pay juliePay = new Pay(1800);
+		Federal calculator = new Ontario(julie, juliePay);
+		assertEquals(180.55, calculator.T());
+	}
+
+	@Test 
+	public void testOTTaxP26() {
+		Employee julie = new Employee(26);
+		Pay juliePay = new Pay(2300);
+		Federal calculator = new Ontario(julie, juliePay);
+		assertEquals(483.03, calculator.T());
+	}
+
+	@Test 
+	public void testOTTaxP52() {
+		Employee julie = new Employee(52);
+		Pay juliePay = new Pay(2500);
+		Federal calculator = new Ontario(julie, juliePay);
+		assertEquals(795.87, calculator.T());
+	}
+
+	@Test 
+	public void testOTTaxP52_2() {
+		Employee julie = new Employee(52) {
+			public double TC() {
+				return 26467;
+			}			
+			public double TCP() {
+				return 16422;
+			}
+			public double Invest() {
+				return 2000;
+			}
+			public int getDisabledDependents() {
+				return 1;
+			}
+			public int getDependentsUnder19() {
+				return 2;
+			}
+		};
+		Pay juliePay = new Pay(1100) {
+			public double F() {
+				return 50;
+			}
+			public double U1() {
+				return 20;
+			}
+		};
+		Federal calculator = new Ontario(julie, juliePay);
+		assertEquals(134.86, calculator.T());
+	}
+ }
+
+----
+See PayrollExample, JavaLanguage, PayrollExampleTwoDiscussion

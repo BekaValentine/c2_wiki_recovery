@@ -1,0 +1,59 @@
+''Another one of ThomasKuehne's patterns. Interpreted by PhilGoodwin.''
+
+See FunctionalPatternSystemForObjectOrientedDesign
+
+When a value that is expensive to calculate may not actually be used, replace it with a ValueObject that uses LazyEvaluation to calculate the value when the client code tries to use it.
+
+Some algorithms take prohibitively long to execute. Others can't be started until some value (that they might not even need) becomes available. Still others must be fooled into executing through the use of dummy parameters that never actually get used. In extreme cases two algorithms may be interdependant on each other -- each relying on the intermediate results of the other in order to operate, neither seemingly able to start before the other finishes.
+
+Often these problems occur because the implementation of most algorithms requires that all the values that the algorithm ''might'' need be made available before the algorithm is put into operation. There are benefits to this: it frees the user of the algorithm from having to know about which values to pass in under which circumstances and it frees the algorithm writer from having to know how to gather the values. However, some values may be expensive to compute or may not be available when the algorithm begins to operate. Furthermore, the algorithm writer may not be able to completely specify the exact set of values that it will need. They may, instead, require access to the means to generate the values it needs on demand. We would like to avoid executing long calculations that won't be needed and we would certainly like to avoid being put in the impossible bind of being required to supply information to an algorithm that cannot be gathered until after the algorithm is put into operation. Ultimately we would like the solution to this problem to be cheap (it doesn't make sense to avoid one expensive operation by implementing another) and easy to understand.
+
+'''Therefore:'''
+
+Use LazyObject''''''s to represent the values that are causing the trouble. A LazyObject is an object whose apparent state is calculated rather than stored. It may contain the data upon which the calculation is to be performed or a reference to some other object that is ultimately responsible for doing the calculation or it may have some other means of causing the calculation to occur. The LazyObject does not actually perform the calculation until one of its clients tries to make use of it. A LazyObject decouples the identity of a value, across time, from its actual representation. 
+
+In order to be of general use LazyObject''''''s usually implement CallByNeedSemantics. This means that the first time a LazyObject is accessed it caches the value it calculates before it is returned. If the LazyObject is ever accessed again it will return the cached value instead of repeating the calculation. 
+
+If the data value is time sensitive or if the calculation has side-effects it may be advantageous to use CommandQuerySeparation to expose a command for calculating the value of the LazyObject. This is usually done by providing one method for causing the evaluation to happen (called "force()" or "evaluate()") and another to return the value (called "item()" or "value()"). In order for "value()" to work correctly it will have to call "evaluate()" internally of course so exposing it as a public method isn't strictly necessary, however the clarity of some code can be increased dramatically by calling "evaluate()" when side-effects are important and "value()" when it is truly the value that is the focus. This may seem anathema to the declarative cleanliness of FunctionalProgramming, but it is an inescapable truth that order of evaluation is sometimes important in ways that cannot be avoided [I may add some pseudo code to FoldFunction that illustrates this].
+
+An algorithm that makes use of a LazyObject won't incur the cost of calculating a value unless or until that value is actually used. Algorithms that are interdependant can be decoupled by using LazyObject''''''s as communication channels.  LazyObject''''''s that implement CallByNeedSemantics through caching can reduce the "big O" complexity of some algorithms. And, finally, Algorithms that require an indeterminate amount of data or data from an unknown source can use a kind of LazyObject, configured to provide data on an as-needed basis, to access that data. All of this does come at a cost. Usually a new class will have to be created in order to implement the LazyObject and, as always, a new layer of indirection adds complexity and the introduction of a new object adds time and space overhead. Also, LazyObject''''''s are immutable ValueObject''''''s and can only be used in contexts where they are appropriate. Some algorithms are sensitive to the state of the world at a particular time. These algorithms require that this state be captured before they begin to operate in order to function properly. It would be inappropriate to use LazyObject''''''s as the parameters for such an algorithm.
+
+LazyObject''''''s look a little like parameterless FunctorObject''''''s: they each represent a means by which a function call can be set up in one context and actually executed in another. LazyObject''''''s can be extended to represent a sequence of (usually recursive) function calls. To do this LazyObject''''''s are given a third method called "next()" or "tail()". This method returns a new LazyObject that represents the next call in the chain. StreamObject''''''s are the canonical example of this. A StreamObject is used to represent a collection. The "item()" method on the StreamObject will return the first item in the collection while the "tail()" method will return a LazyObject that represents the second item in the collection. The entire contents of the collection can be iterated by continually calling "tail()" on the StreamObject. LazyObject''''''s that implement this interface can be used to implement ContinuationsAndCoroutines.
+
+The ProxyPattern is sometimes implemented using a LazyObject in order to delay the cost of instantiating the hidden object. (See for example LazyPtrProxy.)
+----
+Isn't it the same thing as Futures, Promises, IOU ("I Owe You", in RogueWave used terminology)? -- MarcGirod
+
+It's similar but not exactly the same. The concept of Futures and IOUs is to allow semi-asynchronous function calls. With an IOU the call is made as soon as all of the information is available to make it. It immediately returns an object that represents the result of the call and the current thread continues. In the meantime the work has already been started on another thread, another process or even another machine. When the result is needed by the originating thread it accesses the result object. If the work has been completed, then the result object immediately returns a cached value -- just like a LazyObject would. If it has not then the originating thread blocks until it is. Again the external effect is just like that of a LazyObject. The key difference is that with a LazyObject the work is never done unless the result is requested and then it is done on the same thread. -- PhilGoodwin
+
+OK. It is more in step with the RulesOfOptimization:
+    1. don't do it
+    2. don't do it yet
+See also YouArentGonnaNeedIt -- MarcGirod
+
+Do you mean that LazyObject looks like a PrematureOptimization and therefore YouArentGonnaNeedIt? Perhaps I should have done a better job of motivating this pattern. LazyObject can provide some optimization, but generally by reducing the complexity of algorithms though CallByNeedSemantics than through the outright elimination of calculations. 
+
+No, I didn't mean that... "It" was a dangling pointer! It --double indirection-- referred for the object stood for.
+-- MarcGirod
+
+LazyObject enables a more declarative style of programming by separating how to do a calculation from when to do it. It enables one part of a program to plan what work will be done and another to decide when to do it. For instance a code generator might generate a sequence of instructions as LazyObject''''''s in order to defer the calculation of various values, like jump targets, to a time when the data needed for those calculations becomes available.
+
+Of course there are times when optimization is not premature. As in the case of algorithms that generate an infinite amount of data. LazyObject''''''s can act as collections containing an infinite number of members. Algorithms that use such a collection terminate for their own reasons before exploring the entire collection. Since the collection is lazy the infinite amount of time needed to generate all its members is optimized away. -- PhilGoodwin
+
+----
+''it is suggested that LazyObject''''''s provide one method for causing the evaluation to happen (called "force()" or "evaluate()") and another to return the value (called "item()" or "value()"). In order for "value()" to work correctly it will have to call "evaluate()" internally''
+
+This leads to a nit with c++: you can have const member functions, but not mutable. So if you want
+
+  int value() const;
+  void evaluate();
+
+then value() can't call evaluate() without doing a const_cast on its 'this'. What I really want is:
+
+  void evaluate() mutable;
+
+''''mutable'' is the implied default...''
+----
+See also: LazyObjectExample
+----
+CategoryObjectFunctionalPatterns, CategoryLazyPattern

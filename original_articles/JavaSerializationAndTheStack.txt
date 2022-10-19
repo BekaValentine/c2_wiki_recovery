@@ -1,0 +1,220 @@
+This family of pages is broken.  I hate to keep dropping into ThreadMode here, but this gripe is a non-issue. The points raised here are:
+
+1. a recursive algorithm can overflow the stack . '' '''iff''' it is badly implemented.''  No, even well implemented recursion is executed with a finite stack.  For large enough ''N'', the stack will overflow.  (Disagree? Please provide a counterexample--show me an example of a recursive algorithm that will ''never'' overflow the stack.)
+
+''Do tail-recursive algorithms count?  Those don't overflow the stack, if converted to iteration.''
+
+''Actually, a similar problem happens with garbage collection algorithms--garbage collection is an inherently recursive process, and ''not'' tail-recursive.  Which poses a problem--garbage collectors are often invoked when a system is low on memory; having stacks growing without bound is not a good thing in that situation.  One technique is to add extra hidden fields to each object, which does nothing but hold the back-pointers for the dependency graph traversal.  When this is done (essentially, the stack is distributed among the objects), collection algorithms which require no more than fixed extra space can be implemented''
+
+2. naive implementions of Serializable rely upon recursion
+
+show me a JDK object that suffers from the stack-overflow-due-to-recursion and you've got something to complain about (or more accurately, a bug to report), but showing me a recursion based implemention of Serializable that suffers from stack overflow problems signifies nothing--it's a special instance of the first point.
+
+(Perhaps you're expecting ObjectOutputStream to be much smarter than you, and to automatically unravel recursion into iteration.  It isn't, it doesn't, and it's not clear to me that it even could.)
+
+''Recursion based implementation of Serializable is non-sense. Serializable does mandate any implementation. The broken implementation is in java.lang.ObjectOutputStream. ''
+
+Now we're getting somewhere.  Please propose an alternative implementation of ObjectOutputStream.writeObject and ObjectInputStream.readObject that is not "broken" and works for arbitrary Java objects. (Bear in mind that one of the feature of the default Serialization is that each object has the ablity to define it's own serialized format, although that may not strictly be a requirement within this new approach.)  If you've got something that works, then put it out on SourceForge or submit it to Apache's JakartaCommons or something.  I'm a Jakarta-Commons committer, you'll get my +1. 
+
+----
+[Extracted from JavaSerializationIsBroken]
+
+The JVM may crash when serializing as few as 1000 objects. Besides serialization should raise exception '''only''' when there's an underlying I/O error, or when it meets a non-transient and non-serializable object in the object graph, or when a custom serialization method throws an exception. Exceptions and JVM crashes due to the poor implementation don't count as specified behaviour.
+
+''The problem is that I've used Java serialization to save and restore thousands of objects at a time, so it's clear that it isn't always broken. Can you describe the conditions that cause serialization to fail as you describe?''
+
+Costin provides this example:
+
+ /**
+  * Tests the Java serialization of an arbitrary object model
+  * @author CostinCozianu
+  */
+ public class SerializationTest extends TestCase implements Serializable {
+
+   Object[] allObjects;
+   static int childCount = 10000;
+   static int linkCount = 1000;
+
+   public static void main(String[] args) {
+      try {
+         if (args.length > 0) {
+            if (args[0].equals("-read")) {
+               System.out.print("reading the serialized file");
+               Object x= new ObjectInputStream(new FileInputStream("testXXXX.ser"))
+                           .readObject();
+               System.out.println(" ok.");
+               System.exit(0);
+               }
+            childCount = Integer.parseInt(args[0]);
+            }
+         if (args.length > 1) { linkCount= Integer.parseInt(args[1]);         }
+         TestRunner.run(SerializationTest.class);
+      }
+      catch (Exception ex) {
+         System.err.println(ex);
+         ex.printStackTrace(System.err);
+      }
+   }
+
+   public void setUp() {
+      Random r = new Random();
+      allObjects = new Object[childCount];
+      for (int i = 0; i < childCount; i++) {allObjects[i] = new TestTarget();} 
+      for (int i = 0; i < linkCount; i++) {
+         TestTarget x, y;
+         int retries = 0;
+         do {
+            if (++retries == 1000)
+               throw new RuntimeException("Giving up trying to set up the graph, please reduce the number of links");
+            x = (TestTarget) allObjects[r.nextInt(childCount)];
+            y = (TestTarget) allObjects[r.nextInt(childCount)];
+            }   
+         while (x == y || !x.canAdd(y));
+         x.add(y);
+         }
+      System.err.println( "Setup completed: memory"
+                          + (Runtime.getRuntime().totalMemory() 
+                             - Runtime.getRuntime().freeMemory()) / 1024 + "K");
+      }
+
+   public void testSerialize() throws Exception {
+      System.err.println("trying to serialize");
+      long start = System.currentTimeMillis();
+      try {
+         OutputStream bOut = new FileOutputStream("testXXXX.ser");
+         ObjectOutputStream objOut = new ObjectOutputStream(bOut);
+         objOut.writeObject(this);
+         objOut.close();
+         bOut.close();
+         long end = System.currentTimeMillis();
+         System.err.println(
+            "Serialization completed in: "
+               + ((end - start) / 1000.0)
+               + "ms , memory consumption :"
+               + (Runtime.getRuntime().totalMemory()
+                  - Runtime.getRuntime().freeMemory()) / 1024 + "K");
+         Object mirror = new ObjectInputStream(new FileInputStream("testXXXX.ser"))
+                           .readObject();
+         long end1 = System.currentTimeMillis();
+         System.err.println(
+            "Read back completed in: " + ((end1 - end) / 1000.0) + "ms ,"
+            + " memory consumption: "+ (Runtime.getRuntime().totalMemory()
+                                        - Runtime.getRuntime().freeMemory())/ 1024 + "K");
+         }
+      catch (Exception ex) {
+         System.err.println(ex);
+         ex.printStackTrace(System.err);
+         }
+      }
+
+   public static class TestTarget implements Serializable {
+      ArrayList links = new ArrayList(20);
+      int index = 0;
+      Object parent;
+
+      TestTarget() {}
+
+      /*
+       * If you uncomment this constructor andf use it, 
+       * it will make serialization problems much worse
+      TestTarget(Object parentLink) {
+         parent= parentLink;
+      	}*/
+
+      public boolean canAdd(Object o) {
+         if (links.contains(o))
+            return false;
+         return true;
+         }
+
+      public void add(Object o) { links.add(o); }
+
+      }
+
+   }
+
+''I ran the test above and it succeeds.  Well, sort of.  I'm assuming TestCase is junit.framework.TestCase, and my version of that class isn't serializable, so I created a non-TestCase class to save and restore.  Was it supposed to demonstrate that JavaSerializationIsBroken?'' { As per Java serializtion specification, the fact that it inherits from TestCase is not relevant, the class is still serializable. The serialization/deserialization of a few objects still succeeds , so your assumption is wrong. }
+
+
+Run it again with different numbers of objects and links (the first argument and the second argument on the command line). Also if you past just "-read" it will try to read the previously serialized file. You should observe that for some numbers: serialization crashes, and for other numbers serialization succeeds but deserialization crashes. I guess a "safe" margin is 1000 10000 which crashes all the JVMs from 1.3 to 1.4.1_02. The reason being that the serialization algorithm calls itself recursively for all the attrbutes of an object that are object references.
+
+''I tried it with 10000 100000 and it works fine.''
+
+It might depend on memory and OS. For sure my JDK1.3 on linux behaves much better than JDK1.3.1-1.4.1 on XP. On XP it breaks even for 1000 objects 3000 links, on Linux I can go up reliably to 10000 and 50000. You either get a stack overflow error, or sometimes the JVM just crashes. Now, you have an object model that takes in memory  below 1M or even a few megs, or even 10 megs, and you call ObjectOutputStream.serialize(obj). There's nowhere in the documentation that this should blow the stack, or the JVM for that matter. 
+
+
+''Defining a meaningful equals/hashCode method on TestTarget may be helpful.  For those that don't care to read the code all the way through, also note that while the amount of memory /disk space occupied here ''may'' be small, the graph created is rather large and complicated--a 10,000 node graph with 1,000 distinct edges per node.  Flat array serialization may not be the best, or necessarily an appropriate, strategy here.''
+
+''If you just want to see serialization break due to stack overflow for even a small amount of data, there are much simpler test cases.  Define a linked list that relies upon recursion:''
+
+  public class LinkedListNode implements Serializable {
+     public LinkedListNode(LinkedListNode next) {
+       this.next = next;
+     }
+     private LinkedListNode next = null;
+  }
+
+''create a reasonably long list of these:''
+
+  LinkedListNode head = null;
+  for(int i=0;i<100000;i++) {
+     head = new LinkedListNode(head);
+  }
+
+''and serialize it.   But you'll run into the same problem with any recursive algorithm eventually--the stack is finite.  Add this method:''
+
+  public int count() {
+    if(null == next) {
+       return 1;
+    } else {
+       return 1 + next.count();
+    }
+  } 
+
+''and you'll get similar problems.  Is java arithmetic broken also?''
+
+Thanks for the recursive list example. Great. So you broke Java serialization yourself, also. The  reason for which I chose a graph of objects rather than a linked list is that a graph of object simulate more or less typical object models, as they are created in practice by programmers. Now you claim that we're talking about a rather complicated graph. Not at all, on windows it breaks with as little as 1000 objects, 3 links per node, on Linux (which allows a larger stack size by default) it breaks with as little as 10000 objects , 10 links per node. This may seem a complicated graph to you, but the reality is that these kind of figures we are talking here are peanuts. 
+
+Your analogy with the arithmetic is again flawed. If I write the function above I must be nuts, and by the way the function does not serve any good purpose. The problem is that it is nowhere advertised in JavaDoc that java serialization is recursive, and sound engineeering principles (read DavidParnas on information hiding) '''demand''' that the fact that the function is implemented recursively not be '''hidden''' from its users. All the user cares for is that ''serialize(Object o)'' works as documented. Crashing the JVM is not acceptable behaviour, and is not documented. If the documentation said: don't create Object graphs with chains longer than N or cycles longer than K or whatever other graph properties, than maybe you'd have a point, but it doesn't. And even if it did, we then could qualify the implementation as not broken, but we could qualify the design as lousy at best.
+
+''I disagree.''
+	1. ''In theory, it ''does'' work as documented. The possibility of running out of resources is not generally considered when one writes documentation, only the expected behaviour given the input and sufficient resources.''
+	1. ''The default algorithm pretty much ''has'' to work this way. Unless you're much smarter than me and can propose an algorithm that would serialize the general Object subclass along with its "transitive closure"?
+	1. ''The documentation doesn't know how much stack space you have available, so it can't specify N and K.''
+
+And let's be honest serializing a graph and reading it back without blowing up the stack in your favorite language is a trivial problem. Java has failed to solve it in any way that we can qualify as a decent implementation, therefore JavaSerializationIsBroken.
+
+''How good then that most PrevalenceLayer implementations allow alternative serialization implementations. However, I'm still unable to get the test at the top of this page to cause a JVM crash. What parameters should I use for that? -- AndersBengtsson''
+
+The conditions are described above, I'd be surprised if you can't reproduce it with 10000 objects and 100000 links. Alternatively, you can substitute the LinkedList example posted above. If that also passes, then I'd really like to know what JDK you use so that I can use it myself.
+
+''Ok, with 100000 links I got it to produce a stack overflow. Still no JVM crash though.''
+
+''To summarize, Java's built-in serialization implementation uses excessive stack space when serializing deeply nested object graphs. So, if you have to serialize/deserialize such graphs as a single entity, you may have to increase the stack size.''
+
+'''Or provide your own serialization implementation, since you have a clearer understanding of your object model than Java does.'''
+
+Based on the garbage-collection model above, maintain a "serialization stack" that contains nothing but backpointers.  Every time a new (non-leaf) object is created (in other words, an object which contains other objects; excluding those declared transient), one element is added to the serialization stack.  (In practice, the serialization stack would be allocated in page-sized or larger chunks).  If allocation of space for the serialization stack ever fails, OutOfMemoryException (or whatever it's called in Java) gets thrown--but it's thrown by a call to new (where you would expect it), not by a call to serialize() where you wouldn't.
+
+serialize() than uses this stack for serialization--more accurately, it uses it to store back-pointers.  The rest of serialize() can fit in bounded space.
+
+One further optimization is that only tree nodes (those with non-transient references to two or more objects) would get an entry in the serialization stack.  Nodes which contain only a single object reference can be handled as a special, tail-recursive case.  
+
+Do I win a prize????--ScottJohnson 
+
+''I meant to do something specific for serializing a given class which behaved poorly under the default algorithm, based on superior understanding of the object instance graph. Eg for the big, interconnected array given above, just write array subscripts rather than pointers (you'll need a corresponding deserialize() too, and maybe you'll have to wrap the array in a first-class object) and iterate through the array. But I'll give you credit for ingenuity.''
+
+''Handling the "string nodes" (with one object reference) separately still builds up the recursion stack, if you have a long string (and assuming I'm thinking clearly). And of course, doing it this way means using the memory for backreferences all the time instead of just at serialization time. But still, credit for ingenuity.''
+
+----
+To me this seems as if the default serialization algorithm recursively traverses a graph structure, which is a bad idea, because the stack is finite and rather small.  The heap however can grow and is generally larger.  Is this the whole problem?
+
+If so, it is really a stupid implementation and has nothing to do with insight into object structures or something.  The default serialization algorithm should be replaced with an implementation in ContinuationPassingStyle, effectively trading heap for stack.  The resulting algorithm is TailRecursive and can be transformed into an iteration.  Ask a SmugLispWeenie how to do it even in Java.
+
+----
+
+A small stack is a big problem. I'm used to megabyte stacks except in kernel mode.
+When I'm doing single-thread or single-main-thread work, I'm used to gigabyte stacks (stack overflow extends the stack by handling SEGV to mmap() more stack). I'm only dead if the heap runs into the stack at which case I'm out of memory anyway.
+
+----
+See also: JavaSerializationIsBroken

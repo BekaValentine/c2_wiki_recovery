@@ -1,0 +1,69 @@
+SearchResultAsEntityBean is a ProtoPattern (although not written up here in any PatternForm) in which an entity bean is used to encapsulate the results of a complex query submitted by an application client.
+
+The motivation is to provide a remote interface for accessing "batches" of search results at a time when using StatelessSessionBeans (since an entire set of search results may be too big to serialize, and re-running the query every time to get the next batch may be too expensive computationally).  Thus a reference to the search result entity bean is intentionally  distributed to the remote client layer, in knowing violation of SessionBeanWrapsEntityBeans.
+
+--RandyStafford
+
+----
+So this is SessionState masquerading as an EntityBean? It's a neat trick, but it I see a couple issues here:
+
+* What is the EntityBean's key here? The clients "cookie", or some other sort of SessionId?
+
+* Who cleans these old SearchResultAsEntityBean''''''s out when they are no longer needed?
+
+* It seems to me this trick is most viable with a persistent object cache (i.e. GemStone).  Seems it would be inefficient without.
+
+--ChrisRaber
+
+----
+Yes, this is session state masquerading as an EntityBean (StatelessSessionBeans is in the context), and the search result EntityBean does need a key.  In our case we're just drawing from an OidGenerator as we do for other domain abstractions - SessionId is insufficient as there may be multiple search results  (even of the same type) per session.
+
+Reaping behavior ''is'' needed.  Depending on the client technology, these beans can be removed on logout or session timeout.  With a Java application or applet, this is straightforward.  With Servlets and JSP, the servlet spec specifies that upon receiving invalidate(), HttpSessions are obligated to unbind all objects in session state and, through a listener, objects in session state can receive an event notification when they are unbound.  The question is whether servlet engines send invalidate() when they decide to discard an HttpSession.  Failing these scenarios, an asynchronous policy-driven reaper is needed.
+
+Lastly, regarding efficiency of this solution, without a persistent object cache  queries have to be transactional so that RDBMS search results tables can be inserted upon query (once again, StatelessSessionBean''''''s are in the context) - and the objects comprising the search results have to be O/R mapped into the EntityBean's JVM when demanded.
+
+--RandyStafford
+
+----------
+So why not simply capture the query results in StatefulSessionBeans? Using an EntityBean implies that you want to keep the results across sessions. -- RussellGold
+
+----
+Because architectures based on stateful session beans are much more resource-consumptive (less scalable) than architectures based on stateless session beans.  You'd have a (very under-utilized) stateful bean instantiated for every client, whereas a single stateless session bean instance can serve a great many clients and remain highly utilized (assuming pooling of either the bean instance on the server side or the remote stub on the client side). --RS
+
+----
+I would ''NOT'' tie the entity bean key to the user session.  Session beans have no role here.  The first thing that comes to me is, if the query filter you use to obtain your search results is used as the key, you have excellent conditions for high-utilization of these entity beans.  I'm not sure if this is possible with CMP.  The important thing is that the find method in the home interface of the search bean must use it's find-parameters to assemble a key.  I think for most applications queries are heavily re-executed across user sessions (canned queries, etc) so this should be a good performance gain.
+
+	*Example key:  <query name="member lookup"><field name="fname" value="vic*"/><field name="state" value="NJ"/></query>
+	*Randy spoke of batches(pages).  I think an elegant solution to this is to add the pageId to the key expression so page#1 and page#5 would actually be two distinct entity beans
+	*I would not implement this if my data is volatile because my concurrency would get all messed up.
+	*ChrisRaber asks "Who cleans up?".  I think nobody.  Unlike typical entity beans, these search result beans would only persist in the EJB object cache so they would definitely disappear each time the server is bounced.  But they may not even survive that long because once the EJBs object cache is maxed out, the oldest objects will be released.
+
+--VictorWynnytsky
+----
+It seems to me that SearchResultAsEntityBean is a special case of a more general approach: using an entity bean to represent a set of the underlying business objects. The finder method returns a single object that now acts as the set. All operations on the bean operate over the set.
+
+This EntityBeanAsDomainObjectSet approach appears to be a good use for entity beans. Hopefully you could use container managed persistence, and the client gets to decide on the granularity.
+
+--JohnDaniels
+----
+Perhaps something like a TransientEntityBean, which disappears when discarded from the object pool by the container?  The remote interface might expose methods for getting subranges within the result set, and/or retrieving all the results.  The line items, in turn, might include primary keys to enable drilldown to 'true' entity beans representing the actual data objects.
+
+--PeterBonney
+----
+The EntityBeanAsDomainObjectSet is an attempt to apply EJBs to a very common scenario, but it appears that (1) the spec doesn't directly support it, and (2) neither do the vendors (in general, Egypt notwithstanding). 
+ 
+I believe JavaDataObjects attempts to address some of these problems, but they are not part of EJB, in fact, they correct some of the commonly identified problems with EjbEntityBeans, namely, that object sets arenot supported, that each object must be remote and distributed, and that each object must be transactional.  But JDO is still a JSR (Sep 2000), and it's not clear how the Persistence Manager design of JDO jibes with the PM design in EJBv2. 
+
+--DinoChiesa
+
+I think given the recent emphasis on "dependent objects" in the EJB 2 spec, the intention all along was for Entity beans to have a set of domain objects behind them.   Vlada Matena, the EJB 1.0/1.1 architect, just released a book (ISBN 0201702673) that shows some examples of how to handle this by doing SQL queries on the actual business methods of an entity bean to return different collections as value objects.   It's a long overdue look at what he *intended* people to use EJB for... and what the spec didn't communicate very well.
+
+I also think O/R mappers + CMP gives a very good justification to create domain graphs mapped to multiple tables & accessed / modified through a component oriented (i.e. entity bean) interface as a facade.   One can do this with BMP too, but with a lot of hand-crafting.
+--StuCharlton
+
+----
+This is a nice hack, but the reality is that the spec has been made with the only intention for an Entity Bean to represent an Entity as in EntityRelashionshipModelling.
+So, what Primary Key do you make for a search result ?
+
+----
+CategoryJava

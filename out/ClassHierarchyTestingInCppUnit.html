@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Class Hierarchy Testing In Cpp Unit
+      </h1>
+      <p>
+        <a href="BobBinder.html">BobBinder</a> recently mentioned to me that it is a shame that <a href="CppUnit.html">CppUnit</a> doesn't have some sort of support for automatically running the tests of superclasses on subclasses.  It has tortured me a bit too, I often end up cutting and pasting test case functions from test class to test class.  I think that in <a href="JavaUnit.html">JavaUnit</a>, you can just subclass the test class.  In <a href="CppUnit.html">CppUnit</a> it is more difficult because I use a pointer to a member function to dispatch the tests and you can't have those point to member functions in derived classes.  I started to consider whether there might be a better way in <a href="CppUnit.html">CppUnit</a>.
+      </p>
+      <p>
+        This is what I've ended up with.  If anyone knows of any way to simplify this, please let me know.
+      </p>
+      <p>
+        Here is a tiny foolish hierarchy:
+      </p>
+      <code>
+        class BoardGame<br/>
+        {<br/>
+        public:<br/>
+        virtual bool reset () { return true; }<br/>
+        };<br/>
+      </code>
+      <code>
+        class Chess : public BoardGame<br/>
+        {<br/>
+        public:<br/>
+        virtual int numberOfPieces () { return 32; }<br/>
+        };<br/>
+      </code>
+      <p>
+        And here is a test class for the BoardGame class:
+      </p>
+      <code>
+        template<class GAMECLASS> class BoardGameTest : public <a href="TestCase.html">TestCase</a><br/>
+        {<br/>
+        protected:<br/>
+        GAMECLASS	*m_game;<br/>
+      </code>
+      <code>
+        public:<br/>
+        BoardGameTest (string name) : <a href="TestCase.html">TestCase</a> (name) <br/>
+        {}<br/>
+      </code>
+      <code>
+        BoardGameTest (<a href="TestSuite.html">TestSuite</a> *suite) : <a href="TestCase.html">TestCase</a> ("") <br/>
+        { suite->addTest (new TestCaller<BoardGameTest> ("testReset", testReset)); }<br/>
+      </code>
+      <code>
+        void setUp () <br/>
+        { m_game = new GAMECLASS; }<br/>
+      </code>
+      <code>
+        void tearDown ()<br/>
+        { delete m_game; }<br/>
+      </code>
+      <code>
+        void testReset () <br/>
+        { assert (m_game->reset ()); }<br/>
+      </code>
+      <code>
+        };<br/>
+      </code>
+      <p>
+        Notice that I'm using a template here, so I could instantiate with classes other than BoardGame, but I'm really only interested in subclasses at this point.  The other notable thing is the fact that I'm abusing a constructor rather than using a static suite method on the class.  The reason will be obvious in a second.
+      </p>
+      <p>
+        Here is a template class which tests the Chess class.  Note that instances of it inherit BoardGameTest instantiated on the same class.
+      </p>
+      <code>
+        template<class GAMECLASS> class ChessTest : public BoardGameTest<GAMECLASS><br/>
+        {<br/>
+        public:<br/>
+        ChessTest (string name) : BoardGameTest<GAMECLASS> (name) <br/>
+        {}<br/>
+      </code>
+      <code>
+        ChessTest (<a href="TestSuite.html">TestSuite</a> *suite) : BoardGameTest<GAMECLASS> (suite) <br/>
+        { suite->addTest (new TestCaller<ChessTest> ("testNumberOfPieces", testNumberOfPieces)); }<br/>
+      </code>
+      <code>
+        void testNumberOfPieces () <br/>
+        { assert (m_game->numberOfPieces () == 32); }<br/>
+        };<br/>
+      </code>
+      <p>
+        Now we have one other little template class that helps us build up a suite.  AutoSuite calls a constructor of a test class and uses it to fill itself with tests that can be run in the testrunner.  Notice that the call through the constructor accepting <a href="TestSuite.html">TestSuite</a> builds up a list of tests by traversing the inheritance tree.
+      </p>
+      <code>
+        template<class TESTCASE> class AutoSuite : public <a href="TestSuite.html">TestSuite</a><br/>
+        {<br/>
+        public:<br/>
+        AutoSuite () <br/>
+        { TESTCASE testCase (this); }<br/>
+        };<br/>
+      </code>
+      <p>
+        So, now we can create the following object, which to the world looks like a <a href="TestSuite.html">TestSuite</a>.  It is a suite of tests which consists of all the tests that were defined in the ChessTest template and the BoardGameTest template, instantiated for Chess objects.
+      </p>
+      <code>
+        AutoSuite<ChessTest<Chess> > chessTests;<br/>
+      </code>
+      <p>
+        Pop it into a testrunner:
+      </p>
+      <code>
+        runner.addTest (&chessTests);<br/>
+      </code>
+      <p>
+        You can also use templates like these to verify that classes unrelated by inheritance conform to the same constraints.
+      </p>
+      <p>
+        Does anyone see any way to make this simpler?  The constructor which accepts a suite does seem abusive, not the sort of thing you'd show your mother on mother's day, and it would not be bad to make another function which does this, but somehow it feels right like it is, even though it does not convey intention very well.  I suppose I get concerned about forgetting to call the base, whereas it is rather automatic among C++ programmers to call base constructors with the same signature.
+      </p>
+      <p>
+        -- <a href="MichaelFeathers.html">MichaelFeathers</a>
+      </p>
+      <hr/>
+      <p>
+        I think you could get some additional benefits if you don't create the fixture for each TestCaller, but reuse it between them:
+      </p>
+      <code>
+        template <class Fixture> <br/>
+        class ReusingTestCaller : public <a href="TestCase.html">TestCase</a><br/>
+        { <br/>
+        REFERENCEOBJECT (ReusingTestCaller)<br/>
+        typedef void             (Fixture::*<a href="TestMethod.html">TestMethod</a>)();<br/>
+        public:<br/>
+        ReusingTestCaller (Fixture* fix, std::string name, <a href="TestMethod.html">TestMethod</a> test)<br/>
+        : <a href="TestCase.html">TestCase</a> (name), m_fixture (fix), m_test (test) {}<br/>
+        protected:<br/>
+        void                    runTest () <br/>
+        { (m_fixture->*m_test)(); }  <br/>
+        void                    setUp ()<br/>
+        { m_fixture->setUp (); }<br/>
+        void                    tearDown ()<br/>
+        { m_fixture->tearDown (); }<br/>
+        private:<br/>
+        <a href="TestMethod.html">TestMethod</a>               m_test;<br/>
+        Fixture*   m_fixture;<br/>
+      </code>
+      <p>
+        };
+      </p>
+      <p>
+        In that case you could do something like this:
+      </p>
+      <p>
+        // Get rid of some verbosity
+        #define ADD_TEST(theClass, thePointer, theMethod)addTest(new ReusingTestCaller<theClass>(thePointer, #theMethod, theMethod))
+      </p>
+      <p>
+        class ExampleTestCase : public <a href="TestCase.html">TestCase</a>
+        {
+        protected:
+      </p>
+      <code>
+        double			m_value1;<br/>
+        double			m_value2;<br/>
+      </code>
+      <p>
+        public:
+      </p>
+      <code>
+        ExampleTestCase (<a href="TestSuite.html">TestSuite</a> *testSuite, std::string name) : <a href="TestCase.html">TestCase</a> (name) <br/>
+        {<br/>
+        testSuite->ADD_TEST(ExampleTestCase, this, anotherExample);<br/>
+        testSuite->ADD_TEST(ExampleTestCase, this, testAdd);<br/>
+        testSuite->ADD_TEST(ExampleTestCase, this, testDivideByZero);<br/>
+        testSuite->ADD_TEST(ExampleTestCase, this, testEquals);<br/>
+        }<br/>
+        void			setUp ();<br/>
+        static Test		*suite ();<br/>
+      </code>
+      <p>
+        protected:
+      </p>
+      <code>
+        void			example ();<br/>
+        void			anotherExample ();<br/>
+        void			testAdd ();<br/>
+        void			testDivideByZero ();<br/>
+        void			testEquals ();<br/>
+      </code>
+      <p>
+        };
+      </p>
+      <p>
+        class DerivedExampleTestCase : public ExampleTestCase
+        {
+        public:
+      </p>
+      <code>
+        DerivedExampleTestCase(<a href="TestSuite.html">TestSuite</a> *testSuite, std::string name) <br/>
+        :   ExampleTestCase(testSuite, name) <br/>
+        {<br/>
+        testSuite->ADD_TEST(DerivedExampleTestCase, this, testSilly);<br/>
+        testSuite->ADD_TEST(DerivedExampleTestCase, this, testMostSilly);<br/>
+        }<br/>
+      </code>
+      <p>
+        protected:
+      </p>
+      <code>
+        void			testSilly() <br/>
+        { bool silly = true; assert(!silly); }<br/>
+        void			testMostSilly() <br/>
+        { bool silly = false; assert(silly); }<br/>
+      </code>
+      <p>
+        };
+      </p>
+      <p>
+        Then
+      </p>
+      <code>
+        <a href="TestSuite.html">TestSuite</a> suite = new <a href="TestSuite.html">TestSuite</a>();<br/>
+        ExampleTestCase etc(suite, "ExampleTestCase");<br/>
+        <a href="TestRunner.html">TestRunner</a>  runner;<br/>
+        runner.addTest (suite);<br/>
+        runner.run ();    <br/>
+      </code>
+      <p>
+        and 
+      </p>
+      <code>
+        <a href="TestSuite.html">TestSuite</a> suite = new <a href="TestSuite.html">TestSuite</a>();<br/>
+        DerivedExampleTestCase detc(suite, "DerivedExampleTestCase");<br/>
+        <a href="TestRunner.html">TestRunner</a>  runner;<br/>
+        runner.addTest (suite);<br/>
+        runner.run ();    <br/>
+      </code>
+      <p>
+        work as expected.
+      </p>
+      <p>
+        An advantage of this approach is that the base test case runs on a derived test case object if you are testing that derived object. I think this is in agreement with the "<a href="JavaUnit.html">JavaUnit</a> way". They don't need the "reuse fixture hack" though.
+      </p>
+      <p>
+        Hope this helps...
+      </p>
+      <p>
+        --- <a href="ErnestoGuisado.html">ErnestoGuisado</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryCpp.html">CategoryCpp</a> <a href="CategoryTesting.html">CategoryTesting</a>
+      </p>
+    </div>
+  </body>
+</html>

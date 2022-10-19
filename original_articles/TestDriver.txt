@@ -1,0 +1,170 @@
+'''What is a Test Driver'''
+
+This page discusses the concepts and terminology relevant to the test driver, or "driver level", of CppUtxOverview and maybe even CppUnit. It seems to me that a Test Driver does the following:
+
+* References the root test-suite
+* Interprets (processes) any command line arguments
+* Uses this and other data to defines the global Testing Context
+* Owns the database of test results
+
+I've heard Test Driver used interchangeably with Test Station. However, I like to think of the Test Station as the actual executable (or machine) while the Driver is its content or subject. A Test Station could even be a particular instance of a Test Driver. For example, you may have some "class TestDriver" that is 'used' by the Test ""Station's"" UnixTestStation, WindowsTestStation, or AnyPlatformStation.  In a typical O-O C++ program, a Test Station might look like the following:
+
+ wint_t wmain( wint_t argc, wchar_t* argv[] )
+ {
+    TestDriver& theDriver = TestDriver::instance();
+    try
+    {
+       if ( theDriver.setup( argc, argv ) ) // Setup Testing Context
+          theDriver.perform();		    // Perform Tests
+
+       theDriver.terminate();               // Stop any threads, etc
+    }
+    catch ( const XCommandLine& e )
+    {
+       theDriver.streamUsage( std::cout );	
+    }
+    catch ( const std::exception& e )
+    {
+       std::cerr << "ERROR: " << e.what() << std::endl;
+    }
+
+    return theDriver.status();
+ }
+An elided TestDriver class might look something like the following:
+
+ class TestDriver
+ {
+    private:
+
+       Test''''''Context m_ctx;       // Global Data or Context
+       TestSuite   m_root;      // The Root Test Suite
+
+    public:
+
+       TestSuite& rootSuite() const
+       { 
+          return m_root;
+       }
+
+       TestDriver( std::string sRootSuite ) :
+	  m_root( sRootSuite ),
+	  m_cmd_bTrace( "-verbose", "Adds verbose tracing" ),
+	  m_cmd_bAll  ( "-all",     "Apply commands to all tests" ),
+          m_cmd_bList ( "-list",    "List Specified Tests" ),
+          m_cmd_bRun  ( "-run",     "Run Specified Tests" ),
+          m_cmd_aSpec ( "test, ...","Specify tests or suites" ),
+	  ...
+       {
+          m_cmds.Add''''''Handler( m_cmd_bTrace );
+          m_cmds.Add''''''Handler( m_cmd_bAll );
+          m_cmds.Add''''''Handler( m_cmd_bList );
+          m_cmds.Add''''''Handler( m_cmd_sTestInputDataFile );
+          .
+          .
+          .
+       }
+       .
+       .
+       .
+       void setup( int argc, char* argv[] ) throw( XCommandLine )
+       {
+          ''//..Process the command line''
+
+          m_cmds.process( argv, argv + argc );
+
+
+          ''//..Act on command line arguments''
+
+          m_ctx.setTracing( m_cmd_bTrace );        // Trace as we test?
+          m_ctx.loadArgvs( m_cmd_sInputDataPath ); // Argvs for Tests
+
+          if ( m_cmd_bAll )                        // Run all?
+          {
+             m_ctx.specify( rootSuite().name() );  // root specifies all
+          }
+          else
+          {
+             Cmd''''''Args::const_iterator at = m_cmd_aSpec.begin()
+             while ( at != m_cmd_aSpec.end() )
+                m_ctx.specify( *at++ );            // Each cmd arg
+          }
+       }
+
+       void perform()
+       {
+          ''//..Perform Command Line Actions''
+
+          if ( m_cmd_bList )                       // List Tests
+          {
+             Test''''''Lister lister( std::cout );
+             rootSuite().accept( lister );
+          }
+          else if ( m_cmd_bRun )                   // Run Tests
+          {
+             Test''''''Runner runner( m_ctx );
+             rootSuite().accept( runner );
+          }
+          .
+          .
+          .
+ };
+I still feel confused about the separation of behavior between the Test Application, the Global Testing Context (such as verbose, log to file, ''shouldStop'', etc), the Tree of all Tests (i.e. ''rootSuite''), individual TestCase data (i.e. the TestFixture), the Result Database, and so on. I'd like to have a file where each line has a test name and a typical argv line following it as a way to specify commands to a single test fixture.
+
+As always, the more complex it gets, the less sure I feel about my initial SeparationOfConcerns. 
+
+Where does the tree of all possible tests to compare the specified tests against go? 
+* The TestDriver object
+Where should the database of all test results go?
+* The Test''''''Context object
+How about the ''basic_ostream'' instance individual test methods can use to trace info?
+* The Test''''''Context object
+For that matter, how can individual test methods get input data?
+* Add an argv iterator to the Test''''''Context class. The argv iterator gets the current arguments vector from a map that is indexed by the currently running TestCase. For example:
+    
+    arg_iterator Test''''''Context::argvBegin() const
+    {
+       return m_argvmap[ this->activeTestQualifier() ].begin();
+    }
+For example, what if the host address that the testOpenLog method of the Test''''''Log''''''Server class uses changes based on what machine runs the test suite? 
+
+    ;
+    ; test.def -- add a command line for each test case or fixture
+    ;
+
+    Test''''''Log''''''Server.testOpenLog -host 'ten.ada.net'
+
+    ; eof: test.def
+It always seems that the more I can rigidly define the terms in a domain, the better the chance is that I can remove some convolution in the design and get away from thoughts like ''Oh well, I'll just put it here 'cuz I don't know where else to put it and I can't imagine adding yet another new class to this already too large system.'' 
+
+Some of the relevant terms for the application-level are:
+
+* Test Station
+* Test Driver
+* Test Runner
+* Test Context
+
+Test Context seems like it would have a lot of responsibility, after all it is the testing context. It might includes stuff like the list of specified tests, the results database (or testing log), the verbosity or tracing level, it might even be responsible for parsing the input file containing individual test-case arguments into a map of test names and argument vectors. Maybe I need a global testing context and an individual test-case context. With something like this, a test-method would be able to get at local context as well as ''access'' the global context. For example:
+
+ class Test''''''Stack''''''Fixture
+ {
+    void process( Test''''''Context::argv_type& ) throw XCommandLine();
+
+    public:
+
+       void testPush( const Test''''''Context& ctx )
+       {
+          process( ctx.argvBegin() );
+
+          if ( ctx.isTracing() )
+             ctx.trace() << "This test is going to blah..."
+       }
+       .
+       .
+       .
+ };
+In this example, "isTracing()" and "trace()" are examples of ''global testing context'' while "argvBegin()" is an example of Test''''''Case context. "argvBegin" returns an iterator to a vector that is set-up like argv. This allows each test-method to process and use command line arguments.
+
+''-- RobertDiFalco''
+
+----
+CategoryTesting

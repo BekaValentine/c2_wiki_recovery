@@ -1,0 +1,88 @@
+CeePlusPlus specific refactorings
+	* CppRefactorStructToClass
+Also some refactorings with C:
+	* CeeRefactorStringsToFunctions
+
+----
+
+I took the liberty of placing the list of C/C++ refactorings at the top of this
+page to make it easier to find.  The rest of this page discusses how C++
+can be a pain to refactor. -- AndyGlew, Oct 24, 2002. 
+
+----
+
+Maybe see StaticTypingHindersRefactoring first, since it includes languages such as Java.
+
+----
+
+One of the problems with C++ (a language I rather like, and ''please'' don't take this as an invitation to start a flame war)
+is that the cost of refactoring is pretty high. When you add a (class) function, you have to update the class declaration,
+which means you have to recompile the whole system. (Even if you refactor into a non-class function, you may need to make the new function a '''friend''', which requires updating the class declaration...)
+
+This need not be a problem in C; with file static functions, if you put the new function before its first invocation, the new function is private and declared implicitly by its declaration. It's not a problem in Perl or Smalltalk, which regenerate the list of all functions (methods) automatically. I don't think it's a problem in Java, which implicitly declares all functions by their definitions.
+
+It's not a huge problem in C++; it's just not as transparent. 
+
+--PaulChisholm
+
+''There are a number of C++ patterns which alleviate the problem. I don't have a proper reference but I believe they are well-documented. I'd be surprised if they are not in Coplien's "C++ Idioms", for example. Roughly:''
+	* Define one class per header, have each module only include headers it needs, use "MkDeps" and "Make" tools to automatically minimize recompiles. (As in C.)
+	* Use the usual OO techniques. Depend only on stable interfaces in abstract base classes; put volatile implementations in concrete derived classes and avoid having other code depend on them.
+	* Where possible, use "class MyClass;" to make class names known to the compiler without needing to include their full declaration.
+	* Use extra layers of indirection, and wrapper classes, to hide implementation detail so that changes to it don't trigger recompiles.
+
+(See AdvancedCeePlusPlusProgrammingStylesAndIdioms by JimCoplien)
+
+''Yes...The HandleBodyPattern idiom helps to significantly help reduce compile-time dependencies.  I generally go to the extreme of putting all private data and member functions in the body class.  It makes the code slightly less readable (since all of the privates are accessed through a pointer), but it is usually well worth the cost.'' -- ChrisBrooks
+
+This is a good technique that I sometimes use.  The main problem with it is the extra dynamic memory allocation for the body object.  I usually prefer to have interface classes (abstract base classes with only pure virtual methods) that everyone uses which then leaves me free to change the derived implementation class without breaking any other code.  If client code has to be able to create these types of objects then some sort of factory is also required.  This is the "depend only on stable interfaces in abstract base classes" technique mentioned above. -- JamesCrawford
+
+JohnLakos' book LargeScaleCppSoftwareDesign captures a whole set of practices to reduce dependencies and minimize the time required to re-build a C++ application. -- PierceMcMartin
+
+Your point is well-taken, Paul.  When I first heard about ExtremeProgramming, I thought:  "Cool!  but will it work for C++?"  This was important because I'm working on an ORB with an IDL compiler that spits out only C++ from the interfaces.  
+
+Given my initial concerns, I've found that refactoring works just fine.  
+
+Sure, one certainly must do a recompile at each refactor, and sure, sometimes other parts of the system are affected (so other files are recompiled on occasion *WHOOSH*), but I've found the techniques that Dave mentions are effective.  Also, since the systems I develop are fully refactored (I like to say, "lotsa small classes; lotsa small methods"), the compilation time is dramatically decreased.  I mean '''dramatically''': on a system before I knew about XP a system took a half-day to compile (imagine doing incremental debugging with that!), the system with XP (refactoring and other techniques) now compiles in 15 minutes.  Groovy! 
+
+What's better is that now that I've got UnitTest''''''s, etc, I can isolate debugging to a single class.  If I need to change some behavior, I change the class implementation, recompile it with the unit test and insert the new class into the system.  Recompilation takes one minute in these (vast majority of) cases.  And since I'm defining responsibilities better, usually I don't need to redefine a class interface.  Sweet!
+
+P.S. I've absorbed as much SmalltalkBestPracticePatterns as possible; although written for Smalltalk ''per se'' I've been applying more and more of it to my C++ code with stunning results (vast improvements in flexibility, and a lot less (keyed-in) code does a lot more).
+
+-- DouglasAuclair
+
+Here are a few additional items, that helped me speeding up refactoring in C++:
+	1. Don't put any implementation into header files.
+	2. Avoid using templates. Especially when you need many instances of the template. Otherwise the compile-link-cycle may take additional time.
+	3. Have a good source code browser available. Source Navigator works quite fine for me.
+
+-- ManfredLange
+
+----
+
+With all due respect to the folks above, the first rule in RefactoringWithCeePlusPlus should be AlternateHardAndSoftLayers. This gets rid of most of the C++ interdependencies right off the bat, and so then you can write in a very straightforward style:
+
+	0 Make all classes structs and forget about member accessors. The compiler will tell you when you need to fix your types, and accessors are just maintenance overhead when you're calling all your code from a soft language.  ''So you are bypassing public interfaces and jumping straight to published interfaces. Oookay...''
+	0 Derive from STL collections. If you do this, rather than making them members, you can forget about writing adaptors to call their methods. Sure this breaks encapsulation; your soft language does the encapsulation so you don't have to.
+	0 Use scoped typedefs to hide STL ugliness. I use a base_type to describe the collection I derive from, and then declare iterator/const_iterator/blah_blah based on that. Use as many templates and StlStyle bindings and algorithms as you can, because they're faster than calling functions.
+	0 Because AlternateHardAndSoftLayers keeps your C++ components small and self-contained, try to push as much code as possible into the class interfaces, where it's both self-documenting and easier to see.
+
+The aim of these four practices is to cut down on the amount of C++ you actually have to maintain, and to make it easier to push members and classes around in your hierarchy. Sure this wouldn't work if you used C++ without a soft language, but anyone who sets out to write a large C++ system without a soft language these days needs their brains examined. --PeterMerel
+
+I am not sure one would want to abandon C++ for perceived ease in refactoring.  I would question whether abandoning classes in favor of structs would even be a valid refactoring and I recall warnings against deriving from STL (though I don't remember the details, I just chose to follow the advice).   I would think, however, that deriving classes from STL would increase compile time, because instead of taking the STL hit once in the derived class, one would have it each time the derived class is used.  It is no more difficult to refactor in C++ than to code in C++, and playing cute compiler tricks does not seem to be in the spirit of refactoring.
+
+----
+The warning about derviving from STL containers has to do with the fact that they don't have virtual destructors.  that means that if you promise never to delete your object though a pointer to the original STL object, you should be ok...
+
+----
+Here is my personal list of areas where C++ makes refactoring more difficult.  None of these is insurmountable, but one needs to be aware of them and address them when refactoring.
+
+	* Updating both header prototypes and functions at the same time, especially when the syntax is slightly different, i.e., class name required in method implementation, semicolon required in prototype.  One can't just cut and paste one to the other.
+	* Synchronizing virtual functions between base and child classes.  If one renames a virtual function in a base class, the child class can still have the original virtual function.  Solution: only use pure virtual functions.
+	* Difficulty in isolating classes for test (I am assuming that SmallTalk, etc. simplify this).  Stub classes are difficult to maintain and keep synchronized.  Solution: Test at a higher level than class level.  Test groups of classes instead using lower level classes in lieu of stubs.  Write stubs only to remove a testing difficulty, i.e., access to remote hardware or a stub to rollback rather than commit to a database.
+	* Maintaining dependency lists, unless the IDE does it for you.  Updating Unix Make files can be a full time software job.  Solution: When confronted with a "weird" problem, do a clean rebuild before any debugging.
+	* Long compile times.  Solutions: buy faster hardware, test at lower levels than the full program and/or segment program into libraries or DLLs, use forward declarations rather #include files, override/ignore dependency lists.
+
+I think this is a fair list and nothing in it prevents C++ refactoring; the items are just things that require more programmer time or effort than might be expected.  --WayneMack
+----
+CategoryRefactoring CategoryCpp

@@ -1,0 +1,77 @@
+A SpinLock is not BusyWaiting. BusyWaiting is an AntiPattern, while a SpinLock is a DesignPattern. Some OperatingSystems, most notably Windows NT4 (SP4 methinks), has SpinLock''''''s only when compiled for MultiProcessorSystem''''''s.  
+
+''FYI:  NT4.0 SP3 '''exposed''' a spin capablity on CriticalSection objects to allow a wait operation on a CriticalSection to spin for a little while while waiting for the CriticalSection to become available.  If the spin duration was reached, then a normal wait (using the Win32 function WaitForSingleObject) would take place.  Single CPU systems will always ignore the spin count and just do a normal wait.  (This is regardless of running a single or multi-processor build of NT.)'' -- JamesTwine
+
+The reason for this is that when two processors are executing code at the same time and one of them is blocked on a lock, the typical solution is to do a ContextChange, but that takes a lot of time in CpuCycles. If the other CPU is holding the lock, the locked CPU can spin a few cycles to see if the other CPU drops the lock. After that, if the lock is not dropped, most probably the same CPU is locking itself, so it makes sense to do a ContextSwitch.
+
+So as you see, a SpinLock is BusyWaiting, actually spending a lot of Precious CPU resources but only for a limited amount of time:
+
+ if ( lock.isLocked() )
+ {
+   CLI
+   for ( int i = 0; i < 200 && lock.isLocked(); i++ )
+     ;
+   STI
+   if ( lock.isLocked() ) // Beware, this is just pseudocode, possible RaceCondition here
+      lock.waitForLock();
+ }
+ doTask();
+
+See RealSpinLockSolution.
+
+-- GuillermoSchwarz
+
+----
+
+Alternatives to spin locks (CriticalSection''''''s, events, ASTs, etc.) can impose unacceptable overhead, especially when it comes to process and thread context switching.  One often finds brief spin locks deep inside the implementation of other forms of resource waits.
+
+* SpinLocks are not used directly in application programs, but internally in OperatingSystem concurrency abstractions like CriticalSection''''''s and the like. Also they are not useful for uniprocessor systems. -- GuillermoSchwarz
+----
+'''Incorrect: Confuses BusyWaiting and SpinLock'''
+
+A SpinLock is a lazy polling method. "Lazy" because it has a small Sleep, and "polling" because it asks the same question over and over again.
+
+ startAsyncTask(task);
+
+ while (task.isWorking())
+   Sleep(50);
+
+ task.fulfill();
+
+''* This is slow BusyWaiting, not SpinLock, see below. SlowBusyWaiting (or LazyPolling like it is incorrectly called in here) is better than BusyWaiting because it doesn't burn too many CPU cycles, but it is less responsive than BusyWaiting or than MessageQueus''''''s. Definitively I don't recommend BusyWaiting or SlowBusyWaiting, but I do recommend SpinLocks, although their scalability is not very good.''  -- GuillermoSchwarz
+
+----
+
+It should be noted that the application-level BusyWaiting described above doesn't burn too many CPU cycles, provided a call to sleep() (or some other function which yields the processor) is in the loop.  Polling without sleeping is a definite no-no.
+
+Kernel SpinLock''''''s do burn CPU cycles, of course--in most cases, the number of cycles burned is small.
+----
+
+Usually one thinks of spin locks at the hardware level. I think you described BusyWaiting.
+
+SpinLock''''''s are a rather inefficient way to do locking (any waiting time is spent busily but uselessly spinning - hence the alternative name BusyWait), but since common computer hardware does not provide any other form of concurrency control, it is an absolute necessity. All the more sophisticated locking mechanisms, such as semaphores, are built on top of SpinLock''''''s in some form.
+
+This kind of spin lock is usually used by neophyte hardware types who are waiting on a RealTime event and don't know how to use the RealTimeOperatingSystem properly. Hey, I'll admit I did one of these for a quick test on a gig not too long ago and it got checked into the library. Uh, oh.
+
+----
+
+I would agree with the comments above. The scenario described in the example code is an example of polling or BusyWaiting, not SpinLock''''''ing.
+
+There are some legitimate uses for SpinLock''''''s as I understand it. One being in a parallel environment when the penalty of blocking and being rescheduled can be significantly larger than simply BusyWaiting the lock, particularly when the lock is only held over very small time deltas by any process/thread. It can be worth it but usually isn't - YMMV. Usually it's best to OptimizeLater instead, if necessary.
+
+''When you call sleep, assuming we are not using a hardware spin lock, you are blocking and
+being rescheduled. You've just fixed your best case latency to the period of sleep is all.''
+
+
+----
+'''Seems to confuse BusyWaiting and SpinLock'''
+
+A SpinLock can be a symptom of other CodeSmell''''''s. Either remove the PrematureConcurrency, or apply the ObserverPattern.
+
+The InternationalBusinessMachines JavaVirtualMachine uses spin locks to implement JVM monitors. Application code using spin smacks of PrematureOptimization (and probably not very efficient). 
+
+However, some of us have never ever seen them except in their smelly configuration. Like GoTo, the spin itself is not harmful, it's what you do with it.
+
+----
+CategoryConcurrency
+

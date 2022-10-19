@@ -1,0 +1,258 @@
+'''Iterator Semantics Are Wrong'''
+
+'''Thesis:'''
+Assume we want to write a method which counts the number of common elements in two sorted lists.  Because the lists are sorted, it might look something like this:
+
+ public int countCommonElements(List l1, List l2) {
+    int i1 = 0; 
+    int i2 = 0;
+    int n = 0;  // number of common elements
+    while (i1 < l1.size() && i2 < l2.size()) {
+      int c = l1.at(i1).compare(l2.at(i2));  // Bad code!  at(i) is O(n)...
+      if (c == 0) {
+         n++;
+         i1++;
+         i2++;
+      }
+      else if (c < 0) {
+         i1++;
+      }
+      else { 
+         i2++;
+      }
+    }  
+    return n;   
+ }
+Of course this is bad code, as the method "at" in a LinkedList is O(n) and the access is in reality sequential.  The solution is to introduce Iterators. For reference, the java.util.Iterator interface is defined as follows:
+
+ interface Iterator {
+    boolean hasNext(); // Returns true if the iteration has more elements.
+    Object next();     // Returns the next element in the iteration.
+    void remove();     // not relevant to this example
+ }
+Here is the example using Java Iterators:
+
+ public int countCommonElements(List l1, List l2) {
+    Iterator it1 = l1.iterator();
+    Iterator it2 = l2.iterator();
+    Object it1Elem = it1.next();
+    Object it2Elem = it2.next();
+    int n = 0;  // number of common elements
+    while (???) {
+      int c = it1Elem.compare(it2Elem);
+      if (c == 0) {
+         n++;
+         it1Elem = it1.next();
+         it2Elem = it2.next();
+      }
+      else if (c < 0) {
+         it1Elem = it1.next();
+      }
+      else { 
+         it2Elem = it2.next();
+      }
+    }  
+    return n;   
+ }
+The problem is the stopping.  There does not seem to be an easy way to make the loop stop without using Exceptions in normal program flow or using statements such as break.  I usually want to avoid both of these solutions.
+
+Note how much easier that is, if we have the following methods in a NewIterator interface:
+
+ public interface NewIterator {
+    public void next();       // go to the next element
+    public boolean isValid(); // true if we point at an element
+    public Object get();      // get the element.
+ }
+The method then becomes the following:
+
+ public int countCommonElements(List l1, List l2) {
+    NewIterator it1 = l1.iterator();
+    NewIterator it2 = l2.iterator();
+    int n = 0;  // number of common elements
+    while (it1.isValid() && it2.isValid()) {
+      int c = it1.get().compare(it2.get());
+      if (c == 0) {
+         n++;
+         it1.next();
+         it2.next();
+      }
+      else if (c < 0) {
+         it1.next();
+      }
+      else { 
+         it2.next();
+      }
+    }  
+    return n;   
+ }
+Thus, I conclude that the iterator semantics is wrong.  But maybe someone disagrees with me and has a solution which uses current semantics and works just fine.  Let us know, then.
+
+''Score one for BertrandMeyer here -- Iterator semantics are wrong because they violate CommandQuerySeparation. The above Iterator interface obeys CQS.''
+
+-----
+
+'''Antithesis:'''
+
+''[Munged the hasNext() examples, assumes sorted lists, can extend type to assert this]''
+
+ public int countCommonElements(ComparableList a, ComparableList b) {
+   
+   Iterator ai = a.iterator();
+   Iterator bi = b.iterator();
+   
+   // Quick return
+   if ((ai==NULL) || (bi==NULL))
+       return 0; // no elements or list is null
+
+   // Set cursors to first elements in both lists
+   Comparable ao=ai.next();
+   Comparable bo=bi.next();
+   int countEquals = 0;
+   
+   // Set loop flag
+   boolean loopOn = TRUE;
+
+   while (loopOn) {
+     int c = ao.compareTo(bo);
+     
+     if (c==0) {
+         ++countEquals;
+         if (ai.hasNext()) ao=ai.next(); else loopOn = FALSE; 
+         if (bi.hasNext()) bo=bi.next(); else loopOn = FALSE; 
+     }
+     if (c<0) { 
+         if (ai.hasNext()) ao=ai.next(); else loopOn = FALSE; 
+     }
+     if (c>0) { 
+         if (bi.hasNext()) bo=bi.next(); else loopOn = FALSE; 
+     }
+   }
+
+   return countEquals;
+ }
+
+-------------
+
+''How I'd Do It...''
+I'm being devil's advocate here.  I agree that "getting" from and Iterator and advancing it are two distinct operations.
+ boolean anotherIteration = true;
+ Iterator i1 = l1.iterator();
+ Iterator i2 = l2.iterator();
+ Object o1, o2;
+ int c = 0;
+ int n = -1;
+ while (anotherIteration) {
+   o1 = (c >= 0)? o1: i1.next();
+   o2 = (c <= 0)? o2: i2.next();
+   n += (c == 0)? 1: 0;
+   c = (anotherIteration = ((o1 != null) && (o2 != null)))?
+     o1.compare(o2): 0;
+ }
+
+''This code does not work, because next() throws an exception when there is no next element.  It returns null when the next element is null.''
+----
+----
+
+''How about...''
+
+ public int countCommonElements(List l1, List l2) {
+   List commonPart = l1.clone();
+   commonPart.retainAll(l2);
+   return commonPart.size();
+ }
+
+''This is slower, because retainAll does not assume that the lists are sorted.''
+
+...so make that assumption explicit :
+
+ public int countCommonElements(List l1, List l2) {
+   SortedList commonPart = l1.asSortedList();
+   commonPart.retainAll(l2.asSortedList());
+   return commonPart.size();
+ }
+
+''Hmm.  First, I think this idea is missing the thread anyhow, because it's really about iterators here.  Although a solution like this might be better.  Secondly, in my jdk there is no SortedList.''
+----
+
+If you're going to pick on iterators in Java, here's a more egregious problem: all the ones in the Collections library are ExternalIterator''''''s, which are not only clumsier to work with than InternalIterator''''''s are, they're also slower.
+
+----
+A working example that utilizes the existing Iterator semantics:
+
+ public int countCommonElements(List l1, List l2, Comparator comparisonStrategy) {
+    Iterator it1 = l1.iterator();
+    Iterator it2 = l2.iterator();
+    boolean advanceIt1 = true;
+    boolean advanceIt2 = true;
+    Object o1 = null;
+    Object o2 = null;
+    int count = 0;  // number of common elements
+ 
+    while ((!advanceIt1 || it1.hasNext()) &&
+           (!advanceIt2 || it2.hasNext())) {
+ 
+      /*
+       * advance iterators
+       */
+      if (advanceIt1) {
+         o1 = it1.next();
+      }
+ 
+      if (advanceIt2) {
+         o2 = it2.next();
+      }
+ 
+      /*
+       * compare vals (compare must support cases with null as input)
+       */
+      int c = comparisonStrategy.compare(o1, o2);     
+ 
+      /*
+       * increment count on match
+       */
+      if (c == 0) {
+         count++;
+      }
+ 
+      /*
+       * compute advancement flags
+       */
+      if (c == 0) {
+         advanceIt1 = true;
+         advanceIt2 = true;
+      }
+      else if (c > 0) {
+         advanceIt1 = false;
+         advanceIt2 = true;
+      }
+      else {
+         advanceIt1 = true;
+         advanceIt2 = false;
+      }
+    }  
+ 
+    return count;
+ }
+This example splits the count and Iterator advancement statements to support code readability and maintenance, and requires a StrategyPattern object in the form of a JDK 1.2 java.util.Comparator. 
+
+The original example given to illustrate the proposed enhancements to the Iterator interface would require similar support for a comparison strategy, as Object does not implement a suitable interface.  Due to this issue, the line:
+
+ int c = it1.get().compare(it2.get());
+in the original example would fail to compile.
+
+The primary difference between the proposed and existing semantics is an adherence to CommandQuerySeparation semantics.  The underlying goal with the enhancements proposed here seems to be the enabling of a repeatable read.  This would eliminate the need for local variables to simulate java.io.Reader mark() and reset() semantics.
+
+In this light, does this proposal satisfy the needs of the many, or the needs of the few? The needs of clients that access methods that return values vary widely. Most clients will need to buffer state in some way.  It could be argued that these needs will be unique per client, as would the optimization needs.
+
+''I thought this would be a good idea...'' Consider wrapping an Iterator with a QueryableIterator designed to satisfy the buffering needs expressed here. This prevents CodeBloat in Iterator implementations, thus promoting LightweightObjects.
+''However...'' After coding a QueryableIterator that wrapped Iterator and added a repeatable read, and coding a ProposedIterator, I have changed my mind in favor of ProposedIterator as a general solution.  Adding code to utilize a repeatable read without isValid() semantics resulted in CodeBloat.
+
+--KentDorsey
+
+----
+Remarks about page:
+* '''This page needs to be refactored.'''
+* ''Yup, I think the whole argument is made redundant by the '''Iterator.hasnext()''' function. It is precisely what the original author wants, and much better than allowing a cursor (Iterator in this case) to fall off the end of the dataset without an error of some sort. I'll move the relevant paragraph to the top. The rest may be culled as interesting but peripheral. [DeleteMe] --RichardHenderson.''
+* ''It would also be nice if this page were renamed JavaIteratorSemanticsAreWrong.  CeePlusPlus EssTeeEll iterators, for instance, don't have these problems.''
+* Related:
+** Voting on page -> JavaDesignFlaws 

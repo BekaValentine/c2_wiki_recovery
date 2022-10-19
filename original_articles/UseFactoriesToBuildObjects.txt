@@ -1,0 +1,163 @@
+''Please rip into this suggested pattern (idiom). It isn't meant to restate the Factory pattern. This idiom provides a different context (I don't have the GOF book in front of me right now...) It makes sense to me, but I have not had my morning coffee yet. One could argue that it encourages PrematureGeneralization... It is an application of ShieldPattern, justifying the extra shield for certain situations'' -- ToddCoram
+-----
+
+You are planning to BuildInterfaceImplementationPairs and you have considered DontDistinguishBetweenClassesAndInterfaces. You want to program to interfaces rather than implementations. However, developers are still bound to the implementation class because they must be instantiated somewhere.
+
+'''How do you make it easy to add a new implementation of an interface without having to change code to instantiate the implementation class?'''
+
+Make sure that you are not over-designing. In other words, you want to DoTheSimplestThingThatCouldPossiblyWork (because YouArentGonnaNeedIt right now).
+
+However, it will be hard to add or modify implementation once developers write hundreds of lines against your class interface. (Everywhere they use '''new''' to create an instantiation of your implementation, they are directly referring to a specific implementation).
+
+A simple example of how programming against interfaces can still require modification to the developer's code:
+
+	// Car is an interface and standardPassengerVehicle() returns a
+	//  concrete implementation.
+	Car car = new standardPassengerVehicle();
+	// Lots of things happen... and then...
+	//
+	car.addDriver("Maroc");
+	car.addPassengers(2);
+	wash(car);
+	
+If I want to change the the implementation of ''car'' to refer to a Mini-van or change the implementation of standardPassengerVehicle, I have to either instruct the developer to create a new instantiation of car (for a Mini-van) or take my new class definition for standardPassengerVehicle(and thereby throwing away the old definitions).
+
+Where is a MetaObjectProtocol when I need one? I want to change how a large chunk of already-written code behaves.
+
+There is a strong urge to prevent the developer from having to explicitly code instantiations of concrete classes. The instantiations are often hard to chase down (do I grep for ''new''?)
+
+Therefore,
+
+'''Use factories to instantiate objects rather than ''new''.'''
+
+Delegating object instantiation to another class or method allows you to change the interface implementation during runtime. You now have control over what type of objects are represented abstractly to the developer.
+
+This is a common technique to use when deploying multi-tier Java apps. When an object's implementation can be remote to the application, the application developer cannot rely on '''new''' (since it instantiates objects only in the current process space).
+
+Using this technique to instantiate objects locally incurs little overhead.
+
+Our above example now becomes:
+
+	// Car is an interface, and carFactory.create() returns a concrete
+	// implementation.
+	Car car = carFactory.create();
+	// Lots of things happen... and then...
+	//
+	car.addDriver("Maroc");
+	car.addPassengers(2);
+	wash(car);
+	
+The type of car returned can now be decided at runtime. The developer is now coding ''completely'' to interfaces. No changes are required to the above code if the implementation of car returns a mini-van or a special '''logging''' version of standardPassengerVehicle.
+
+Using factories can save a lot of headaches later. It can also help profiling and debugging because you now have runtime control over object instantiations.
+
+However, it is very easy to abuse this technique (see discussion in ShieldPattern). For example, you may be tempted to replace every occurrence of '''Vector''' with '''Vectorfactory'''. This would probably violate some ExtremeProgramming tenets. You are writing a factory for an existing class just to provide future control. If you are developing a new class (such as standardPassengerVehicle) then adding a factory mechanism becomes (merely) a standard part of constructor design (you have to design a constructor anyway, right?).
+
+''On C3, we create all collections by messages such as "Collection orderedCollection" instead of "OrderedCollection new". This allows us to create instances of different classes in GemStone and in VisualWorks. Most such messages create the same class on both sides, but some do not. We covered them all to provide a consistent approach to collection creation. -- RonJeffries''
+
+----
+
+If you are delegating object creation to a self method, you are following the FactoryMethodPattern. If you are delegating to another object, you might be following the PrototypePattern, the BuilderPattern, or the AbstractFactoryPattern. Or maybe not. There are lots of patterns that involve delegating to another object so it can create something for you. I call them all collectively the FactoryPattern.
+
+-- RalphJohnson
+
+----
+
+So, when should you use the FactoryPattern? I've found two situations, one being the case stated earlier, in which the created object may be one of several classes. The other case occurs when object construction takes a lot of code, and you're basically applying an ExtractClass refactoring to the constructor. Most of the time, ''new'' is more readable.
+
+----
+Which packages would these different classes/interfaces belong to and why?
+Assuming:
+	interface Car
+	class StandardCar implements Car
+	class CarFactory
+I can think of lots of good reasons to put Car and StandardCar in separate packages, but I don't have as many ideas for where to put CarFactory. What do you think?
+
+-- JohnHeintz
+----
+It depends on the circumstances. Often CarFactory can go into the same package as Car; maybe even be a static method of Car. Or it can go wherever is convenient.
+
+''Possibly silly point of syntax:'' You can't make it a static method on Car because static methods aren't allowed on interfaces.
+
+Beware of premature generalization. We isolate factories so that they can act as FlexPoints. This means their code is allowed to be relatively volatile. It can be OK to rewrite the factory every time a new subclass of Car is added to the system. That's the point; that's what they are for.
+
+Of course, there are ways to avoid doing that - e.g., to have the subclasses register themselves with the factory and have the factory select the best one using some appropriate rule. I think this is an area where it is especially easy to get seduced into doing more than you really need.
+-- DaveHarris
+
+In Java you can use ParameterClasses to dynamically select functionality based on run-time parameters. These ParameterClasses can be located and instantiated by a Factory.
+
+-- NatPryce
+
+-----
+
+A good "known use" of this Idiom occurs in EnterpriseJavaBeans. In EJBs, the Home is a class that acts as a Factory for your Enterprise Java Beans. For every EJB Class, you must specify a Home Interface that states the ways in which objects can be created, found, and removed. The actual implementation of the Home class is provided by the EJB Container. The implementation will handle not only creation of your bean class' instances, but creation of the associated EJBObjects that handle multithreading, persistence, and transactionality as well.
+
+-- KyleBrown
+----
+I've been thinking about this sort of thing a lot recently... you can hook into someone else's object by passing in an object that you define, but you can also hook in through factories when creation is delegated to you. I often wonder what it would be like if all object creation points were transparent plug-in points by default in some language. COM and EJB do this by default at the class level, but what about at the instance level with language support? You decide to use some class and on creation you can say "when instances of this class are created in the class, I want to use this subclass instead." It seems like it could be nice, but it could make code difficult to understand if people keep "seeing" the current creation semantics.
+
+Example:
+
+class Histogram
+{
+	...
+	public Histogram () {}
+	public Amplitude maximum () 
+	{ return new Amplitude (findMaxiumum ()); } 
+};
+
+Histogram regionalSales = new Histogram ()<Amplitude=ReportingAmplitude(view)>;
+
+Histogram divisionSales = new Histogram ();
+
+Now regionalSales uses class ReportingAmplitude when it is supposed to create Amplitude objects. Assume that class ReportingAmplitude has a constructor which accepts an observer (view in this case) and whatever findAmplitude returns. The divisionSales object just uses Amplitude.
+
+Well, I guess this is just a lazy template mechanism now that I really look at it.
+
+-- MichaelFeathers 
+-----
+
+Sounds like something that can be effectively addressed by a MetaObjectProtocol (unfortunately, not practical to do in C++ or Java without significantly changing the language or writing a very sophisticated preprocessor).
+
+-- ToddCoram
+
+''True, a MOP would do it but it would be overkill and not quite as succinct. Anyone else run into situations where such a language feature could be useful? To me, it seems like the ultimate decoupling device. -- MichaelFeathers''
+
+----
+
+Would it be a good idea to put the Factory and the classes built by the Factory into the same package, with protected modifiers for the class constructors? This would prevent improper instantiation of the class through 'new', and force use of the factory. 
+
+-- ChanningWalton
+
+----
+
+Would this make any sense?
+
+ .public class D''''''elegateAndFactory implements A''''''ppropriateInterface{
+ .  protected A''''''ppropriateInterface delegate;
+ .
+ .  public D''''''elegateAndFactory(){
+ .  .  if(appropriateLogic)
+ .  .  .  delegate = new C''''''oncreteImplementation();
+ .  .  else
+ .  .	. . .
+ .  }
+ .
+ .  public void methodDefinedByAppropriateInterface(){
+ .  .  delegate.methodDefinedByAppropriateInterface();
+ .  }
+ .  
+ .  public Object anotherMethodDefinedByAboveInterface(){
+ .  .  delegate.anotherMethodDefinedByAboveInterface();
+ .  }
+ .}
+
+'''Pros:'''
+	* Allows subclassing of a concrete implementation without concrete knowledge of implementation
+	* D''''''elegateAndFactory is associated directly with A''''''ppropriateInterface's implementation (benefits of static method), while preserving inheritance (benefits of separate factory class)
+
+'''Cons:'''
+	* Factory is now implicit, although this could be a plus, it could be confusing
+	* No casting the D''''''elegateAndFactory to some known subclass of A''''''ppropriateInterface's implementation, although this too could be a good point in some situations. (Easily worked around by providing a method to return the delegate, of course)
+
+-- WilliamUnderwood

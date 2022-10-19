@@ -1,0 +1,47 @@
+A ScriptingLanguageAgnosticSystem is one that supports any 'scripting language' so long as someone writes a module to evaluate/execute it and plugs it into the system.  Scripts to such a system must include a token identifying the script and allowing dispatch to the appropriate module.  E.g. a script might look like '#javascript:command goes here', which would then be evaluated or executed by a module that emits the token 'javascript' when asked which language it processes.  
+
+Unix, with its SheBang executable text, is an early example of a ScriptingLanguageAgnosticSystem.  In that case, it uses whole languages as 'modules'.
+
+The approach is useful when scripting languages vary from customer to customer in a multi-customer product, though it is also useful if you just have a few scripts that need to be hyper-optimized and so wish to create a module for them.  Scripts will typically be customer-specific and located in a database or configuration files.  As an example, a system this author is writing has a fully configurable GUI (for controlling a wide variety of vehicles) and scripts are used for everything from gauges and hovertext to determining which menuitems receive checkmarks.  
+
+I've found that usefully, a scripting module should consider exposing (by some means) each of the following commands:
+* '''language()''' - returns a string identifying the scripting language accepted by the module (could be adjusted to support multiple languages)
+* '''evaluate(script,context)''' - must return a value immediately (in a predefined format), possibly via a callback (esp. in languages with explicit memory management).  Possibly allows for returning in error.  Doesn't promise absence of side-effects, but should generally be scripted that way (i.e. caller should be able to pretend that 'evaluate' is effectively side-effect free and thus feel able to call it often without concern).
+* '''execute(script,context,time = now|soon|delayed N milliseconds)''' - execute a script for its side-effects now or at some time in the future.  The ability to have delayed scripts is extremely useful for more generic support of scripted behaviors, and also reduces wait-dependencies on getting other work done.  Ability to execute 'now' is useful when further action depends on the side-effects of a script (which isn't that often... though one might see it for, e.g., dynamic menus that one can 'generate' via script).
+* '''watch(script,period,context)''' - an optimized version of a periodic evaluation, likely keeping a pre-parsed script and possibly subscribing to the database (if it is a publish-subscribe architecture).  Returns a property-identifier that can be subscribed to in the database or periodically calls back with updates, or returns a handle for deleting the watch and performs the callback whenever it notices the expression in the script is updated (which it should attempt to do with a latency less than 'period').  
+
+Not all language modules need expose all commands, but they do need to expose the 'same' commands in the 'same' way thus allowing the dispatch code to truly be unconcerned about which language the code is in (so long as the language-identifier token in the script matches that returned by one of the loaded modules, all is cool with the dispatcher).
+
+'Watch' is extremely useful in most applications (allowing for a far more EventDriven architecture) and is often readily optimized over periodic calls to 'evaluate', which is why it is included above.  Feature should be automatically emulated if the scripting module exposes 'evaluate' but not 'watch' - via periodic delayed calls to 'evaluate'.
+
+'''The 'context' Parameter:''' 
+
+Note that use of a fairly generic ContextObject or ExplicitManagementOfImplicitContext is highly appropriate to this sort of interaction, because (a) without context, every script would need to be extremely explicit, and thus the system as a whole would be nearly unusable, (b) it is impossible for the dispatcher to embed parameters into the script via string manipulation (being S''''''criptingLanguageAgnostic, the dispatcher doesn't know what values or parameters look like), and (c) the dispatcher code is invariably extremely 'myopic' regarding which parameters should be passed forward to the script... as those arise from the whole context in which the script is being executed.  
+
+For example, consider '#mylang:window.close()' at the bottom of a database-defined 'File' menu.  If one ''cannot'' pass 'window' as a context parameter, then one would need to rewrite this as something like '#mylang:windowXYZ.close()', which would prevent the Menu definition from being effectively shared across windows (i.e. you'd need to copy the entire menu once for each window).  Given the other number of contextual variants, this becomes a combinatorial problem... e.g. a whole duplicate 'Menu' not only for which window you're in, but also on which vehicle you're controlling and which payloads are on that vehicle.  It would be a nightmare.  
+
+For safety/security purposes, the context object may also limit which services the script is allowed to access.  This would be up to the module to enforce, though with ExplicitManagementOfImplicitContext and the removal of 'global' communications objects and other services from the language, it could also be enforced by the system dispatching the script (essentially enforcing a CapabilitySecurityModel within the application).
+
+'''The "Official" Language Module:'''
+
+After making a ScriptingLanguageAgnosticSystem (not such a hassle, and not even inefficient) go ahead and choose one 'official' language that you 'promise' your application will support, and create the module for it.  Javascript or Python would be good choices, as would LUA (or Scheme or Lisp or Ruby or ...) - a big-name scripting language is a better choice for advertising purposes even if you use some tightly integrated scripting languages for highly optimized low-latency '''watch'''es and such.  
+
+The important thing is that you aren't forcing a bunch of customers to use ''your'' peculiar scripting language for the vast majority of work.  They DONT want to learn it.  It isn't a skill they can sell after they've learned it.  Heck, it's better for you for the same reason: integrating a big-name scripting language lets you put one more feather under your cap when it comes time to learn and actually ''use'' the scripting language you just integrated - you can't say the same for system-unique scripting languages.
+
+In my experience, ''most'' customers are extremely happy with one big-name 'official' language, but there are almost always a few exceptions (given a broad enough audience).
+
+'''Scripting Module Integration:'''
+
+Scripting modules must integrate back into the system by use of the interfaces exposed to the scripting module... e.g. manipulations to a database, issuing callbacks, etc.  Value translation is an issue, though one can often get by with just supporting: integers, strings, records, and arrays (just grab the list from JSON or YAML and support those things).  Most embedded languages are designed for integration and so make (e.g. javascript integrates with a DOM, and LUA readily integrates with C), while most extensible languages allow for it (Python, etc.).  Essentially, every scripting language could be exposed to the same DOM and Database, but could then choose to access it in different ways.  Beyond that, scripting modules could be complete languages with access to communications and FILE I/O and such... if desired.
+
+'''Costs and Weaknesses of ScriptingLanguageAgnosticSystem'''
+
+Flexibility (in ''any'' system) has a cost in that (a) if you have it, people will use it (if you build it, they will come), (b) scripted content doesn't have a short half-life - people don't muck with working scripts (scripts, like diamonds, are forever) and (c) if you people use it, then they want to keep using it (if you break it, they will complain).  
+
+Together, these mean the set of scripting modules is (generally) monotonically increasing over time.  Applicable here seems a negative corollary to "ThereIsMoreThanOneWayToDoIt": to perform maintenance, you need to know every which way.  Of course, as a counterpoint the original developers would be somewhat justified in declaring they won't support other people's scripting modules beyond documenting the API for scripting module developers... which keeps things more consistent for individual developers.  But, regardless of maintenance issues, this growing set of modules becomes a problem if there is a culture of 'shared content' that uses the scripts (which would involve, for example, shared GUI configuration data in the case of my own project).  When content is shared that uses a non-official scripting language, the scripting module will be added semi-permanently to the shared set actually in use.
+
+If there is value in keeping systems minimalist, and there is a lot of shared, scripted content, then supporting a wide variety of scripting languages is of questionable positive value.  OTOH, if you're also supporting modular plugins for mime-types and such things, then supporting a variety of script-types really isn't going to cost you anything 'extra': essentially, the mechanisms and costs are the same even if the exposed interfaces and purpose are slightly different.
+
+------------
+
+See Also: AlternateHardAndSoftLayers, ExplicitManagementOfImplicitContext

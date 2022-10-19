@@ -1,0 +1,162 @@
+From PythonTranslator, GabrieleRenzi raises the question of how to do (implementation of Amb is found in AmbInRuby):
+ amb = Amb.new
+ a, b, c, d = Array.new(4){amb.choose 1, 2, 3, 5, 7 }
+ if tot == a * b * c * d
+   puts "#{tot} == #{a} * #{b} * #{c} * #{d}"
+ else
+   amb.fail
+ end
+
+ if tot == a * b  * c
+     puts "#{tot} == #{a} * #{b} * #{c} "
+ else
+     amb.fail
+ end
+
+gives: 
+ 105 == 1 * 3 * 5 * 7
+ 105 == 1 * 3 * 7 * 5
+ 105 == 1 * 5 * 3 * 7
+ 105 == 1 * 5 * 7 * 3
+ 105 == 1 * 7 * 3 * 5
+ 105 == 1 * 7 * 5 * 3
+ 105 == 3 * 1 * 5 * 7
+ 105 == 3 * 1 * 7 * 5
+ 105 == 3 * 5 * 1 * 7
+ 105 == 3 * 5 * 7 * 1
+ 105 == 3 * 5 * 7
+
+''This appears to be truncated...''
+
+For your amusement - AmbInPython.  It could be made a lot more robust, but hey - it works without needing call/cc which is good because generators give me enough of a headache as it is, and anyway, only StacklessPython has continuations ;-):
+
+----
+'' Actually, that's not true anymore.  As of Python 2.5, generators are now equivalent to coroutines.  Since you can build continuations on top of coroutines, you can say Python 2.5+ has continuations. ''
+
+'' OTOH, I don't know that anyone's actually written call/cc for Python yet.  Come to think of it, it was probably possible in earlier versions by hacking sys._getframe.  Hmm... ContinuationsInPython anyone?''
+
+''--PaulMiller (a loyal pythonista)''
+
+The argument: '''I can build X in Y therefore I have X in Y''' fails.  Beware the TuringTarpit, where it is possible to say anything but nothing of interest is easy to say.  Language support for any feature, including continuations, implies a degree of syntactic simplicity in achieving it.
+
+----
+
+    import random
+    class Amb(object):
+        def __init__(self, choices=[], constraints=[], n=1,
+                     msg="%s", error = "Failed!"):
+            random.shuffle(choices)   # Non-determinism ;-)
+            self.choices = choices
+            self.constraints = constraints
+            self.n = n
+            self.msg = msg
+            self.error = error
+            
+        def __iter__(self):
+            fail = True
+            for choice in self.choose(self.choices, self.n):
+                if False not in [c(choice) for c in self.constraints]:
+                    if self.n == 1:
+                        choice = choice[0]
+                    yield choice
+                    fail = False
+            if fail:
+                raise ValueError
+
+        def choose(self, choices, n):
+            if n == 0:
+                yield []
+            else:
+                for i in range(len(choices)):
+                    for c in self.choose(choices[:i] + choices[i+1:],n-1):
+                        if isinstance(choices[i],Amb):
+                            try:
+                                for elem in choices[i]:
+                                    yield [elem] + c
+                            except ValueError:
+                                pass
+                        else:
+                            yield [choices[i]] + c
+
+        def format(self, msg, item):
+            try:
+                return msg%(item)
+            except TypeError:
+                try:
+                    return msg%tuple(item)
+                except TypeError:
+                    print msg, item
+
+        def get_one(self):
+            for item in self:
+                return self.format(self.msg, item)
+
+        def __str__(self):
+            try:
+                return "\n".join([self.format(self.msg, item) for item in self])
+            except ValueError:
+                return self.format(self.error, self.choices)
+                
+
+    import operator
+
+    def printchoices(n, total, choices):
+        print Amb(choices,
+                  [lambda item: total==reduce(operator.mul,item)],
+                  n,
+                  "%s == "%total + "%s" + " * %s" * (n-1),
+                  "Can't multiply %s elements of "%n+"%s"+" to get %s."%total,
+                 )
+
+    mylist = [1,2,3,5,7]
+    printchoices(4, 105, mylist)
+    printchoices(3, 105, mylist) 
+    printchoices(2, 105, mylist) 
+    print "---"
+
+
+    w = Amb(["oo", "or", "og"])
+    x = Amb(["foo", "bar", "baz", "fob"])
+    y = Amb(["foe", "baf", "baz", "boaz","oaz"])
+    z = Amb(["o", "e", "i"])
+
+    print Amb([w,x,y,z],
+              [lambda (a,b,c):(a+b).replace(c,"") == "fbaz"],
+              n=3,
+              msg="found: %s %s %s",
+              error="No combinations match.")
+    print "---"
+
+
+    x = Amb(range(10))
+    y = Amb(range(10))
+    z = Amb(range(10))
+
+    a = Amb([x,y,z],
+            [lambda (a,b,c): (0<a<=b<c) and (a**2 + b**2 == c**2)],
+            n=3,
+            msg="a==%s, b==%s, c==%s",
+            error="No Pythagorean triples"
+           )          
+
+    # This will print out 6 lines - a feature not a bug since
+    # There are 3*2*1 sets of identical combinations...
+    print a
+    print "---"
+    print a.get_one()
+    print "---"
+
+    print Amb()
+    print Amb([Amb(), Amb(), Amb()])
+    print Amb([Amb(), Amb(), Amb(), 1])
+    print Amb([Amb(), Amb(), Amb([Amb([1])]), Amb()])
+
+----
+
+Also see:
+AmbInRuby, PythonTranslator, AmbSpecialForm
+
+
+----
+
+CategoryPython

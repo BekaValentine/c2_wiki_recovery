@@ -1,0 +1,73 @@
+Moving an Oracle database from one Windows 2000 server machine to another when the ''other'' machine uses drive E:\ instead of C:\ 
+
+------------
+'''Assuming you do not need the database up during all this'''
+
+Concepts taken from http://www.oracle.com/forums/message.jsp?id=1413419&gid=515246
+
+This is the way that someone did it.  There is probably a better way.
+
+	1 export from source machine with GRANTS, INDEXES, ROWS, CONSTRAINTS, FULL, TRIGGERS all set to Y
+	1 create new database with same instance name on target machine
+		1 You can use Database Configuration Assistant to create the database
+	1 move the export file over to the target machine if there is room
+	1 create the users
+	1 create the tablespaces 
+		1 if you open the export file up using something like UltraEdit and look at the beginning 2 pages, you will see what the tablespaces were on the source machine.
+		1 Some Table spaces are there by default.  Perhaps you just want to change the size of the tablespaces which are there by default using "DBA Studio"
+		1 CREATE TABLESPACE "whatever the name is" DATAFILE  'E:\whatever the file was on source machine' SIZE 2000M REUSE DEFAULT  STORAGE(INITIAL 40960 NEXT 40960 MINEXTENTS 1 MAXEXTENTS 505 PCTINCREASE 50) ONLINE PERMANENT; 
+	1 import the file via two phases:
+		1 E:\>imp system/manager file=E:\export_import\export_files\dba.dmp buffer=2048000 commit=y full=y rows=y indexes=n constraints=n grants=n log=e:\export_import\imp.log
+			1 or in a generic sense: imp user/pwd file=filename buffer=2048000 commit=y full=y rows=y indexes=n constraints=n grants=n 
+		1 imp system/manager file=E:\export_import\export_files\dba.dmp buffer=2048000 commit=y full=y ignore=y rows=n indexes=y constraints=y log=e:\export_import\2ndimp.log
+			1 or in a generic sense: imp user/pwd file=filename buffer=2048000 commit=y full=y ignore=y rows=n indexes=y constraints=y 
+
+------------
+'''All of this needs to be tested on a Windows 2000 Server machine with Oracle 8.1.7'''
+
+Resources: 
+	* http://www.oracle.com/forums/message.jsp?id=1408216&gid=515246
+	* http://www.dbaclick.com/forums/archive/16/35.html
+
+
+'''Assuming you do not need the database up during all this'''
+
+'''another way to do this'''
+
+All of this is assuming no database instance is on the target machine which bears the name of that which you want to install.  Oracle 8.1.7 Windows
+
+	1 On the source database get into svrmgrl
+	1 Backup the control file
+		* connect SYSTEM AS SYSDBA
+		* do at "SQL>" prompt: alter database backup controlfile to trace; ' 
+	1 shutdown normal  or  shutdown immediate (choose one or the other)
+	1 Copy the database files to the target server
+		* example: Copy from C:\oracle\oradata\MyDBInstance to E:\oracle\oradata\MyDBInstance 
+		* or run on the source machine to find out which files need to be copied for sure:
+			1 SELECT name FROM v$datafile;
+			1 SELECT member FROM v$logfile;
+			1 SELECT name FROM v$controlfile;
+	1 Copy the trace file to the target machine.  The file may be something like ORA00336.TRC.  It would be stored in something like C:\oracle\admin\MyDBInstance\udump
+	1 Edit the trace file:
+		1 remove the lines until you get to the 'CREATE CONTROLFILE ..' statement. 
+		1 Edit the CREATE CONTROLFILE statement to read CREATE CONTROLFILE SET DATABASE "new_db_name" RESETLOGS ARCHIVELOG 
+	1 save the modified trace file
+	1 (NOT SURE ABOUT THIS STEP) If you already installed the Oracle on the target machine, copy the whole ORACLE_ADMIN directory from the source db to the target db. Rename init<ORACLE_SID>.ora file to the <new_db_sid> value.
+	1 Create Oracle service on the target db via: oradim -new -sid <new_sid> -intpwd <internal_password> -startup a -pfile "location_to_new_pfile"
+		* Example: oradim -new -sid Titan2 -intpwd change_on_install -startmode a -pfile E:\oracle\admin\Titan2\pfile\init.ora 
+
+	1 Check in the Services (located in Administrative Tools) that the new Oracle service was created.
+	1 Using the modified trace file, create the new control file via these steps:
+		1 svrmgrl
+		1 connect internal (or / as sysdba) 
+		1 startup nomount 
+		1 @theTraceFileWhateverItsNameIs; 
+		1 alter database mount; 
+		1 alter database open resetlogs; 
+
+----------
+
+It might be good idea to switch the add user and the create tablespace
+tasks. Often the Users a associated with Tablespaces and it ends up
+erroring since they are not yet there. I do not believe that there is ever
+tablespaces tied to usrs. -- DaveMiller

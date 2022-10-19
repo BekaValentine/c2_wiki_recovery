@@ -1,0 +1,310 @@
+[From TemplateMetaprogramming - ''Can anybody think of a less verbose title for this page?'']
+
+----
+CeePlusPlus templates are indeed TuringComplete, but that doesn't mean they can do everything. (They can do everything ''up to isomorphism'', but the isomorphism may involve rewriting the entire remainder of your program or making it all run exponentially slower or something.) If you reckon it's possible to do something equivalent to the CommonLisp '''average''' example on TemplateMetaprogramming example with C++ templates, I'd be very interested to know how. A quick sketch of the idea would suffice.
+
+----
+You can also implement an average CeePreprocessor macro (pun intended) taking advantage of the Order MetaLanguage for C preprocessor MetaProgramming. Here is an example:
+* http://cvs.sf.net/viewcvs.py/chaos-pp/order-pp/example/average.h?view=markup
+* http://cvs.sf.net/viewcvs.py/chaos-pp/order-pp/example/average.c?view=markup
+The macro, implemented in the above example, and the Order interpreter require C99 variadic macros (likely to be standard C++ in the future). The macro seems significantly simpler (it is just one simple macro) and more flexible (no type restrictions, no immediate limit on number of arguments) and is guaranteed to generate efficient code (it generates a simple expression, no temporary arrays to eliminate or functions to inline) than any of the C++ template based solutions on this page. -- VesaKarvonen
+
+----
+Well, if you use a CONS list of the 4 values, taking the average is trivial.
+
+ template <int value, class next>
+ struct CONS
+ {
+    static int const VALUE = value;
+    typedef next NEXT;
+ };
+
+ struct NIL
+ {};
+
+ template <class C>
+ struct Length
+ {
+    static int const R = 1 + Length<typename C::NEXT>::R;
+ };
+
+ template <>
+ struct Length<NIL>
+ {
+   static int const R = 0;
+ };
+
+ template <class C>
+ struct Sum
+ {
+   static int const R = C::VALUE + Sum<typename C::NEXT>::R;
+ };
+
+ template <>
+ struct Sum<NIL>
+ {
+   static int const R = 0;
+ };
+
+ template <class C>
+ struct Average
+ {
+ 	static int const R = Sum<C>::R / Length<C>::R;
+ };
+
+ //test it
+ template <bool B>
+ struct static_assert;
+ template <>
+ struct static_assert<true>{};
+
+ typedef CONS<4, CONS<3, CONS<5, NIL> > > testvalue;
+ static_assert<Average<testvalue>::R == 4> test;
+-- Tom
+
+----
+You may want to pop by http://oonumerics.org/blitz/papers/ -- it contains several interesting papers, especially ''CeePlusPlusTemplatesAsPartialEvaluation'', which contains an example of a generic average function that gets a majority of the information it needs at compile time.
+
+C++'s templates don't allow for variable argument template optimization, but if you allow yourself to use C++ based programming paradigms, then the simplest version of this would use a vector/fixed array for the items to be averaged.
+
+ template <class T,int count>
+ inline T sum(T* values) {
+     return sum<T,count-1>(values) + values[count-1] ;
+ }
+
+ template <class T> 
+ //This uses partial specialization to provide the termination condition for
+ //the recursion above.
+ inline T sum<T,0>(T* values) {
+     return values[0];
+ }
+
+ template <class T>
+ inline T average(T* values) {
+     int length = sizeof(values)/sizeof(values[0]);
+     return sum(values,length)/length;
+ }
+This all assumes that T* is a array of numeric types, and that the array 'values' acts as a tuple.
+
+Given that and a constant array float *f = { a, b, c, d} , the code for average should expand at compile time to:
+
+ inline float* average(float* a) {
+     int length = 4;
+     return (a[0]+a[1]+a[2]+a[3])/4;
+ }
+Of course, this is not the same as the CommonLispObjectSystem example, in that C++ templates don't quite allow for variable arguments. You could, however, massage the data using a package like OpenC++, which provides a MetaObjectProtocol for C++ which allows for such things to be handled.
+
+----
+Going back to the statement about lack of variable length lists in TemplateMetaprogramming, here's my attempt at implementing the 'average' function:
+
+ template <int value, class next>
+ struct CONS
+ {
+    enum { VALUE = value };
+    typedef next NEXT;
+ };
+
+ struct NIL
+ {};
+
+
+ template <class values>
+ struct STATISTICS
+ {
+    enum
+    {
+        TOTAL = values::VALUE + STATISTICS<typename values::NEXT>::TOTAL,
+        COUNT = 1 + STATISTICS<typename values::NEXT>::COUNT,
+        AVERAGE = TOTAL / COUNT
+    };
+ };
+
+ template<>
+ struct STATISTICS<NIL>
+ {
+    enum
+    {
+        TOTAL = 0,
+        COUNT = 0
+    };
+ };
+
+
+ #include <iostream>
+
+ main()
+ {
+    typedef CONS<3, CONS<4, CONS<5, NIL> > > values;
+    int result = STATISTICS<values>::AVERAGE;
+    cout << result << endl;
+ }
+Yes, the syntax can be very clunky and debugging is almost impossible, but it is possible! The average will be calculated at compile-time (verified with gcc 2.95). -- DaveWhipp
+
+''Ouch.''
+
+----
+The original Lisp macro computed the length but not the average at compile time. Here's C++ to do that. Note that computing the length at compile time is done in the average() function. I also wrote the sum() function in a recursive template style:
+
+ template <int N>
+ struct Sum {
+   static int sum(int array[]) { return array[0] + Sum<N-1>::sum(array+1); }
+ };
+
+ template <>
+ struct Sum<0> {
+   static int sum(int []) { return 0; }
+ };
+
+ template <int N>
+ int average(int (&array)[N]) {
+   return Sum<N>::sum(array) / N;
+ }
+
+ // Test
+ #include <iostream>
+ int main() {
+   int args[5] = {10, 20, 30, 40, 50};
+   cout << average(args) << endl;
+ }
+It's a little awkward because we don't have variable arg templates, so I'm using an array instead. -- AmitPatel
+
+----
+It occurs to me that the versions favouring static arrays (over recursive template structures) have the distinct advantage that averages can be computed in alternative domains (int, double, complex<>, valarray<>, matrix<>, ...). -- KevinCousins
+
+See StdValarray
+
+----
+Why not have user code in C++ like:
+
+float ans = (average, 1, my_var, 3.0, 4);
+
+this looks very like the lisp (apart from what one does with the answer, on the lhs, but that is an unbridgeable cultural divide!)
+
+I think it is implementable in C++, by overloading the , operator.
+
+It can be rendered in templates to do the addition at runtime, to cope with the variables, and the length count at runtime (by parameterizing the number of args so far in the templated return type of each operator, so far). 
+
+How to declare the 'macro'? would be nice to do something like:
+
+Macro< operator+(), 0, operator/() > average;
+
+I'm sure something like this can be done in C++, and its syntax could be made very similar to the lisp.
+
+-- BillWeston
+
+indeed, i think it is possible, and would be possible to compute either the number of terms and/or the sum at compile (will hopefully have a go at this when the relevant machine here is up again)
+
+one slight catch may be that the () in your example arent needed - yet if one omited them u could get in bother with a different expression e.g .
+
+average,5,6,7,8 + 10
+
+might not do what you want, perhaps operator() might be preferably dut to its higher precedence, otoh your syntax is less like lisp then and if you need to be sure about precedence in the above case then you'd need to use () anyway -- JamesKeogh
+
+----
+Here's my shot at the CommonLisp semantics. Checked with gcc 3.3; calculates length at compile time, allows an arbitrary number of arguments, and is a criminal offence in 42 states. -- AdamBerger
+
+  #include <stdio.h>
+
+  template<int L, class T>
+  class A''''''vgCntT {
+  public:
+    A''''''vgCntT(T iii) {}
+    A''''''vgCntT<L+1,T> operator,(T x) {}
+  };
+
+  template<class T>
+  class A''''''vgInt {
+    T i;
+  public:
+    A''''''vgInt(T iii) { i = iii; }
+    A''''''vgInt operator,(T x) { return i + x; }
+    template<int L> T operator /(AvgCntT<L,T> a) { return i/(T)L; }
+  };
+
+  #define avg(a,...)     (((A''''''vgInt<typeof((a))>) (a),##__VA_ARGS__) /    ((A''''''vgCntT<1, typeof((a))>) (a),##__VA_ARGS__))
+
+  int main() {
+    printf("3 == %i\n", avg(1, 2, 6));
+    printf("2 == %i\n", avg(1, 2, 6, 1, 1, 1));
+    printf("7 == %i\n", avg(7));
+    printf("2.1 == %f\n", avg(1.1, 2.1, 6.1, 1.1, 1.1, 1.1));
+
+    __complex__ int ci = avg(4 + 3i, 2 - 7i);
+    printf("3 - 2i == %i + %ii\n", __real__ ci, __imag__ ci);
+
+    int a = 1, b = 2, c = 6;
+    printf("4 == %i\n", avg(++a, ++b, ++c));
+
+    return 0;
+  }
+Commentary:
+
+About the line
+  #define avg(a,...)     (((A''''''vgInt<typeof((a))>) (a),##__VA_ARGS__) /    ((A''''''vgCntT<1, typeof((a))>) (a),##__VA_ARGS__))
+VesaKarvonen said: Neither variadic macros nor typeof are standard C++ [C++97], yet. Also, the concatenation of a comma and __VA_ARGS__, namely  ##__VA_ARGS__, has undefined semantics in C99. The concatenation is unnecessary here.
+
+''I agree, mostly. This is GnuCpp, not c++. One of the specific points, though, re ##__VA_ARGS__: this is actually a gcc-ism. A comma followed by a concatenation, as there, has special meaning in gcc. It removes the leading , if and only if __VA_ARGS__ is empty. As variadic macros are, as you mention, not standard, this doesn't need to be either. It works quite well, though. -- AdamBerger''
+
+The gcc-specific concatenation trick isn't needed to remove the comma. Variadic macros are standard C, but not standard C++. This is very likely to change in the future. -- VesaKarvonen
+
+----
+
+well here is my stab at it:
+
+#include <iostream>
+
+//class that actually stores the data and does the average
+template<unsigned nvalues>
+class average_helper
+{
+public:
+  average_helper(double value); 
+  average_helper<nvalues+1> operator()(double next_value) const;
+  operator double();
+private:
+  double sum;
+};
+
+//function to create the helper class so we dont see templates at call site
+average_helper<1> average(double first_value)
+{
+  return average_helper<1>(first_value);
+}
+
+//ctor for the helper class - where we 'count' the first value 
+template<unsigned nvalues>
+average_helper<nvalues>::average_helper(double value):sum(value){}
+
+//operator() for helper class - this is where we sum and count subsequent valuess
+template<unsigned nvalues>
+average_helper<nvalues+1> average_helper<nvalues>::operator()(double next_value) const 
+{
+  return average_helper<nvalues+1>(sum+next_value);
+}
+
+//operator double for helper class - here we actually do the average
+template<unsigned nvalues>
+average_helper<nvalues>::operator double()
+{
+  return sum/static_cast<double>(nvalues);
+}
+
+//simple tests of average
+
+using namespace std;
+
+int main(int argc, char * argv[])
+{
+  if(average(1)(1.5)(2)(-1.5)(-3) == 0) 
+  {
+    return EXIT_SUCCESS;
+  } 
+  cout<<"o noes i can't count proper"<<endl;
+  return EXIT_FAILURE;
+}
+
+things to note are it calculates the number of entries at compile time, but the values are summed at run time, 
+the call site syntax is remarkably clean for c++. however it creates a whole bunch of temporary objects to do this so you are probably relying on your optimizer to actually spot this to get any improvement from counting the number of terms dynamically (i assume that this would be why you were writing something macro like in the first place rather than just writing a function) and the definition is significantly wordier than a LispMacro would be -- JamesKeogh
+
+----
+CategoryCpp CategoryCppTemplates

@@ -1,0 +1,33 @@
+...but I'm guessing it's pretty slow. I'll describe how to make it work. First, some definitions.
+
+	''Transitive closure of '''x''''':	the set of objects which can be reached from '''x''' (including itself) by following references.
+	''Damaged'':	the state of an object from the time that it loses some reference, to the time it is proven that it oughtn't be freed.
+	''Referend'':	the object referred to by the reference in question.
+
+Axiom: Objects referred to by a live object are live, by definition.
+Lemma: Objects in the transitive closure of a live object are live, by induction.
+Axiom: If every object is live before an object becomes damaged, objects not in the transitive closure of the damaged object are live, despite the damage.
+
+From these we can show by induction that the following algorithm will always work correctly.
+
+We assign two fields per object for the GC's use: a current reference count, and scratch space for a "temporary" reference count. The temporary count is normally zero.
+
+When an object '''x''' is damaged, do the following:
+
+	1. Decrement the current reference count of '''x''' (of course).
+	1. Perform a search starting from '''x''', following all paths, so as to find the transitive closure of '''x'''. Each time a reference is followed, increment the referend's temporary count, even if the referend has previously been visited (but only follow outgoing references from any object once). Thus we find, for all objects in the transitive closure of '''x''', the number of references which come from within that transitive closure.
+	1. For each object '''y''' in the transitive closure of '''x''': if '''y''''s current reference count exceeds its temporary reference count, then it must have a link from "outside", so it is live by the previous axiom. Thus its transitive closure is live, by the previous lemma.
+	1. All objects in the transitive closure of '''x''' which were not demonstrated to be live by the previous step, are dead. (This is probably the most difficult part to prove.) Thus we remove them - for each '''z''' in this set:
+		1. Decrement the reference count of each object referred to by '''z'''. Since the transitive closure of these objects is contained within the transitive closure of '''x''', we do not need to recurse the procedure: these decrements cannot affect the live/dead status of any object under consideration.
+		2. Free the memory of '''z'''. Any object which referred to '''z''' before the deletion, will eventually be removed in this step; otherwise '''z''' could not have been determined to be dead.
+	1. Reset the temporary counts (to zero) of all the objects which were found to be live.
+
+For objects with a lot of "baggage" (top nodes of a tree, complicated cycles etc) this could mean a large amount of overhead for every removal of reference. There is a compromise: combine reference counting with traditional "combing" GarbageCollection in a smart way. Thus, when an object is damaged:
+
+	1. If the reference count reaches zero, remove a reference to each child, and free the object memory. The children are now damaged, so this step must recurse. Otherwise, add the object to a list of "damaged object" references (maintained internally by the garbage collector).
+	1. Instead of sweeping through memory, the garbage collector (when invoked) applies the previous algorithm to every damaged object. When an object is found in a transitive closure, it is removed from the damaged object list, to avoid redundant work. This could still produce poor behaviour, e.g. if one object is considered, then its parent, then its parent etc.
+
+----
+See http://arctrix.com/nas/python/gc/ for details on how PythonLanguage handles cycles
+----
+CategoryGarbageCollection

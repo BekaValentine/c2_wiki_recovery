@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Graph Re Writing Compiler
+      </h1>
+      <p>
+        A compiler implemented by <a href="TermRewriting.html">TermRewriting</a> of an initial graph constituting the input program, into some lower level language (ultimately into <a href="MachineCode.html">MachineCode</a>).
+      </p>
+      <hr/>
+      <p>
+        [See <a href="RethinkingCompilerDesign.html">RethinkingCompilerDesign</a> for additional context.]
+      </p>
+      <p>
+        Rules are written `<pattern>`-><replacement> where replacement must result in a new pattern, but may contain guards etc. (everything, that has been defined up to that point). Placeholder use the prefix ^. 
+      </p>
+      <p>
+        Is parsing not a special case of this?  How would some <a href="BackusNaurForm.html">BackusNaurForm</a> grammar rules look in this format?  For example does
+      </p>
+      <code>
+        function_declaration := type function_name ( arglist )<br/>
+      </code>
+      <p>
+        become
+      </p>
+      <code>
+        `^type ^function_name "(" ^arglist ")"` -> `function_declaration( ^type, ^function_name, ^arglist )`<br/>
+      </code>
+      <p>
+        <em>No: The <pattern> can be only well-formed (sub-)expressions (=terms). But the syntax used in these examples may look quite unstructured. See </em><a href="MinimalParsing.html">MinimalParsing</a> for details.<em></em>
+      </p>
+      <p>
+        Examples:
+      </p>
+      <code>
+        `assignType(int)` -> `type:int`;<br/>
+        `int+int` -> `int`;<br/>
+        `assignType(^a+^b)` -> `^(a.type+b.type):(assignType(^a)+assignType(^b))`;<br/>
+        `assignType(^t:^(var:a))` -> a.name.type=t, `^(a.type):^a`;<br/>
+        `assignType(^(var:a))` -> `^(a.name.type):^a`;<br/>
+        `assignType(^a((^p:^b))<-(^r:^x))` -> `^(func(x,b,p,r)):^a`;<br/>
+        `assignType((type:^a):^b)` -> `(^a:assignType(^b))`;<br/>
+        `(type:^a):^b` -> b.type=a, `(^a:^b)`;<br/>
+        `compile(((func(^x,^f,^p,^r):^a)(^p:^b))` -> `^r:compile(replace(^x,^f,^b))`;<br/>
+        `replace(^a,^a,^b)` -> `^b`;<br/>
+        `replace(^a,^b,^c)` -> `^a`;<br/>
+        `compile(^a;^b)` -> `compile(^a),compile(^b)`;<br/>
+        `compile(^(var:a))` -> `asmLoad(a.name.address, a.name.reg)`;<br/>
+        `asmLoad(^addr,^reg)` -> `^(0x800|addr<<10|reg)`<br/>
+      </code>
+      <p>
+        <em>These are just some sketches for possible rules copied out of my notebook. Some further explanations:</em>
+      </p>
+      <ul>
+        <li>
+           There are no futher special literals. But there must be a special notation to match any identifier or any number. This is here done with a token name (as used in '^(var:a)'). Oh, it might be possible to represent identifier, strings and number as tokens of bytes and then bits. This would be crude at first, but once appropriate rules are present could be the cleanest way.
+        </li>
+        <li>
+           'a:b' declares 'b' to be of type 'a' (binary operator with strong precedence).
+        </li>
+        <li>
+           'a,b' and 'a;b' evaluate a and then b, return the latter, ',' with moderate precedence, ';' with low (therefore used between rules). There is no such thing as an end-of-statement. Everything is just one large expression.
+        </li>
+        <li>
+           'a(b)' a binary operator, used to denote function call in the above example, that uses mandatory brackets around the second operand.
+        </li>
+        <li>
+           'a=b' assignment operator. This is used as a primitive operator e.g. in 'a.name.type=t' to assign an attribute of the variable 'a'.
+        </li>
+      </ul>
+      <p>
+        I will explain one example in some detail:<em></em>
+      </p>
+      <code>
+        `assignType(^t:^(var:a))` -> a.name.type=t, `^(a.type):^a`<br/>
+      </code>
+      <p>
+        I assume, that the expression representing the whole program (after <a href="MinimalParsing.html">MinimalParsing</a>) fed to the rewrite engine is implicitly sorrounded by one extra operator 'doItAll(<expr>)', which is then rewritten to e.g. 'postprocess(compile(assignTypes(preproc(<expr>))))'. 'assignType' is one of these stages, which is reponsible for assigning types to partial expressions.
+      </p>
+      <p>
+        The rule `assignType(^t:^(var:a))` matches any sub-term, that has the binary operator 'a(b)' as the top opertor with a being the constant 'assignType' and a being the term with the binary operator ':' with any term designated 't' as its left operand and any programm identifier (captured with the special notation 'var') designated 'a' as its right operand.
+      </p>
+      <p>
+        If this rule matches AND the right hand side succeeds (i.e. evaluates to a pattern), then it is fully replaced with that pattern (with placeholders replaced with the corresponding sub-terms.
+      </p>
+      <p>
+        In this case the right hand side consists of an assignment and a pattern. The pattern just discared the 'assignType' and completes this stage on this sub-term. The assignment is just a sketch of what should be done to attach the type not to the sub-term/graph, but to the actual 'variable'. In this case 'a.name' should indicate, that we fetch the actual name of the term (which is already known to be an identifier). And 'a.name.type' refers to the type of this name. This glosses of details of <a href="LexicalScoping.html">LexicalScoping</a> and incompatible assignments of types to variables. An other example might have read 
+      </p>
+      <code>
+        'symbolTable.lookup(a, a.name).bind(type)'<br/>
+      </code>
+      <p>
+        but that implies just too much about an implementation and could be done any other way anyway.
+      </p>
+      <hr/>
+      <p>
+        I am not quite clear that this ad-hoc syntax is really well-suited for the task of defining rewrite rules for the kind of compiler described in <a href="RethinkingCompilerDesign.html">RethinkingCompilerDesign</a>. But it fulfills the following requirements:
+      </p>
+      <ul>
+        <li>
+           Can be represented with the given expression language (which requires <a href="MinimalParsing.html">MinimalParsing</a>)
+        </li>
+        <li>
+           Powerful enough for typed GraphRewriting and guards.
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        The <a href="LanguageMachine.html">LanguageMachine</a> relates quite closely to this approach - it applies grammatical rewriting rules which can recognise and substitute arbitrary grammatical patterns that include variable bindings - you can see how it works by looking at the <a href="LmDiagram.html">LmDiagram</a>. The central algorithm is an online algorithm which operates symbol by symbol, and the <a href="LmDiagram.html">LmDiagram</a> can be read as showing what happens as successive symbols are dealt with, and (for a completed analysis) as showing how the substituted material relates to the material that was recognised and to the nesting of recognition phases (the 'ghost of the Parse Tree'). The Parse Tree  is sometimes referred to as the <a href="AbstractSyntaxTree.html">AbstractSyntaxTree</a>. See also <a href="VisitTheParseTree.html">VisitTheParseTree</a> to see what happens if you have to deal with the tree itself instead of a nice helpful ghost.
+      </p>
+      <hr/>
+      <p>
+        Relevant papers:
+      </p>
+      <ul>
+        <li>
+           Graph Rewrite Systems for Program Optimization (2000) <a href="http://www.inria.fr/rrrt/rr-2955.html">http://www.inria.fr/rrrt/rr-2955.html</a>
+        </li>
+        <li>
+           A number of papers written by the Clean team are at <a href="http://www.cs.ru.nl/st/Onderzoek/Publicaties/publicaties.html">http://www.cs.ru.nl/st/Onderzoek/Publicaties/publicaties.html</a>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        The <a href="CleanLanguage.html">CleanLanguage</a> is a "term graph rewriting" language; also pure, lazy, strongly-typed (Milner / Hindley / Mycroft), etc.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryCompilers.html">CategoryCompilers</a>
+      </p>
+    </div>
+  </body>
+</html>

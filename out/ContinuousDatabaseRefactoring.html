@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Continuous Database Refactoring
+      </h1>
+      <p>
+        Assumption: the big corporate DataBaseAdministrator is either on your side or non-existent. The process I outline will *not* work if you don't control the schema yourself either by modification or by a very responsive DBA.
+      </p>
+      <ul>
+        <li>
+           "First thing we do is kill all the DBAs." ... I think Shakespeare meant to say that. Next, we realize that <a href="DatabaseIsSoftwareToo.html">DatabaseIsSoftwareToo</a>. -- <a href="JeffWinchell.html">JeffWinchell</a>
+        </li>
+      </ul>
+      <p>
+        Here's what I've been a part of on my XP team: 
+      </p>
+      <p>
+        We create a script called "setup" which makes a copy of the production database(s) into a development sandbox. (For us, Integration is just another sandbox.)
+      </p>
+      <p>
+        <em>"But Wait!", I can hear you cry. It's too slow!</em>
+      </p>
+      <p>
+        In order to conquer the speed problem for large databases, you have to figure out your schema, and look for the large logging and other fast-growing tables, and when doing the database copy, you copy the schema from production, but you don't copy the data out of those tables. Or you only copy the most recent X rows, where X is related to the data chunks necessary for the system to function normally in the sandbox.
+      </p>
+      <ul>
+        <li>
+           Relational integrity will likely be compromised by these simple sampling techniques. It's not too hard in RDBMS that has a system catalog to develop a generic solution that solves this. -- <a href="JeffWinchell.html">JeffWinchell</a>
+        </li>
+      </ul>
+      <p>
+        Now, right after a release to production, you have a pristine copy of the (truncated) production database. This means that not only do you have the most recent production schema, you also have any data anomalies that may be creeping into your production data.
+      </p>
+      <p>
+        The next part of the solution involves a minor enhancement to the setup script. After running the database copy, the setup script calls out to a "<em>apply_schema_patches</em>" program which basically has coded all the modifications to the schema that have been made since the last release, as well as inserts for any persistent data in new schema items, and any other data modifications that need to be done to bring the production database into line with the current TopOfBranch code.
+      </p>
+      <p>
+        As you develop code and you find that you need to change the schema, there are two main paths.
+      </p>
+      <ol>
+        <li>
+           if the schema change is simple: load your standard sql manipulation tool (sqlplus and derivatives) and make your 
+        </li>
+      </ol>
+      <p>
+        schema change. Copy that schema change sql into your <em>apply_schema_patches</em> program, surround it with the appropriate code in the language the <em>apply_schema_patches</em> file is written in. Get the tests running, check in the code changes and the changed <em>apply_schema_patches</em> program, and <em>voila</em>, you have a program that you can use to update the schema on integration, get the tests passing again, and then the other developers can use the program to update the schema for themselves as well.
+      </p>
+      <ol>
+        <li>
+           If the schema change is complex (rare): more particularly, when you have to make data migrations that can't be done in straightforward sql, the process is a little more time-consuming. The reason it is more time consuming is because in this case you make your changes to the <em>apply_schema_patches</em> program, and run the full <em>setup</em> program again to actually execute the schema changes and data manipulation. Assuming it works, and the tests all pass, you are golden. If not, you have to fix the <em>apply</em> program and rerun setup. In the rare cases where you have to do this, it can be time-consuming, and therefore, you might want to explore options as below. 
+        </li>
+      </ol>
+      <p>
+        In both cases, you end up with several advantages.
+      </p>
+      <ul>
+        <li>
+           your sandbox is clean. There are no tricky, complicated bits to deal with the schema differing from the code as follows.
+        </li>
+        <li>
+           the integration remains trivial as in normal XP practice. There isn't a costly step to integration that requires the deferred database schema change.
+        </li>
+        <li>
+           you have a program that automates the schema changes that can be run during your release downtime while the production code is being updated to the latest revision
+        </li>
+        <li>
+           that program is very well tested by the continual integration and developer updating
+        </li>
+        <li>
+           that program is tested with the most current production data multiple times per day
+        </li>
+      </ul>
+      <p>
+        Generally, you have to face the pain eventually, and like <a href="ContinuousIntegration.html">ContinuousIntegration</a>, I think you'll find that in general, <a href="ContinuousDatabaseRefactoring.html">ContinuousDatabaseRefactoring</a> is a better idea than deferring database refactorings.
+      </p>
+      <p>
+        -- Jeff Bay
+      </p>
+      <p>
+        How do you test for performance issues? At some point to you copy a larger chunk of data over?
+      </p>
+      <p>
+        -- <a href="DaveTauzell.html">DaveTauzell</a>
+      </p>
+      <p>
+        Generally, we use test data in those tables, since it is faster to generate than copying over the whole data-set. Occasionally a performance problem with this tables will slip by for a while, but it gets caught in profiling very quickly. Once we know where a performance problem exists, tests pin that section down so that they don't creep back into being a problem again.
+      </p>
+      <p>
+        If we suspect a problem in this area, the tools we built allowed for the option of copying over the whole production database in order to sample a run with full data.
+      </p>
+      <p>
+        -- <a href="JeffBay.html">JeffBay</a>
+      </p>
+      <hr/>
+      <p>
+        I have some experience of this. All systems have release cycles of some sort. As you say, in a corporate environment this is a heavyweight operation, and rightly so since there is significant risk. So what you need is two development systems. One is the QA environment where release procedures can be rehearsed and a full regression suite can be run. Then you've got the development box which can be unstable as you like. In this environment nothing is sacred under loose consensus. We used group e-mailing to warn of impending downtime and all operations were guaranteed to complete fast or be rolled back. I was the moderator of all database changes which for me meant splitting the development box into about five clones which could be booked out for high speed development. We got a full database build time, from disk upwards, down to about an hour allowing interactive integration debugging with repeated combing. All SQL was written as stored procedures (very important!). I suppose the point is to get yourself an environment you have complete control over, and work it harder than it ever has before :).
+      </p>
+      <p>
+        -- <a href="RichardHenderson.html">RichardHenderson</a>
+      </p>
+      <p>
+        Here's how it works for my company:
+      </p>
+      <p>
+        Prerequisite: we are a very small company and are able to take our production database offline for short periods (long enough to do an upgrade), so that's not a problem for us. We aren't doing XP but I do try to encourage changes in that direction. We also have all code that touches the database in source control, so we can find the application code affected by a schema change.
+      </p>
+      <p>
+        We give each developer his own database account, and are fortunate that the production database is still small enough that we can copy it into a developer account. (That's unlikely to be the case much longer though - at some point we will have to use excerpts.)
+      </p>
+      <p>
+        Once the production database was deployed I created a script called "upgrade.sql". The specification of this script is that is should be able to upgrade any existing version of the database to the current development version. (The script can be run multiple times. If a change has already been made, it does nothing.)
+      </p>
+      <p>
+        The script contains PL/SQL similar to this pseudo-code:
+      </p>
+      <code>
+        if not table_exists('foo'):<br/>
+        create table foo (...)<br/>
+      </code>
+      <code>
+        if not column_exists('bar','baz'):<br/>
+        alter table bar add (baz ...)<br/>
+      </code>
+      <p>
+        Anyone who wants to make a schema change does so by adding some commands to the end of upgrade.sql. They test the upgrade script in their own environment and also test the application code and make any necessary changes. When they check in their code, they also check in upgrade.sql. A developer checking out the new code brings their schema up-to-date by running upgrade.sql.
+      </p>
+      <p>
+        When the code is deployed to production, we take the system offline and run the upgrade script just like we would in the developer environment. We know the upgrade script has been well-tested because the developers have been using it to upgrade their databases using a copy of the production data.
+      </p>
+      <p>
+        Of course not every schema change is as easy as adding a table or column. But the rule is that you write the data conversion routine when you change the schema. The schema change isn't complete without a data conversion script. (Just like it's not complete without unit tests.) 
+      </p>
+      <p>
+        The upgrade script gets longer as people make changes so it gets unwieldy after a while. From time to time I move the oldest changes to another file, since they've already been applied for all known copies of the database.
+      </p>
+      <p>
+        (As the DBA I tend to make most of the additions to upgrade.sql, but the system would also work if people wrote more data conversion routines themselves.)
+      </p>
+      <p>
+        -- <a href="BrianSlesinsky.html">BrianSlesinsky</a>
+      </p>
+      <hr/>
+      <p>
+        My approach is pretty similar to the ones described above, though there are a few differences.
+      </p>
+      <ul>
+        <li>
+           I keep a full copy of DDL for the schema under revision control, along with data for lookup tables (complete if it's a small number of rows, or a reasonable sample if it's large) and data for tests. This loads in a few seconds to a minute or so, depending on the project, making loading up a fresh database for testing easy.
+        </li>
+        <li>
+           I generally don't make production data available to all developers, since it's usually sensitive data, often protected by privacy laws.
+        </li>
+        <li>
+           I use database update scripts as described above.
+        </li>
+        <li>
+           For one larger project, I built a schema diff program that would tell me what the differences were between two schemas, and I'd use this to diff a dump of the production database schema (not including data) and the DDL under revision control. This gave me confidence that I was actually testing against the schema that my production code was using.
+        </li>
+        <li>
+           It's definitely much, much better to do many small releases, when you're doing this kind of stuff. If you're clever, and it's important enough, you can find a fair number of ways to keep things running straight through upgrades. (I often do database upgrades in the middle of the day.) It costs more in compatibility code and testing, but less downtime always costs more.
+        </li>
+      </ul>
+      <p>
+        -- <a href="CurtSampson.html">CurtSampson</a>
+      </p>
+      <hr/>
+      <p>
+        Try VMWare to solve the large database copy problem. We create a VM with the database, run VMWare in undo or non-persistent mode to try out the proposed code changes, and when we shutdown the VM, we can discard or keep those changes to the database.
+      </p>
+      <p>
+        Before using VMWare, we just had a background task that would copy one or a few copies of the database (4-6 GB of data) that we could use for testing when we needed it. The time it takes to do some tests, write some code is similar to the time it takes to do these background copies, so effectively little time is spent waiting for a new copy of the db to test. It does require more diskspace, but diskspace appears to be absurdly cheap for most situations. -- <a href="JeffWinchell.html">JeffWinchell</a>
+      </p>
+      <hr/>
+      <p>
+        See Also: <a href="RefactoringWithRelationalDatabases.html">RefactoringWithRelationalDatabases</a>, <a href="XpDatabasesFaq.html">XpDatabasesFaq</a>, <a href="UnitTestsAndDatabases.html">UnitTestsAndDatabases</a>, <a href="DbasGoneBad.html">DbasGoneBad</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryExtremeProgramming.html">CategoryExtremeProgramming</a> | <a href="CategoryAdoptingXp.html">CategoryAdoptingXp</a>
+      </p>
+    </div>
+  </body>
+</html>

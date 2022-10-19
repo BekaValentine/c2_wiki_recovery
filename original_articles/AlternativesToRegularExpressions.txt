@@ -1,0 +1,269 @@
+Taking "alternative" to mean "semantically equivalent facility with different syntax", there are at least these alternatives to/with RegularExpression''''''s:
+
+* Basic regular expressions
+* "Extended" regular expressions
+* Perl-compatible regular expressions
+* ... and many other variants...
+* SNOBOL-style RE syntax (SnobolLanguage, IconLanguage)
+* SRE syntax (RE's as EssExpressions)
+* different FSM syntaces
+* Finite-state intersection grammars (quite expressive)
+* ParsingExpressionGrammars, as in OMetaLanguage and LuaLanguage (http://www.inf.puc-rio.br/~roberto/lpeg/lpeg.html)
+* The parse mode of RebolLanguage
+* ProbabilityBasedParsing
+
+*''ParsingWithDerivatives is an interesting approach.''
+----
+
+I am not much of a fan of RegularExpression''''''s. It is too hard to remember what the symbols stand for, for one. Asterisk for 0 or more repetition, plus for 1 or more repetitions, question mark for 0 or 1 occurrences, brackets surrounding a set of characters -- who's got time to memorize this kind of complexity? Besides, grammars are more complex than regular expressions, so they're simpler.
+
+I would like to see an alternative developed based on BNF grammar, as used by all language parsing kits. Here is an example BNF grammar for a "toy" Lisp:
+
+  statement -> "(" command params ")"
+  statement -> "(" command ")"
+  params    -> params param
+  params    -> param
+  param     -> constant
+  param     -> variable
+  param     -> statement
+or, with one extra symbol,
+
+  statement -> "(" command params ")"
+  params    -> params param | param |
+  param     -> constant
+  param     -> variable
+  param     -> statement
+----
+
+This looks like a ContextFreeGrammar. This is great for '''parsing''' tasks, which is what Bison and Yacc are meant for (they implement rules very much like this). PerlLanguage's RegularExpression''''''s have become bloated compared to the "classical" definition (by allowing backreferences and zero-length assertions) which makes them (as far as I can tell) as powerful as ContextFreeGrammar''''''s are (CFGs indeed are more powerful than traditional REs).
+
+''Actually, RegularExpression''''''s embellished with such (backreferences etc) are ''more'' powerful than CFG's; they can be used to do some context-sensitive stuff as well.''
+
+* They're not a strict superset unless some kind of recursion is added.
+
+However, you still have to know what kinds of sequences of characters make up a "constant", etc. Interpretation at that lower level is usually thought of as ''scanning'' or ''lexing'' which is what Flex and Lex, and traditional REs, are meant for. The sort of notation presented is (so the material was presented to me) rather overkill for this task, and the notation can be quite verbose - and may also use those symbols (.*?|) that you hold in such low regard. I don't see how you could do without at least |, in any case.
+
+-- KarlKnechtel, who took a compilers course in university. Fun times.
+
+----
+
+The above notation, or something similar to it, is known as BackusNaurForm. As mentioned above, it is used to describe ContextFreeGrammar''''''s. It can also be used to describe RegularExpression''''''s; with the caveat that no recursive terms can be present in a RegularExpression.
+
+Lots of good stuff on this topic in the literature; see TheDragonBook for example.
+
+Actually, the above example has lots of ambiguities. A better CFG for Lisp might be as follows; special forms are not treated specially here (the SemanticAnalyzer can handle that). Literal characters are enclosed in quotes. Comments follow //:
+ 
+ Expression -> Literal                          // A string, number, punctuation, etc.
+ Expression -> "`" List                         // quoted list.
+ Expression -> List                             // unquoted list
+ Expression -> "(" Expression "." Expression ")" // cons node syntactic sugar
+ List       -> "(" Expressions ")";          // non-empty list
+ List       -> "(" ")"                       // empty list
+ Expressions -> Expression                   // two rules for Expressions; equivalent to Expression+
+ Expressions -> Expressions Expression
+I may have made an error there, feel free to correct. I'm also assuming that a LaLr parser is being generated; if you want to build a top-down parser, replace the last rule with
+
+ Expressions-> Expression Expressions
+
+Go read TheDragonBook to find out why that's important.
+
+Of course, any SmugLispWeenie worth his/her salt will tell you that while LISP grammar is context-free; a parser stack is not needed to parse LispLanguage. All you need is a counter to count parentheses.
+
+-- ScottJohnson
+
+Re: ''All you need is a counter to count parentheses. ''
+
+That is about where any machine or human ends up spending most of their time in LISP :-)
+
+''Apparently, you haven't spent much of your time in Lisp.''
+
+For those who didn't really get this, Lisp is unique in that there's really no conversion to a parse tree. Lisp ''is'' a parse tree as written.
+
+''Your all forgetting about quote in lisp! (first '(a b c)) ''
+
+''Does the interpreter store internal code as strings or as trees made with pointers to element nodes? [Perhaps this question should be moved to a Lisp topic]''
+
+Trees with pointers, as said above. ImplementingLisp is possibly a good page for further questions.
+
+''That is still parsing, even if it is simple parsing. It is converting linear text into trees.''
+----
+
+''I would like to see an alternative...''
+
+You may want to look at the RebolLanguage. It has parsing built into the language, using a syntax that looks like the one you described.
+----
+
+I've been kicking around another alternative that replaces the symbols and punctuation with function-like expressions. For example, this pattern string will check to see if a value is a positive number such as "17", "0.95", "123.456", "23.", etc.
+
+  numpat = "rpt(dig,1,inf), rpt('.',0,1), rpt(dig,0,inf)";
+
+  numpat = "rpt(dig,1,inf), '.', rpt(dig,0,inf)";   // if decimal required
+Some basic reserved items:
+* rpt([charpat],[min],[max]) - Repeat controller.
+* inf - Infinity, to represent open-ended repeats or counts.
+* dig - Digits, same as "any('0123456789')"
+* any([charpat]) - A given position can be any of the given characters.
+* letters - All letters of the alphabet, upper or lower case
+* uplets - Upper case letters
+* lowlets - Lower case letters
+* punc - ASCII punctuation such as $,#,%, etc...
+* Perhaps we can barrow some operations from http://kobesearch.cpan.org/htdocs/Regexp-English/Regexp/English.html
+
+  any('abc')  -  matches any a, b, or c.
+  'abc' - matches only 'abc' in that literal order.
+  rpt('abc', 2, 3) - Example matches: abcabc, abcabcabc
+  rpt(any('abc'), 2, 3) - Example matches: ac, ba, bcb
+Nesting should also be possible:
+  
+  mypat = "rpt(pat(rpt(dig,1,inf), 'x'), 1, 3)";
+Here "pat" specifies a pattern group. It would also be nice if there was a way to define patterns with names to break expressions into smaller and reusable chunks:
+
+  mypat = newArray();
+  mypat.integer = "rpt(dig,1,inf)";
+  mypat.intWithX = "integer, 'x'";
+  mypat.main = "rpt(intWithX, 1, 3)";  // same as prior example
+  matchCount = isMatchArray(mypat, '1234x99x');
+Assume that myPath is either an associative array or dynamic object. Also assume that "isMatchArray" looks for "main" as its starting point, using other array slots for defined patterns.
+
+Note that these two are equivalent:
+
+  mypat.intWithX = "integer, 'x'";
+  mypat.intWithX = "pat(integer, 'x')";
+"Pat" is just a more explicit way to indicate we are defining a pattern list.
+
+Maybe we can also have an "or(...)" operation to match variation branches.
+
+I don't claim this more powerful than regex's, just easier to read if one does not use regex's often enough to memorize the symbols.
+
+Refinements to come...
+
+-- top
+
+''This looks like you are re-inventing parser-combinators. Apparently Haskell has a library, parsec (paper: http://research.microsoft.com/~emeijer/Papers/Parsec.pdf with references). The Clean programming language has a library as well (part of the distribution). Java seems to have one: jparsec. etc.''
+
+There seem to be several implementations of a similar idea for Scheme. Both use a functional composition technique something like:
+
+ (or (repeat (one-of "a" "b")) "something")
+
+Olin Shriver's version uses the familiar posix symbols, like * ? + etc.: http://www.cc.gatech.edu/~shivers/papers/sre.txt. But, the S48 version uses words (like above): http://s48.org/0.57/manual/s48manual_50.html. 
+
+''Haskell? My proposal is generally language-independent. It is just strings passed to funcntions/methods.''
+
+* Which gets you back to grep- and perl- style regexes, doesn't it? We've already established what they are; we're just haggling over the syntax. :)
+
+* ''Maybe. Regex syntax is difficult to remember unless you use it a lot or have a photographic memory. This is an attempt to make a more functional syntax that does not depend so heavily on funny symbols. Thus, it has at least two goals:''
+** More english-like than RegExp.
+** Usable as a library in multiple languages (just like RegExpr).
+
+----
+
+I have in the past tried to be open to these sorts of ideas, but I have found it easier to simply memorizing the meaning of * (zero or more) and + (one or more) and [a-z] (the set of characters constituting the lower case latin alphabet) and | (OR) would take you about ten minutes, compared with hundreds of hours spent thinking about supposedly simpler approaches to save ten minutes.
+
+It is really no more tedious than memorization that "1 + 1" means addition and "2 * 2" means multiplication, so instead you are going to invent an "easier" system that requires less memorization, like "add(1, 1)" and "multiply(2, 2)".
+-- DougMerritt
+
+''Like I said, I don't use regex's often enough for them to become cemented in memory. I may go half a year or more without ever touching them at times. A second problem is that the characters are all '''jammed together''' a bit too compactly for comfort, at least my comfort. Maybe I am a mild dyslexic, but a lot of people seem to get confused on similar kinds of things. I know that people often mistype license plate numbers based on a project related to vehicle tracking, so I am not alone. This kind of thing is probably a '''personal preference''' and I won't try to dictate what makes your eyes and brains happy. Personally, I would prefer a more functional-like syntax where the '''operators and operands are visually separated''' and somewhat pneumonic, and maybe others would also. If you are not one of those, viva la difference. I congratulate you for having a superior set of eyes and memory. --top''
+----
+
+Many of the "funny" symbols, of course, come from BackusNaurForm; something which all CS undergraduates are exposed to; so they aren't '''that''' funny or obtuse. OTOH, regexes do frequently suffer from the backslash problem, in that the backslash character is frequently overused as an escape (in the worst case, when implementing regexes in C/C++ on a Windows platform; it serves as the escape character for C/C++ strings, for the regexes themselves; '''and''' is used as the path separator in filenames. -- sj
+
+** He's not talking about the very real issues that come up with '''complex''' regular expressions, it's clear that he's complaining about the very basic primitives themselves. And '''that''' calls for a clue by four.
+*** Somebody does seem to have a terminal case of NotInventedHere syndrome, I would say. Maybe we should refer to his creation as ''irregular'' expressions. :)
+** BTW regular machines and the Kleene Star "*" pre-date BackusNaurForm and are strictly simpler. -- Doug
+*** You're right... my bad. -- sj
+
+----
+
+I wonder if most of the visual noise in complex regular expressions doesn't come from the convention of using space to represent, well, space. Perhaps if we made the small change of requiring literal characters, those that stand for themselves, to be inclosed in quotes. 
+
+Consider the classic example of a string of As and Bs:
+
+* (A|B)+ -- original
+* ('A' | 'B')+ -- improved with spaces
+
+Here is the expression I use to match WikiWord(s):
+
+* [A-Z][a-z]+([A-Z][a-z]+)+ -- original
+* [A-Z][a-z]+ ( [A-Z][a-z]+ )+ -- improved with spaces
+* ( [A-Z][a-z]+ ){2,} -- possibly improved by refactoring duplication
+
+This expression matches ISBN numbers:
+
+* \[?ISBN:?([0-9- xX]{10})\]? -- original
+* '['? 'ISBN' ':'? ( [0-9- xX]{10} ) ']'? -- improved with spaces
+
+With a couple of definitions:
+
+* word = [A-Z][a-z]+
+* isbn = 'ISBN' ':'? ( [0-9- xX]{10} )
+
+We get even simpler expressions of WikiWord''''''s and only sensible versions of optional brackets around isbns:
+
+* word word+
+* isbn | ('[' isbn ']')
+
+Perl offers a slightly different version of whitespace tolerant regular expressions. I haven't tried them, though I have seen regular expressions spill over multiple lines and still be very readable. I wanted to try this form because it might just be possible to form literals this way without further enclosing notation. -- WardCunningham
+
+-----------
+
+For '''fix-sized string''' matching, I've kicked around something like this:
+
+ |LLLLSSCSS9999
+ |9999UU.UU....
+ |.......DD....
+ // Symbol Definitions
+ L = 'a'..'z','A'..'Z' // letters
+ S = ' ' // space
+ 9 = '0'..'9'
+ C = ':'
+ U = '_' // underscore
+ D = '-' // dash
+ // periods are merely place-holders
+
+Sample matches:
+
+ 12YB__:__8765
+ bbbb  :--3333
+ 7777__:  1234 
+ 7777__:-_1234
+
+Each line is essentially an "OR" of possible character sets. It attempts to make the patterns more visual. Devising AND's and NOT's may take some thought. 
+
+
+--top
+
+------
+
+Maybe some use of XML.
+
+Very rough draft:
+
+  <def name="alphachar" min=1 max=1>
+     <any>
+        <charset valuefrom="a" valueto="z">
+        <charset valuefrom="A" valueto="Z">
+     </any>
+  </def>
+  <def name="token">
+     <char def="alphachar" min=1>  <!-- must start with alpha -->
+     <any min=0>   <!-- must end in alpha -->
+       <group>
+         <charset list="_-" min=0>
+         <charset def="alphachar" min=1>  
+       </group>
+       <group>
+         <charset def="alphachar" min=1>  
+       </group>
+     </any>
+  </def>
+
+----
+
+This page is incorrectly named. Grammars are not "alternatives", they are supersets of the semantics of regular expressions, and in some implementations, of the syntax as well.
+
+This depends on whether we are talking about the semantics of RegularExpressions or their syntax. The semantics of regular expressions differs vastly (long since they accepted only RegularLanguage). So the question rather seems to be how to write them more readable.
+
+----
+JanuaryZeroSix
+
+CategoryRegularExpressions

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Partitioned Graph
+      </h1>
+      <p>
+        A Partitioned Graph (in category <a href="RelationalPatterns.html">RelationalPatterns</a>) is a group of several tables of a <a href="RelationalDatabase.html">RelationalDatabase</a> schema, in which all records belong to partitions based on a key value, and no foreign key relations are allowed between rows not in the same partition.  An example would be a single database instance used by multiple companies that do not share data.
+      </p>
+      <p>
+        The issue here is how to get a relational database to enforce the partitioning across all tables in the graph, and still follow the <a href="LawOfDemeter.html">LawOfDemeter</a> as much as possible, not propagating a direct dependency on the master partition key across an entire large graph.  We can achieve a good compromise arrangement by implementing sub-partitions where appropriate, and having each table include a partition key value referring for its own level of the hierarchy, but no others.
+      </p>
+      <p>
+        Let's say that our database partitions data by company, and we want to represent companies, brands, product categories, products, product style, and inventory where a product can have a brand and a category, each product has multiple styles, and specified combinations of style, and product are allowed.  An inventory item is of a specific product style.
+      </p>
+      <p>
+        Here's how we might make a partitioned graph schema for this case.
+      </p>
+      <code>
+        company<br/>
+      </code>
+      <ul>
+        <li>
+          company_id
+        </li>
+      </ul>
+      <code>
+        company_name<br/>
+      </code>
+      <code>
+        brand<br/>
+      </code>
+      <ul>
+        <li>
+          brand_id
+        </li>
+      </ul>
+      <code>
+        company_id (fk to company)<br/>
+        brand_name<br/>
+      </code>
+      <code>
+        product_category<br/>
+      </code>
+      <ul>
+        <li>
+          product_category_id
+        </li>
+      </ul>
+      <code>
+        company_id (fk to company)<br/>
+        product_category_name<br/>
+      </code>
+      <code>
+        product<br/>
+      </code>
+      <ul>
+        <li>
+          product_id
+        </li>
+      </ul>
+      <code>
+        brand_id (part of fk to brand)<br/>
+        product_category_id (part of fk to product_category)<br/>
+        company_id (part of fk to both brand and product_category)<br/>
+        (enforces partitioning by company)<br/>
+        product_name<br/>
+      </code>
+      <code>
+        product_style<br/>
+      </code>
+      <ul>
+        <li>
+          product_style_id
+        </li>
+      </ul>
+      <code>
+        product_category_id (fk to product_category<br/>
+        (no partitioning key relation required for simple 1-m)<br/>
+        product_style_name<br/>
+      </code>
+      <code>
+        product_product_style (m-m junction table)<br/>
+      </code>
+      <ul>
+        <li>
+          product_id (part of fk to product)
+        </li>
+        <li>
+          product_style_id (part of fk to product-style)
+        </li>
+      </ul>
+      <code>
+        product_category_id (part of fk to both product and product-style )<br/>
+        (enforces partitioning by product_category - sub-partition of company)<br/>
+      </code>
+      <code>
+        inventory_lot<br/>
+      </code>
+      <ul>
+        <li>
+          inventory_lot_id
+        </li>
+      </ul>
+      <code>
+        product_style<br/>
+        quantity<br/>
+      </code>
+      <p>
+        Notice that the junction between product and product_style no longer needs a direct association to the company partition because product category is a sub-partition of company that constrains records in both of those tables as well as the junctions between them.  As the graph becomes more complex, there can be many more levels of sub-partition, and in each case, changes at the higher levels need not ripple down more than one layer of the partition hierarchy.
+      </p>
+      <p>
+        If we extend the graph above, we might have to add some missing partition key fields to some of these tables, but effects don't ripple far, and we can even insert levels of partitioning at the top without suffering a catastrophic ripple across the entire graph.
+      </p>
+      <p>
+        Down-sides:
+      </p>
+      <ul>
+        <li>
+           Once you start using the database to constrain value-based partitions, almost every table in the graph now needs at least one extra key to refer to its partition.  If you have a junction between items in a partition defined more than 1 level up in a 1-m-m hierarchy, the partition key must be carried through all those levels, so it is available in the records involved in the junction at the end.
+        </li>
+        <li>
+           In some database systems, you have to define one or more redundant unique indexes to allow declarative referential integrity that includes the required partition field(s).  For instance, I might need a unique index on (company_id, brand_id) in the brand table, even though brand_id alone is enough to uniquely identify a brand row.
+        </li>
+        <li>
+           Junction tables, instead of needing one 2-field primary key, and one single-field index to support the foreign keys, now has to define a primary key for the combination of primary of the associated tables, and two 2-field indexes, each including the key of one of the related tables as well as the partitioning field.  For example, on the product_product_style table, we need indexes *(product_id, product_style), (product_category_id, product_id), and (product_category_id, product_style_id).  This combination of indexes uses about twice the space of the table-data it is indexing, tripling the total storage requirement and slowing updates for the junction.
+        </li>
+        <li>
+           When looking at the schema or <a href="EntityRelationshipDiagram.html">EntityRelationshipDiagram</a> for a database constructed this way, it won't necessarily be obvious what the intention was, or why foreign keys seem to incorporate more fields than necessary to uniquely identify a row in the related table.
+        </li>
+        <li>
+           Although the partitioning rules are explicit (if you understand them) in the schema and physical <a href="EntityRelationshipDiagram.html">EntityRelationshipDiagram</a> (ERD), they are not visible in the logical ERD which shows what relations exist, but not how they are implemented.
+        </li>
+      </ul>
+      <p>
+        Alternatives:
+      </p>
+      <ul>
+        <li>
+           It is common to not use the database to enforce full graph partitioning at all, and leave that up to a middle tier.  This is a fine idea, but only if all applications access the database through a shared middle tier, and there is a data integrity check process that can be run periodically to verify that integrity is being preserved.
+        </li>
+        <li>
+           Triggers can be used instead of DRI to look back up the graph, and see if partitioning rules for m-m associations are being met.  Just as in the case above, ripple effects are limited because triggers only have to look back up as far as one level of partitioning hierarchy.  The biggest problem with this is that triggers are usually defined in a server-specific language, and are not generic SQL.
+        </li>
+      </ul>
+      <p>
+        Both of the above alternatives have the advantage that if a business rule requires overriding a partitioning restriction in some cases, that can be done without changing the schema.  Both alternatives also share the down-side that the partitioning rules are not evident in the schema or by looking at the <a href="EntityRelationshipDiagram.html">EntityRelationshipDiagram</a>.
+      </p>
+      <p>
+        -- <a href="SteveJorgensen.html">SteveJorgensen</a>
+      </p>
+      <hr/>
+      <p>
+        One could argue that perhaps each company should simply have its own database. See also <a href="WebStoresDiscussion.html">WebStoresDiscussion</a>.
+      </p>
+      <p>
+        --
+        Yes, one could argue that, and one would often be right, but not always.
+      </p>
+      <ul>
+        <li>
+           It is not possible to directly perform queries across companies (though propagating updates to an OLAP database might be appropriate).
+        </li>
+        <li>
+           Each schema change must be propagated independently across all company databases, and the application code must be kept in sync with the databases during the process.  If there is a single database, there's never a question of having a consistent schema.
+        </li>
+        <li>
+           A user may need permission to add companies via the application UI without having permission to create databases, or creating databases may not be trivial, requiring resource allocation, etc.
+        </li>
+      </ul>
+      <p>
+        There are also other types of situation in which the same issue arises and multiple-databases option is definitely not a good idea.  For instance, let's say you need a metaschema to describe another database so you can describe data transformation operations to/from that database.  You might have a table definitions, field definitions, index definitions, and relationship definitions.  A table has fields, and an index has fields that must exist in its table.  A relationship has relations between 2 tables based on fields that must belong to those same 2 tables.
+      </p>
+      <hr/>
+      <p>
+        See also:
+      </p>
+      <ul>
+        <li>
+           <a href="RelationalPatterns.html">RelationalPatterns</a>
+        </li>
+        <li>
+           <a href="DirectedGraph.html">DirectedGraph</a>
+        </li>
+      </ul>
+    </div>
+  </body>
+</html>

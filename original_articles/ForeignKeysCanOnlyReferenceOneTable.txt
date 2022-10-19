@@ -1,0 +1,247 @@
+In relational schemata, foreign keys can allegedly only reference one table. This alleged limitation can present difficulties when modeling a relationship whose target is a "role" played by different "types" of entities. ObjectOrientedProgrammingLanguage''''''s facilitate graceful implementations of such DomainModel relationships because of their type systems, substitutability, and polymorphism. Therefore some feel that the difficulties presented by this limitation constitute a problem that partially comprises the ObjectRelationalImpedanceMismatch. ThreadMode discussion follows.
+
+----
+
+It's late and I can't sleep, so I'll take a shot at this. It could very well be that I don't fully understand the term Object Relational Impedance, but here's a concrete example of a something that's very natural to code in OO, but very difficult to implement with a relational database backing store (thankfully, we're using GemStonej which has presented its own challenges, but not nearly of the magnitude that a RelationalDatabase would present).
+
+We have an alarm clock object that any object implementing the IAlarmListener interface can register itself with. As expected, at the appropriate time, the alarm clock will wake up all the objects registered at that time and send them a handleAlarm() message. Note that these objects may be of completely different type.
+
+With GemStonej (or any ObjectOrientedDatabase, for that matter), the fact that these objects are of different type are irrelevant to me as an application programmer. A RelationalDatabase would require me to store not only the key of the object, but the type as well. Then, I would have to code Manager or Extent objects in my application which, given an object's key, would be able to return the appropriate in memory object. Of course, this is no big deal until we consider that the IAlarmListener object may be an aggregation of several collections of objects (each aggregation would require knowledge of the appropriate Extent objects thus increasing coupling). In C++ or Eiffel, the object's class may have multiple inheritance (with state stored in multiple parents) further complicating the relationship of Extent objects.
+-- MarkAddleman
+
+''I agree. Relational databases cannot easily support polymorphic references, or arbitrary aggregates. We may interconvert, but this transformation is exactly needed because of the ImpedanceMismatch. -- RichardHenderson''
+
+----
+
+A stab at the problem statement: ObjectOrientedDatabase''''''s require less coding from the application programmer to store and retrieve arbitrary object instances and their associated behavior from persistent storage than RelationalDatabase''''''s and therefore support the application programmer's use of polymorphism better.
+-- MarkAddleman
+
+----
+
+A simple example where polymorphism would be helpful:
+
+Consider any small business accounting system.
+We have tables for "Customer" = people we sell stuff to, "Vendor" = people we buy stuff from, and "Employee" = lazy bums who work for us. ;->
+These are independent tables (and classes) with meaningful business keys.
+We also write checks, mostly to Vendors, to pay for stuff.
+But wait - way may also need to write checks to Customers and Employees:
+We may need to pay a refund to a Customer, or reimburse an Employee for a business expense.
+We wouldn't want to create a shadow "Vendor" record for each Customer or Employee who we ever pay, so we want Check to be able to hold a ForeignKey to anything that has a name and can be paid - Vendor, Customer, or Employee.
+
+Now you have a problem. You can do one of the following...
+* Put all three foreign keys in the Check record. Two must always be NULL. Adding another table to the "payable" things means adding yet another ForeignKey, and complicating the NULLability rules further.
+
+* If all three have system assigned keys of the same type, you can have one foreign key column and a "type" column to switch between Vendor, Customer and Employee. But you won't be able to declare the referential integrity constraint in your database, and you'll have similar problems with most modeling tools.
+''Ick. No matter how you cut it, something that's very easy and natural in most OO languages ends up icky in the RelationalDatabase.''
+
+''I don't see why these are a big problem. Is it that vendor tools can't handle it? Or is the relational paradigm just rotten? One advantage of a (good) database is to be able to share data with multiple languages and paradigms. There are certain costs to being like this. Generally if there are likely to be few or no additional 'types' of things to be paid, then the first approach above (multiple columns) is probably better, but if there will be more added, then the second approach ("type" column) is better IMO.''
+
+Ensure that the Vendors, Customers and Employees have some shared identifier namespace (if there is a Vendor 345, then there can't be an Employee 345). Create a view "Check''''''Recipient" that consists of exactly the data needed to indicate a check's recipient, and define that to be the union of {Check''''''Recipient tuples of Vendors}, {Check''''''Recipient tuples of Customers}, {Check''''''Recipient tuples of Employees} - sharing that identifier. Make the Check foreign key reference that view's identifier. (If your database has slow views, complain to your vendor.) Note that in this example, we won't ever need to create a new Check''''''Recipient directly, so we don't have to worry about lack of vendor support for that operation.
+
+''Actually, IIRC, sufficiently new versions of the SQL standard allow you to implement precisely that second foreign key constraint: "The parent row must exist in this other table and the following additional conditions must hold..." (for the parent row and/or possibly for the child row) I'm disinclined to dig through my JoeCelko book at the moment to see if it's discussed there. Assuming that it ever gets implemented (ultimately a SimpleMatterOfProgramming), does that make the remainder of this discussion moot? :) --JasonBucata''
+
+Issues of people and business-party classifications are discussed under ContactAndAddressModels.
+
+
+I would solve the problem with a manager. Customer, Vendor and Emplyee all have a 1:1 relation with CheckManager, which has a 1:n relation with Check. That we, we can give C, V and E an FK-constraint to manager and Check as well. Of course we need to ensure that every time a C, V or E is created, a new Manager record is created as well, but that's what triggers are for. Granted, it takes a little more work, but not too much. If you'd rename the CheckManager to CheckHolder, you could see it as an interface -- CV&E all 'implement' it, and Checks all belong to a CheckHolder.--AalbertTorsius.
+----
+
+Another possibility would be to create a table named after the "role", e.g., "Payee". This table would have two columns, both of which participate in its primary key: payee type, and payee ID. Then the Check table could have a foreign-key reference to the Payee table, but the Payee table could not have foreign-key references to the Vendor, Customer, or Employee tables because ForeignKeysCanOnlyReferenceOneTable. So this solution just moves the problem one place away from the "referrer" table (e.g. the Check table) into the reified "role" table. In any case, once again, it is additional effort, additional complexity, and not the SimplestThingThatCouldPossiblyWork. Therefore it is evidence of the ObjectRelationalImpedanceMismatch. -- RandyStafford
+
+''I tend to find one-to-one or one-to-zero-one relationships complexity-inducing in many cases. Thus, I personally would avoid the above.''
+
+----
+
+''The normal approach is to reverse the direction of the relationship. Then each of the client objects can reference a Check. A number of Checks if a relation table or three is used. The query logic must vary per type by standard type overloading techniques, or a UNION query can be used, where we want to query a client by check. It ain't pretty, but since you got into solving the problem ;). -- RichardHenderson''
+
+There is not always a table to put such information in, especially in many-to-one relationships. However, this is indeed one approach to keep in mind.
+
+----
+
+I'm glad that it was RandyStafford who fixed the only essential problem that may be considered as a true part of the impedance mismatch. 
+
+''(This is nice discourse, Costin, but for me, the essential problem that is the true part of the impedance mismatch is that ObjectRelationalMappingCostsTimeAndMoney -- RandyStafford)''
+
+Both inheritance support and polymorphism support are in the end reduced to this essential thing. How do we create a relation that has among its domains one or more ''types'', abstract or not, that can be substituted with something from any of its subtypes.
+
+This is a very intriguing problem both from an OO perspective and from a relational perspective. From a relational perspective this signals a failure of current RDBMS systems to properly implement the relational model as detailed in the third manifesto. At this point it would already be legitimate to talk about ObjectRelationalImpedanceMismatch but unfortunately the OO languages doesn't support this type of models too well themselves. What's more funny is that what is easily supported by current OO languages, can also be relatively easy implemented in current RDBMSes.
+
+More, the things that are usually supported by OO languages in the form of collection of references to a base class can be practically supported by the current DBMS implementation as well. It is true that the support is a little rough, but the roughness will be the burden of database designer, and should not be filled by the client application developer.
+
+In the real life example presented by Randy, we have a little impedance in that he automatically assumes that all objects of the same type (i.e. checks) are stored in a single table. This is an automated thing I found in many papers on the impedance mismatch. So it is quite easy for me to create a schema containing 3 tables:
+
+CHECKS_TO_EMPLOYEES, CHECKS_TO_VENDORS, CHECKS_TO_CUSTOMERS 
+
+''This looks kind of ugly in my opinion. Another thing to keep in mind is that these categories are not necessarily mutually exclusive. A given vendor can also be a customer. Thus, maybe have a Contact table instead. After all, Employees may not want to send their check to themselves, but somebody else, like their mother or ex-spouse. IOW, The payables can be somewhat divorced from the reason for the payment. You can still have codes to track such, but using a Contact table may reduce the need for switch/case statements, etc. The Employee table would have a foreign key to Contact also, I would note. Often there is more than one contact anyhow, such as emergency contact, paycheck contact, regular contact, etc. (See ContactAndAddressModels)'' 
+
+And since we also want to have some kind of perspective on all the CHECKS we've ever written we'll create a view ALL_CHECKS containing the union of the essential attributes of those three.
+
+Essentially the same approach is suggested if I create a table PARTY which means any party I do business with, and then I will have a PARTY_NO or even better PARTY_ACCOUNT to identify the party. The checks will be registered to a party in general. And I'll also have three tables EMPLOYEES, VENDORS, CUSTOMERS, who will each have its PARTY_ACCOUNT as primary key, or at least as an unique index.
+
+Both the first approach and the second approach raise one little data integrity problem. In the first approach we can have the same check identified by a CHECK_NO present in more than one table, which will be clearly a error that should have been caught by a database, and it was triggered by the fact that we split the initial relation in three.
+
+The same goes for the second case where we might have the same PARTY_ACCOUNT assigned both to an employee and to a vendor and this might get us into trouble.
+
+Fortunately, even with today's RDBMS limitations a database designer can prevent such a thing, although the techniques vary from one vendor to another.
+
+I'll stop here for now, because we go into further practical details. We need to take a step back, and see we confront with a much larger problem then this example is able to suggest. The problem relates first to DatabaseIsRepresenterOfFacts, that is we need to always make sure we get our facts right in the databases, and hence data integrity is most important. 
+
+The second issue is that although the title of the pattern does not suggest, the pattern deals primarily with '''inheritance''' and how we define inheritance from a data modelling perspective (even from a ''domain model'' perspective).
+
+When we say that we want to store polymorphic relations (or collections, or better said ''sets'') in the database, we always talk about a ''base type'' that all objects in the polymorphic relation should conform to (i.e. should ''inherit from'' in loose terms), otherwise it is completely pointless to have an attribute (foreign key or not) that can essentially hold references to ANY kind of object. 
+
+And for most OO approaches inheritance is primarily related to code reuse - we want to reuse code from the base class, and usually implies that the class that inherits from the base class has more attributes but not less (of course the code from the base class still has to access its needed attributes). 
+
+From a data modelling perspective, and I contend that it should be true from a ''domain modelling'' perspective inheritance should have nothing to do with how many attributes an object has, and also should have nothing to do with how many more methods we add, or what methods we do reuse. So by inheritance we need to essentially store an IS-A relation between an object and a possible classification (type). And here OO programming languages do not help us very well either. See LiskovSubstitutionPrinciple and CircleAndEllipseProblem for a brief look on the inheritance subject from an OO programming perspective. 
+
+-- CostinCozianu
+--------
+''More, the things that are usually supported by OO languages in the form of collection of references to a base class can be practically supported by the current DBMS implementation as well.''
+
+The alarm clock example above is not a collection of references to a base class. It is a collection of references to objects with a particular interface. In this real life example, the application must execute commands at particular times. These command objects may be nothing more than Smalltalk code blocks or Java inner classes having no intrinsic state of their own only a reference to the objects that they operate on.
+
+''It is true that the support is a little rough, but the roughness will be the burden of database designer, and should not be filled by the client application developer.''
+
+Now you've added the cost of a database designer to the mix of developers furthering the point that ObjectRelationalMappingCostsTimeAndMoney.
+
+''When we say that we want to store polymorphic relations (or collections, or better said ''sets'') in the database, we always talk about a ''base type'' that all objects in the polymorphic relation should conform to''
+
+I don't believe this is always true. It certainly isn't necessarily for multiple inheritance languages like Eiffel or C++. It is ''very'' inconvenient for Java and Smalltalk.
+
+''And for most OO approaches inheritance is primarily related to code reuse - we want to reuse code from the base class, and usually implies that the class that inherits from the base class has more attributes but not less (of course the code from the base class still has to access its needed attributes).''
+
+Inheritance is only one small part of reuse. In the alarm clock example, no inheritance is necessary to reuse the alarm clock for every object in the system. Polymorphism is the key in this example.
+
+''And you can't have polymorphism without inheritance. Java interfaces a re just a disguised application of multiple inheritance, where the mess of dealing with inheritance of instance attributes is eliminated. However, Java ''implements Interface'' is structurally the same as inheriting from an abstract base class in C++. The fact that you are able to invoke a specific method on a reference is supported by the fact that that reference IS-A (conforms to) specific type. The generalization of inheritance with all its twists in the current programming languages is the IS-A relation.'' -- Costin
+
+Untrue. Smalltalk's polymorphism is orthogonal to inheritance. In a sense, Java's is too since polymorphic behavior can be implemented through reflection and, often, very usefully is.
+---------
+
+Mark what you did in the example with IAlarmListener is that you forced something that belongs to the domain of the application client into the database. Database will generally not store behavior (with some little exceptions) but DatabaseIsRepresenterOfFacts. Also, an relational database will not be your typical runtime environment that will generate events, trigger listeners and stuff like that. Remember the relational database model was conceived to deal with large shared data banks, and represent facts. Runtime execution is generally outside the database, and even when you have it physically inside the database (stored procedure for example).
+
+Now go back to your example and try to convince me that the collection of listeners is something that really needs to be stored inside a database. why can't you have a daemon, that will execute those listeners and the database as a representer of facts will be able to store the facts that eventually emerge from each of the listener's actions. If you consider that what code is to be executed in the future and whether or not it has been executed at some point in time is a ''fact'' worthy to be stored in a database, then just store the name of the software module together with a few more attributes. 
+
+''Now you've added the cost of a database designer to the mix of developers.'' 
+
+That's very, very funny. You assume that a developer cannot be a database designer in the same time. Or developers that are also good database designers are hard to find. I suggest that you add a DBA in the mix, the DBA can also play the role of a database designer, but be aware not to find one that is too entrenched in the low level details of how to organize indices and tables.
+
+Believe me, Mark, OODBMS or RDBMS or even a file system, ANY DATABASE AT ALL THAT is beyond a significant size (5GB can be a psychological average) NEEDS both a database designer for the construction of the schema and applications AND a full-time DBA on the job. If you think that Gemstone or whatever else is going to mitigate this problems, you are just kidding yourself. It's like I would consider that my car only needs oil and gas, and I'll never need to take it to a mechanic. Modern RDBMSes and possibly OODBMSes that I don't know, has come to some rescue by providing some kind of expert systems that analyse the inner workings of the database and are able to ''recommend'' the measure to be taken by a DBA, much like the modern engines have a chip on board that analyzes the functioning of the engine. But that's as far as it goes, for now. To run a significant database without a DBA is just a disaster waiting to happen.
+
+I know that we as developers like to consider ourselves the most important part in the equation, and a project that goes on without DBA without a database designer would be the dream of many of us. The complexity of the problems involved in large shared databanks just won't let us do that.
+
+-- CostinCozianu
+--------
+''Now go back to your example and try to convince me that the collection of listeners is something that really needs to be stored inside a database. why can't you have a daemon, that will execute those listeners and the database as a representer of facts will be able to store the facts that eventually emerger from each of the listener's actions. If you consider that what code is to be executed in the future and whether or not it has been executed at some point in time is a ''fact'' worthy to be stored in a database, then just store the name of the software module together with a few more attributes. ''
+
+What makes these alarms ''worthy'' of being stored in the database is that they must be persistent and they must be transactionally stored. If I don't store them in the relational database or the object database because they fall outside some artificial thing called a ''DomainModel'', I have to store them somewhere else and somehow wrap transaction contexts around them. That's a whole lot of work. I would much rather store them in the relational or object database. Storing them in a relational database is hard. Thus, the ObjectRelationalImpedanceMismatch exists.
+
+Sure, I could store the name of a software module together with a few more attributes. I could use CustomerInformationControlSystem and CobolLanguage. I could hire a bunch of people with wrist watches to execute the commands from a user interface. This wasn't the SimplestThingThatCouldPossiblyWork. The SimplestThing was to add IAlarmListener to the appropriate objects and stick them in an alarm clock.
+
+''You assume that a developer cannot be a database designer in the same time. Or developers that are also good database designers are hard to find.''
+
+I do no such thing. At a minimum, I assume that there is a cost associated with managing two schema: One schema for the relational database and another for the application. If you don't believe the two exist and are different, then I really must misunderstand your point that a DatabaseIsRepresenterOfFacts only and I should store application model stuff like the alarm clock listeners somewhere else. Furthermore, to the extent that my in-memory model of any ''fact'' is different than the database model of the same ''fact'', I have an ImpedanceMismatch that must be managed at some additional cost.
+
+''Believe me, Mark, OODBMS or RDBMS or even a file system, ANY DATABASE AT ALL THAT is beyond a significant size (5GB can be a psychological average) NEEDS both a database designer for the construction of the schema and applications AND a full-time DBA on the job.''
+
+Please cite your references.
+
+''The above assertion comes from my personal experience and knowledge about how databases work. Try to show me how you make a database larger than 5 Gb can work, and '''work well''', without a DBA. Who will perform the backup/recovery. Who will manually rollback the database to some point in time, in case it is needed? Who will be able to alter the physical layout in order to make the database perform better in case the initial assumptions about usage patterns are not true (oops., I forgot that with an OODBMS you often have to construct the indices in the code yourself)? The assertion is just too obvious. Try to show me an example that will prove the contrary.'' -- CostinCozianu
+
+All of this is true, however irrelevant to the point that the ObjectRelationalImpedanceMismatchDoesNotExist unless your point is that since a DBA would be required anyway, he/she should be put to work maintaining the second schema and maintaining the additional code necessary to handle polymorphic objects. I suggest that's a huge OpportunityCost considering that same time could be put towards developing new functionality. 
+
+As for tuning issues, GemStone has a number of tuning options available both logical and physical. On the logical level, it does offer indexable collections loosely described on OaooApproachToIndices. On the physical level, you can tweak most of the same mind numbing options that you can with DB2. The same is true for ObjectStore and other oodbs, I'm sure.
+----
+
+Ok, maybe it's the time to discuss the IAlarmListener and the AlarmClock more in depth. Let's see whether it is really a problem that belongs to the database domain, and whether the effort needed to store the relevant information about the clock and its' listener is really that big so you can justifiably complain about the relational database. 
+
+If it takes 15 minutes development time with a relational database versus 3 minutes with Gemstone I would say it's not that big of a deal.
+
+From what I understand above the AlarmClock does not belong to the database, since it is an active object responsible for firing events at certain times.
+It probably resides in some kind of a daemon, and we don't want to put it inside a DBMS engine; am I right about my assumption?
+
+Then you want stored in the database some kind of information that specify what exact code should be executed at certain intervals. Traditionally, I remember this kind of info is put inside a script file, but I see no problem in putting it in a relational database, nor do I see that great of an effort.
+
+I don't know the elaborate use-case that you have in mind, but at a minimum I suggested you can have a VARCHAR(2000) column from where you can read a String and then just call ((IAlarmListener) Class.forName().newInstance()).handleAlarm(), and catching the right exceptions and making sure about some integrity constraints in the described VARCHAR(2000) columns. It doesn't look that big of a deal to me. -- Costin
+----
+''If it takes 15 minutes development time with a relational database versus 3 minutes with Gemstone I would say it's not that big of a deal.''
+
+If your argument is that if it only takes five times as long to code something against a RelationalDatabase versus an ObjectOrientedDatabase, then I want to know why anyone would ever use a RelationalDatabase. Clearly, this is not your argument.
+
+''It probably resides in some kind of a daemon, and we don't want to put it inside a DBMS engine, am I right about my assumption?''
+
+It does not reside as a daemon in the sense of a separate process. The application is a single process having a thread dedicated to running the alarm clock object. The alarm clock state consists of a map of dates to a queue of listeners to be notified on that date.
+
+Because alarm listeners must be transactionally attached to the alarm clock, I absolutely want the alarm clock state stored in the database. Furthermore, the listeners must be removed from the queue transactionally. If the listener's handleAlarm() method fails (or the system crashes), the system must act as if the listener was never removed from the queue.
+
+Without storing the alarm clock's state in the database, I'd have to somehow code all of this transactional logic myself. Clearly, this is more than a 15 minute job.
+
+''Then you want stored in the database some kind of information that specify what exact code should be executed at certain intervals.''
+
+Either this data belongs in a RelationalDatabase or it does not. I contend that it absolutely belongs in a transactional data store of some sort. No one has told me that it does not belong in an ObjectOrientedDatabase, nor do I see any reason that it shouldn't, so I store it there.
+
+The development cost in storing the alarm clock in GemStonej (as an example) is close to zero and I get all the transactional qualities that I need. Furthermore, I don't need some sort of encoded VARCHAR field in a relational column to tell the alarm clock what to do. This is a prime example of the ObjectRelationalImpedanceMismatch.
+
+To achieve the same functionality using a RelationalDatabase, I would have to not just store the class name in the table, but also a foreign key into ''some'' table (note that it is possible that the foreign key in the alarm clock table will be to more than one table). I would have to provide the alarm clock with some mapping of class name to table name in order to resolve the foreign keys. There is still a problem when the alarm clock goes to instantiate the necessary listeners because I have now lost object identity and all the problems associated with that described on RelationalHasNoObjectIdentity.
+
+-- MarkAddleman
+
+----
+
+Mark, of course you knew what I mean by 3 minutes as opposed to 15 minutes. I mean this kind of difference would be irrelevant when weighed against all the costs of software development and when taken all the factors into account. 
+
+''I apologize for the snide comment. Feel free to delete it, but recognize the point that since RelationalDatabase''''''s require some extra effort over an ObjectOrientedDatabase (regardless of the size of the delta) the ObjectRelationalImpedanceMismatch exists. In general, I do not believe that the difference is miniscule.''
+
+Maybe we will refactor this discussion in the ObjectRelationalMappingCostsTimeAndMoney, because we clearly have to have some kind of overview on what are the costs in doing a database application against a relational database, and how do they weigh in the overall development effort, especially when compared with other factors. My personal experience as well as other's experiences that I know of show that the ''extra-effort'' is not significant, see ArgumentThatObjectRelationalImpedanceMismatchDoesNotExist. And also we need to identify whether programming a database application like you have no database at all (the approach that you describe about Gemstone) has any advantages/drawbacks.
+
+-- CostinCozianu
+
+''And also we need to identify whether programming a database application like you have no database at all (the approach that you describe about Gemstone) has any advantages/drawbacks.''
+
+I'd be happy to put some initial thoughts on the matter on InfiniteAmountOfTransactionalMemory. -- MarkAddleman
+
+I'd be grateful if you could do that. I don't know if it is the best title but it's a good start. If indeed, this approach to building database applications is ''worry free'' or at least doesn't have any drawbacks as opposed to programming against a relational database, then I'll definitely say that ObjectRelationalImpedanceMismatch exists, and I'll try to convert to the new religion of programming database applications :) -- Costin
+
+''I certainly don't claim that it is '''worry free''' but it's certainly a step in the right direction!''
+----
+
+Is this issue a difficulty with relational theory in general, specific to SQL (SqlFlaws), or specific to the way OO tends to model things (such as judicious use of hierarchical noun taxonomies and subtypes)? I believe I can envision some relational operators that could simplify some of this. They are just not available in SQL.
+
+----
+
+This page seems a tempest in a teapot to me. Or perhaps, it's really about limitations in commercial database management systems. From a relational theory point of view, there's no reason that a database constraint can't reference a view (virtual relation variable, in the parlance of TheThirdManifesto). So, if you want a foreign key to reference multiple tables, you form a view which is a union of the common aspects of those tables, and require the foreign key to reference a tuple of that view. (There has to be something common for the foreign key to reference, of course - otherwise I would question whether the schema design makes sense at all.) The problem discussed on this page is definitely not inherent to relational theory, although it may be a concern regarding efficiency or ease of expression with current database implementations.
+
+If the efficiency of using a view as a referent in the constraint is an issue, then the ''physical'' design of your database could factor the common aspects of you target tables into a table of its own. You might (or might not) want to hide that detail from the logical view of the database.
+
+-- DanMuller
+
+''One would probably have to look at specific cases to see if some or most of them are simply a result of poor table factoring. The check example given above is not convincing IMO and smells of possible poor schema design. I have yet to see a '''good UseCase''' where it is a problem not related to questionable schema design.''
+
+----
+
+An interesting question - ''why'' is this so? Would the RelationalModel collapse if <Table, CandidateKey> tuples were allowed into the model (and existing ForeignKey''''''s be a constrained form where in a given relation, all foreign keys have the same value for Table?). I'm assuming, of course, that ReferentialIntegrity is still preserved.
+
+It seems that if the set of tables to consider is known in advance, you could do this under the existing model with NULLs. Create a foreign key attribute for each target table you like, and arrange of no more than one such key to be non-NULL in any given record. This workaround doesn't address the issue of the case where Table is arbitrary and not known in advance (unless one wants to include an attribute for every table in the database - which you could do).
+
+What could go wrong? Lemme see..
+
+* Have to be careful how you deal with NULL.... in particular, any difference between <NULL,NULL>, <Table,NULL>, and <NULL,KeyName>? The last doesn't make any sense... the other two might.
+* Do all of the target tables have to have the same shape? If not, what does a join mean? Should we have a restricted form of join that only considers a subset of all foreign keys, those which map to a particular table (or a set of tables with the same shape)?
+
+Any other thoughts on this?
+
+--------
+
+Attempted '''summary''' of points:
+
+Possible solutions:
+* Move away from sub-type model (may depend on philosophical importance given to "subtypes", as debated under ThereAreNoTypes)
+* Introduce entity name column instead of just the foreign key value
+** Drawbacks: complicates joins, not natively supported in most relational languages
+* Introduce multiple foreign keys, and leave most blank/null/zero
+* Try reversing direction of references, making B point to A instead of A to B.
+* Introduce schema inheritance into relational (controversial)
+* Schema design may be out-of-kilter, study for revision. For example, use a single contact/address table instead of replicating address columns for vendors, customers, employees, etc.
+* Use a "dynamic relational" database (MultiParadigmDatabase). Every row gets a unique row-ID (or object-ID), so there is no risk of ID overlap.
+
+----
+See Also: SparseColumns

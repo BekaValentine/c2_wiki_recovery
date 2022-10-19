@@ -1,0 +1,107 @@
+A general collection adapting itself to the actual usage. This can be done dynamically through usage patterns as well as statically by profiling and hints. Also intended to abstract structure away as a programming concern regarding collections.
+
+For details how this might work see IndexedValueCollection.
+
+''That seems to overfocus on performance for certain operations. What about ad-hoc queries; access approaches that are hard to anticipate in advance? And concurrency, multi-language access, etc?''
+
+Think of AdaptiveCollection''''''s as being low-level collections from which higher-level machinery - like DBMSes, logic engines, rendering engines, etc. - could be built. Relations, tables, tuples, rows and sets do not spring into being, fully-formed from raw bytes. They are constructed from more primitive data structures like lists, arrays, trees, hashmaps, etc. An adaptive collection could choose appropriate primitive data structures based on compile-time profiling and hints, and dynamically vary the selection of primitive data structures based on run-time usage patterns. Theoretically, this may achieve better performance than a static choice of list, array, tree, etc.
+
+''Could they be used effectively with interpretive languages?''
+
+Certainly. For interpretive languages, replace "compile-time" with "interpretation-time". Interpretive languages wouldn't benefit so much from profilers unless the programs either run for a very long time OR the profiler occasionally saves information that can be leveraged across runs. (An AdaptiveCollection will certainly require time to adapt.) OTOH, interpretive languages would still be able to provide hints as to what the profiler is likely to say, the collection is unlikely to be (significantly) worse than a list even if both you and the interpreter guess horribly wrong.
+
+
+For comparison see Google MapMaker (http://google-collections.googlecode.com/svn/trunk/javadoc/index.html?com/google/common/collect/MapMaker.html ) which explicitly isn't adaptive.  
+
+----
+
+'''Ad-hoc Queries'''
+
+Regarding ad-hoc queries that were unanticipated, one would expect them to run slowly... perhaps as poorly as iterating across the whole collection, but possibly at some interim speed depending on the quality of the query processor and how many of the existing indices could be leveraged. If, however, ad-hoc queries came in regularly or took a long time, the profiler will find them. If they have a recognizable pattern (as will often be the case for most domain-related queries), the adaptive collection is intended to adapt to that sort of query (e.g. by producing a new index). That adaptation is, truly, core to the AdaptiveCollection idea. However, there are almost always compromises. Creating a new index will require maintaining the index (as the collection is modified) and building it in the first place (which can be expensive, though it can often be done lazily or iteratively).
+
+'''Regarding Multi-Language Access: rejected'''
+
+AdaptiveCollection is intended to be ''part of'' a language, a replacement for the basic collection type, be it the C/C++ array, the Haskell or Lisp list, etc. If you typed [1,2,3], you'd expect it to be in an AdaptiveCollection, and that access to it is optimized for how you actually try to access it (though, in the case of such small collections, optimizations can be quite minimal or non-existent... but even that is an adaptation). This is not supposed to be like a DBMS, where users of different languages have APIs to access tables via a query language. This is supposed to be part and parcel to the language environment, used for everything, optimized by the compiler with hints from the programmer and (if profiling is deemed beneficial) adapting even during runtime. If a user of another language wanted access, they could write themselves a program in the language supporting the AdaptiveCollection that opens a port and accepts communication and provides an access service much like DBMSs actually do, but that is certainly not fundamental to the collections themselves.
+
+'''Concurrency'''
+
+Regarding concurrency: AdaptiveCollection can conceivably be either immutable value or mutable object. Further, it can be a collection '''of''' values, or a collection '''of''' objects. All these cases would call for some different concurrency issues that are, admittedly, rather difficult. In implementing the AdaptiveCollection idea, it would probably be best to start with the easiest: A value-collection-of-values, where the queries might change over time, and where a new collection might be produced from the old via some function (and have similar access properties, requiring parts of various indices to also be transferred, as values, intact). This would handle the Database Relations and such easily enough (since a relation is a conceptually immutable value... the only variable in the database is the variable carrying the relation-value). Collections of objects might need to -subscribe- to object manipulations in order to maintain indices. Object-collections are subject to some sort of direct manipulation and/or have direct pointers into or iterators across their structure that either cannot be invalidated or must have understandable rules governing their invalidation. Those would be the hardest to handle, and might be left to... well, not me. I'd be plenty content to have only the AdaptiveCollection value, where one passes it (conceptually) by value, even if it necessarily references the same collection, and where a cell containing a collection is manipulated by changing the whole value in the cell (whilst maintaining access characteristics, including most index-values).
+
+Multiple users of a value at the same time is easy to understand. It is treated, conceptually if not physically, as though they each have their own copy. Any concurrency control would occur in the same manner as for any other value (e.g. an integer). In a distributed system, remote caches or redundant cells might still be maintained - that would probably require some sort of 'diff' thing that wouldn't be the same as for an integer (to reduce communication costs), but the idea is similar.
+
+----
+
+'''Sets vs Ordered Collections'''
+
+I've been trying to figure out three things, but I need more than one person's experience to answer these: (1) how one might go about identifying whether a collection should have set-properties (no duplicates, no order) vs. ordered collection properties (duplicates allowed, ordered parameters). (2) '''whether''' one should go about identifying whether a collection should have these properties, or whether this is something much better anticipated by the programmer than by any profiler. (3) '''whether''' duplication and ordering should be considered two different orthogonal axes... i.e. is it common that one might care about order but wish to reject duplicates, and is it common that one might want duplicates but wish to reject order.
+
+My own experience indicates that the answers for these are: (1) ??? static analysis of all uses of a collection all the way through the code can tell you whether order or dups -might- be relevant but even that doesn't answer to programmer intent, (2) No, the programmer would be the best to answer these questions, (3) Not sure; true multi-sets (duplicates, no ordering) and ordered sets (ordering, no duplicates) have very little value in my experience, and I think that doubling the count of types of adaptive collections should be avoided where possible. That said, I want some more expert opinions.
+
+Consider a value-producer function:
+
+  f = \a b c -> [1,a,2,b,3,c]  -- function of three arguments into a collection
+
+  (f 3 1 4):
+     '''ordered collection:'''  [1,3,2,1,3,4]
+     '''ordered set:'''         [1,3,2,4] or [1,2,3,4]  (ambiguous, but probably the first one)
+     '''multi-set:'''           [1,1,2,3,3,4] (ordering arbitrary... but likely selected structurally as shown)
+     '''set:'''                 [1,2,3,4] (again, ordering arbitrary)
+My answer to (2) implies my own preference that the programer '''ought''' to have some syntactic control over which of these five values are returned. Now, one means of providing that control is to say that it's always going to be '''ordered collection''', or always going to be '''set'''. Programmers are happy with that sort of thing because they can predict what their language is going to do. But they also like flexibility. My question (3) is whether some effort should be provided to allow for '''ordered set''' and '''multi-set''', or whether programmers are going happy with -just- '''ordered collection''' and '''set'''.
+
+I think duplication and ordering are two of the big axes for distinguishing collection types, but I'm not sure it's complete. If I'm missing something obvious to you, please let me know.
+
+Sample alternative syntax:
+
+  '''distinguish ordered-collection vs set only'''
+  fc = \a b c ->   [1,a,2,b,3,c]  -- to ordered collection
+  fs = \a b c ->  &[1,a,2,b,3,c]  -- to set ('&' representing 'and', 1 and a and 2 and b and 3 and c)
+or
+
+  fc = \a b c ->   [1,a,2,b,3,c]  -- ordered collection
+  fo = \a b c ->  &[1,a,2,b,3,c]  -- to ordered set, no duplicates (ambiguous result, still)
+  fm = \a b c ->  $[1,a,2,b,3,c]  -- to multi-set, no order 
+  fs = \a b c -> $&[1,a,2,b,3,c]  -- to set ('$&' is mnemonic 's''et', '&' still represents 'and' (no dups), so '$' represents no order)
+I find that having four options gets confusing even after getting familiar with the mnemonics (which themselves are a bit confusing, admittedly, but it's what I came up with over lunch break at Arby's).  Thus it becomes more an issue of whether we really want to treat these as two orthogonal axes. Of additional issue (atop construction) is the use of pattern-matching over collections, sets, multi-sets, and ordered sets, and conversions (be they physical or via interface) between them.
+
+Hmmm... opinions, please? Does anyone else hate (on some fundamental level) the idea of four different basic collection types? Or even two types? I find myself able to deal with two, wrap my mind around them, put them to different uses... but even there I'd -prefer- the language automatically determine what the programmer wants. I've a feeling, however, that it would need to be auto'''magical''', and I can't figure out where that magic would be coming from.
+
+Update: for my own labor in this, I've decided to support only ordered collections (duplicates, ordering allowed) and sets (no duplicates, no ordering)
+
+'''Sets and Undecidability'''
+
+This also needs resolution. For some things, like functions and infinite streams and procedures, it is '''undecidable''' whether two values are equal. DV brought up in AreTablesGeneralPurposeStructures that these are acceptable so long as there is something else to distinguish the value (e.g. part of a tuple, wherein a collection is serving additional tasking as a table). DV's approach would be to simply disallow (or throw exception) for any value that can't be distinguished from other values due to undecidability. This is, to me, a reasonable compromise with theoretical correctness... but not the only reasonable compromise. Another useful approach is to regard 'equality' on normally undecidable things in terms of their representations (or '''descriptors''') rather than on the actual, higher-level, conceptual '''value'''. This approach would allow, for example, (\x->1+x) vs (\x->x+1) to be considered two -different- functions (due to different descriptions) even if the collection was clearly typed: '''set of functions of type Int->Int'''.
+
+Neither mechanism is '''theoretically''' correct. '''Theoretic''' correctness requires computing the undecidable. Thus I bring this up, instead, as a survey of which '''compromise''' seems more intuitive. 
+
+'''Please offer your opinions:'''
+
+That (comparing by representation) is the way I used in a container for trees where cyclic structures and sharing was present. The technical equals()-method needed to be fast and worked structurally whereas the logical isSubType method (and derived isTypeEqual) were implemented on the full types and cached the results (for speed).
+
+I would always go for structural equality in a technical container/collection. I think logical values and the corresponding identity belongs into a separate domain specific layer. -- .gz
+
+I think I'm going to concur that, when resolution can't be determined quickly, structural identity will need to be used.
+
+----
+
+Side comment: I talked about this AdaptiveCollection thing with a friend who has the related problem of using misc iterators. In Java there is only one Iterator. But it provides 'optional' methods for marking, resetting and skipping (and misc other stuff that can be considered optional from Object like hashable, printable etc.). The problem being that there not every combination is present and Java has no typesafe way of requiring an iterator with specific capabilities. What this has to do with AdaptiveCollection? Well it's the same question: How do we mark a 'collection' as has-unique-elements or as ordered-by(x)? To me this looks like views onto some underlying data and that's how we should represent it. There should be an operation view-as(criteria). With the default being ordered, non-unique as that is at the top of the lattice. -- GunnarZarncke
+
+The criteria might be specified in a way like this (a ref I recently added to MinimalTable):
+
+  http://research.microsoft.com/Users/simonpj/papers/list-comp/index.htm
+-- .gz
+
+A 'view' of a collection is probably useful for containers (collection-objects), where components can be manipulated directly and, thus, where access to the same object is useful. Java is certainly designed to support containers. Haskell and SQL, otoh, support only collection-values, and both SQL SELECT and the list comprehensions shown for Haskell are not so much for viewing a collection as for building a new collection with components from an old. I hope you can understand my confusion in applying techniques for the latter to the former... though I could see some use in creating a container and 'attaching' sorting, grouping, and filtering to it without using any sort of inheritance.
+
+''Sorry for the confusion. I indeed meant the concept of 'attaching' a view by such a mechanism. That the filtering in Haskell works on values is immaterial. -- .gz''
+
+----
+
+Any ideas on how to (with simple syntax) describe pattern-uniqueness properties in a type? (e.g. that (x,y,*) is supposed to be unique?) ... Especially in typing of values? Value-types are a little unusual here because it's unclear when performing an operation (e.g. an append) which type you intend to possess as a consequence of a construction operation. After all, uniqueness properties over operations are -temporal- constraints being applied over an -immutable- object... not exactly a sensible proposition. E.g. if you want stuff to possess a uniqueness property, perhaps what it means is "overwrite, don't append, where a value with one of these patterns already exists." Or perhaps you did, indeed, mean "append", and you're alright with having a result with a different type than the inputs. Or perhaps you meant "throw an exception, don't append, if this would violate uniqueness constraints."
+
+I'm thinking I'll need the generic ability to declare desired uniqueness properties as part of collection construction operations... along with the strategy to achieve them. And I'll need to do so in a manner that is, as much as possible, syntactically intuitive.
+
+ append L1 and L2 with unique (x,y,*) favoring leftmost and unique (*,y,z) favoring rightmost (...)
+I need someone who has already given a great deal of thought on CollectionOrientedProgramming to weigh in on this sort of stuff. Appends, Joins, Selects, etc. need to essentially handle like database operations, producing new values from existing values. Uniqueness properties are valuable in large-values and in cell-types as they make part of the indexing easy to anticipate and utilize, and make it easy to perform guarantees over certain pattern-matching operations.
+
+----
+See also SetOrientedProgramming, MultiParadigmDatabase

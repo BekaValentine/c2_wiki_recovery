@@ -1,0 +1,67 @@
+This is a development of laws for state variables in Haskell. These laws can be used in proofs, to "push" a read or write past another, using ''rewriting''. The laws are:
+
+1. read var >> m = m
+
+2. write var x >> write var y = write var y
+
+3. write var x >> read var = write var x >> return x
+
+4. read var >>= \x -> write var x >> return x = read var
+
+5. liftM2 (,) (read var) (read var) = liftM (\x -> (x, x)) (read var)
+
+6. liftM2 (,) (f var x) (g var2 y) = liftM2 (flip (,)) (g var2 y) (f var x), when var /= var2, and f and g are each either 'read' or 'write'
+
+7. new x >>= \var -> liftM ((,) var) (read var) = new x >>= \var -> return (var, x)
+
+8. runST (m >>= \x -> writeSTRef var y >> return x) = runST m
+
+See also: ConcurrencyLaws
+
+''The conditions on number 6 seems like not quite mathematically elegant enough to me, although I am unsure.''
+
+I was thinking of breaking it up into three rules:
+
+1. liftM2 (,) (read var) (read var2) = liftM2 (flip (,)) (read var2) (read var)
+
+2. read var >>= \x -> write var2 y >> return x = write var2 y >> read var, when var /= var2
+
+3. write var x >> write var2 y = write var2 y >> write var x, when var /= var2
+
+'''Giving the same treatment to File I/O:'''
+
+Let holdPosition m = hTell h >>= \x -> m >>= \y -> hSeek h Absolute''''''Seek x >> return y
+
+Let getAt h i = holdPosition $ hSeek h Absolute''''''Seek i >> hGetChar h
+
+Let hFileSize h = holdPosition $ hSeek h Seek''''''From''''''End 0 >> hTell h
+
+Let
+  protectedGetAt h i = hFileSize h >>= \sz -> if i >= sz then
+		return '\0'
+	else
+		getAt h i
+
+Let putAt h i x = holdPosition $ hSeek h Absolute''''''Seek i >> hPutChar h x
+
+data Ref = Position Handle | Char Handle Int
+
+Let
+  read (Position h) = liftM Left (hTell h)
+  read (Char handle i) = liftM Right (getAt handle i)
+
+Let
+  write (Position h) (Left x) = hSeek h Absolute''''''Seek x
+  write (Char handle i) (Right x) = putAt handle i x
+
+Then the following laws hold:
+
+The state laws (except 7 and 8) hold for read and write given above.
+
+putAt h i x >> getAt h j = protectedGetAt h j >>= \y -> putAt h i x >> return y, when i /= j
+
+hSeek h m i >> hSeek h x j = hSeek h x j, x /= Relative''''''Seek
+
+hSeek h Relative''''''Seek i = hTell h >>= \j -> hSeek h Absolute''''''Seek (i + j)
+
+openFile path mode >>= \h -> hSeek h Absolute''''''Seek 0 >> return h = openFile path mode

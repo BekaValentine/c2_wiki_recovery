@@ -1,0 +1,152 @@
+There was some discussion in the ChuckMoore page that Forth is no more difficult to read than C.  Here's some sample Forth code, and some C code that does the same thing.   You be the judge.  The Forth source is from the ExampleForthCode page, but the comments (other than stack comments, which serve to identify input-output parameters) are removed.
+----
+'''Forth'''
+
+    : star ( - ) [char] * emit ;
+    : stars ( n - ) 0 do star loop cr ;
+    : square ( n - ) dup 0 do dup stars loop drop ;
+    : triangle ( n - ) 1 do i stars loop ;
+    : tower ( n - ) dup triangle square ;
+    : main ( - ) cr 7 stars cr 3 triangle cr 6 tower ;
+
+----
+'''C'''
+
+    void stars(int n) {
+      for (int i=0; i<n; i++) putchar('*');
+      putchar('\n');
+    }
+    
+    void square(int n) {
+      for (int i=0; i<n; i++) stars(n);
+    }
+    
+    void triangle(int n) {
+      for (int i=0; i<n; i++) stars(i);
+    }
+    
+    void tower(int n) {
+      triangle(n-1);
+      square(n);
+    }
+    
+    void main() {
+      stars(7);
+      triangle(3);
+      tower(6);
+    }
+
+----
+I have a little bit of Forth experience and significantly more C experience, but I would say that the example above does support the statement that "Forth is no more difficult to read than C". However, I would also say that this example is so trivial as to be almost meaningless -- there is hardly anything here but the basic syntax that you'd get on day one of learning any language.
+----
+The above C code ignores several C shortcuts. Using "while" instead of "for" makes the code more readable to a C programmer(how?). In addition, the single-statement functions and non-looping functions can be written legibly on one line (although some C purists might disagree). ''It's legible, but '''less''' legible than the multi-line versions.''
+
+Here is the simplified C code. Except for "n--", it should be understandable even by someone who does not know C.
+
+    void stars(int n) {
+      while (n-- > 0) putchar('*');
+      putchar('\n');
+    }
+
+    void square(int n)   { int i=n; while (i-- > 0) stars(n); }
+
+    void triangle(int n) { int i=n; while (i-- > 0) stars(i); }
+
+    void tower(int n)    { triangle(n-1); square(n); }
+
+    void main() {
+      stars(7);
+      triangle(3);
+      tower(6);
+    }
+
+''Nice, but the triangle looks upside-down from the other versions.''
+----
+To translate the above (incorrect) code back into Forth:
+
+ : stars ( n -- )       begin dup while 1- [char] * emit repeat drop cr ;
+ : square ( n -- )      dup begin dup while 1- over stars repeat 2drop ;
+ : triangle ( n -- )    begin dup while dup stars 1- repeat drop ;
+ : tower ( n -- )       dup 1- triangle square ;
+ : main                 cr 7 stars 3 triangle 6 tower ;
+
+Note that many Forth dialects support an explicit counted loop form too, despite it not being ANSI-compliant:
+
+ : square ( n -- )      dup for dup stars next drop ;
+
+To correct the triangle upside-down bug,
+
+ : triangle ( n -- )    1 begin 2dup >= while dup stars 1+ repeat 2drop ;
+ : tower ( n -- )       dup 1- triangle square ;
+
+Also, if your coding conventions favor readability over conciseness, then a naive coder would ''really' write square as:
+
+ : row ( n x -- n x )    over stars ;
+ : square ( n -- )       dup begin dup while row 1- repeat 2drop ;
+
+A more experienced Forth coder would see the general pattern:
+
+ begin dup while ... 1- repeat
+
+occur all over the place.  So she can refactor the whole construct into a higher-order function:
+
+ : asNecessary ( ... n xt -- ... )
+   >r begin dup while r@ execute 1- repeat drop r> drop ;
+
+ : .*                      [char] * emit ;
+ : stars ( n -- )          ['] .* asNecessary cr ;
+ : row ( n x -- n x )      over stars ;
+ : square ( n -- )         dup ['] row asNecessary drop ;
+ : row ( n x -- n x )      swap dup stars 1+ swap ;   ( hooray for HyperStaticGlobalEnvironment''''''s! )
+ : triangle ( n -- )       0 swap ['] row asNecessary drop ;
+ : tower ( n -- )          dup 1- triangle square ;
+ : main                    cr 7 stars 3 triangle 6 tower ;
+
+If you're even more advanced, you can write words to permit code blocks right inside of Forth colon-definitions.  We employ knowledge of immediate-words to extend the compiler, plus knowledge of run-time string evaluation to implement text-substitution macros.
+
+ ( Add code quotations to GForth; odds are good it'll work elsewhere too. )
+ variable quotedCode
+ : $(           S" ahead [ :noname " evaluate ; immediate
+ : $)           S" ; quotedCode ! ] then [ quotedCode @ ] literal " evaluate ; immediate
+
+ : stars        $( [char] * emit $) asNecessary cr ;
+ : square       dup $( over stars $) asNecessary drop ;
+ : triangle     1 swap $( swap dup stars 1+ swap $) asNecessary drop ;
+ : tower        dup 1- triangle square ;
+ : main         cr 7 stars  3 triangle  6 tower ;
+
+So, with only 2 lines of "blood, sweat, and tears", easily tucked away into a library, to define a new language feature, plus one higher-order function, the ''remainder'' of the program actually becomes ''substantially more'' readable and maintainable than any C version posted here to date.
+
+--SamuelFalvo
+----
+First of all, you really need to stop simulating DO/FOR loops with WHILE loops. Especially on a page demonstrating the readability of Forth. Secondly, while code quotations are awesome, I really don't think that this example is more readable with them. This code should be written like so (the standard words are in uppercase ''only'' for strict ANSI compliance):
+
+ \ Just in case your system doesn't have FOR loops.
+ [UNDEFINED] FOR [IF] : FOR  0 POSTPONE LITERAL POSTPONE DO ; IMMEDIATE
+ SYNONYM NEXT LOOP
+ [THEN]
+
+ \ Also, asNeccesary is traditionally defined as 
+ : times ( i*x xt n -- j*x )  FOR  DUP EXECUTE  NEXT  DROP ;
+ : star  [CHAR] * EMIT ;
+ : stars  ( n -- )  FOR star NEXT CR ;
+ : square  ( n -- )  DUP  FOR  DUP stars  NEXT  DROP ;
+ : triangle ( n - ) 1 DO I stars LOOP ;
+ : tower  ( n -- )  DUP triangle square ;
+ : go   CR 7 stars  3 triangle  6 tower ;
+
+---
+
+I'm new to Factor, but here's an attempt at a port
+
+ : star ( -- ) "*" write ;
+ : stars ( n -- ) [ star ] times nl ;
+ : square ( n -- ) dup [ stars ] curry times ;
+ : triangle ( n -- ) iota [ 1 + stars ] each ;
+ : tower ( n -- ) [ triangle ] [ square ] bi ;
+ : main ( -- ) nl 7 stars nl 3 triangle nl 6 tower ;
+
+----
+See also: ForthReadability ChuckMoore
+----
+CategoryForth

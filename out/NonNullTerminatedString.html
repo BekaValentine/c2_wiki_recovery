@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Non Null Terminated String
+      </h1>
+      <p>
+        <em>Two strings walk into a bar. The bartender says, "What'll it be?". The first string says, "I'll have a gin and tonic#MV*()>SDk+!^ &@P&]JEA&#65535;Segmentation Fault". The second string says, "You'll have to excuse my friend, he's not null-terminated."</em>
+      </p>
+      <hr/>
+      <p>
+        A rather common source of nasty bugs in <a href="CeeLanguage.html">CeeLanguage</a> (and to a lesser text, <a href="CeePlusPlus.html">CeePlusPlus</a>; though this only affects <a href="CharStar.html">CharStar</a>s and not the C++ standard library string class, which has its own <a href="StringClassProblem.html">StringClassProblem</a>s).
+      </p>
+      <p>
+        A string in C is simply an array of characters, with the final character set to the NUL character (ascii/unicode point 0). This null-terminator is <em>required</em>; a string is ill-formed if it isn't there. The string literal token in C/C++ ("string") guarantees this.
+      </p>
+      <code>
+        const char *str = "foo";<br/>
+      </code>
+      <p>
+        is the same as
+      </p>
+      <code>
+        const char *str = {'f', 'o', 'o', 0};<br/>
+      </code>
+      <p>
+        The length of a string as returned by strlen() and similar functions is <em>one less</em> than the amount of storage required. Note that the length is <em>not</em> stored anywhere explicitly; to determine the length of a string one simply advances a pointer until one finds a null; counting characters on the way. (In other words, strlen() requires O(n) time and not O(1) time to compute - a curiosity in a language priding itself on performance).  See <a href="StringWithoutLength.html">StringWithoutLength</a> (an <a href="AntiPattern.html">AntiPattern</a>).
+      </p>
+      <p>
+        What happens if a string that <em>isn't</em> null-terminated gets passed to strlen()? <a href="UndefinedBehavior.html">UndefinedBehavior</a>. strlen(), when given such a beast, will keep searching memory until it a) finds a null character; or b) hits an address that causes a memory protection fault of some sort (or worse). strlen(), at least, is read-only; so it won't corrupt data.
+      </p>
+      <p>
+        Functions like strcpy(), on the other hand, will cause all sorts of death and destruction when passed <a href="NonNullTerminatedString.html">NonNullTerminatedString</a>s.
+      </p>
+      <p>
+        Functions like printf(), which do strange things based on the string passed in, are a common source of security exploits in <a href="CeeLanguage.html">CeeLanguage</a>. See <a href="FormatStringAttack.html">FormatStringAttack</a> 
+      </p>
+      <p>
+        To make matters worse... many targets of functions like strcpy are bounded (fixed-size) buffers; the designers of the C library correctly figured that use of unbounded copy functions like strcpy() is not a good idea; hence they provided a similar function strncpy(), which takes a third argument - the maximum length to copy. strncpy(dst,src,len) will copy bytes from src to dst, until either <em>len</em> bytes are copied, or a null in <em>src</em> is encountered, whichever comes first. If the null character in <em>src</em> is encountered, it is copied, and all is well. However, if <em>len</em> bytes are copied; strncpy exits, <em>without copying a terminating null</em>. In other words, the destination string is <strong>not null terminated</strong>.
+      </p>
+      <p>
+        Programmers aware of this pitfall have ways to code around it - either by calling strncpy() with one less than the buffer size, and explicitly making sure that the destination string is null-terminated. Many libraries for C provide "safer" versions of strncpy that guarantee that the destination string is null-terminated. However, this is a major source of bugs in C.
+      </p>
+      <p>
+        <em>Unhappily, strncpy() returns only the </em>'address<strong> of the destination string. This is unfortunate and ironic: you already know where you copied the string (you passed it as a parameter), and what you </strong>don't<strong> know (and it doesn't tell you) is </strong>how many bytes<em>' were copied. A return value of the number of bytes copied would be more useful, and allow you to write code like this</em>:
+      </p>
+      <code>
+        bytescopied = strncpy(dest, src, maxbytes);<br/>
+        if (bytescopied < 0) { // indicates no bytes copied, parameter error<br/>
+        throw(fit);          // error handler stuff here<br/>
+        } else if (bytescopied == maxbytes) {<br/>
+        dest[maxbytes-1] = '\0';   // force null terminator<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>assuming that there is some compelling need to have a null-terminated destination string.</em>
+      </p>
+      <p>
+        There always is - read above. Most library functions expect it and will crash without it.
+      </p>
+      <p>
+        <em>always is ... except in some of my programs where I </em>'don't<em>' use any form of strcpy(), but memcpy() instead. Some of my ETL code (data warehouse stuff) uses structure assignment and memcpy() to move "strings" around, with specific code to remove control characters and nulls. Any code that requires a "string" in this context uses a string that I build, with guaranteed null-termination. I've been bitten by that snake before.</em>
+      </p>
+      <p>
+        The question of whether <strong>strncpy</strong> did or did not copy the null byte is moot, the simple solution is always to put a null in the last place of the destination.
+      </p>
+      <code>
+        strncpy(dest, src, buffsize-1);<br/>
+        dest[buffsize-1] = 0;<br/>
+      </code>
+      <p>
+        Do the analysis:
+      </p>
+      <ul>
+        <li>
+           Strings must always be null-terminated
+        </li>
+        <li>
+           strncpy may result in a string that's not null-terminated
+        </li>
+        <li>
+           I must null-terminate the destination string
+        </li>
+        <li>
+           I don't know where it stopped
+        </li>
+        <li>
+           If it stopped early then it doesn't matter, it's already null-terminated
+        </li>
+        <li>
+           If it didn't stop early then it filled the buffer
+        </li>
+        <li>
+           If it filled the buffer then I should null-terminate in the last possible position.
+        </li>
+      </ul>
+      <p>
+        We <strong>always</strong> include this sort of analysis either in comments in the code or in a separate "cookbook" of reasons. This is equivalent to showing that the code avoids certain failure modes, something that's hard to do in <a href="UnitTest.html">UnitTest</a>s. Question: How could you recode this to make the reasons clear from the code and thereby make the comment redundant?
+      </p>
+      <p>
+        <em>Define a safestrncpy() function that forces the null byte, and always use that.</em>
+      </p>
+      <p>
+        And where/how do you document <strong>why</strong> it is safe?
+      </p>
+      <p>
+        <em>Define a function copyStringWithoutOverflowingBufferAndEnsureNullTermination(). :P</em>
+      </p>
+      <p>
+        That is still saying what it does, it is not saying why it can be done like this. It seems that every time I try to make this point no one understands what I'm saying. The analysis above shows why putting a zero in the last place of the destination buffer is always the right thing to do. Without the analysis you may see that it works without understanding why. I believe the why should be documented. Where can I put that if not in a comment? Your suggested naming of the function does not solve this problem, and I am interested in learning whether anyone has solved it.
+      </p>
+      <p>
+        <em>Partially. </em><a href="DesignByContract.html">DesignByContract</a>.<em></em>
+      </p>
+      <p>
+        DBC as I understand (and use) it still does not address the question of why. It gives preconditions that must be met by the caller and postconditions that are guaranteed by the routine. It still does not say *why* the code given is right.
+      </p>
+      <ul>
+        <li>
+           You are correct about DBC, but at least it is very specific about <strong>what</strong> must be. I don't think any programming language has ever had a facility to say "why" anything must be done. In fact, in the general case that is <strong>impossible</strong>, since it usually involves actual understanding of the problem domain, which is AI complete and thus beyond state of the art. Furthermore, we humans also do not always know <strong>why</strong> we do things; in many cases we only know <strong>how</strong> to do things.
+        </li>
+        <li>
+          ...which makes me wonder if you're saying something other than what you really mean.
+        </li>
+      </ul>
+      <p>
+        [Put it in the comments.  Or the documentation.  The issue of documenting the "why" is orthgonal, really, to the issue of whether or not null-terminated strings are a good idea.]
+      </p>
+      <hr/>
+      <p>
+        Another solution is to use strncat() on an empty string. strncat() always null-terminates the string. Unfortunately, strncat() has another pitfall where you must remember to subtract 1 from the buffer size, or it will overflow:
+      </p>
+      <code>
+        char dest[buffsize] = "";<br/>
+        strncat(dest, src, buffsize-1);<br/>
+      </code>
+      <hr/>
+      <p>
+        <a href="http://en.wikipedia.org/wiki/Strlcpy">http://en.wikipedia.org/wiki/Strlcpy</a>
+      </p>
+      <p>
+        strlcpy and strlcat are what you want. They both takes the buffer size and ensure null termination. Here are the prototypes from the OpenBSD project:
+      </p>
+      <code>
+        /*<br/>
+      </code>
+      <ul>
+        <li>
+           Copy src to string dst of size siz. At most siz-1 characters
+        </li>
+        <li>
+           will be copied. Always NUL terminates (unless siz == 0).
+        </li>
+        <li>
+           Returns strlen(src); if retval >= siz, truncation occurred.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        size_t<br/>
+        strlcpy(char *dst, const char *src, size_t siz)<br/>
+      </code>
+      <code>
+        /*<br/>
+      </code>
+      <ul>
+        <li>
+           Appends src to string dst of size siz (unlike strncat, siz is the
+        </li>
+        <li>
+           full size of dst, not space left). At most siz-1 characters
+        </li>
+        <li>
+           will be copied. Always NUL terminates (unless siz <= strlen(dst)).
+        </li>
+        <li>
+           Returns strlen(src) + MIN(siz, strlen(initial dst)).
+        </li>
+        <li>
+           If retval >= siz, truncation occurred.
+        </li>
+        <li>
+          /
+        </li>
+      </ul>
+      <code>
+        size_t<br/>
+        strlcat(char *dst, const char *src, size_t siz)<br/>
+      </code>
+      <p>
+        -- <a href="MikeWeller.html">MikeWeller</a> 
+      </p>
+      <hr/>
+      <p>
+        Let's try this: <em>much better, thanks.</em>
+      </p>
+      <p>
+        People who have been using C/C++ professionally for any length of time are quite used to the vagaries of NUL/NULL. In fact, they even know the difference! [See note, below.] This page only makes sense in the context of a warning to those whose careers have not yet included a number of years of C/C++ program development. Otherwise all the discussion of the Nasty Things That Can Happen When Strings Aren't NUL Terminated is kinda like preaching to the choir, ain't it? If there are professionals who feel that C/C++ string manipulation is simply too dangerous and fraught with pitfalls then by all means <em>switch to a different language</em>. Please don't try to convince the rest of us that strings are time bombs waiting to explode at the drop of a NUL.
+      </p>
+      <p>
+        Note: NUL is the ASCII character whose code is 0; NULL is a pointer whose value is 0. The character is one byte; the pointer is whatever size it is cast to be.
+      </p>
+      <hr/>
+      <p>
+        <em>I'm the author of this page, and I've been using C and NUL-terminated strings for quite a while, too (not 20 years, though...) The purpose of the page is not to call for abandonment of C; instead to educate the user on why this is an important concern for C programmers, and how to avoid this particular pitfall - the consequences of which can be nasty.</em>
+      </p>
+      <p>
+        <em>Obviously, one solution to the problem is to program in something else - for some applications, that may be a good idea (and for reasons besides this page). For other applications, C (or C++) is a better choice than Java, Smalltalk, or Lisp - in which case, the issues described herein will need to be confronted.</em>
+      </p>
+      <p>
+        <em>Suggestions that Java/Smalltalk/Lisp are for "lesser" programmers are not at all helpful.</em>
+      </p>
+      <p>
+        Ahh, but the suggestion was to avoid a language that would be a source of grief - not any indication that "lesser" developers would choose to use it. Only <a href="OldFart.html">OldFart</a>s with bookoo experience would appreciate the "shortfalls" of systems languages like C/C++ or assembly and accept those risks as naturally as breathing. 
+      </p>
+      <p>
+        <em>It isn't even that simple. It wouldn't be hard to find a Lisp programmer who has been coding Lisp longer that C has existed --- and still thinks null terminated strings are an efficiency hack that should hardly every be used. I don't think anyone with half a clue would argue that C does not fit a particular domain (systems programming, on certain systems) very well. It is when you want to call it a "general purpose" language that the arguments start!</em>
+      </p>
+      <ul>
+        <li>
+           They shouldn't. C has been very widely and successfully used for every conceivable kind of application domain, not just for systems programming. There's never <strong>been</strong> a more general purpose language, in <strong>that</strong> sense. The arguments should start <strong>only</strong> when someone claims that it is also one of the <strong>best</strong> general purpose languages. It has these flaws, you see, that make arguing about its strengths and weaknesses interesting. But one can't deny history.
+        </li>
+      </ul>
+      <p>
+        <em>I'm not sure where it was suggested that one "avoid" C, other than noting that for some applications a higher-level language might be a better choice. I certainly am not suggesting that </em>CeeLanguageConsideredHarmful; let me be clear about that right now. However, C <em>is</em> a systems language - there are some tasks it excels at, some tasks that it is a poor choice for. <a href="HorsesForCourses.html">HorsesForCourses</a>, etc.<em></em>
+      </p>
+      <p>
+        <em>There shouldn't be anything controversial about that.</em>
+      </p>
+      <p>
+        Okay, then why the whining about non-NUL terminated strings? Why complain about the behavior of strcpy() and such things when you already know what awaits you should you be so dumb as to not properly terminate your strings? As was stated before, experienced people know all this stuff and don't even give it a second thought. Only the purveyors of so-called "high level" languages think this is a problem. C/C++ types take it in stride.
+      </p>
+      <p>
+        [Be that as it may, and there certainly has been entire volumes preached about this, the C standard string functions are STILL a huge source of bugs and <a href="SecurityExploits.html">SecurityExploits</a>, being found on an almost daily basis. I think this makes it pretty self-evident that while it's a well known problem, and has been for years (decades!) there's still a large body of C programmers who are happy to ignore it]-- by 139.76.128.71
+      </p>
+      <p>
+        <em>Think of a swamp that has quicksand.  Several possibilities exist with regard to how one should provide safety advice to visitiors to that swamp.</em>
+      </p>
+      <ul>
+        <li>
+           <em>Tell visitors that they should never ever visit the swamp; because they might encounter quicksand.  Go visit the local city park instead; you won't get hurt there.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Say nothing.  If someone wants to visit the swamp, they ought to be experts and know where the quicksand is; if they fall in that's their fault.  Tough luck for them</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Put up warning signs in the swamp, alterting visitors where the quicksand is.</em>
+        </li>
+      </ul>
+      <p>
+        <em>This page tries to take the third approach.  We're not saying, "don't use C"; I consider that an unrealistic position.  OTOH, the notion that this advice is unnecessary because expert C programmers know it already is foolish.  I'm not worried about the expert C programmer.  I'm worried about the novice C programmer who may not fully appreciate the subtleties involved--string overflows are a notorious source of difficult-to-find bugs in C code; I've spent quite a few hours at my job tracking down and fixing the string-handling errors introduced by junior programmers.</em>
+      </p>
+      <p>
+        [You seem to be rather defensive about the existence of this page. Why?]
+      </p>
+      <p>
+        Well, I can see the need for a page like this <em>if</em> it is contained in a "Pitfall" set of some kind. Perhaps some kind Wikizen will collect these newbie alert pages and categorize them somehow? And then make each page as being for the purpose of newbie warning, perhaps the way the <a href="FasterJava.html">FasterJava</a> pages are marked as being part of that set? Please, something other than just Category Pitfalls, since that may apply to many issues not newbie-related.
+      </p>
+      <p>
+        Newbie here.  Just found this page.  Found this page by searching for the exact words I was concerned about: Non-Null Terminated String.  I've never found a discussion about coding standards without it degrading into a "best language debate."  I pretty much skip over all that.  I just wanted to say this page was extremely helpful in my case.  I am copying a portion of one string into and empty string.  n < src length.  Fortunately I knew enough to be concerned about the nul termination.  And VERY fortunate that I found this site.  First and only site that discusses this subject.  Well done.  Thank you.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryCee.html">CategoryCee</a>, <a href="CategoryPitfall.html">CategoryPitfall</a>
+      </p>
+    </div>
+  </body>
+</html>

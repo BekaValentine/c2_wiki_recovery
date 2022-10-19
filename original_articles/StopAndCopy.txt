@@ -1,0 +1,68 @@
+Stop and copy is another technique for GarbageCollection that also removes any fragmentation.
+
+It works by splitting the available memory in half. One half is designated as the current half (where all allocations take place) and the other half is designated as the idle half (nothing happens to it). [Splitting memory in half is for semi-space collectors, which is perhaps the most naive and simple form of StopAndCopy. More sophisticated algorithms are available that preserve more of the address space.]
+
+Because this technique eliminates fragmentation, there is no free list to maintain or search. So, when memory must be allocated, it can simply be taken from the free space immediately after the last object allocated in the current half of the heap.
+
+When the end of the current half of the heap is reached, a garbage collection must be performed. As with MarkAndSweep garbage collection, the collector traverses the heap by starting at the root pointers (conventionally, stored in the stack and registers). 
+
+For each node traversed, the collector copies the node into the idle half of the heap (adjusting the pointers so that links are still maintained ''[How is this done?]'' [See below.]). 
+
+When the copy is complete (all reachable nodes have been copied into the idle heap), the designations of the heaps are switched, the idle heap becomes the current heap and the current heap becomes the idle heap.
+
+In the process, all the unreachable nodes are left in the idle heap at this point.
+
+This scheme is quite interesting in that it eliminates fragmentation, allowing memory allocation to be done in constant time; the drawback being of course, that half your memory is always wasted. Bummer, huh? 
+
+-- MarkGrosberg
+
+A similar algorithm is used in the game Jak & Daxter.
+
+This can be combined with MarkAndSweep as StopMarkAndCopy which doesn't need the two heaps.
+
+-- EddieEdwards
+
+''Please describe StopMarkAndCopy.''
+
+Hip shot: I suppose you could mark according to MarkAndSweep, and then simply copy all the objects in address order to one side of the heap. This would leave you with a continuous free block at the other side. It doesn't require two heaps, and has the added advantage that you do not always need to copy every object, since over time the most long-lived objects will be found stuffed away at the far end of the heap. -- DanielBrockman
+
+''That method would probably lead to broken references. Specifically, you might copy an object over a "broken heart".''
+
+I don't really know anything about garbage collection, so those are a mystery to me. As I understand it, a BrokenHeart is like a HTTP 301 Moved. But (again, as I understand it) since BrokenHeart''''''s only stay for a short amount of time - if they were to linger, it seems memory would quickly become extremely fragmented - their referrers must be updated. So what I don't understand is, why use broken hearts at all? Why not build an old address -> new address table as the moving proceeds, and just before collection finishes walk all objects and update any old address?
+
+''Where would you store this table? Why not use the fromspace? Broken hearts are simply a way of storing the new address at the old address.''
+----
+
+Q. ''How does the collector keep track of all the references to heap objects? This seems to have fairly serious implied overheads.''
+
+A. There are two typical strategies. One is to use an object table, which is simply a vector of pointers to objects, which may then exist anywhere in the heap. Objects refer to other objects via their offset in the object table. This approach makes it trivial to move objects in memory, since it simply requires updating the pointer on the object table. However, each time an object is referenced, it must be dereferenced through the object table, which hurts performance slightly. There's also the memory overhead of the table itself. Growing the object table can be difficult as well.
+
+The other common approach is to use direct references. References to objects are pointers to the object. In order to facilitate scanning the heap, the allocator puts all objects in a sequence in the heap, and objects contain a header which indicates their size and other information that the collector will need to know to do its work. A consequence of direct referencing is that it becomes cumbersome to move objects in memory, since the collector must locate all references to the object being moved and correct them (though there are strategies for this as well).
+
+Another approach, or perhaps a variaton on the second, is to make all live objects a linked list. Each object contains a link to the next object in the heap.
+----
+'''How Stop and Copy is Done.'''
+
+[This assumes that a reference to an object is a pointer to the object.]
+
+Memory is divided into two parts, called ''fromspace'' and ''tospace.'' During ordinary use, fromspace lies fallow, and all new objects are allocated in tospace. When tospace is full, it is swapped with fromspace and stop and copy occurs. When stop and copy is complete, the new tospace should have free space again. (Otherwise, there was no garbage to collect, which means your memory is actually full.)
+
+Stop and copy begins with two pointers into tospace, the write pointer and the read pointer, and two procedures, ''evacuation'' and ''scavenging.'' At the start, the two pointers are initialized to point to the beginning of tospace.
+
+You start by evacuating the root object(s) of garbage collection. To evacuate an object, you copy the object to the write pointer and then advance the write pointer past it. Then, at the object's old address in fromspace, you write a ''forwarding address'' object, also called a ''broken heart.'' This contains the object's new address.
+
+Then you scavenge. Scavenging basically looks at the object under the read pointer. Each pointer in that object is examined. If the pointer points to an object in fromspace, that object is evacuated. But if the pointer points to a ''forwarding address,'' the object has already been evacuated, so the old address is simply replaced with the new address. Once an object is scavenged, the read pointer is advanced past it. Then the next object can be scavenged.
+
+As each object is scavenged, more objects are evacuated, and eventually those are scavenged too. But the number of objects in use is finite, so eventually, as objects are scavenged, more and more forwarding addresses are found, and less and less evacuation occurs. Eventually, the read pointer meets the write pointer. At that point, the stop-and-copy is done.
+
+The write pointer becomes the new allocation pointer where new objects are allocated.
+
+There's more information about this at http://web.media.mit.edu/~lieber/Lieberary/GC/Realtime/Realtime.html, including how to extend it for GenerationalGarbageCollection, and real-time collection.
+
+(However, the only way I can figure out for generational collection to work is if each generation has its own fromspace and its own tospace. And I can't seem to grok real-time collection; it seems to introduce a race condition between new allocations and evacuations, which occur simultaneously in real-time collection. It seems memory could fill up before evacuation is finished, and yet still hold enough as-yet-unidentified garbage that a stop-and-copy collector would not have had a problem.)
+
+-- EdwardKiser
+
+(Later note: StopAndCopy is described in StructureAndInterpretationOfComputerPrograms, but the description there divides memory into cars and cdrs, which is useful for cons cells but not so much for other data types. When I read that description, I didn't understand that the division into cars and cdrs is not essential to StopAndCopy. Memory can be, and probably should be, ''bytes.'')
+----
+CategoryGarbageCollection

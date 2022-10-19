@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Resource Releases Resource
+      </h1>
+      <p>
+        This issue of managing resources has been getting a lot of attention in Comp.object recently (early Feb. 1998). Here is a Java idiom for managing precious resources that is at least as good, if not better than the C++ idiom <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a>. It is similar to some of the other suggestions on these Wiki pages, but it has a few added benefits.
+      </p>
+      <ol>
+        <li>
+           It is abstract and reusable.
+        </li>
+        <li>
+           It takes more of the burden off of each client of a resource and places the burdon one time on the resource provider.
+        </li>
+        <li>
+           It has no policies about how many clients, criteria for granting access, etc.
+        </li>
+      </ol>
+      <p>
+        Here is a quick sketch of the abstract class:
+      </p>
+      <code>
+        public abstract class <a href="AbstractResource.html">AbstractResource</a><br/>
+        {<br/>
+        abstract protected begin(<a href="ResourceClient.html">ResourceClient</a> client, Object object);<br/>
+        abstract protected end(<a href="ResourceClient.html">ResourceClient</a> client, Object object);<br/>
+      </code>
+      <code>
+        public void consume(<a href="ResourceClient.html">ResourceClient</a> client, Object object)<br/>
+        {<br/>
+        begin(client, object);<br/>
+        try {<br/>
+        client.consume(this, object);<br/>
+        } finally {<br/>
+        end(client, object);<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        public interface <a href="ResourceClient.html">ResourceClient</a><br/>
+        {<br/>
+        abstract public void consume(<br/>
+        <a href="AbstractResource.html">AbstractResource</a> resource,<br/>
+        Object object<br/>
+        );<br/>
+        }<br/>
+      </code>
+      <p>
+        -<a href="PatrickLogan.html">PatrickLogan</a>
+      </p>
+      <hr/>
+      <p>
+        But what if an object needs to own a resource for longer than the duration of a single method call?  Would the <a href="AbstractSessionPattern.html">AbstractSessionPattern</a> (<a href="http://www-dse.doc.ic.ac.uk/~np2/patterns)">http://www-dse.doc.ic.ac.uk/~np2/patterns)</a> help here?
+      </p>
+      <hr/>
+      <p>
+        Somewhere in the system, there is (usually? always?) an object whose ownership of the resource is exactly one method call.  Use the above approach on that object.  When his method finishes, finalize the resource.
+      </p>
+      <p>
+        Even in an event-driven situation, there's usually some state, somewhere, that corresponds to the life of the object.  The method in question might just look like
+      </p>
+      <code>
+        [self finished] whileFalse: [self waitSeconds: 30]<br/>
+      </code>
+      <p>
+        while all kinds of other objects are playing with the resource this guy controls.  
+      </p>
+      <p>
+        --<a href="RonJeffries.html">RonJeffries</a>
+      </p>
+      <hr/>
+      <p>
+        Why isn't the <em>begin()</em> inside the try block? --<a href="BobPasker.html">BobPasker</a>
+      </p>
+      <p>
+        <em>It's outside for flexibility, I believe.  I as the framework user get to decide whether I want all my initialization to occur inside or outside the try{}.  For example, I may want to open a file in begin(), knowing that since I'm outside the try{} block at that point, my end() implementation won't be called, and therefore my end() implementation won't have to handle an unopened file.  Or, if that doesn't meet my needs, I could simply have an empty begin(), and put all my initialization inside </em><a href="ResourceClient.html">ResourceClient</a>.consume (see below for my feelings on the method names).<em>  -- </em><a href="DavidSaff.html">DavidSaff</a>
+      </p>
+      <hr/>
+      <p>
+        This is a great idiom, Patrick.  It almost fully fills the void left by <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a>.  But given the new idiom, the old "consume" metaphor seems out of place, since it feels like the client is <em>entering</em> the resource, rather than <em>acquiring</em> the resource.  I'd be tempted to replace it with a feel similar to the <a href="VisitorPattern.html">VisitorPattern</a> (is this a misuse of that pattern?  The current problem doesn't deal with forces arising from a complex data structure.)
+      </p>
+      <code>
+        public abstract class <a href="AbstractResource.html">AbstractResource</a><br/>
+        {<br/>
+        abstract protected welcome(ResourceVisitor visitor, Object baggage);<br/>
+        abstract protected farewell(ResourceVisitor visitor, Object baggage);<br/>
+      </code>
+      <code>
+        public void accept(ResourceVisitor visitor, Object baggage)<br/>
+        {<br/>
+        welcome(visitor, baggage);<br/>
+        try {<br/>
+        visitor.visitResource(this, baggage);<br/>
+        } finally {<br/>
+        farewell(visitor, baggage);<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        public interface ResourceVisitor<br/>
+        {<br/>
+        abstract public void visitResource(<br/>
+        <a href="AbstractResource.html">AbstractResource</a> resource,<br/>
+        Object baggage);<br/>
+        }<br/>
+      </code>
+      <p>
+        Two issues with this:
+      </p>
+      <ol>
+        <li>
+           Naming the extra Object "baggage" gives away my prejudice against such VoidStarCallbackParameters in OO programming.  It seems that the visitor should internalize the baggage.  I'd be curious if others have the same prejudice.
+        </li>
+        <li>
+           If anyone can come up with a better method name than "farewell", please update the page.  I wanted a simple verb to offset the verb "welcome", but couldn't come up with a good one. <em>dismiss</em>
+        </li>
+      </ol>
+      <p>
+        -- <a href="DavidSaff.html">DavidSaff</a>
+      </p>
+      <hr/>
+      <p>
+        One other aspect that I can't quite resolve.  What if a given client needs to consume (or visit) more than one resource at a time to accomplish its task?  Is it desirable or possible to package a given set of resources as a single "meta-resource", or is there some other idiom for this?  Say I need a database Connection resource and a remote procedure call? Ignoring for the moment any two-phase commit semantics -- maybe the RPC is simply an audit log.  How does this idiom adapt to that situation? --<a href="StevenNewton.html">StevenNewton</a>
+      </p>
+      <hr/>
+      <p>
+        The <a href="RubyLanguage.html">RubyLanguage</a> libraries use this idiom very widely.  The idiom is much more convenient when you have a decent syntax for closures.  I expect that Java's inner classes are too verbose and obfuscatory to allow this idiom to catch on, and people will stick with try...finally blocks.
+      </p>
+      <p>
+        <em>Been using Ruby for years; never seen this idiom </em>once<em>.  Are you sure you're not confusing this with the </em><a href="ResourceAcquisitionIsInvocation.html">ResourceAcquisitionIsInvocation</a> pattern?<em></em>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryJava.html">CategoryJava</a>
+      </p>
+    </div>
+  </body>
+</html>

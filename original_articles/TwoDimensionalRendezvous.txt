@@ -1,0 +1,146 @@
+From AlgorithmsWanted:
+
+Suppose you have a collection of points in a two dimensional space. Given another point, just how fast can you find the closest one from the set?
+
+Obviously you can do it in '''O(n)''' just by scanning through them all, applying the metric, and keeping the closest. However, if you're going to do this lots of times, maybe you can precompute something and do the search more quickly.
+
+Good things:
+	* you may be comparing another set against the original set, allowing some commonality of calculation.
+
+Bad things:
+	* The points in the original set may move.
+
+-------
+
+Consider EuclideanProximitySearchEngine (generalizing up to N-dimensional space). A "movement" in this case would consist of removing the old point and adding the new one, perhaps lazily. That page also discusses finding points nearest to a line, a plane, a volume... and performing simple transforms on the dimensions (e.g. giving distance in one dimension more or less relevance than distance in another dimension).
+
+----
+
+I think you need to be more specific (including "how often do they move?"); there is a vast literature on nearest neighbor and clustering algorithms, which are critical in any number of fields, such as neural net applications (e.g. radial basis vectors in e.g. OCR) and physics simulation (e.g. collision detection).
+
+Note also "Why so many clustering algorithms: a position paper" http://portal.acm.org/citation.cfm?id=568575&dl=ACM&coll=GUIDE
+
+clustering algorithms overview
+http://genome.imim.es/~eblanco/seminars/docs/clustering/index_types.html
+
+An Analysis of Recent Work on Clustering Algorithms
+http://citeseer.ist.psu.edu/fasulo99analysi.html
+
+-- DougMerritt
+----
+
+Divide your space into boxes. Add a point to the box it is in. Nearest point will be in the same box or a nearby one. There are more complex schemes that rest on this basis.
+
+If the volume is too large, and the points cluster, then the problem resists this approach in its simplest form.  Sometimes you can't have a predetermined set of buckets.  QuadTree''''''s look better, but is there another approach.
+
+Sometimes there is no good size of grid to use - lots of grid points means too much memory, not many grid points means everything is close to the same grid point.
+
+The question concerns the zillions of grid points idea.  how do you avoid the overhead of grid points with no data points nearby.
+
+'''QuadTree''''''s'''
+
+I think you might want something like QuadTree''''''s. See Google for lots of references, including http://www.ics.uci.edu/~eppstein/gina/quadtree.html. In particular, this:
+	 :	"Encoding astronomical coordinates with quadtrees can provide significant improvements in efficiency when accessing sources near a given direction and can aid in the correlation of positions from different astronomical catalogs."
+
+looks quite close to your problem as described above.
+
+The idea would be to severely restrict the number of points you actually had to look at by looking at regions increasingly close to your point - at this point you only need to know if the segment is empty or not. Once you get "close enough", switch to the linear search through the points you've located. What's "quicker" depends on the density distribution of your points. If you're really lucky (i.e. have a "nice" distribution), you'll get down to just one point in the first part...
+----
+Where's the time go now? Is it driven by the number of points, or the complexity of your distance metric? If the former, you're going to have to do something to reduce the points looked at - which suggests something like QuadTree. If the latter, can you use an approximation initially?
+
+What about precomputing distances from each point to all points on a grid/lattice - keep a distance-sorted list of data points for each grid point, then using the nearest grid point to the point of interest to quickly discard (binary chop?) most points from consideration?
+
+'''Hmm.. actually, you can precompute what to discard. Any point that's further away than the next grid point in that direction (ish, I hope you see what I mean), can't be the nearest point. So, the lists are of "nearish" points that are worth examining. So I think this is the same as a QuadTree, with the points attached to the smallest subdivision. See below''.
+----
+''Does the distribution vary over time, or is it pretty static (for a given run)? If so, you could have a non-linear grid that's more dense where the points are more dense. This I think means an adaptive quad tree, with more subdivisions where the points are dense. I'm sure there are algorithms for this''
+
+''And yes, google searches for "Adaptive Quadtrees" get hits. This looks relevant http://www.science.gmu.edu/~aantunes/tree.html. Sounds like it's worth talking to your local astrophysics department''
+----
+
+'''DelaunayTriangulation'''
+
+Another sort of approach is to maintain a DelaunayTriangulation of the pointset. To find the existing point closest to a new point, add the new point to the triangulation. The closest point will share an edge with the new point.
+
+A DelaunayTriangulation can be built in O(NlogN) time, and insertions can be done in (amortized?) O(logN) time.
+
+For other ideas, look to the GIS literature, for example http://citeseer.nj.nec.com/al-daoud95applying.html
+
+In general, you want the *dual* to a Delaunay triangulation: a VoronoiDiagram. A Voronoi diagram is a set of (possibly unbounded) polygons that cover the plain. Each of your original points is in exactly one polygon, and that polygon is the set of points closest to that original point.  
+
+And please use someone else's Delaunay code. It can be horribly tricky to get right, especially with floating-point coordinates. There's plenty of code out there; I'm partial to Jonathan Shewchuk's triangle. Don't underestimate the difficulty of getting a *correct* answer to a "nearest neighbor" query. In many apps, absolutely correct isn't too important, but in some it's critical.
+
+----
+
+All good ideas. What about the efficiency of the triangulations given that the points can move.  Adding points to a DelaunayTriangulation is so icky to code ...
+
+----
+
+'''1 dimensional sorting'''
+
+Here's an algorithm that might possibly be the SimplestThing that could possibly work.
+
+Instead of scanning every point in the list,
+sort the list by X coordinate,
+find the point in the list with the closest X coordinate,
+and scan left and right from that point.
+Then exit early as soon as you hit points where the X coordinate alone is
+further away than the closest point you've seen so far.
+
+Setup:
+* Add 2 extra "dummy" points to your set: one with x,y = -inf, the other with x,y = +inf.
+* Make a list A of all n+2 points in the set, sorted by X position.
+(If the set is very tall and skinny, perhaps better to sort by Y position).
+
+Find closest point in the set to point P:
+* ASSERT( there are at least 3 points in the list A).
+* Set L and R and M to the index of the point with the closest X position. O(log n)
+* set dL = dR = dM = distance( P, A[L] )
+* set Lx = abs(P.X - A[L].x)
+* set Rx = abs(P.X - A[R].x)
+    // Loop invariants:
+    // M is the index of the the closest point we've seen so far.
+    do{
+        // Is L or R closer to P, in the X direction ?
+        // (Comparing absolute distance( dL < dR ) is slower)
+        if( Lx < Rx ){
+            // L is closer; scan list to the left
+            L = L - 1;
+            Lx = abs(P.X - A[L].x);
+            dL = distance( P, A[L] );
+            if( dL < dM ){
+                M = L
+                dM = dL
+            }
+        }else{
+            // R is closer; scan list to the right
+            R = R + 1;
+            Rx = abs(P.X - A[R].x)
+            dR = distance( P, A[R] );
+            if( dR < dM ){
+                M = R
+                dM = dR
+            }
+        }
+    }while( (Lx < dM) or (Rx < dM) );
+
+Looks like I need a OnceAndOnlyOnce refactoring of the commonality between the 2 branches of that if().
+
+It's pretty easy to come up with pathological cases where this algorithm
+searches all N points, O(n), but I think for evenly distributed points it runs for O(n^(1/2)) (Is that right ?).
+Not quite as good as O(log n), but far better than O(n).
+
+-- DavidCary
+
+----
+
+'''two dimensional sorting'''
+
+Is it possible to make two-dimensional SkipList''''''s ? ''I don't think so, I tried to come up with an algorithm some time ago, but failed. But it would be great wouldn't it?'' -- GunnarZarncke
+
+See
+"sorting algorithms for two dimensional arrays" at the bottom of SortingAlgorithms. "BrokenLink" - can't find the link in that page.
+
+See TwoDimensionalRangeQuery
+
+----
+CategoryAlgorithm

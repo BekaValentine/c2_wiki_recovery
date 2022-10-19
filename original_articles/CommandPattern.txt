@@ -1,0 +1,153 @@
+'''Intent:''' Encapsulate a request as an object, thereby letting you parameterize clients with different requests, queue or log requests, and support undoable operations. 
+
+'''See also:''' CommandObject, DesignPatterns, ThreadedCommandObject, SchedulerPattern
+
+'''AKA:''' Object version of closure.
+
+----
+
+The GangOfFour CommandPattern documents the recurring design theme of separating execution of a command from its invoker.  Different variations were mentioned, like being able to undo the execution of commands, and executing commands in batch.  More patterns that extend the Command pattern are being discovered. -- PhilipEskelin
+
+----
+
+Besides Undo, when you turn all user actions into a "command stream" passing through a "command engine", as mentioned above, you can insert synthetic commands into the stream to implement scripting, and save the command stream to implement recordable macros. You can also redirect the command stream to another computer to remote control another app over the internet.
+
+----
+
+That is true, the "command pattern" concept does not include or require undo. I focus on undo because the command pattern is a very intuitive and extensible way to implement it. Approaching a problem using this pattern tends to organize things and make them more consistent. It also tends to reveal opportunities to factor out repetitive code. You can separate similar commands into families, and factor repeated code into shared base classes.
+
+This pattern works very well in GUI code, but it can be applied wherever it is possible and worthwhile to make operations reversible. For example, you could use it to undo filesystem changes, or database transactions. Commands can fail, and roll-back is easily implemented, so the system can make a best-effort to stay in a valid state. 
+
+----
+
+I don't know, it seems like a "glorified" function call to me.
+
+[It's a function call that has state, it's a closure, it remembers how to undo itself, that's far more than just a function call.]
+
+''That's the point. A call "glorified" (or reified) so that you can pass it around, and maybe store it for later usage.''
+
+You mean like in LISP? :-) [This simulates Lisp's closures.]
+
+''Yes. Some languages like Lisp and Python have built-in features to pass around methods. This can be used instead of this pattern, or as a way to implement it.''
+
+I suppose any language that can reference an algorithm by name or address and "run" it could also apply (to various degrees). This might be as simple as:
+
+  commands = fileToString("myPath/myCode.prg")
+  executeString(commands)
+''Wait, if you use function pointers instead of a Command object (with do and undo methods), don't you lose the undo feature, which is the main concrete feature touted above?''
+
+
+'''Undo is not a feature of the Command pattern, it is simply one of the application features you could implement using it. Using single-argument function pointers in a language like C, you could use an array of function-pointer/argument pairs as your undo stack.'''
+
+----
+
+I find the DataAccessCommandP''''''attern very useful for persistence. For example, if I want to display the shopping cart using the following query:
+
+select product.name as product_name, item.item_id as item_id, 
+item.description as item_description, item.price as item_price, quantity from cartitems, item, product 	
+where cart_id=? and cartitems.item_id = item.item_id and item.product_id = product.product_id
+
+With the DataAccessCommandP''''''attern I would have (in Java):
+
+  public class View''''''Cart''''''Command{
+    private Row''''''Set rs;
+    private int _cartId;
+
+    public void setCartId(int cartId){ _cartId = cartId; }
+
+    public void execute() throws DataCommandE''''''xception{
+      Connection conn = null;
+      PreparedStatement stat = null;
+      try{
+        conn = ConnectionPool.getConnection();
+        stat = conn.prepareStatement(query);
+        stat.setInt(1, _cartId);
+        rs.populate(stat.executeQuery());
+        rs.beforeFirst();
+      }catch(SQLException e){
+        throw new DataCommandE''''''xception(e);
+      }finally{
+        try{
+          if(stat != null) stat.close();
+          if(conn != null) conn.close();
+        }catch(SQLException err){ throw new DataCommandE''''''xception("failed to close db resources", err); }
+      }
+    }
+
+    public String getProductName(){ return rs.getString("product_name"); }
+    // etc
+  }
+The advantage of this approach compared to O/R mapping solutions (including DataAccessObjectP''''''attern) is that you don't have to navigate an object graph or create custom value objects. For more information check out http://www.theserverside.com/books/EJBDesignPatterns/index.jsp
+
+-- Cameron Zemek (grom_3@optusnet.com.au)
+
+----
+
+I'm confused by that DataAccessCommandP''''''attern up above. Could someone explain to me why it's a good idea in that shopping cart context? It stores, using a Row''''''Set, a single cart entry and holds on to it. I haven't used JDBC directly in a little while, but won't you have to re-execute that command all the time anyway? Maybe it's a good idea to separate the database stuff from the storage stuff. I guess I just don't see the magic there.
+
+Also, don't you have to roll forward the Rowset by one before you can get that first (and only) row?
+
+-- Dustin PENTO
+----
+I never really understood the command pattern until I worked with some code written by someone else who really got it. There's probably a bunch of lessons in that about reading good code, just plain reading other's code, the apprentice system, etc.
+
+It also helped that I've been looking at Ruby. Once I realized that 'hey, this is sort of like a way to do Ruby blocks in C++', things came together quickly. Probably a lot more general lessons in that too.
+
+''I was wondering if this was just about SmalltalkBlock''''''s, or how would it be something else. It actually says it's the Object version of cosure... The mention of Lisps closures plus RubyBlock''''''s is a confirmation.''
+----
+In the ComponentDesignPatterns project, a mini-pattern language has emerged from a pattern submitted to PLoP 1998 called Override Current Processing (http://jerry.cs.uiuc.edu/~plop/plop98/final_submissions/P46.pdf) is being broken up into these Command patterns.
+* InterruptibleCommand.
+* AcidCommand.
+* ConcurrentCommands.
+Many times, each of these patterns has a resulting context that leads to ConnectionPatterns.
+
+The command pattern is excellent for supporting undo. The idea is to have a base class that defines a method to "do" a command, and another method to "undo" a command. Then, for each command, you derive from the command base class and fill in the code for the do and undo methods. The "do" method is expected to store any information needed to "undo" the command. For example, the command to delete an item would remember the content of the item being deleted.
+
+Here's where the undo/redo comes in: You have a stack of objects (which could be implemented as an array). When you want to execute a command, you construct a command object of the appropriate type, call its "do" method. If "do" succeeds, you push it to the command stack (append it to the array).
+
+When you want to undo a command, you call the undo method of the command at the stack pointer, and decrement the stack pointer.
+
+When you want to redo a command, you increment the stack pointer and call the "do" method of the object at the stack pointer.
+
+Note that the act of pushing a new command to the command stack truncates the stack at that point, discarding all of the command objects after the current top-of-stack stack entry.
+
+Redoing and undoing just move the stack pointer up and down the stack.
+
+Theoretically, all this is seems fine, but when I tried to implement it I ran into two scenarios: 
+
+* Commands that have ALREADY occurred, such as catching a change to an editbox after it has occurred.
+* Commands that are about to occur.
+
+Sometimes you want to construct a command object and place it on the undo stack, WITHOUT calling it's "do" method, because it has already occurred. If you caught a change to an editbox, the character has already been added so you don't want to "do" that command, you just want to remember information about where the insertion occurred and what was inserted (a simplification is to simply remember the old and new content of the field, or use the old and new contents to deduce the information to be stored compactly).
+
+On the other hand, if the user selects an item and clicks Delete, then the "do" method of the "delete" command object would store the details of the item being deleted and it would actually perform the deletion.
+
+In my implementation, I have an object that manages the undo stack. It has three methods for updating the stack:
+* Do''''''Command
+* Undo''''''Command
+* Add''''''Command
+
+Each of these methods take a command object as a parameter (except Undo''''''Command).
+
+Do''''''Command pushes the object to the stack AND calls its "do" method.
+
+Undo''''''Command calls the "undo" method of the command at the stack pointer, and adjusts the stack pointer.
+
+Add''''''Command pushes a new command object to the stack WITHOUT calling its "do" method.
+
+One of the problems with this pattern is that it can cause an explosion of little command classes. It is important to have a good naming convention and to do your best to factor common classes.
+
+To handle events that need to be undone as a group, I implemented a "group undo" class. It's job is to be a container for several command objects. When code is performing an operation to be done as a group, it creates a group command object and appends the commands to it. The Do method calls all of it's children's Do methods. It's undo method calls all of its children's Undo methods in reverse order. When pushing to the stack, if a command execution fails, this class also undoes the commands done so far (which rolls state back to the way it was before the group was executed) then it fails the creation of the group object.
+
+This pattern also opens the door to implementing a macro language. Each macro command could create and execute a command object.
+
+Groups can in turn contain other groups. The very execution of a macro itself is a group. If anything fails, it rolls back to the state prior to the execution of the macro.
+
+-- Doug Gale (dgale@excite.com)
+----
+
+Forgive me for asking, but isn't this basically just an IoMonad? --AnonymousDonor
+
+''The way I see it, they're different concepts, with which you usually do similar things. The semantics of monads don't map to objects, or vice versa, but they can solve similar problems. Anyway, I don't fully get my head around monads. (Just remove this when a real comparison arrives :P )''
+----
+CategoryPattern CategoryBehavioralPatterns

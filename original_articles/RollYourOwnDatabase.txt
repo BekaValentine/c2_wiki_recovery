@@ -1,0 +1,209 @@
+'''AntiPattern Name''':  RollYourOwnDatabase
+
+'''Type''': Architecture
+
+'''Problem''': Subject-matter data needs to be held in persistent store, but we don't have the budget for a proper database and anyway, it's only a few hundred records
+
+'''Context''': Small systems that grow
+
+'''Forces''': money, time
+
+'''Supposed Solution''': we'll just stuff it in a text file and write a reader/writer class to get the data
+
+'''Resulting Context''': 
+
+* you develop a custom format that no-one else in the world uses
+** If you're at all clever, you at least use ExtensibleMarkupLanguage or something similar and spare yourself from having to write a parser; though some teams are known to even eschew ''that''.
+
+* you wind up with a text file that takes ages to access because it grows too big
+** Or becomes a contention issue if you find you need to access the same file from multiple applications (or multiple instances of the same application, simultaneously)
+
+* you then write other classes to index its content, resulting in more text or (''shudder'') binary files
+** Bonus points if you discover you need AdHocQueries and write code for ''that''
+
+* MaintenanceProgrammer''''''s have to get on top of these special classes to deal with your code
+
+* wouldn't it have been simpler and cheaper, in the long run, to have done it properly in the first place? 
+** A loaded statement. Anyway, if the development process is good, refactoring later should be the better way, not the worse way to go.
+
+* Hardware or licensing limits product or library choices.
+
+Remember:
+
+* XML is for human-readable and editable ConfigurationFiles, or for transferring data between HeterogenousSystems
+** Or for "documents", which a database does not qualify as.
+*** Though document-is-a-database has a certain amount of appeal, and some nice compositional properties. See DeclarativeGui for an exploration of this.
+
+* CommaSeparatedValues is for talking to MainFrames or MicrosoftExcel
+
+* LDAP is for config data that spans systems across the enterprise, for ''relatively small'' amounts of ''hierarchical'' data that is ''non-volatile'' but which may have a ''heavy read load''.
+
+* RelationalDatabase''''''s are for most BusinessData
+
+* Using text or binary data files with special custom formats is just begging for grief
+
+'''Related AntiPattern''''''s''': ReinventTheWheel XmlDatabase
+
+'''Refactored Solution'''s: 
+
+* If money is a problem, use a NimbleDatabase or one of the many fine OpenSource RDBMS products (MySql, PostgreSql)
+* Perhaps a language like VisualFoxpro (with a RDBMS engine, though a small-scale one) built in
+* JetDatabaseEngine might be preferable (now, there's also SqlServerCompactEdition).
+
+----
+The question is asked:
+* ''wouldn't it have been simpler and cheaper, in the long run, to have done it properly in the first place?''
+
+No.  If your code is clear, well-factored, and has well defined interfaces then no, it wouldn't have been quicker, once you take into account future discounting.  This is the whole point of XP.  If a simple text file suffices in the first instance then that is appropriate.  If later you need faster access, or many more records, then remove the class and drop in a different implementation with the same interface.
+
+If your code is poorly designed, poorly factored, and hard to understand, then maybe you'd've been better using someone else's code/database to start with.
+
+I'm not suggesting a flat BuildDontBuy policy.  I'm suggesting that thought is required, and using someone else's database is not always appropriate.  Writing good code is the only real essential.
+----
+'''Using the File System for Multi-Indexing'''
+
+I have been kicking around the idea of a file-based semi-relational database that is relatively easy to implement. It would be used in situations where you are not allowed to use a commercial DB, need custom alterations, don't want the overhead of a commercial DB, cannot get an open-source one to install, school project, or just plain MentalMasturbation experiments. 
+
+I have been thinking about simple ways to implement a very basic MultiParadigmDatabase. One idea is to use the file system for indexing since every major OS has one.  The starting letters in each key would be used to determine where to look. For this illustration, assume we have a folder for each digit (0..9), each letter (A..Z), and one catch-all folder for all other characters, such as punctuation. Our first level would thus have 37 folders (10 digits, 27 letters, and 1 catch-all for punctuation or short keys). If our indexing goes to two digits, then we would have 1369 folders (37 x 37). However, for the final (second) level we can use just files. Thus, there would be 37 folders each with (up to) 37 files in them. An example directory/file structure might look something like:
+
+* 0 (a folder)
+** 0 (a file for 00)
+** 1 (a file for 01)
+** ...etc...
+* 1
+** 0 (10)
+** 1 (11)
+* ...etc. for each digit
+* A
+** A (AA)
+** B (AB)
+** ...etc...
+* B
+** A (BA)
+** B (BB)
+** ...etc...
+
+Thus, if a key is "CAR", the "C" folder is sought out, and the "A" file within that folder is searched. Ideally the number of levels would be configurable, but for "typical" applications, 2 letter levels are probably sufficient.
+
+If we allow multiple indexes (keys), then have two files in such a directory: one called "A.dat" and one called "A.ndx". The first keeps the data and the second keeps the indexes for keys with the second character being "A". Each record would have a unique sequential number assigned to it. Let's call it "rowID". Indexes will use the rowID to tell where to find the data record. Since row ID's are integer, this would mean that only the digit folders will have ".dat" files. A typical index file for "CA" might look like this:
+
+  name="Carla" rowID=1234
+  storeName="Cannon Products" rowID=66323
+  state="CA" rowID=5726
+  state="CA" rowID=78702
+  ...etc...
+
+Indexing would thus be at least two hops: one to find the index, and one to find the record(s) that match. Note that there may be multiple matching records in both the index and the data files. And, not every record found in the indexes may eventually be used, for "predicate intersections" may be performed on ID lists alone, as shown later.
+
+The format of storage would be one row per line. Ordering by rowID within a file does not need to matter, but could simplify some operations if your implementation wants it. The format for both the indexes and data is assumed to be XML-like above, but we don't need the brackets. However, some other approach may be easier to parse. 
+
+One approach is to use pipes or carats as the delimiter, and simply always assume name-value pairs such that odd positions in the delimited list are column names and even positions the values. It might simplify things to always assume the first position is the rowID since every record will either have a rowID or reference one. These variations are all equivalent:
+
+  <data rowID=1234 name="Susan" birthdate="1978/12/02" salary=56000/>
+  rowID=1234 name="Susan" birthdate="1978/12/02" salary=56000
+  <1234 name="Susan" birthdate="1978/12/02" salary=56000/>
+  rowID|1234|name|Susan|birthdate|1978/12/02|salary|56000
+  1234|name|Susan|birthdate|1978/12/02|salary|56000
+
+The last format (with an implied rowID name position) is my current favorite. Lisp fans probably want to use EssExpressions; however, if one wants to ever standardize it, then keeping it simple may allow many different language implementations to easily parse the same data. (The delimiter character could be in a config file.)
+
+Deletion does not necessarily have to remove all the keys, for that may be an expensive operation. One could simply delete the data record. A periodic "re-pack" operation may be needed to clean out all orphaned keys. The repacking operation would simply read every data record and recreate all the indexes, after first deleting all the old ones. Adding a new index may also require such an operation. (Some existing NimbleDatabase tools also require periodic repacking.)
+
+It would generally be treated as a nimble "dynamic relational" database (see MultiParadigmDatabase), and use a very simple predicate-based query system similar to the one described under MinimalTable. One would simply include an "entity" key to divide data into tables.
+
+There would be at least two other files besides the data and key indexes:
+
+* ID.dat - File that stores the next sequential number to use for new record's rowID.
+
+* keyList.dat - File that stores the indexed columns. Example: "name|state|rank".
+
+Here is how an example query might work:
+
+Display of keyList.dat:
+
+  name|state|rank|dept
+
+Next, build up query predicate (map array) equivalent to the SQL clause: where dept=5 and state='CA' and title='web developer'.
+
+  qry = createArray();
+  qry['dept'] = 5;
+  qry['state'] = 'CA';    // California
+  qry['title'] = 'web developer%';  // "%" could be a wildcard - optional
+  resultSet = query(qry);
+  ....
+
+By reading the keyList file the system knows that "state" and "dept" are indexes. It then surfs the indexes to find all departments of "5" and all states of "CA". It does not need to read actual data yet, just simply collect all the rowID's from each key clause and then do an intersection operation (see SetTheory). Predicate terms that are not an index, such as column "title", must be filtered by an internal sequential filter loop that operates on the result set gained from the application of the indexed terms. In the spirit of RelationalTheory, one should get the same final result set regardless of whether or not a term is indexed. Queries would just be slower without indexes.
+
+General algorithm:
+
+* Get predicate map (query).
+* Find out which query columns are indexes and which are not, using column index list (file).
+* Make a list of rowID's for each index based on index searches (index files).
+* Take the ID intersection of all the lists.
+* Get the actual data rows based on intersection list.
+* Filter data rows for the non-indexed query columns.
+* Return result set to API user.
+
+'''Limitations''' 
+
+Obviously this cannot replace BigIron databases in both power and query language expressiveness. Sequential searches on non-index-able queries would especially be slow, so liberal indexing may be warranted. And, it is not meant to be multi-threaded. Although multiple applications may use it, only a single engine should be running against it at any time. But, for simple applications this should not be a problem.
+
+'''Notes'''
+
+* Perhaps data folders and index folders should be separated. This may allow a deeper nesting of rowID indexing than other indexes, which may be warranted.
+
+* Any sorting would be applied to the final result set, if implemented.
+
+* The result set (result table) could be implemented using a map array with a key made up of the combination of (temporary) row number and value. For example, the state of the second result record could be set using "rs['2,state']='CA';". API's would of course allow a more natural access interface (see QueryAndLoop). This is just one of many possible ways to represent the internal structure in languages lacking table structures.
+
+* For better hash balancing, perhaps the file portion of the indices could use the last two characters of a key instead of the first two.
+
+-- top
+
+----
+''Using the File System for Indexing''
+
+I've seen this sort of thing.  Have you ever looked at the directory tree used for SourceSafe?
+
+''[I feel compelled to interject here that SubVersion also uses the filesystem as its database (it can also use BerkeleyDb and somebody hacked a MySql backend. -- TobyThain]''
+
+Their concept doesn't map to what you're saying, but a glance over it is sufficient.  The result is a folder structure that's quite tedious to traverse by hand.
+
+I've noticed a tendency with certain applications and tools to treat the file system as a kind of object/attribute naming organizer.  Very few file/disk managers make browsing such a layout easy.  I use ZeeTree (Z-Tree) to flatten tangled sub-tree structures and see all the files at once.
+
+I might suggest another approach.  Assuming that you can't use a port of something like FoxPro/ClipperLanguage/FlagShip/XbasePlusPlus or the like (which solves a lot of your problems with indexing), you can always employ sorted flat files as index stages, using a simple BinarySearch algorithm to locate keys.
+
+''Inserts can be expensive with such.''
+
+How much layering and indirection you want to employ is up to you.  Coercing the file system to represent keys and fragment your data storage implies complexity in other places when you try to browse the data.
+
+Unless I've missed something.  -- GarryHamilton
+
+----
+
+[use of simple flat text files as a database]
+
+Such techniques tend to be one-trick ponies, however. If you want to do ''ad-hoc'' queries and cross-references to study patterns, for example, then such techniques become problematic.
+
+----
+So what do you do if you're writing a game, and your prospective user won't have a database?
+
+''EmbeddedDbms''''''s like SqLite make it possible to include DBMS technology in projects without the overhead of a stand-alone DBMS.''
+
+Important key product of the future: a replacement for SqLite. A proper relational lightweight database. DeeLight.
+
+''Oh Gaawwwd. Spare me. That would be like Ada-Lite.''
+
+By ada lite do you mean delphi, which is a very productive tool..
+
+''I believe if you are going to go "lite", then a scriptish approach is more fitting. Non-critical app, easy to learn, easy to implement, smaller interpreter footprint, easy to use and install without big IDE.''
+-----
+See also:
+* BoatAnchor (That's not nice; there may be special niches where such could be useful)
+* GoldenHammer,
+* WolfTicket
+* ReinventingTheDatabaseInApplication
+* WhenAreDatabasesNotAppropriate
+* CheapMassivelyParallelSequentialSearch
+----
+CategoryAntiPattern CategoryDatabase CategoryArchitectureAntiPattern

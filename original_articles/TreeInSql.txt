@@ -1,0 +1,329 @@
+''Also see DocQueryInSql. (If I've written it).''
+''And the final episode will be PushDocQueryInSql. Subtitled 'how I made IBM cry once'. Cheers -- RichardHenderson.''
+
+A Work In Progress:
+
+A high performance mapping of a tree to a relational database (and vice versa).
+
+Illustrates the architectural issues with a relational mapping, particularly performance and storage efficiency.
+
+----
+
+This pattern appears in: Bill Of Materials apps, documents, stemming searches, inference engines etc.
+
+I have used this in a document stemming search system, a Bill of Materials store, and currently I am using it to store large semantic networks.
+
+''I am not convinced that there is such a thing as a "global tree taxonomy". Sometimes, different users or customers may want different views. See LimitsOfHierarchies, EverythingIsRelative.''
+
+----
+
+'''Motivation'''
+
+There are many applications where data is structured as trees. This data needs to be stored in a database. This data needs to be searched efficiently. A join operation (set intersection) needs to be efficient.
+
+'''Forces'''
+
+* Loading an entire tree into memory before searching is not scalable.
+* Relational tables are two dimensional, so trees must be expressed using relational linkage.
+* Fast searching at the database relies on early subsetting against some index.
+
+----
+
+'''Notes'''
+
+* Object stores local/explicit/relational key.
+* Local key stores entire ancestral chain plus "this" identifier.
+* Length of key determines level in tree.
+* References are all from child to parent (relational reference model).
+* Memory local references are created and destroyed on the fly as necessary.
+* Searching algorithm subsets at the database on the relational index.
+----
+
+'''Detail'''
+
+A tree node object is to be stored in a relational database. The first thing to deal with is the change from a locally referenced environment (direct forward memory references) to a relational keyed environment (indirect reverse key references). An in memory tree node usually stores a list of forward pointers to its children. In a relational database we cannot simply associate a variable number of keys with a single tuple. There are workarounds but for the tree case, each child only has one parent, so we can use a single reverse reference that corresponds to a child-parent relationship.
+
+We must still define the behaviour of keys and object references. A simple approach is to store the relational parent key in the tree node. This is maintained in memory but otherwise has no in-memory function. When the node is stored, this key is stored with it, and the list of memory references is discarded. When the node is retrieved, it will automatically gain an identity which can immediately be stored in the linked references. Retrieving trees and subtrees in a known order allows this simple reconstruction.
+
+Where nodes are added in-memory, they must be keyed by inserting the parent string, and adding the local identity. I use a fixed length byte string. Two bytes gives up to 64K keys. This gives 64K top-level objects, and each node with 64K children. Keys may be arbitrarily long, but this may complicate the storage of the keys in the database. Particularly, the parent key is the concatenation of the entire ancestral chain including the local key. In practice this is just:
+
+
+ <child>.<parentkey> = <parent>.<parentkey> + <child>.<localkey> 
+
+ <child> and <parent> are instances of <memorytreenode> 
+
+ <memorytreenode> = <childreferencelist><parentkey><localkey><nodeinformation>
+
+In the database one can store the compound key in the tuple as a variable character string ( e.g. varchar(256)), limiting the values to some readable ascii subset. I simply used digits giving a maximum ordinality of 99. This gave 1000 keys which was easily enough for any application. The tree depth can easily be computed by dividing the length of the parent string by the atomic keylength. I stored this in the relational tuple for width then depth retrieval, but this may be computed on the fly.
+
+So, the relational tuple becomes:
+ <relationaltreenode> = <parentkeylength><parentkey><localkey><nodeinfokey>
+ <nodeinfo> = <nodeinfokey><nodeinfo>
+Note I have split the actual node contents from the keying information. The reasons for this are to do with database query efficiency; I'll get to that later.
+
+Barring SNAFU, this describes the physical structure of the two representations. There are quirks to do with update efficiency, but these structures tend to low volatility after the initial creation, so simple brute-force transactional techniques should do. Modifications to near-root nodes can produce very large updates to the relational keying structure which require attention if the tree is to be changed a lot. This structure is well suited to very large trees querying against large numbers of criteria.
+
+So to the good bit, the queries themselves. What are my typical use cases. Firstly, there is subtree extraction. In a stemming system, keywords may have many related terms. These terms naturally organize as a tree with children acting as more detailed synonyms of keywords. These keywords may themselves be further subdivided. For example, a keyword such as 'Asia' should stem to 'India', 'Pakistan', 'Bangladesh', etc. These may themselves stem to the individual states and so on. We want all of these nodes to supply to a text search system that looks for a list of terms in a document and returns a scored list of documents.
+
+Extracting an inclusive subtree is simple. Given the desired <rootkeyword> the query goes:
+
+ <SQL>
+ <querykey> = 
+ select node.parentkey
+ from node, nodeinfo
+ where nodeinfo.name = <rootkeyword> and
+	nodeinfo.nodeinfokey = node.nodeinfokey
+ </SQL>
+ <SQL>
+ select nodeinfo.name
+ from node, nodeinfo
+ where nodeinfo.nodeinfokey = node.nodeinfokey and
+	node.parentkey like '<querykey>%'
+ </SQL>
+I deliberately split this query into two parts. This is another efficiency issue. It is much easier to tune two separate queries than one big one. It will probably be slightly slower, but clearer. The ''like'' keyword is very fast. 
+
+''!!Note to self: I think these are wrong. -- RIH''
+Indexes should be created on:
+ <nodeinfo>.<nodeinfokey>
+ <node>.<parentkey>+<node>.<nodeinfokey> 
+The latter key includes (covers) the <nodeinfokey> so only the index is needed in the query. This allows a fully in-memory query using most databases' index caching. This is very quick.
+
+When extracting the tree information we may want to determine order. If order by '''<parentkeylength> <parentkey>''' then comes out a level at a time. If order by '''<parentkey>''' only, then will be returned depth first.
+
+A Bill Of Materials system often needs the opposite form of query. Given low-level components, identify top level assemblies that use those components. This requires a temporary table with the list of interesting components. E.g. 'components made by Philips'. [This is a bit Sybase, sorry about that]
+
+So:
+
+ <SQL>
+ /* Get the list of components made by Philips */
+ select node.parentkey
+ into #searchitems
+ from node, nodeinfo
+ where nodeinfo.manufacturer = 'Philips' and
+	nodeinfo.nodeinfokey = node.nodeinfokey
+
+ /* Get the top level assemblies using these components */
+ select unique nodeinfo.name
+ from node, nodeinfo, #searchitems
+ where 
+	nodeinfo.nodeinfokey = node.nodeinfokey and
+	node.parentkey = left(#searchitems.parentkey, <keylength>)
+ </SQL>
+Or as a single query:
+
+ <SQL>
+ select unique info_roots.name
+ from nodeinfo info_leaves, node n_leaves, node n_roots, nodeinfo info_roots 
+ where
+  	info_leaves.manufacturer = 'Philips' and
+  	n_leaves.nodeinfokey = info_leaves.nodeinfokey and
+  	n_roots.parentkey = left(n_leaves.parentkey, <keylength>) and
+	info_roots.nodeinfokey = n_roots.nodeinfokey
+ </SQL>
+The subassembly list can be derived in a further query.
+
+----
+
+''You can store parent information in the individual nodes, so each record has a parent_node_id field or something like that. (And then if it's a binary tree, you can also have a child_direction field.) In Oracle's SQL, the connect clause will help you do searches through a table such as this. I've always found it quite difficult to write good queries using this clause, though. -- FrancisHwang''
+
+I think my id scheme might interest you. I'm not completely familiar with Oracle, but my approach only uses standard SQL techniques. See what you think. Thanks for the feedback. :) -- RH
+
+On our current project we're using this construct. Performance isn't that great, though, so in some often used cases, we've ended up using look-up tables.
+Consider a family tree, stored in a 'person' table. Every person has a name, an ID, a 'motherID' and a 'fatherID' (some parents are unknown).
+   NAME               ID   MOTHERID   FATHERID
+   ---------- ---------- ---------- ----------
+   Bill                1 -          -
+   Faye                2 -          -
+   Joe                 3          2          1
+   Billy               4          2          1
+   Bob                 5          2          1
+   Catherine           6 -          -
+   Calvin              7          6          4
+Now we can find out who Bills descendents are.
+   SELECT p.*, level
+   FROM person p
+   CONNECT BY (PRIOR ID = motherID  OR PRIOR ID = fatherID)
+   START WITH ID = 1
+   /
+This would return something like:
+   NAME               ID   MOTHERID   FATHERID      LEVEL
+   ---------- ---------- ---------- ---------- ----------
+   Bill                1 -          -                   1
+   Joe                 3          2          1          2
+   Billy               4          2          1          2
+   Calvin              7          6          4          3
+   Bob                 5          2          1          2
+Notice that the tree structure is preserved; we see Calvin directly under Billy. Oracle also provides a way to order the results while maintaining structure:
+   SELECT ft.*, level
+   FROM person p
+   CONNECT BY (PRIOR ID = motherID OR PRIOR ID = fatherID)
+   START WITH id = 1
+   ORDER SIBLINGS BY name
+   /
+   
+   NAME               ID   MOTHERID   FATHERID      LEVEL
+   ---------- ---------- ---------- ---------- ----------
+   Bill                1 -          -                   1
+   Billy               4          2          1          2
+   Calvin              7          6          4          3
+   Bob                 5          2          1          2
+   Joe                 3          2          1          2
+The look-up approach we had to use to fix the severe performance problems we had, would've looked like here:
+           ID   CHILDID 
+   ---------- ----------
+            1          3
+            1          4
+            1          5
+            1          7
+            2          3
+            2          4
+            2          5
+            2          7
+            4          7
+            6          7
+-- AalbertTorsius
+
+I'm not sure ''CONNECT BY'' can be considered "standard", at least as far as actual implementations.
+----
+
+Another MicroArchitecture production.
+
+-- RichardHenderson
+
+Richard - This is an excellent solution to the problem of adapting SQL to tree structured data. Thank you.
+
+Where I work another team have been having endless grief (over the last two years) from (mis) managing a tree in SQL. They end up doing multiple and inefficient queries (returning small datasets) to retrieve subtrees on demand. -- JamesCrook 
+
+''You are very welcome, glad to help. Let me know if you need any other details.'' -- RichardHenderson
+
+----
+
+There are at least 2 separate performance problems here:
+	* Server time taken to answer query "find all nodes occurring below node N in the tree (possibly filtered)"
+	* Server time taken to "transplant node X from being a child of node C to a child of node D"
+
+Your solution may solve point 1, but not point 2.
+If you encode any data that depends on the path from the node up to the root of the tree, then moving a node close to the top of a tree will mean updating all of its children. (There is also a space trade-off. As you store nodes deeper down the tree, the path information held in the nodes is growing linearly.)
+
+-- DafyddRees
+
+''Yes that's correct. That is the trade-off. This is a solution to the common difficult case where read query performance is important over very large structured datasets. Architecturally, the solution is very clean for Bill Of Materials applications, and categorized text searching. (I'll fill in some more details above, including possibly the extended set queries that can be done against the structures in specific applications. Possibly on another page as this one is getting too big and needs some instant refactoring :) ). Do you have a specific application in mind that involves the kind of pathological case you mentioned?'' -- RIH
+
+Am I missing something? With Richard's scheme, can't the update be done with one SQL UPDATE (that affects a number of records)? OK so it involves changing a number of tree elements, but that seems reasonable as they are all 'moving' - they are the subtree that is being moved. -- JamesCrook
+
+''I think, playing devil's advocate, that Dafydd is comparing efficiency with a pure pointer object-database style solution. This would involve a single tuple update and all subsequent navigations would work. Unfortunately, this is no good in a relational database. The logical and physical architectures are just too different, making read query efficiency horrible. A DatabaseImpedanceMismatch.'' -- RichardHenderson
+
+Untrue. The worst case is similar to a query that traverses the world, and in both cases, you do it only if you really need to do it, and in both cases, the internal implementation can do a lot to optimize things behind the scenes. In particular, serious implementations will attempt to optimize locality during extended traversals, will keep an in-memory cache of rows whose physical location must change and therefore will shortly have a changed internal row ID (sometimes using a 2 or multi-generational scheme). These existing implementations are extremely similar to what would be needed to directly support a tree structure in an RDBMS.
+
+Given the use of such optimizations, I don't see any reason why such an enhanced RDBMS would have to be any slower than an OODB with direct "pointer" references, which after all are the essentially the same thing as the internal row IDs used in RDBMSs.
+
+It is no doubt true that tree operations in '''either''' an OODB or an RDBMS with tree support will be slower than similar operations optimized to avoid tree-like access/insert patterns in an RDBMS (or in an OODB), when it's possible to avoid them, but that is not the issue at hand. -- DougMerritt
+
+''An enhanced RDBMS? I think you are moving goalposts Doug. Even with optimisations in place, a single parent update can always be made more efficient than an entire subtree update. Nevertheless, as you note, that pain can be spread out with a write-cache, at risk of ACID breakage. For my problem I just had vanilla Sybase. -- RIH''
+
+----
+
+Looks like a good pattern for truly tree structured data.
+
+''Though things get complex again if low-level parts (like screws) are reused across assemblies. If the parent-to-child relationship is many-to-many, then each child would have a one-to-many relationship to all possible interpretations of its tree key.''
+I'm not sure what you mean here. Do you mean assemblies overlapping so that a single physical screw belongs in two assemblies? That sounds like a graph, not a tree. Graphs require relation tables, extended integrity checks and postprocessing to remove duplicates from queries (I do this in DocQueryInSql). -- RIH
+
+''I wouldn't be too concerned about the "inefficiency" of moving sub trees around in the hierarchy, as it wouldn't happen very often in most application, and this pattern trades off time and space efficiency of setup to get runtime searching efficiency.''
+Indeed. Read exceeds write by a large factor for most applications. And disk is cheap. -- RIH
+
+----
+What about storing the tree in pages? Each node would belong to a page, their subnodes would either to the same page, or to a subpage of the parent's page. This would enable the client to retrieve one whole page containing a part of the tree with a single query.
+
+The table could look like this:
+
+ table tree 
+ ( node_id integer primary key
+ , parent_id integer foreign key references tree.node_id
+ , page_id integer
+ , ...
+ )
+
+ index on node_id; 
+ index on parent_id;
+ index on page_id;
+Now, when I want to retrieve a part of the tree below some top level node NODE1 I can do it like this:
+
+  select * from tree
+  where page_id = (select page_id from tree where node_id = NODE1)
+this gives me the whole page to which the node belongs. Now when I explore the node, I will reach a node NODE2 with children in other pages. I can retrieve the missing pages by:
+
+  select * from tree
+  where page_id in (select page_id from tree where parent_node_id = NODE2)
+Certainly, with this approach I cannot retrieve the whole subtree of one node at once, and I have to maintain the pages, but I don't have to have those large keys. -- GregorRayman
+
+----
+
+I would suggest an alternate solution. I would have an entity ITEM. A BILL OF MATERIAL is a sub-type of ITEM. A BILL OF MATERIAL COMPOSITION is the set of ITEMs of which the BILL OF MATERIAL is composed (first level only).
+
+I would need checks and constraints to ensure that there are no cycles.
+
+To simplify queries, I would build a transitive closure BILL OF MATERIAL HIERARCHY which maps the parent ITEM, the child ITEM and the depth of the relationship.
+
+Once I have the hierarchy table in place, most of the queries ought to be a piece of cake.
+
+----
+
+I think Richard Henderson's approach here, remembering the path to the node in the node itself, is a good idea - and I think I have seen something similar to it in a different computer-science field, namely equational term-rewriting. Equational matching and term rewriting are implementation techniques for certain executable specification languages such as Maude and ELAN. It is important to find efficient algorithms for matching the left-hand side of rewrite rules (equations) to subterms within a "subject" term being reduced, and some of the best techniques being employed now use the same "hack" as Richard Henderson: they encode the path to a node at the node itself.
+
+For example, see:
+William McCune. Experiments with discrimination tree indexing and path indexing for term retrieval. Journal of Automated Reasoning, 9(2):147-167, October 1992.
+http://citeseer.nj.nec.com/context/196379/377693
+"terms are viewed as strings and where common prefixes are shared"
+
+A Compiler for Rewrite Programs in Associative-Commutative Theories (1998)
+Pierre-Etienne Moreau, Hélène Kirchner
+Lecture Notes in Computer Science
+http://citeseer.nj.nec.com/moreau98compiler.html
+
+-- Scott Alexander scottxyz@usaNOSPAM.com
+
+----
+I have a couple of reservations about storing the full path to a node along with the node. 
+
+Firstly, this limits the depth of the tree by the width of the column used to store this information.
+
+Secondly, it limits the nodes to participate in a single tree. 
+
+-- HemantSahgal hsahgal@rediffmail.com
+
+----
+
+If nodes participate in more than one tree, its called a graph.... Which introduces the need for a second table node_x_node to create the relation over N x N, N being the set of nodes.
+
+----
+There are several approaches to storing (or rather: encoding) hierarchical information in RDBMSes. The beginning of the page seems to describe the "Materialized Path" approach. And the "Adjacency List" model (where each tuple stores a node ID and a parent node ID) is hinted in other parts of the page. JoeCelko has introduced the "Nested Set" model, and Vadim Tropashko has described the "Nested Intervals" model. The different encoding schemes are interesting to read about, but I can't help thinking that such explicit ''navigational'' information is somehow a sign of lack of DBMS features.
+
+I find it strange that so little literature on the subject exists. Fortunately, JoeCelko has recently published a book dedicated it: ''Trees in SQL'' (ISBN 1-55860-920-2).
+* He previously addressed the topic in columns and in SqlForSmarties (to a lesser extent, obviously)
+
+At http://troels.arvin.dk/db/rdbms/links/#hierarchical I've tried to gather links to books and original+review articles about the subject.
+
+In the theoretical World, many articles have been published about the difficulties related to recursion (including the need for ''stratified queries'' to guard against never-ending queries).
+
+RDBMS support for recursive queries is increasing. Oracle has offered their proprietary ''CONNECT BY'' construct for some time. DB2 has a more general solution in line with SQL:1999's ''WITH RECURSIVE'' construct. SQL Server 2005 will - as far as I know - also add support for recursion. - And for PostgreSQL, a patch exists which adds Oracle-style recursive query capabilities. I'm not sure if the RDBMSes have support for relevant index structures to support recursion, though, so the above mentioned encoding schemes will probably have to live on.
+
+-- TroelsArvin
+
+----
+What we do is very simple and efficient for reads and requires regenerating a paths table for deletes. We basically have two tables:
+
+ Paths
+    ID ancestor
+    ID descendant
+    NUMBER depth (i.e. height)
+
+ Links
+    ID parent
+    ID child
+The Links table just has parent child relationships, where the paths table has a path for all descendants of a given group node. This also supports our requirement of having nodes (groups or leaves) be able to be linked to by any other group. So, IOW, the leaf foo can be a child of group bar1 or group bar2. Bar2 itself can also be a child of more than one group. Anyway, this structure makes for superfast queries but slower inserts or deletes.
+----
+
+See also: LimitsOfHierarchies, RelationalAndTrees, BanyanTree
+
+----
+CategoryCodingIssues CategorySqlProgramming

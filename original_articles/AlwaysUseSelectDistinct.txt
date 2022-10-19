@@ -1,0 +1,117 @@
+This page appears to be attempting to sum up SelectDistinctIsaCodeSmell (which is too long for a casual read), but it's not a complete summary. Let's try to make a complete but ultra-terse list; correct me if I'm wrong:
+
+* DuplicatesAreBad; exceptions to this are either zero or vanishingly small.
+* Aggregation operators and GROUP BY are both okey-dokey; no duplicates result.
+* Primary keys must be distinct (otherwise you've got even bigger troubles); but projection and potentially even careful joins on non-normalized databases can still create duplicate results. [This is redundant; keys are ''by definition'' distinct.]
+* ThirdNormalForm is a GoodThing, but projection with an improper join can still produce duplicates. Annoyingly, projection in SQL can produce duplicates, even from a beautifully normalized base schema. Hence the need for the DISTINCT qualifier.
+* Distinct primary keys, ThirdNormalForm, proper joins, and careful projection will avoid duplicates, '''but''' the potential for error is undeniable, therefore use SELECT DISTINCT anyway
+* '''Complaint''': but that may introduce unnecessary overhead - maybe a huge one for some queries on some tables, which is avoidable since I'm sure I did my joins properly. '''Answer''': that's still better than taking the chance on having an undetected error in the wild due to unexpected, possibly rare, duplicates.
+* Most of the SELECT DISTINCT queries will perform exactly as fast as their simple SELECT counterparts, because the optimizer will do away with the step necessary for eliminating duplicates. Very few queries may perform faster in SELECT DISTINCT mode, and very few will perform slower (but not significantly slower) in SELECT DISTINCT mode but for the later case it is likely that the application may need to examine the duplicate cases, which shifts the performance and complexity burden to the application.
+** That's an impossibly exaggerated claim. Eliminating duplicates requires tracking them, either by having an existing index (which won't always exist), or by building an on the fly index or hash or something. Building such a thing will necessarily incur overhead compared with not needing to build it. Clearly there are many kinds of queries that, without DISTINCT, can be satisfied e.g. by a simple traversal of all rows, without bothering to track things with an index/hash.
+** ''Well, let's consider it for a brief moment. 100% of the tables '''should''' have primary keys, as well as other secondary keys. Great chances are that the query will include material from those. Voila, a great deal of queries will have duplicates eliminated without anybody doing a bit of effort. A great deal of other queries semantically require duplicates elimination. Yet there's another category whereas eliminating duplicate can improve performance by reducing the volume of data to be marshalled in a client/server call. The major case in which SELECT DISTINCT is a serious performance penalty is when the volume of data to be sorted is exceedingly large (for example TEMP disk storage area may be used). But a quasi majority of queries in an OLTP environment will retrieve small amounts of data. Users are not particularly interested, nor should they be subjected to, reading huge tables massaging 1000s of rows result sets - making it worse, some of which may be duplicates and unsorted (if you present them sorted SELECT DISTINCT is no performance at all). Well, at least if you don't use some particularly nasty components (datgrid, etc.) that retrieve huge amount of data on auto-pilot. A more careful analysis may come up with some exceptions, but I do not see at all from my experience and myu knowledge of both database internals and application development, a prima facie case that using SELECT DISTINCT is gonna have a significant performance penalty.''
+** Ok - but it seems to me that you're agreeing that it's possible for it to have a penalty, it's just that, in your experience, those cases are not typically in the majority, right? I have no problem with that. But one must watch out for those exceptions. If some query has to examine every row of a huge DB, it'll be relatively slow to start with, and those slowest of queries are the ones where it might be most important not to burden with extra overhead for DISTINCT if it doesn't happen to be necessary. Sometimes. Other times playing it safe might be more important. I just feel uncomfortable with an absolute statement on this.
+** ''It is possible, and it is in the same time extremely unlikely. I have yet to see a convincing example where an application needs a SELECT ALL in order to process rows with duplicates at the application level. Unless the application is calculating some aggregate on resulting data, the application is likely to have the problem of detecting duplicates on its own - therefore the whole system is likely to perform worse. Major DBMSes have by now quite a handful of aggregate functions already in place, plus the multi-dimensional operators ready to slice and dice data analysis, plus the ability for the programmer to extend the DBMS engine with additional aggregates. Of course, there might be exceptions, but AlwaysUseSelectDistinct is from this perspective as good as any other piece of programming advice (like always avoid using goto, structure your programs properly), there are exceptions that to most of the rules, but they are good rules regardless.''
+
+AnswerMe please: Does that cover 100% of the pragmatic points made on these pages?
+
+Almost: it could be valid for a projection to return duplicates (in that it can be seen as part of the process of projection), the problem is that there is no further distinction that can be made between the duplicates. Select Distinct is the sensible thing to do in this case. If there still is some distinction to be made, than they aren't 'duplicates' as they will vary in some way. 
+
+''Well, of course the last part of that is just a tautology. But doesn't the first part of that contradict Costin's point about ThirdNormalForm?''
+
+Not really... I read it as "Do not duplicate data elements which represents the same data"... i.e., I shouldn't store the age of a person in an employee table ''and'' a vital stats table. There's nothing sensible you can do with duplicates; hence the constraint of relational theory that we don't show them. Put another way, if we change the result of a projection containing duplicate elements such that the changes write through to the original table, each one of those duplicate elements must be changed in the same way (assuming that non-deterministic behaviour isn't acceptable). Select Distinct guarantees this.
+
+-- cwillu
+
+see RelationsHaveNormalForms
+
+----
+
+If you want to work with Bags Of Tuples, then realize that you no longer have guaranteed unique primary keys. You can't, by definition: bags allow duplicates. Once you have to allow duplicates, then you have to allow duplicates in your joins. You're stuck with inventing your own theory.
+
+Now, in this new theory, Select Distinct will indeed hide errors, because some duplicates are duplicates caused by projection (which can be safely dropped), and some are simply identical-but-not-duplicate entries (which are valid entries, and so shouldn't be removed). You have to be extremely careful to get the joins right, including doing the work that Select Distinct was intended to do, '''because Select Distinct no longer as any way of distinguishing these two cases!''' Select All will show still signs of these errors (typically through returning too many results). This is why you want object identity (thanks Costin), to allow yourself to make that distinction. These errors can only occur because of the initial decision to use bags instead of sets.
+
+[bad hint of faintest idea removed]
+
+-- WilliamUnderwood
+
+P.S., please cut me to shreds... I need the rigor to get the important bits right.
+
+''I'd shred you to pieces, William, if I had the faintest idea what you were trying to say here :) Maybe you try to restate it? -- Costin''
+
+:p I had actually considered removing this block when I last edited the page (now done)... suffice to say, this is what happens when one has two different subjects one wishes to talk about, and subconsciously switches from one to the other mid-paragraph.
+
+The first bit stands as stated, that one ''might'' be able to scrap by if you have all the necessary equals (et al) methods defined, but it simply won't be clean or elegant.
+
+The other (unrelated) half of the paragraph is in reference to a pet project of mine, which is discussed somewhat in TupleOrientedProgramming (although much of the information on that page is out of date), and which is also not really ready for any public display yet, let alone prime time.
+
+In any case, my understanding of the subject as stated is what I'm really interested in having shredded, as anything I create has that understanding as its sole foundation.
+
+-- cwillu
+
+----
+SQL has made a very nasty habit of choosing the bad defaults. Although SQL databases can support (more or less adequately) the relational model, the mission for the application developer is tougher because all the defaults in SQL go against the relational model.
+
+One of these defaults is that SQL operates on "bags of tuples" instead of "set of tuples" as the relational model is required. By default a table doesn't need to have a primary key declared , but nowadays all database designers do declare a primary key on every table, but the more subtle issue is that SELECT does select duplicate rows.
+
+In case you have doubts why duplicates are bad, both in the base tables and in query result, let's discuss it in DuplicatesAreBad.
+
+Therefore always use SELECT DISTINCT.
+
+Select can operate in two modes (SELECT ALL/ SELECT DISTINCT (UNIQUE))
+Select distinct will eliminate duplicates and allow you to operate in a proper relational model.
+
+-- CostinCozianu
+
+----
+
+''I don't do this because it hides errors.''
+
+This point has been made in SelectDistinctIsaCodeSmell. What errors does SELECT DISTINCT hide from you?
+
+''Okay. Consider an account which holds transactions. We wish to return the accountid, the date of the transaction and the line item value. There may be some duplicate rows. If the DISTINCT keyword is applied then the results will be unpredictable since it will aggregate by coincidence very occasionally. Say I buy two identical items, only one line item will appear. This occurs as a consequence of the source set being unique, but the view of that information is not. Application of DISTINCT is wrong here. Even when applied correctly, if someone changes the particular view of the result set, say by removing a line_item_id, then behaviour can change unpredictably and rarely. The worst combination. -- RichardHenderson.''
+
+Ok, this really belongs to DuplicatesAreBad, because what you're doing is bad. You generate duplicates, only that you present them to the end-user, instead of storing duplicates in the database. You can get away with a misdemeanor for not storing duplicates in the database but it still not the greatest thing you can do to your end users. 
+
+''See "Employee to Department" example on SelectDistinctIsaCodeSmell page. It shows how "DISTINCT" hides the error (most of the time) in a badly-formed query.''
+
+As you wish Costin, though you are missing my point. Duplicates are bad, probably an error. Hiding errors is unsafe. SELECT DISTINCT hides these common errors. So SELECT DISTINCT is unsafe.
+
+''I'm puzzled, I have just shown an example there how SELECT DISTINCT doesn't hide errors in formulating the query, (the bad JOIN criteria). See SelectDistinctIsaCodeSmell. It would be pretty ironic if it turns out that the way to eliminate the errors exposed by SELECT ALL would be to use SELECT DISTINCT. -- CostinCozianu''
+---- 
+
+It's my impression that the SQL defaults were chosen for efficiency of processing on the server. SELECT DISTINCT is slower because you have to search for duplicates before adding an entry to the recordset. Not that this is of course important to 99% of people, but such is SQL. -- AnonymousDonor
+
+Well, as a matter of fact you are absolutely right. SQL defaults were chosen for efficiency of processing, but the work on the first SQL standard has begun in the late 80's, while the first standard (not fully implemented yet) appeared in 92.
+
+The problem is that things have drastically changed since those times, but the standard has not. And it's not only the hardware speed. but also the query engines and optimization techniques. In those days SELECT DISTINCT usually meant getting the results, doing a sort and eliminating duplicates, which was terribly inefficient, but nowadays in most cases the query engine will be able to skip the last phase by using primary keys and unique indices.
+
+Now of course there are situations when the query engine will just have to sort the rows and eliminate duplicates. For example when doing a projection on few columns who don't include the primary key or an unique index. But if you don't choose to do just that (SELECT DISTINCT) then I contend it is a bad choice. -- CostinCozianu
+
+''This is a lot of information. In my experience, it is rare, although not impossible to want duplicates in an answer set. I would only recommend that for a guru who really knew what they were doing. I've been working with relational databases since 1985 (about a year after they came out) and I have probably needed the duplicates two or three times. In one of those cases, the confusion for the customer was eventually deemed too much and we found another way. In logical modeling, we spend a lot of time with complex models trying to make sure that we won't have duplicates in complex joins once they become physical. As far as performance, I just spent a month and a half tuning a large batch application. A pattern that kept coming up was that the programmer had used either an EXISTS subquery or an IN subquery to keep duplicates from occurring. They chose this instead of a join with a DISTINCT because they thought it would perform better. This made some of the tuning easy. I could always go through and convert the subqueries (which weren't performing so well) into joins with a DISTINCT. A good example is a DATA table with a DATA_ERRORS table where there could be multiple errors in the DATA_ERRORS table per row in the DATA table. The intent was to bring back a single record from DATA in the case that at least one error occurred in the DATA_ERRORS table. The tables involved included a 7-million row table, a 2-million row table, several tables in the hundred-thousand row range and some small codes tables. Since the joins were knocking the answer set down to 10's of thousands of rows before the sort was applied for the DISTINCT, the sort added very little to the time. It was very common to tune batch processes that ran in 20-35 minutes down to around 5 minutes with this technique. -- MikeCorum''
+----
+
+Costin: thanks. And what about just below that? See "But doesn't the first part of that contradict Costin's point about ThirdNormalForm? "
+
+''First of all that part of the text seems unintelligible to me. Somebody commented "it is valid for projection to return duplicates". Well, maybe for "projection" as SQL, although SQL never speaks of projection, SQL combines three operators into one syntactic clause: SELECT. No relational operator whatsoever produces duplicates, by definition.''
+
+''So the key to understanding this approach is by discussing the broader pattern, which I planned to do for some time: ProgramIntoaLanguage.''
+
+Ok, I'm sure that'll be interesting. For now I'll assume that you don't find the summary I attempted at the top of the page to be badly done, at least.
+
+	 :	The comment about duplicates in projection was explaining some rationale behind why projection (and relational in general) doesn't have duplicates: if it did, the only sensible thing to do with them would be to only perform actions on all duplicates or none of them. Which is equivalent to folding them down to one tuple.
+
+	 :	This is of course beside the point that a projection returns a set of tuples like every other relational operator (?), and thus by definition (as you said) can no produce a duplicate.
+
+	 :	I guess my intent was to provide an example of why sets are used rather than bags: they cause unspecified behaviour where completely specified behaviour is perfectly feasible. That had been the subject of some 'debate', and so in the interest of avoiding that false start, I felt it should be included in the summary.
+
+	 :	-- WilliamUnderwood
+
+----
+I think this is an example where ivory tower theory is smashed by reality. Try performing a SELECT DISTINCT in Oracle where you have a BLOB in the result set. It doesn't work. There are times where you need to use SELECT DISTINCT but these kinds of JOINS are almost always better written as sub-queries that remove the need for SELECT DISTINCT. --BlackHat
+
+What is ''the actual'' performance hit for SELECT DISTINCT over BLOBs in Oracle? Even for large BLOBs the DISTINCT test is usually quite cheap (compare internal pointers, compare checksums, and compare sizes prior to comparing contents). I don't know what Oracle does, but I regularly '''intern''' BLOBs for mostly static data (i.e. excepting audio and video streams) and have never suffered poor performance for doing so. Further, if you  can 'remove the need for SELECT DISTINCT' with sub-queries, are you not already using some sort of uniqueness constraint on the tables? I smell PrematureOptimization here.
+ 
+
+
+----
+CategorySqlProgramming

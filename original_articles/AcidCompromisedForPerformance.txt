@@ -1,0 +1,103 @@
+Ways in which AtomicConsistentIsolatedDurable may be violated for performance gains.
+
+----
+
+(Moved from ParallelNeedScenario)
+
+Let's look at an extreme scenario for illustration. Take the fact of the quantity of X at store Y. If 100 CPU's wish to change this quantity at the same time, there is generally going to be a bottleneck at the point in RAM (disk cache) where this one value is stored. Updating this value is generally going to be a sequential process regardless of the number of CPU's involved. They have to "wait in line". This is because we want OnceAndOnlyOnce for the "official" value. (We can cache writes to multiple caches, but that involves many of the same problems described below.)
+
+Now lets look at reading this inventory quantity. If 100 CPU's all want to read this one spot at the same time, they still must wait in line in the basic case. However, it may be possible to cache a copy of this value such that each CPU can have a copy. 
+
+Some kind of mechanism needs to be in place to make sure any updates to the original are propagated to the cached copies. Such a mechanism itself costs processing power and other resources, and thus adds overhead. The further and deeper the copies, the further the update tracking and propagation mechanism needs to be.
+
+Further, each copy takes up space. Generally chunks of RAM are cached, not just individual values (in the hopes that related info is more likely to be close to each other). On a larger scale, this requires more total RAM than if fewer CPU's are used. If there is not enough RAM to go around for such caching, then it will become the bottleneck long before lack of CPU chomping power is.
+
+There are work-arounds to this, but they involve trade-offs. In the database world, there is something called a "'''dirty read'''", which means you read from whatever cache is immediately available, knowing that it may not be the latest. (There's probably a more formal name for it.) Ideally, one wants an upper limit on the age of the data. For example, you'd like to specify that a dirty-read is fine as long as the data (cache) is no older than N seconds. This can improve performance by sacrificing some amount of timeliness. It is useful in say an e-commerce web system with lots of readers and writers. (If traffic is light, hopefully it will not bother to use dirty-read algorithms, and just wait for any pending transactions to finish.)
+
+High-end database vendors have spent a lot of time thinking about these issues. They probably have a lot of good lessons and scenarios for those working on app-language-centric solutions. Or, just use a RDBMS instead of reinvent the wheel.
+
+--top
+
+"''In the database world, there is something called a "'''dirty read'''", which means you read from whatever cache is immediately available, knowing that it may not be the latest.''"
+
+''Actually, a "dirty read" is where one transaction can select uncommitted updates from another transaction still in progress.  In an ideal world, all transactions would be completely isolated (this isolation level is termed "SERIALIZABLE"), which means each transaction perceives the world as if all transactions occur serially rather than concurrently.  Unfortunately, achieving this is relatively expensive -- mostly due to the use of locks upon which other transactions must wait, but also because fully-isolated transactions may be forced to abort in order to avoid deadlock.  To achieve acceptable performance, the transaction isolation level may be reduced, but this introduces the possibility of encountering anomalies such as dirty reads.  In many real-world applications (e.g., those where it can be guaranteed that no transactions will be rolled back, hence uncommitted data is valid), this is deemed acceptable.  The transaction isolation level that permits dirty reads is termed "READ UNCOMMITTED".''
+
+Thanks for the clarification. I'm curious why using an uncommitted value would be more efficient than using the "official" data (as it is before commit's). Perhaps this should be moved to it's own topic.
+* [READ COMMITTED is another isolation level, above READ UNCOMMITTED and well below SERIALIZABLE (actually below REPEATABLE READ as well). Using READ COMMITTED you'll only read "official" data. It's still not isolated in that, if you read the same data twice, you might end up reading two different values (because a transaction commits between your first and second reads). In general, implementing and using READ COMMITTED isn't more expensive than READ UNCOMMITTED, but there are cases when you write memory then read it again where this generalization is broken... still, there are implementation techniques that keep it clean.]
+
+''Under the typical circumstance that transaction B starts after transaction A, it is more likely to be erroneous if transaction B reads a value from prior to the start of transaction A than if B reads data updated by A prior to A being committed.  B reading uncommitted updates by A is only erroneous if A fails to commit, which is (hopefully) rare and unlikely.  B reading data prior to the start of A is consistently erroneous '''unless''' A fails to commit.''
+
+I'm not sure I'd consider "out of date" to be "erroneous". It is highly dependent an the domain environment. But anyhow it seems the ideal system would offer a choice of either kinds of "dirty reads".
+
+''It's not merely "out of date", it is erroneous.  Imagine that A adds 1000 to your current account balance, and B concurrently adds 500 to your account balance.  Under READ UNCOMMITTED, the result is consistently correct if A commits.  If B takes the initial account balance from before the transaction starts, the result is consistently incorrect.'' 
+
+In that scenario, yes. But envision a product catalog. If "A" is merely a read but "B" has an error and is aborted, then using the pre-B state is less of a "sin" than using the bad B state. Plus potentially slower.
+
+''As noted above, the presumption of normal transactional processing is that failure to commit (i.e., "is aborted") is considered rare and unlikely.''
+
+It's a business decision. Can you say that any of these 3 options are always the best or always the worse?:
+
+* 1. List (read) catalog item as it is in the cache copy that was made before change B appeared or is applied (if cache exists).
+** Pro: Potentially faster than 2 and 3. User will never see info that fails DB integrity (at least of the kind that #2 might see).
+** Con: May reflect slightly outdated info.
+
+* 2. List catalog item as if change B happened.
+** Pro: We will see updated item as long as B is accepted. Read is faster than 3.
+** Con: We will see potentially bad item info if B was rejected. For example, "Title" may be required, but was missing from transaction B.
+
+* 3. Wait for change transaction B to finish, and then query catalog item.
+** Pro: Results are as accurate as possible.
+** Con: A has to wait for B to finish.
+
+[Read-only transactions are generally pretty trivial. One of the problems with them is that they can 'serialize' at any arbitrary version of the database, including old caches, excepting that they ''might'' turn into read-write transactions. This makes focusing on read-only transactions a bit difficult in terms of performance, since reading from any old cache of committed data is good enough to be 'serializable'. Another problem with read-only transactions is that there doesn't appear to be any difference between committing and aborting the transaction, though a failed commit might be meaningful to the client ''if'' the client's state is updated by the transaction.]
+
+[Your example problem is too weak to illustrate the differences between isolation levels, and certainly too weak to imply performance differences (AcidCompromisedForPerformance) in a read-only transaction. Complicate it up a bit...]
+
+* Note that I did ''not'' suggest that ''all'' reads and all transactions be treated the same. Each query activity may benefit from different settings.
+* [I assume only that the programmer must make a choice at the beginning of transaction "A" without knowing in advance about concurrent transactions, such as writer transaction "B". Given this assumption, you must still complicate the example up a bit to really understand the various cases for how readers might be affected by writers. As far as 'each query may benefit from different [isolation level] settings', I have stated technical objections to such choice, below.] 
+
+[Assume you are reader R, and there are writers W1, W2:] 
+* W1 commits while you're in the middle of your read: problem is, W1 commits half his updates to stuff your queries just finished reading, and half his updates to stuff you're about to read.
+* W2 updates something you're about to read, then goes back and updates something you already read, but doesn't commit (at least not yet) and might abort.
+* R does more than one query, and perhaps does a few joins, and may end up reading some tuples twice in the different queries.
+* R ''might'' become a writer at any point during the transaction (i.e. the transaction system isn't given advance awareness of R's intentions).
+
+[Options for R include READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE.]
+* 1. READ UNCOMMITTED would let you read W2's stuff and W1's stuff before they commit. Data may be 'bad' ''whether or not'' they are rejected. For example, "Title" may be required, but simply not have been added yet by the transaction. Performance is also bad, since you can't read a local cache if you're going to be up-to-date on the most recent partial update.
+* 2. READ COMMITTED would let you read W1's commits after W1 commits. Of course, W1 commits half-way through your reads, so you only read ''half'' of what W1 committed, and perhaps perform joins on that half with data you read earlier. Thus, your read is not isolated. When you go back and read some of what you read earlier, the data might be different.
+* 3. REPEATABLE READ is as per (2) except that when you read what you read earlier, you read the same thing you read earlier. You are still not isolated. Performance is worse than (2) since now you need to keep track of what you read earlier.
+* 4. SERIALIZABLE has several sub-options, most likely selected heuristically or based on anticipated property profiles for your transaction (e.g. you suggest it is likely to be read-only, or indicate that aborting isn't a big deal.) 
+** You read strictly from before W1's commit, even from earlier cached data. This could be very fast, or slow, depending on whether you have versioning or access to earlier versions of the data. If R becomes a writer, ''then'' the transaction will fail because you won't be writing based on most recent data.
+** You assume W1 will commit, and read what it has written. This can also give you very good performance, especially since W1 doesn't write over stuff you already read and actually does commit. This is an 'optimistic' transaction.
+** You assume W2 will commit, and read what it has written. This fails: since W2 goes back and updates stuff you read, you'll need to roll back either to the point you 'read' W2 (so you can continue as though W2 isn't around), or you can roll back even further to the reads that W2 wrote (so you can continue working as though W2 commits). In general, no matter which choice you make can involve redoing the entire transaction, which may be very bad performance. If you commit your transaction, you will wait until W2 completes or aborts its own, and you might need to start over once again if W2 aborts and you expected it to commit..
+
+[For read-only transactions, the highest isolation level doesn't require sacrificing performance, especially if not optimistic or using caches. It's when you start throwing updates (or even ''potential'' updates) into the mix that isolation becomes complicated.]
+
+-----
+
+[To be fair, you should say that with all non-isolated levels (all levels lower than SERIALIZABLE) you get RaceCondition''''''s. READ COMMITTED and REPEATABLE READ offer progressively better reasoning about what sort of race conditions might occur, but don't prevent them. Not all race conditions are malign (resulting in error), but most of those dealing with updating shared state ''are'' malign. READ UNCOMMITTED is about at a level where you don't have any synchronization at all.]
+
+[But top is saying that "an ideal system would offer a choice". I don't believe this to be the case. When attempting to achieve some fraction of AtomicConsistentIsolatedDurable, it is useful to note how these properties '''feed back''' into one another. In particular, sacrificing isolation makes consistency far more difficult to achieve, forcing programmers to achieve consistency at '''individual steps''' rather than for the transaction as a whole (which is far more expensive in algorithmic costs and constrains programmers in ways that I expect hurt productivity). Sacrificing isolation to the point of READ UNCOMMITTED pretty much kicks 'Atomic' in its rockers (since a transaction that commits can commit data that would otherwise have been uncommitted). While some ability to 'escape' transactions is valuable (e.g. to provide a progress bar or transaction debugger), reducing isolation levels should probably be heavily limited in scope... e.g. to 'read only' transactions. But, and here's the kicker: read-only transactions are relatively cheap to perform in a fully isolated manner, even with optimistic transactions (no locks), so '''most''' arguments in favor of escaping isolation tend to evaporate if the scope is limited to 'read only' transactions.]
+
+''True, and well-put.  I was becoming increasingly terse (to the point of incompleteness) out of frustration.  The behaviour of transactions under various isolation levels can be found in any sound reference on DBMSes, and should be well-known by anyone who professes to be a database expert.''
+
+[Heh, yeah, you'd expect someone whose name is derived from 'TableOrientedProgramming' to know these things.]
+
+Explains why you have NO handle. Anyhow, the jury is still out.
+
+''No, it isn't.  Someone has taken the time to explain, in their own words, material that can be found in any popular comprehensive text on databases.  You should be appreciative of the effort rather than arrogant and dismissive.  Asking you to make a BookStop was never more appropriate than on this page.''
+
+[Well, the jury has adjourned and gone home long ago enough for several members to die of old age on the terminology and the behavior of transactions under various isolation levels. But if Top was talking about the value of "choice", then he's right that there is no broad consensus. I thought the same thing on first reading: his statement was exceedingly ambiguous in its intended application.]
+
+-------
+
+How about a common scenario where the "old cache" approach would be less efficient or riskier. Remember that the original motivation for the above discussion was scaling to multiple CPU's. The idea is that each CPU may have copies (cache) of some or all of the data. Rather than keep requesting a central copy, they could use their OWN cache as long as it's not older than a given span of time. I envision a kind of repeating "pulsed update" where queued catalog updates (catalog scenario above) are performed against the single master data set while the multi CPU's are using their cache. Thus, when the second "copy pulse" time comes, most or all the updates are already applied. This avoids the bottleneck of all processors trying to access a single copy of the pending updates and/or the single "official" copy of the data. --top
+
+If you aren't planning to validate the data, and simply use cached data as though it were official (so long as it is no more than N seconds old), then you'll have RaceCondition''''''s galore. Whether these are malign race conditions depends on the domain. In your particular example, if you used cached data, you could end up with someone buying a product when you're sold out. In airlines, you might end up with two people booking the last seat on the same flight then having to shift one of them to a different plane. Whether these are costly things to you depends on the business.
+
+But caches are not 'anti-ACID' or anything like that. One can easily achieve ACID transactions using old caches; for read-write transactions, one must verify (loosely) that either the data you read was up-to-date or the data you're writing hasn't been read in a read-write transaction.  A lower cache update frequency would somewhat increase the risk that a read-write transaction based on reading data from the cache would fail. The update frequency would be tunable to achieve different performance and cost characteristics (bandwidth vs. probability of failed read-write transaction vs. non-ACID devaluation of aged data, etc.).
+
+Also, note that ''read-only'' transactions, such as your catalog example, don't have ACID-related costs for being out-of-date if you already have caches of data for other reasons. It is trivial to serialize read-only transactions that read aged data only - you simply serialize them as having happened after the last update to that old data. Instead of ACID, you need to assign some sort of cost/value function that describes how aged data reduces in value for decision making and other purposes. For a product catalog for most businesses, you probably could get away with it being out-of-date a full month without difficulty. Altitude on an aircraft would be a bit more critical to keep up-to-date, ideally at least 10 Hz (sub-second out-of-date) according to the domain experts I've worked with.
+
+----
+JanuaryZeroNine

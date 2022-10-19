@@ -1,0 +1,88 @@
+Today I was thinking about the way I build UIs (List then Edit) and the way most people I know build UIs (Edit then List) and the relation that the way you build you UI has with the way you store the data you manipulate in you UI.
+
+'''List then Edit'''
+
+In this "pattern" for UI structure, after the user selects an option in the menu he sees a window that allows searching with some controls (generally in the top of the window),and with some control in the bottom that represents the search results, then the user selects one of the search results (an object, or row if you prefer) and he proceeds to work (edit, modify) it, for that he opens a new window "the editor" (perhaps by double clicking the selected object, perhaps by clicking an "edit" button in the list window) in the editor he may modify the object being edited as much as he likes, and then click "save" if he wants to commit his changes or "cancel" if he wants to rollback them.
+
+If the user wants to create a new object, the list has a "new" button that also calls the "editor" so that the user can set the initial values for the fields before the object is committed to the database for the first time
+
+* ''In my experience, List then Edit is the most prevalent and friendly UI arrangement. --IanOsgood''
+
+'''Edit then List'''
+
+In this other "pattern" for UI structure, after we select an option in the menu we are right there in the editor, but all the controls that could allow us to modify the current object (or row) are disabled, because we haven't searched for any (or created a new one) from here the user can choose to create a new object that action has the effect of enabling all the control in the editor, or search for an already persisted object (or row) by clicking the "search button", that shows the search "list" window, in the top of that window there are controls to configure the search criteria, and in the top a control to represent the search results, from here the user can choose one of the search results (an object or row), and click on the "accept" button, which takes him back to the editor that now is displaying the previously selected object, here the use may choose to make some changes and click "save", or just cancel click "cancel" but actions have the effect of disabling the controls in the editor UI until the buttons "search" or "new" are used again.
+
+'''Edit in List'''
+
+When an application generally follows List the Edit, sometimes, if the info in the selected object is very simple, the user may modify it right there, but for for objects with medium to complex (several fields, to one or to many relations with other objects) calling a window to modify the object is more comfortable for the user
+
+'''Search (List) in Editor'''
+
+Some times, the developer likes to use the same UI to Edit and to Search, this works like some kind of "query by example", that is when user enters the editor, instead of being disabled an waiting for a click on the "new" or "search" button, the controls are enabled, and if the user writes some data in to them and clicks "search" the already persisted object (or row) that is more similar to the partial information already written in the editor is loaded. Sometimes there are many objects that match the query by example, here is when a navigator control can be a nice thing to have.
+
+'''Master List, Detail Editor'''
+
+This is also a very common configuration, both the list and the editor are in the same window, the list generally in the top, and the editor in the bottom, I think this somewhat corresponds with Two Panel Selector. 
+
+'''Persistence implications'''
+
+Okey, until now I have exposed what I think are the some of the common "patterns" used to create UIs that manipulate data, now... what I find more interesting about this is the the way this "patterns" affect the way the data is stored or retrieved from persistence:
+
+* If we use Edit then List:
+** The Edit is displayed on the screen
+** The user clicks "search" and the search List window appears
+** The user configures the search criteria in the List window
+** The objects (or row) matching the criteria are shown in the List window
+** The user selects one of the matching objects and click in the "accept button" in the List window
+** We return to the Edit window, that now is displaying the selected object.
+** We can make changes to the current object by clicking "save" or click "cancel" to dismiss the changes, if we do either action the Edit controls are disabled and we again have to click "search" or "new" to work with an object
+*** The problem here, is that the user might want to see the same search results he used the last time, but each time we call the search List window, we are creating a new object, and all of the configuration from the last time we called it is already lost (this disadvantage has a "nice side", because we don't have to worry about showing "stale data" to our user)
+**** Another disadvantage is that maybe not all the controls we use to manipulate the data in the edit windows are "databindable" so we have to manually reset the state of the Edit window, and if we don't do it correctly we could have bugs that "transfer information between edits". (First I edit John and set his age to 24, then I edit Mary, and her age is also shown as 24, but her age is 56, and we had no intention of changing it, it happened because we forgot to clear the text-box value)
+* If we use List and then Edit:
+** The list is displayed on the screen
+** The user configures the search criteria in the List window
+** The objects (or row) matching the criteria are shown in the List window
+** The user selects one of the matching objects and click in the "edit button" in the List window.
+** The "Edit" window appears on top of the List window, and is displaying the selected object.
+** We can make changes to the current object by clicking "save" or click "cancel" to dismiss the changes, if we do either action the Edit window is closed and we return to the List window
+** One of the advantages of this approach is that we don't have to worry about the "transfer between edits" bug, because each time we call the Edit window, it is a new window, without any data, ready to configure itself to match the data contained in the object we are going to edit.
+** Then problem of keeping the search results to reuse them is also automatically solved, because the search List window was never closed, it was there all time, behind the edit window.
+** But the problem now is that some of data shown there may not be updated, or perhaps, it has data that has never been on the database, and that we do not want on the database, how can that be? well, we edited the object in the edit window, and the databinding ensured that the changes were written to the object before we clicked "save" or "cancel", if our intention is to keep those changes and we clicked "save" in the Edit window then we don't have a problem... but if we clicked cancel, now we need to rollback in memory changes and some of this changes could have modified relationships with other objects, or properties of the other objects, we could have created, deleted or updated a complex graph of objects but "only in memory" and now, we need to rollback all this changes, if we are using an Object Relational Mapper (ORM) that supports this (like Apple's EOF) or a relational cache that allows for in memory transactions (like the .NET DataSet) we can solve this problem easily (of course the DataSet has other disadvantages), but if we are using an ORM like HiberNate that AFAIK does not rollback in memory changes then you have a problem, you have to re-fetch the information from the database.
+*** ''This is a failing of your databinding infrastructure, not HiberNate. For example, JGoodies.Binding has a triggerable buffered binding, so that edits are made to the buffered object which is only committed on a trigger event ("Save"). I don't know the equivalent for .NET. In any case, you shouldn't be committing after every field edit, except for your "Edit in List" scenario above. --IanOsgood''
+**** But, what if you need to run a data modification algorithm over you model? You do not want to couple you algorithm with the view,but you can not use your model because the changes have not been "committed" from the view in to the model. Simple example:
+
+You have a Mode object "Product" with Name, Price and PriceTax. You will want to write the method that calculates the PriceTax like this (in pseudo-java-like code):
+
+ class Product{
+ 
+  public void setPrice(Number newPrice){
+	if(newPrice!=this.price)
+	  return this.setPriceTax(newPrice*TAX_PERCENTAGE);
+	this.price=newPrice;
+  } 
+
+ }
+
+Now, you want this to be interactive, if you rewrite the "price" in the UI, you want to instantly see the price tax (and of course, if you cancel you want it to go back to its original value), if you are using something like JGoodies.Binding (I am only guessing because I have not used it), that means that the value the for price has not reached your object model, and so, it can not offer you an interactive calculation of the price tax. The only way to do is with a transactional object model (like the one offered by Apple's EOF or the DotNet DataSet) or, violating DRY (and/or layer separation?) and rewriting this at the UI level.
+
+This seems like a big omission from the HiberNate guys... but it isn't exactly so, everything I have exposed here, has been on the assumption that we are working in a "Smart-Client" that holds local information, and Hibernate was born in "the web 1.0 world". In the web 1.0, you "need" to re-fetch the information on each request (so when you go from editor to list or from list to editor you always reload the data) and you don't really pass the object you are going to edit from the list to the edit, it easier, and more efficient to just pass the primary key, of course the problem there is that you can only do that with objects previously persisted in the database, if you object is new it has to be serializable and some times that just isn't advisable (but that is an issue for another discussion)....
+
+* The HiberNate workflow for an edit should be:
+** Load/Create your object(s).  The only difference between the loaded and new objects is whether HiberNate's object id is initialized.
+** Do all the data modification on the object you desire. This is all in-memory only.
+** When ready to commit, start a transaction, '''update''' your loaded or '''save''' your new object(s), then commit the transaction.
+
+The thing with web based application is that the controls in the UI don't actually store the information directly in your object, their store it in the view-state, or in the query-string, in cookies, in the session or in an object that "represents the form", and only when you finally want to save, you extract the information from the web-controls and write it in to your object (at least that is more/less was the way I did it in the Java servlet world) but this is a "feature" that might be going away... the problem is that with the new JSF databinding, or with the new databinding facilities of ASP.NET 2.0, you can actually bind you controls directly with you datasources... and then how will we rollback the in memory changes? should we build a framework on top of HiberNate, a kind of "in memory object context" that handles the commits and rollbacks in memory? 
+
+'''More Questions'''
+
+* And what about the case when a list window calls an edit window that has an embedded list control that calls another edit window? (complex multiple level or nested interfaces) should the object relational mapper make it easier for me to build this kind of UIs?
+* Or Should a new kind of framework deal with the problem of communicating the persistent objects with the UI?
+* is using DTOs really the solution? Does Apple's EOF go beyond the responsibility of an ORM by providing in memory transactions?
+* If HiberNate can almost transparently persist objects to the UI, shouldn't this other framework be able do the same and transparently present the object in to the UI without having to manually create objects to do this job?
+* How should we deal with this problem if the UI was written in a completely different language (JavaScript)? Do we need an ORM at the JavaScript level?
+
+----
+See also: CrudPatterns, CrudScreen (CreateReadUpdateDelete)
+----
+CategoryUserInterface

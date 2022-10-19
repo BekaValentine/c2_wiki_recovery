@@ -1,0 +1,173 @@
+Tips for modeling financial accounting
+
+---------
+
+Accounting table layouts:
+
+  Table: acctTrans  (accounting transaction)
+  ---------
+  transID        (auto-generated)
+  transDate
+  fromAcctRef    (debit  - foreign key to accounts table)
+  toAcctRef      (credit - foreign key to accounts table)
+  transAmount
+  correctionRef  (reference to transaction being corrected if correction, blank/null otherwise)
+  transNote
+
+  Table: accounts
+  -----------
+  acctID
+  acctDescript
+  acctType  (A = assets, L = liability,  E = owner's equity)
+  
+Triggers can be used to make sure the "from" and "to" accounts in the acctTrans table are a proper match (A = L + E). For example, the "from" and "to" accounts cannot be "L" and "E" or "E" and "L".
+
+In practice, transaction information might also have locational info so things can be tracked and/or balanced by region or department.
+
+----
+I gather the above acctTrans layout is meant to be just a bare bones example.  E.g. you'll probably also want fields for
+ sysDate (date the transaction was generated, generally not the same as the transDate itself)
+ userName 
+ sourceJournal (A/R, A/P, payroll, manual journal entry etc.)
+ etc.
+
+----
+
+I'm sure I'm not understanding having a "from" and a "to" accountRef.  This would seem to apply to only very simple transactions (e.g. A/R and A/P subledger entries).  As a matter of convenience, many manual transactions (i.e. general ledger journal entries) have many debit and credit amounts and no one-to-one correspondence between accounts for a given transaction amount.  Not that one couldn't be enforced by the system, but as I said, I'm not sure this is what you mean.
+
+''Eventually a double-entry form of accounting must done for a publicly-traded US company. Whether it is done at the time of being put on a list or not is another matter. I suppose the debit or credit could be done in bulk. For example, batch numbers could be assigned to journals, and then one double-entry transaction is made for the entire batch.''
+
+I'm not trying to avoid DoubleEntryBookkeeping either. But I'm in the dark about how aggregating transactions in batches would make any difference.
+
+We make lots of entries on a monthly basis similar to this:
+
+ Insurance expense 1              x dr
+ Insurance expense 2              y dr
+ ... 
+ Insurance expense n              k dr
+ Prepaid Insurance    x + y ... + k cr 
+
+And here's an actual journal entry I wrote last year-end:
+
+ Provincial Tax installments 15,744 cr
+ Provincial Tax payable      29,243 dr
+ Capital Tax payable          1,199 cr
+ Income Tax expense          12,500 cr
+ Capital Tax expense            200 dr
+
+Please show how these would be represented in the above data structure.
+
+''The software will automatically split the x + y + ... + k amount into the corresponding ties and insert the corresponding account debit and account credit in the transactions table for each of those sums. The accountant will still see the one to many or many to many as he is used to because in the presentation the software can summarize it again. ''
+
+Well, that seems straightforward when the multiplicity of accounts are all debits or all credits.  Then the single credit (or debit) can easily be split up.  Even so, I guess the software has to search for the first line of the opposing sign to start the splitting process and keep track of how much remains to be split.  So if I'm understanding this aright, in the real life example it would look like this:
+
+ fromAcctRef Provincial Tax installments
+ toAcctRef   Provincial Tax payable
+ transAmount 15,744
+
+ fromAcctRef Capital Tax payable
+ toAcctRef   Provincial Tax payable
+ transAmount 1,199
+
+ fromAcctRef Income Tax expense
+ toAcctRef   Provincial Tax payable
+ transAmount 12,300
+
+ fromAcctRef Income Tax expense
+ toAcctRef   Capital Tax expense
+ transAmount 200
+
+That's an interesting approach - certainly not intuitive to me as an accountant anyway, and I can't imagine that it would be easier to code (or to write simple queries for) than just keeping one acctRef and transAmount per item (line) in the entry.  I can see it would take up less space for most simple entries though (one less item more than offsets the extra field), but was that a goal anyway?
+
+''The goal is to avoid redundancy. Typical transactions are one to one, in which case the sum is kept redundantly in 2 places (the credited account's log and the debited account's log). This is a relic of DoubleEntryBookkeeping, which is no longer needed in modern information systems (it's quite counter-productive).''
+
+''Plus the schema above (slightly modified) is easier to run reports against, the equation sum_of_credits= sum_of_debits is verified automatically this is an indication that we eliminated some redundancy , and you can set up better data integrity enforcement. For example typically  a look up table is set up which will enforce that only certain combinations of (account_debit, account_credit) can appear in the transactions table. ''
+
+----
+Why bother to distinguish between types of Balance Sheet accounts?  Are Income Statement accounts considered type "E"?
+
+''I am not sure I understand your Income Statement question. Income Statements as I understand them are a presentation issue, not necessarily related to internal modeling. I suppose we could have an "acctGroup" table and a reference from the "accounts" table to group them according to Income Statements.''
+
+True enough.  But the only real accounting restraint for any transaction is that total debits = total credits.  Distinguishing between Assets/Liabilities/Equity could also be considered a presentation issue of the Balance Sheet, i.e. not related to internal modelling, so perhaps the model above could be described a little more fully to explain the need to distinguish between types of Balance Sheet accounts?
+
+''Are you rejecting the A = L + E constraint? It would be broken if a transaction had both an L and E, no?''
+
+The point is that ''transactions'' don't need to have an L or an E.  A = L + E is not a transactional level constraint, it's a consequence of the total debits = total credits constraint.  Unless of course your model uses that constraint instead, but that's what I'm asking to be explained more fully.  In our accounting system (relational based) each detail item of an accounting transaction has just a transID, accountRef and transAmount (positive or negative).  But there's also a summary item with a bit more data like description, user etc.  The fact that all the transID's for any given summary item sum to zero is handled by the logic, not the data model.
+
+''I am sorry, I don't really understand your question. Again having an L and E transaction (above) would be "wrong".''
+
+''Surely it is the other way round. A = L + E is the constraint, and debits equals credits is the consequence. In the case of a non-fiancial accounting system such as an inventory system, then there would be other accounting equations that need satisfying. In these cases, a consequence would still be that debits = credits.''
+
+Well let's use a simple example then.  Suppose I want to convert some corporate debt into shares.  The entry would be debit debt (L) and credit share capital (E) for the amount.  This appears to me to be contrary to your constraint, since fromAcctRef would be L and toAcctRef would be E.  But I don't imagine this is what you meant, so that's why I'm looking for a more detailed explanation.  How would you see this example transaction being represented?
+
+''You are right. My mistake. It has been a long time since I had to think like an accountant. My point is that A = L + E needs to be enforced. I suppose I should check some UseCases. Perhaps it can be used to determine whether to add both accounts, or add one and subtract the other. Is this what you meant by, "The fact that all the transID's for any given summary item sum to zero is handled by the logic, not the data model"?''
+
+Sort of, but never mind for the moment.  The thing is, we're both arguing that ''some'' accounting equation needs to be enforced.  I'm just trying to make the point that total debits = total credits is the general case of A = L + E, and therefore probably easier (there's one less variable) to model/enforce.  Obviously A = L + E must also be satisfied since it can be derived from total debits = total credits when you categorize accounts as A, L or E (if Income Statement accounts are also E accounts), but what else does this categorization get you?  
+
+I gather from your model that it allows you to keep both sides of a transaction in one acctTrans item.  The thing is, as I said above, not all users want to be that constrained when making manual journal entries.
+
+''I guess I would have to see a specific example that was not addressed in my "batch" comment above.''  See above.
+
+Also, in very ''very'' simple financial statement software you might have a default way of presenting an A account vs an L account (e.g. always display debit balances as positive for A accounts and negative for L and E accounts).  But for financial statements with even a nominal amount of sophistication, that sort of presentation issue is much better left out of the accounts table and put into the financial statement setup where users can decide on a statement by statement basis how to present different accounts. (More likely they won't be presenting individual accounts at all anyway, but rather groups of accounts.)  So, for any but the most basic accounting software, the acctType field is unnecessary.
+
+On the other hand, if you want a utility that allows users to verify the completeness of their financial statement setup, you could use a stmtType attribute to distinguish between balance sheet or income statement accounts.  (By the way, if you have alternatives to verifying financial statement setup, I'd like to hear them.)
+
+''As with many things in business software, everybody wants to see it their own special little way. At this point I think we should address finding a clean internal representation, and then worry about presentation techniques second. I am not sure yet that presentation and data integrity are tightly related.''
+
+That's exactly the point I'm trying to make - they aren't related at all: ''that sort of presentation issue is much better left out of the accounts table''.
+
+''Well, there must be *some* rules to what the credit and debit account is allowed to be. Time to whip out my old textbook.....''
+
+----
+
+Does double entry break the usual rule about not storing the same data in more than one place? Well, double entry is just a special case of a multiple entry transaction. The transaction must statisfy the appropriate accounting constraint such as A = E + L. In a multiple entry transaction, there will not be the case where we will be storing redundant data for the reason above. However, given n-1 of the items we can work out the nth. This is the more general version of the redundant data problem. However, we can't designate easily which entry is special. Since we can't do that, it is perfectly reasonable to store all the entries.
+
+-----
+
+'''Assume Balance'''
+
+I believe I finally figured out how to factor out the duplication after rolling it around in my head for a while. It is a matter of what you do to both sides. Example table:
+
+  From To   Amt.
+  ---- ---- -----
+  A001 E001 50.00
+  A002 L002 10.00
+  E003 L002 20.00
+The letters of the account codes indicate what "kind" of account it is (from "A=E+L"). This is not proposing some kind of actual letter coding (HungarianNotation), but letter prefixing is merely used to simplify the example. (In practice the account table would track the kind (per account number), not a letter prefix. The prefix just makes the example simpler.)
+
+In the 50.00 transaction, the amount is assumed to be added to ''both'' A001 and to E001. The equation is still balanced. Same with 10.00. Now with the 20.00, it is assumed to be reducing E003 by 20 and increasing L002 by 20. Thus, the "E + L" side stays the same in total, satisfying the equation.
+
+This technique "assumes balance". '''You cannot put a wrong combination in''', at least not in a technical sense (assuming existing account codes). If the accounts are not the ones you intended, that is a data-entry error on your part. But, it still balances dispite any such errors. Unlike prior attempts, no combination can be "wrong", assuming the accounts exist and are active. Any "problems" encountered you can rightfully blame on the data entry person. It dumps the responsibility on the user; that's why I dig it.  (A data entry screen could be set up to show them the consequences (+/-) before they confirm.)
+
+This is the interpretation table:
+
+  From  To  Arith.-Type
+  --    --  -----------
+  A     A   -/+    (subtract value from "A-from" account and add it to "A-to" account)
+  A     E   +/+
+  A     L   +/+
+  E     A   +/+
+  E     E   -/+
+  E     L   -/+
+  L     A   +/+
+  L     E   -/+
+  L     L   -/+
+--top
+
+''This approach is fine for simple bookkeeping, such as personal accounting, but is not adequate for enterprise accounting. See the discussion on DoubleEntryBookkeeping and above, starting with "I'm sure I'm not understanding having a 'from' and a 'to' accountRef. ..."''
+
+That's one opinion.
+
+''No, two.''
+
+But I weigh more.
+
+''FacePalm.''
+-----
+
+For another way to model accounting, in which each economic event ''is'' recorded once and only once, see ResourceEventAgent.
+-----
+See Also: RelationalPatterns, DoubleEntryBookkeeping
+
+----
+CategoryModelingLawsAndPrinciples, CategoryBusinessDomain

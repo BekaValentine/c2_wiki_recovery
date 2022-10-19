@@ -1,0 +1,187 @@
+Alleged AntiPattern:
+
+An n-tier application which contains SQL syntax in all the tiers.
+
+''Child's play. Define that slice of the app with the SQL as the "data access system". The real fun starts when your project has SQL syntax in ''every file''. -- PhlIp''
+
+And all the while IBM and many other vendors thinking that EmbeddedSql was a good thing.  ;->
+
+''Your alternative is to do what? List them and we can come up with downside those approaches as well. I've always avoided ESQL like the plague, but it had its place, especially when systems were much less powerful than they are now. Anyway, stored procedures have been available for a long time, you never needed to embed SQL.''
+
+The alternative is to isolate the SQL and stored procedure calls into a "data access" layer (or set of functions).
+Doing this enables you to more easily find and optimize the SQL statements, or change them from/to stored procedures, or provide artificial subs during UnitTest''''''ing.
+
+When SQL statements (or even stored procedures) are distributed throughout your application's business code, then changing the database schema, or switching from one database to another, can be very expensive and time consuming.  Business code and SQL should not be mixed.
+
+* That depends. Having function/method calls with giant parameter lists are also change-nasty. Views can smooth schema changes. 
+
+''No one in their right mind has giant parameter lists, you pass around data structures, not simple types.  That may be a struct, an object, a recordset, whatever, but no need for long paramater lists.''
+
+** ''Views don't smooth anything but queries, you still have to hunt down and change update/insert statements, so it's still a nightmare.''
+
+*** And how often does that happen? I don't think it makes sense to complicate 90% of all changes in order to simplify 10%.  The economic probabilities usually don't pay that way.
+
+** If the inserts and updates change also, then usually there are other major structural changes such that updating queries pales in comparison or become part of larger changes. (Except possibly for really bad normalization.)
+
+As far as changing database vendors, that does not happen often enough, and thus YagNi trumps wrapping for something that may be ten years off. Languages at a site tend to change more often than DB vendors in my observation. 
+
+''Ha! What about when you have to provide support for 10 different DB vendors at once?  Which by the way.. many applications do.  It is quite common to support at least 2 to 3 different databases with one application.''
+
+How about something like this in the using module?:
+
+  function queryX(...) {
+    theSql = "select...";  // default
+    if (dbVendor == 'oracle') {
+      theSql = "select...";
+    } elseif (dbVendor == 'sybase') {
+      theSql = "select...";
+    } elseif...
+    }
+    return(runQuery(theSql));
+  }
+
+However, I am sure some will complain about the grouping. Some will want to group all by vendor, others by query, others will want code in a table so that the grouping is virtual, etc. Another Grand Grouping HolyWar. Ideally something like HibernateQueryLanguage may be the way to go, if perfected.
+ 
+''EmbeddedSql -- a good thing to use when you're convinced that your programmers aren't smart enough to make subroutine calls or write data driven code.''
+
+Don't you have bigger problems if that's the case?
+
+''Yes, but unfortunately like defensive driving we have to operate in an imperfect world.''
+
+----
+
+'''Abstracting SQL dialects into a PhraseBook'''
+
+There is an AnalysisPattern which can be applied to this problem, which is called the PhraseBook pattern. This fundamentally entails creating a ''book'' containing your SQL statements. In your code, you can ask the book to return ''phrases'' (or SQL statements) by name. You can also pass parameters to replace variables. I can't remember where I saw this pattern, but it was definitely at one of the PloP proceedings online. I think it was in the same group as the SkinPattern. -- TobinHarris
+
+''I HaveThisPattern - I tend to use R''''''esourceBundles in Java for this purpose. -- KrisNuttycombe''
+
+The PhraseBook pattern was used by an OO library vendor to implement transparent support for all the major DBs of its time. It made for impressive demos. "Swap Oracle for Informix? Just change this one statement here..."
+
+''In my opinion, SQL wrap proponents exaggerate the frequency of changing vendors and the benefits that wrapping gives you if it does happen. It is fairly easy to find SQL statements with text search commands. I don't know why they exaggerate it. Maybe it happens more to them than it does to me. But, I've worked at a lot of companies in my contractor days and it does not happen that often. Generally a given shop will have 2 dialects at the most and one can find commonalities between the two dialects to write SQL in the first place that does not need that much changing if you do swap between them. If you do have to change them, putting all the SQL together in one repository does not significantly improve the change speed, and makes the code harder to change for regular (non-vendor-swap) changes.''
+
+''Business logic-related maintenance often happens several times a year for several years; while vendor switching is usually a one-time occurrence. I'd say it's about a 15-to-1 ratio, as a rough estimate. In other words, for any given SQL statement, the quantity of changes or visits due to biz logic changes is about 15 times for every time it's visited for DB vendor changes. Why make the 1 harder at the expense of the 15? -t''
+
+Is it wrong to want to keep my SQL PhraseBook in the db?
+
+----
+
+I like wrapping SQL, but not primarily for the future-safety it gives me. I like it for the way it simplifies and clarifies the code by removing the specifics of the SQL query. When I ask my friend to buy me some milk, I don't care which path she chooses between the isles at the grocery store; I care about the request ("Could you buy me some milk?") and the result (the milk). Same with SQL; the details of the query detract from narrative of the code.
+
+As a side bonus, a DatabaseAbstractionLayer makes it easier to inject a mock for unit testing. -- CarlMasak
+
+''That's generally what is covered in HelpersInsteadOfWrappers. Nobody is really against localized abstraction. It becomes an issue when somebody decrees that ALL sql must be behind wrappers.''
+
+All SQL should be wrapped.  Database schemas change for different reasons than application logic.  They should therefore be decoupled.
+
+''Not if the carrying cost of the extra layer is greater than the average payoff from wrapping. You pay the extra layer-bureaucracy "tax" maintaining each part of the layer regardless of whether it actually helps down the road or not. I'd like to look at representative samples of schema changes that you think justify such. In my experience extra layers usually don't pay off.''
+
+The assumption appears to be that encapsulating SQL is expensive.  There's no reason it needs to be.
+
+With the exception of simple CRUD systems where the database is dedicated to one application and the access patterns are straightforward, it is always best practice to encapsulate the specifics of data access and manipulation.  The core reason is, as noted previously, because the database schema and the application logic change for different reasons and at different rates.  Encapsulating SQL means that:
+* Changes can be made in exactly one place
+* Unit testing is simplified
+* The interface functions can be given descriptive names, making the code easier to understand
+* Applications are insulated from changes related solely to other applications
+
+The payback for a thin encapsulation layer is immediate.  There is no reason not to do it (again, except in the case of a very simple CRUD application).  Scattered SQL everywhere should never make it through a code review.
+
+''The schemas usually change for the '''same''' reasons that apps do, in my experience. Your characterization does not match my roughly 20 years of industry experience with RDBMS at about 3-dozen different organizations (which includes consulting). And, I've never seen a useful "thin" one. Again, I'd like to see some UseCase''''''s to evaluate their likelihood and alternatives. Making extra functions and methods that are called from one place clutters up the code with extra scaffolding and formality and makes the eye and scroll-bar have to jump around more to read and change the code. Use comments if you only need comments. It's a great socialistic jobs program for programmers, but usually makes no business sense. Most orgs I work for want more nimbleness, not code-intensive formalities. (However, domains such as accounting and life-support may have a different labor-to-risk profile.)''
+
+The schema and application logic will only change at the same time and for the same reasons in simple CRUD applications, which is why I excepted those explicitly.  For systems where the database is shared by multiple applications or where the application logic is more complex than CRUD, ScatterSqlEverywhere is without doubt an antipattern, in part because of the four bulleted issues you failed to address.
+
+''To "test" your bulleted list, I would apply various scenarios. They are only "true" in '''situations''', not universal. For example, whether "changes can be made in exactly one place" depends on the change. I can give a scenario where having wrappers requires more change spots, but I doubt that would prove anything substantial, since everyone agrees there are exceptions to most "rules". It's determining the "rules", or most common situations, that matters the most. Further, the boundary between CRUD and non-CRUD can be very blurry. Also, being "CRUD" and being simple are not necessarily the same. '''CRUD==simple is simply naive''' (or subconscious domain ego inflation). Otherwise, why would there be 100,000 lines of CRUD-centric code out there for many apps? If CRUD was simple, somebody would factor it all into a library/API(s) by now such that the 100,000 LOC apps would only be 2k LOC, or the like. Furthermore, most production apps have a large CRUD component to them, even if they do "fancy stuff" like launch rockets, predict whether, etc. If you have some fairly clear rules for what's CRUD versus non-CRUD, I'd like to see them. -t''
+
+As far as I can see, you haven't addressed the core issues I raised.  First, it is obvious that, aside from simple CRUD systems, the database schema and the application logic do change for different reasons and at different rates.  That alone suggests that the best practice is to decouple the two components to make the system easier to maintain and extend.
+
+* ''Again, I disagree with that change assumption. The ratio of same-reasons to different-reasons is an important number in this discussion. I admit I haven't offered any evidence for the pattern/ratio I claim I see, but you haven't done so either. Thus, we are at a stalemate, or perhaps an EvidenceStop. -t''
+
+* It's not an assumption, it is a fact.  A database schema that supports more than one application will change for different reasons and at different rates than will the logic of those applications.  The logic of each application will change for different reasons and at different rates than the logic of other applications.  This simply isn't controversial.
+
+* ''Sorry, but I cannot accept it as a "fact" without further evidence. Nor should any reader of this topic.''
+
+* I'm getting the impression that you're being deliberately obtuse, or that you have no experience with systems where a database is shared by multiple applications.
+
+* ''The feeling is mutual. That's why I wish to see some change UseCase''''''s that illustrate what you claim is common. Scenarios help erase obtuseness. If you don't wish to supply such, just say so. No need to make it personal.''
+
+* I get the distinct impression from your responses that you have never worked on a system where a database is shared by multiple applications that provide different sets of functionality to end users.  Is that the case?
+
+* ''No. That is incorrect. Enough about me. Scenarios, please. Note that I have seen some cases where tables were replaced with views of the same name (as the old table) in order provide backward-compatibility. Of course, that doesn't work for writing (in current implementations), but changes in say one-to-one columns in the same table into one-to-many relationships in different tables usually requires a change in user interface anyhow in my experience. Changes in ordinal relationships (1:n, n:n, etc.) usually create application-specific logic and UI changes.'''
+
+* If you had experience with databases shared by multiple applications, or if you just thought about it for a moment, you would realize that the application logic changes for different reasons and at different rates than does the database schema.  If you don't recognize that simple, obvious observation, your opinions are clearly not worth considering.
+
+* ''You've claimed that multiple times here. Why should I or the reader '''just''' take your word for it (that it's the most common case)? It's not realistic to expect us to just accept your word at face value. And, I'm not asking anybody to just accept my opinions by themselves. However, one cannot generally demonstrate rarity via scenarios. Otherwise, I'd do it. BUT, the opposite is scenario-able:  high frequency. If you can show say 3 scenarios of the ChangePattern you vaguely describe, it gives your case far more weight. I know scenario analysis is not perfect, but it's far far better than "just trust me".  -t''
+
+* {I suspect any reader with experience developing enterprise databases and applications knows, without needing further evidence, that application requirements and database requirements change frequently and independently, but changing databases or applications has inevitable impact on both.  Therefore, creating appropriate separation layers between applications and databases is not just a good idea, it's almost necessary for developer survival.  By way of a very apt analogy, imagine that you had to maintain a suite of applications designed to print to a variety of laser, inkjet, and dot-matrix printers.  Printers will sometimes change and applications will sometimes change.  Do you want to spread printer control code throughout your applications?  Or would you rather localise it in something called a "printer driver"?  Now, replace "printers" with "databases", "printer control code" with "SQL", and "printer driver" with "SQL encapsulation layer".}
+
+* ''It has not been established that RDBMS are "low level". Maybe you or your org use it as a low-level "dumb" filing system, but that doesn't necessarily mean it must be used that way. Note that in BagNeedScenarios, I presented 4 scenarios to illustrate my claim that bags have sufficient utility. I expect something similar from you. (Others disagreed with the scenarios in various ways, but it's okay by me to LetTheReaderDecide. Both sides presented their case over the scenarios and then we hand it to the jurors--the reader.) -t''
+
+** {"Low level" vs (presumably) "high level" is irrelevant.  I'm sorry I used the phrase "low-level" above.  I have removed it; note that in removing it, the meaning of what I wrote has not changed even one iota.}
+
+** But the printer analogy keeps a similar "low level" theme; and is still weak for similar reasons. Ironically, a decent vendor-neutral printer language could be a bunch of tables that are filled via SQL or the like. Pen types could be one table, common shapes (sprites) could be another, etc. That allows one to reference repeated features of a printout without re-inventing (re-specifying) them each time, and with the option of not filling up RAM with such specifications. -t
+
+** {As I pointed out, "low level" vs "high level" is irrelevant; you are focusing on an inconsequential issue.  Similarly, if I use a "car" as an analogy, you can be sure the colour of its paint is immaterial!  Anyway, I'm sure we both agree that the database should be a full and equal participant in application functionality.  Neither the application nor the database should be "higher" or "lower" level than the other.  However, they represent conceptually distinct layers (proof: there are parts that interact with the database and there are parts that do not interact with the database.)  Not only that, but they can and do change independently.  Conceptually identifiable layers that change independently should be separated as much as possible.  This is known as SeparationOfConcerns.}
+
+** Yes, they can change independently. However, they are only '''semi'''-separate. The probability curve (similarity) is important in determining whether adding an extra layer of indirection is worth it or not. Indirection is not free. We are having the same debate over and over. It's time to call it quits, barring new evidence.
+
+* You aren't addressing the issue.  If you have multiple applications sharing a database, as is common in even medium-sized systems, those applications will change for different reasons and at different rates.  That's simply an observation and even someone lacking experience with such systems should be able to understand why that will be the case; if they always change for the same reasons and at the same rate, they're so tightly coupled that they're not really different applications.  The database schema itself will also change for different reasons (extensions for a particular application and optimizations based on observed access patterns being two that immediately come to mind) and at a different rate than any individual application.  Again, this is an observation of real non-CRUD systems and again it should be readily understandable even to someone lacking experience with such systems.  Given those observations, decoupling the applications from the schema is essential to maintainability and extensibility.  I'm bemused that it is necessary to explain this in such detail.
+
+* ''You haven't shown there's an issue to address. You've done nothing to demonstrate "common". Your evidence is purely anecdotal and appeal to a claimed authority, yourself. If you have extensive experience with such, then producing 3 scenarios should be a cake walk. You appear to be stalling, using unverifiable platitudes as a cover. CampusExample can be used as a test case, if you so desire.''
+
+* It's clear that you lack the necessary background to have an informed opinion on this topic.  I'm done wasting my time with you.  Anyone who has worked on non-CRUD systems of more than trivial size will understand my points.
+
+* ''It's clear that you lack the necessary background to supply an informed opinion on this topic; otherwise you'd be able to produce some scenarios, or at least some kind of non-AuthoritarianEvidence instead of just claiming the other side lacks experience. Surely your alleged vast experience would bring you to plenty of scenarios over the years. Even if you forgot a majority of them, you couldn't have forgotten them all, unless your memory is too unreliable to rely on here. I don't see a valid excuse. "If you had my experience, you'd just agree with me" is unacceptable "evidence" (or insufficient evidence from which to make such bold claims; see EvidenceTotemPole). [I removed strong language because I've cooled down since.] --top ''
+
+Second, restricting changes to one place, even if that place is a module rather than a single function, further increases maintainability and extensibility by reducing the risk of change.
+
+* ''Again, it's not always the case that doing such reduces the change points. It's situational.''
+
+* Not unless you're doing it wrong.  Isolating SQL in a separate module is a standard practice in even medium sized systems and is essential in larger systems, for the reasons I've specified (among others).
+
+* ''Standard practice sometimes turns out to be wrong (even if I did agree it was common). GOTO's used to be standard practice also. The industry is ripe with fad-ism and copycat-ism. That isolation can be net helpful in some cases/domains, sure, I will accept that. But not as a universal truth.''
+
+* The point is that decoupling SQL from the application logic allows you to restrict changes to a single module.  That significantly improves maintainability and extensibility by reducing the risk of changes and by making it easier to find where changes need to be made.
+
+* ''Sure, but indirection (layers) is not a free lunch. It's weighing trade-offs.''
+
+Third, wrapping SQL, even in a simple function, significantly simplifies unit testing.  You can mock out the function to test the application logic in isolation and you can test changes to the schema without pulling in application logic.
+
+* ''Again, I'd like to investigate specific examples, and to see if this is true in general, or specific cases. If it's only in specific cases, then we have another ratio/probability variable issue on our hands. -t''
+
+* I made a general statement that is true on its face.  What part of "You can mock out the function to test the application logic in isolation and you can test changes to the schema without pulling in application logic." do you take issue with?
+
+* ''Create a test database(s) that mirrors the structure of the production one.''
+
+* That's not a unit test.  It adds significantly to the cost of testing application logic.  Unit tests should be cheap, so that they get run often.
+
+* ''How is it "expensive"?''
+
+Fourth, interface functions with descriptive names do make the code easier to understand, again improving maintainability and extensibility.
+
+* ''Again, a comment may be a simpler (less code) way to do the same thing in many cases. Comments also give us more freedom of wording than formal object names.''
+
+* Comments lie, in part because they often don't get updated when changes are made.  Since comments can't be trusted, developers have to read the code anyway.  Reading descriptive function names improves maintainability and extensibility because they are shorter and easier to understand.  Again, there is nothing I'm saying here that isn't industry best practice for very good reasons.
+
+* ''So can object names, and for the very same reasons. (There's an existing topic on this somewhere already.)''
+
+* Non sequitur.
+
+* ''Not. It's a double-standard being exposed.''
+
+Fifth, and related to the first and second points, insulating applications from changes related solely to other applications further improves maintainability and extensibility by reducing the impact and risk of changes.
+
+A SQL wrapping layer would have to be pretty heavy to outweigh those benefits.
+
+You have yet to provide any reasons not to decouple SQL.  My point here stands.
+
+''Yes I have. It can create two places that may need updating instead of one. For example, if a new column is added to a table, one may then have to change both the SQL isolator function/method AND the app function/method that uses the new column. This is compared to one method that would have to be changed if they are not separated. One is less than two. And it creates more indirection code (layers) to have to maintain. All things being equal, less code is better and less layers is better. Layer hopping is extra busy work that costs time and money. It's not a free lunch. I've worked on layer-happy systems, and it can take almost double the time to make any given change. That's roughly $60,000 more the owner is paying each year per developer for the "privilege" of layers. Again, I am not always against it, but rather saying the cost and benefits need to be weighed.''
+
+-----
+Re "CRUD is simple" - I believe this common misconception comes about because on a high level CRUD is simple. Unlike say weather forecasting which requires years of study to know the general domain of forecasting, CRUD as a general concept comes pretty natural to most humans. However, making it work right for a given situation requires myriad interacting details to be coordinated and tuned. Weather forecasting is front-loaded (or both-loaded) with complexity, while CRUD is back-loaded. The devil is in the details such that it's a lot of little devils instead of one big one. --top
+----
+See NoStrings, HelpersInsteadOfWrappers, DatabaseVendorLock, PerniciousIngrownSql ''<-- should this be merged with this page?'' {except it's already big}
+
+-----
+JulyEleven
+
+CategoryAntiPattern, CategorySqlProgramming, CategoryInfoPackaging

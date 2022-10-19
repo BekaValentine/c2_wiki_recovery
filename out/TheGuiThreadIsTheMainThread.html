@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        The Gui Thread Is The Main Thread
+      </h1>
+      <p>
+        Most MultiThreaded applications have a MainThread. This thread is the one that is created by the <a href="OperatingSystem.html">OperatingSystem</a> when the application is started. In a GUI application, it is common that the widgets are initialized in that MainThread.
+        As most of the widgets frameworks are not <a href="ThreadSafe.html">ThreadSafe</a>, the widgets creation and event handling should be performed in the same thread. Therefore, <a href="TheGuiThreadIsTheMainThread.html">TheGuiThreadIsTheMainThread</a>.
+      </p>
+      <p>
+        In a Windows application, the MainThread creates the Windows, then handles all the events in its MainLoop.
+      </p>
+      <p>
+        This is a typical error of <a href="JavaAwt.html">JavaAwt</a> or <a href="JavaSwing.html">JavaSwing</a> applications: the MainThread (the one that called the main static method) is not the <a href="GuiThread.html">GuiThread</a> (or the EventThread). Therefore, any Swing application that creates or access a widget from within the MainThread is violating the documented rule that Swing is not <a href="ThreadSafe.html">ThreadSafe</a>. Incidentally, this bad practice is used in all Swing samples and teaches developers very bad habits. Later on, very weird behaviors appear, some artifacts are visible when the Windows refreshes itself, and everybody concludes that Swing sucks. It does not, but the samples do!
+      </p>
+      <p>
+        <a href="JavaSwt.html">JavaSwt</a> does not have this problem because the events are dispatched from within the MainThread, as for a native Windows application.
+      </p>
+      <p>
+        -- <a href="PhilippeDetournay.html">PhilippeDetournay</a>
+      </p>
+      <p>
+        Until a Swing component is first attached to its peer it is not associated with the GUI thread. This means that it <em>is</em> valid for the main thread to create and call methods on components but <em>only</em> before making those components visible on screen.  Making a component visible on screen for the first time involves creating its peer.
+      </p>
+      <hr/>
+      <p>
+        <a href="TheGuiThreadIsTheMainThread.html">TheGuiThreadIsTheMainThread</a> is an architectural <a href="AntiPattern.html">AntiPattern</a> in my opinion because it forces the main thread to enter the event loop to make the GUI responsive.  The AWT, in contrast, separates event dispatching from the code that constructs the interface components and hides the details of event dispatching in the framework itself.
+      </p>
+      <p>
+        <em>I would like to examine some allegedly smell-bound </em><a href="UseCases.html">UseCases</a>. If by chance the app needs to launch an independent thread/process to have something that "stays around", a GUI manager will not necessarily need to prevent such.<em></em>
+      </p>
+      <hr/>
+      <p>
+        Beside the interface construction, everything in <a href="JavaAwt.html">JavaAwt</a> is usually executing from the event thread. Any <em>eventOccured</em> method is executed from that one, and if the event treatment takes some time, you will have no choice but to start a new thread or to freeze the entire GUI (something we see a lot, by the way... not a great example of GUI architecture). If you then want that thread to provide feedback to the GUI (a progress bar, for instance), you must post events and not call the AWT code immediately (most of the time, your AWT code is not <a href="ThreadSafe.html">ThreadSafe</a>, and Swing is explicitly not <a href="ThreadSafe.html">ThreadSafe</a>).
+      </p>
+      <p>
+        The fact that you just can't call some "doEvent" method somewhere to keep the GUI responsive enforces you to start multithreading on a framework that is not supporting it. I personally think that the ' <em>hide this event loop from the coder</em> ' is the main AWT flaw. SWT does not have this problem.
+      </p>
+      <p>
+        I've been told that the <a href="NetBeans.html">NetBeans</a> IDE was generating code whose main method did nothing but... to dispatch the GUI creation in the event thread. I didn't check by myself, if anyone has further details about this...
+      </p>
+      <p>
+        -- <a href="PhilippeDetournay.html">PhilippeDetournay</a>
+      </p>
+      <p>
+        Even with an explicit event loop in the main thread, you still can't call doEvent willy-nilly because events will enter your GUI components at unexpected times.  *Every* event-driven GUI framework expects event handling code to spawn worker threads to perform long-running tasks, or to perform non-blocking, event-driven I/O, which is fiddly and often harder to get right than using worker threads.
+      </p>
+      <p>
+        A progress indicator is a common need such that perhaps the GUI framework should provide a ready made one, perhaps with a Cancel button. The event could call an indicator updater routine. If it is something that will take a really long time, then fork off an independent process as if it was a separate application.  A built-in progress indicator interface may resemble:
+      </p>
+      <code>
+        event myEvent(Event ev, ...) {<br/>
+        ...<br/>
+        pctComplt = 32;<br/>
+        if (! ev.updateStatus(pctComplt, "Processing your stuff", True)) {  <br/>
+        // params: percent, text, show cancel button {<br/>
+        return()  // quit event if Cancel pressed<br/>
+        }<br/>
+        ...<br/>
+        }<br/>
+      </code>
+      <p>
+        In <a href="AsciiArt.html">AsciiArt</a>, the screen would have a little box that would resemble:
+      </p>
+      <code>
+        | |||||||.......... 32% |   (a bar graph - possibly optional)<br/>
+        | Processing your stuff |   (your custom text - optional)<br/>
+        | ______[Cancel]________|   (cancel button - optional)        <br/>
+      </code>
+      <p>
+        Perhaps not display the bar graph and percent if zero or a negative value is passed. Or, we could complicate the interface to make these attributes. The window would automatically go away when the event is complete.
+      </p>
+      <hr/>
+      <p>
+        I fully agree, in most situations a long-running task should not call the doEvent directly. However, this method is very convenient to code modal dialogs. I also used this method in order to implement the <em>handlePauseRequest</em> on a progress bar: the long-running task is calling the <em>doingThis</em> and <em>doingThat</em> on some <em></em>TaskProgression<em> instance, but regularly it calls some </em>handlePauseRequest<em> method that will block the calling thread if the user requested the task to be paused. If the method is called from a worker thread, no issue, just do some blocking wait. But if the method is called from the main thread, you just can't wait for the user to press the "resume" button while blocking in the main thread. In that situation, </em>doEvent<em> saved my life.</em>
+      </p>
+      <p>
+        In my opinion, well-coded AWT applications end up using this pattern anyway: the MainThread is dead waiting for the main window to be closed (or System.exit to be called), and everything gets executed in the AWT EventThread that effectively becomes the new MainThread. Once you do that consistently, any AWT or Swing application starts responding and working as a charm.
+      </p>
+      <p>
+        -- <a href="PhilippeDetournay.html">PhilippeDetournay</a>
+      </p>
+      <p>
+        You cannot use nested event loops to implement modal dialogues in a platform independent way.  The AWT model is better at helping inexperienced programmers avoid accidentally writing platform dependent code.
+      </p>
+      <hr/>
+      <p>
+        "The fact that you just can't call some "doEvent" method somewhere to keep the GUI responsive enforces you to start multithreading on a framework that is not supporting it."
+      </p>
+      <p>
+        But Swing and AWT <em>do</em> support multi-threading.  You seem to be confusing thread safety with multi-threading support.  
+      </p>
+      <p>
+        <em>They support multi-threading so well that we had to wait the 1.2 release to have a simple invoke method on the AWT </em><a href="EventQueue.html">EventQueue</a>, and 1.4 to have Sun start thinking about the fact that being able to stop the application other than by calling System.exit would be a nice idea. I won't enumerate all the threading-related issues existing with AWT, just browse the bug database (they are even listed in the <a href="JavaDoc.html">JavaDoc</a>...). In SWT, if I call any method on a widget that has been created in another thread, I get an exception. At least we have a clear behavior about threading support. You can't have something like that because widgets are created in another thread than the one that will be dispatching the events. A specification such as 'The reason is that AWT encapsulates asynchronous event dispatch machinery to process events AWT or Swing components can fire. The exact behavior of this machinery is implementation-dependent.' should never be allowed to come to life!<em></em>
+      </p>
+      <p>
+        <em>Anyway, the topic here is not AWT versus SWT, I just say that being able to process the events "manually" offers you the ability to decide what thread will be processing the </em><a href="EventQueue.html">EventQueue</a>. That includes the choice of the ThreadGroup, the fact that you know what happens when you exit the main method, the possibility to deliberately opt for a single-threaded approach (most Windows GUI applications are single-threaded, why not the ones in Java?) etc... <em></em>
+      </p>
+      <ul>
+        <li>
+           This is a perfect example of why the AWT threading model is better than that of SWT.  You cannot choose which thread processes the <a href="EventQueue.html">EventQueue</a> in a platform independent manner.  Some windowing systems allow any thread to dispatch events (X11, for example), others associate windows and event queues with threads and do not allow other threads access to the event queue (Win32 for example).  AWT neatly hides all these platform differences behind a simple API.  SWT does not and so allows inexperienced programmers to accidentally write platform dependent code by using multiple threads.
+        </li>
+      </ul>
+      <p>
+        <em>Well I strongly disagree, I would never call AWT a </em>'simple<strong> API. By the way, inexperienced programmers do a lot of threading mistakes using AWT, so hiding the threading mechanism does not seem to be the panacea. By denying any platform specificity (threading model, the impossible-to-implement add method, ...), Sun managed to create a GUI framework that was running so badly on Windows that the only solution was to reimplement everything back to the pixel with Swing, reaching platform-independence at the cost of the standard platform look&fell. I'm not sure whether this is THE key reason why Java failed so badly on the desktop, but it is at least in the top 10... By the way, SWT also works on X11 and </strong>MacOS.<em></em>
+      </p>
+      <p>
+        You're missing the point.  Exposing the event loop is not platform dependent in itself (as you say, SWT works on Win32, X11 and MacOS).  However it allows an inexperienced programmer to write platform dependent code without knowing it.  For example, creating a window in one thread and then dispatching events for that window in another will work on some platforms and fail on others.
+      </p>
+      <p>
+        By the way, Swing is written in pure Java for political, not technical, reasons.
+      </p>
+      <p>
+        There's a <em>lot</em> wrong with AWT and Swing, but conceptual model behind the use of threading is one of it's best points. 
+      </p>
+      <p>
+        <em>I suppose we should </em><a href="AgreeToDisagree.html">AgreeToDisagree</a>. Or to continue this discussion in some <a href="PlatformIndependentGui.html">PlatformIndependentGui</a> page.<em></em>
+      </p>
+      <p>
+        See
+      </p>
+      <ul>
+        <li>
+          <a href="http://www.galileocomputing.de/openbook/java2/kap_15.htm#t27">http://www.galileocomputing.de/openbook/java2/kap_15.htm#t27</a>
+        </li>
+        <li>
+          <a href="http://java.sun.com/j2se/1.5.0/docs/api/java/awt/EventQueue.html">http://java.sun.com/j2se/1.5.0/docs/api/java/awt/EventQueue.html</a>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        Several months later...
+      </p>
+      <p>
+        The big SWT project is on its way to production, and we now have something like 30 screens, some including home-drawn widgets, some other making extensive use of SWT ones in term of focus or mouse control.
+      </p>
+      <p>
+        Just for the fun of it, I tried to start it on Linux (RedHat9), using the GTK support of SWT.
+      </p>
+      <p>
+        To my big surprise, the software started without any difficulty. Everything but a couple of tiny glitches (and when I say a couple, this is really what I mean: we noticed exactly two mis-sized controls over the entire application) was perfectly functional. I expected limited migration effort; It appeared to be no effort at all.
+      </p>
+      <p>
+        Needless to say, the application LookAndFeel was the GTK-one. Note that I also tested the application with the new <a href="WindowsVista.html">WindowsVista</a> and you wouldn't be able to make the difference between SWT and a Vista native application (including this curious, green, animated and 3D progress bar...)
+      </p>
+      <p>
+        I remember having had much more difficulties when porting pure AWT (non-SWING) applications (the default background colour issue to start with, those who had to port AWT software know what I mean).
+      </p>
+      <p>
+        I still have to test it on MacOS, but I can already say that, in term of portability, SWT is the clear winner over AWT.
+      </p>
+      <p>
+        -- <a href="PhilippeDetournay.html">PhilippeDetournay</a>
+      </p>
+      <hr/>
+      <p>
+        See also: <a href="EventsAreNotCallBacks.html">EventsAreNotCallBacks</a>, <a href="GuiThread.html">GuiThread</a>, <a href="EventDrivenProgramming.html">EventDrivenProgramming</a>, <a href="HollywoodPrinciple.html">HollywoodPrinciple</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryEvents.html">CategoryEvents</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,305 @@
+See also StringBuilder which should be your first choice for most usages in Java since 1.5 (see also below).
+----
+
+java.lang.StringBuffer is a class in the Java runtime library.  
+*** http://docs.oracle.com/javase/1.5.0/docs/api/java/lang/StringBuffer.html
+
+It provides a convenient way to concatenate strings together:
+
+  StringBuffer buffer = new StringBuffer();
+  buffer.append ("foo");
+  buffer.append (" ");
+  buffer.append ("bar");
+  String s = buffer.toString();
+  System.out.println (s);
+
+  ''foo bar''
+
+Ugly?  Don't worry -- when you use the + operator and either of the operands is a String, Java uses a StringBuffer behinds the scenes.  The above is equivalent to:
+
+  String s = "foo" + " " + "bar";
+  System.out.println (s);
+
+  ''foo bar''
+
+Contributors: WayneConrad
+----
+Q: I thought the "nice" version created a lot of garbage "String"s. Since Strings are immutable ValueObject''''s and the + operation returns a String, the only option is to create another String...
+
+A: It's implementation dependent, but the reference implementation (JDK) does optimize away the garbage Strings.
+
+From the Java Language Spec version 1.0:
+
+	 :	15.17.1.2 Optimization of String Concatenation
+
+	 :	An implementation may choose to perform conversion and concatenation in one step to avoid creating and then discarding an intermediate String object. To increase the performance of repeated string concatenation, a Java compiler may use the StringBuffer class (§20.13) or a similar technique to reduce the number of intermediate String objects that are created by evaluation of an expression.
+
+	 :	For primitive objects, an implementation may also optimize away the creation of a wrapper object by converting directly from a primitive type to a string.
+
+The JDK does the StringBuffer optimization, so that + creates no extra String temporaries (compared to just using StringBuffer yourself).  Furthermore, the compiler is allowed to perform String concatenation at compile time for ''final'' variables, and the JDK does.
+
+Let's disassemble some code and see what it actually does.  I'll use JDK 1.2.2.  The compile command is "javac -O <filename>", and the disassembly command is "javap -c <classname>".
+
+'''+ with final variables'''
+
+  public void plusWithFinals() {
+	final String a = "abc";
+	final int i = 2;
+	final double d = 3.4;
+	String s = a + i + d;
+	}
+
+  Method void plusWithFinals()
+	0 ldc #1 <String "abc">
+	2 astore_1
+	3 iconst_2
+	4 istore_2
+	5 ldc2_w #15 <Double 3.4>
+	8 dstore_3
+	9 ldc #2 <String "abc23.4">
+	11 astore 5
+	13 return
+
+The compiler has cleverly done the concatenation at compile time.  It can do this since we declared the variables ''final''.
+
+'''+ with non-final variables'''
+
+  public void plus() {
+	String a = "abc";
+	int i = 2;
+	double d = 3.4;
+	String s = a + i + d;
+	}
+
+  Method void plus()
+	0 ldc #1 <String "abc">
+	2 astore_1
+	3 iconst_2
+	4 istore_2
+	5 ldc2_w #15 <Double 3.4>
+	8 dstore_3
+	9 new #6 <Class java.lang.StringBuffer>
+	12 dup
+	13 aload_1
+	14 invokestatic #14 <Method java.lang.String valueOf(java.lang.Object)>
+	17 invokespecial #9 <Method java.lang.StringBuffer(java.lang.String)>
+	20 iload_2
+	21 invokevirtual #11 <Method java.lang.StringBuffer append(int)>
+	24 dload_3
+	25 invokevirtual #10 <Method java.lang.StringBuffer append(double)>
+	28 invokevirtual #13 <Method java.lang.String toString()>
+	31 astore 5
+	33 return
+
+The compiler used a StringBuffer to avoid creating lots of temporaries.  The call to "valueOf" is interesting: valueOf returns a string representation of an object.  Since "a" is already a String, why did the compiler call valueOf on it?
+
+'''StringBuffer'''
+
+  public void useStringBuffer() {
+	String a = "abc";
+	int i = 2;
+	double d = 3.4;
+	StringBuffer buffer = new StringBuffer();
+	buffer.append(a);
+	buffer.append(i);
+	buffer.append(d);
+	String s = buffer.toString();
+  }
+
+  Method void useStringBuffer()
+	0 ldc #1 <String "abc">
+	2 astore_1
+	3 iconst_2
+	4 istore_2
+	5 ldc2_w #15 <Double 3.4>
+	8 dstore_3
+	9 new #6 <Class java.lang.StringBuffer>
+	12 dup
+	13 invokespecial #8 <Method java.lang.StringBuffer()>
+	16 astore 5
+	18 aload 5
+	20 aload_1
+	21 invokevirtual #12 <Method java.lang.StringBuffer append(java.lang.String)>
+	24 pop
+	25 aload 5
+	27 iload_2
+	28 invokevirtual #11 <Method java.lang.StringBuffer append(int)>
+	31 pop
+	32 aload 5
+	34 dload_3
+	35 invokevirtual #10 <Method java.lang.StringBuffer append(double)>
+	38 pop
+	39 aload 5
+	41 invokevirtual #13 <Method java.lang.String toString()>
+	44 astore 6
+	46 return
+
+This is very close to what the compiler generated when we used +.  No extra stack temporaries are being created.  The extra code is from the "pop/aload 5" pairs that the compiler did not generate for the "+" case.  But these certainly aren't the performance killer that extra string temporaries might be.
+
+Strangely, the gratuiotous call to valueOf that the compiler inserted when we used + isn't generated when we use StringBuffer.
+
+-- WayneConrad
+
+Wayne, you UtterBastard. -- Redundant author of StringBufferExample
+
+I saw that!  It made me laugh that we both did this and at almost exactly the same time.
+
+I like that you ran timing tests.  How would you prefer to merge our results?  Or should we keep yours?  Looks like you used a different platform than me, and that's valuable.  --WayneConrad
+
+Very amusing timing, nice to see that someone else is as much a victim of curiosity as myself :-). I used Linux JDK 1.2.2 (the copy Sun distributes, I think) without a JIT. It would be nice to merge the results, though it's way past my bedtime so for the moment I've just put the code I used on the web: http://www.javagroup.org/luke/string.java is the java source, http://www.javagroup.org/luke/string.jsm is the jasmin-syntax assembler code. -- LukeGorrie
+
+Have a nice sleep.  Things to do to this page:
+	* Add the timing test
+	* Fix the examples at the top of the page (As you pointed out, examples should use variables to prevent the compiler from doing the concatenation at compile time)>
+----
+
+Has anyone taken the initiative on this to test other compilers? The above bytecodes are all generated by javac from 1.2.2.  Let me think, I've used all of the following: JikesCompiler, the compiler packaged with Visual Age, the JBuilder JDK compiler, JDK 1.1.6, JDK 1.1.8, JDK 1.3 (from Sun), jdk 1.1.8 for Linux from Blackdown, JDK 1.2 for Linux from Blackdown, JDK for Linux from IBM.  Whew! The point being, just because one compiler ''does'' optimize away the differences, is that behavior something we should count on?
+
+-- StevenNewton
+
+----
+I think the core insight of StringBuffer is that most of the time strings can and should be immutable. When you want them to be mutable, use a separate class. I mention this because it is something the C++ STD library got wrong. They have a single mutable string class, and they have a devil of a job getting the implementation both correct and efficient, especially in the face of multi-threading and reference-counted behind-the-scenes sharing. They should have made strings immutable and added a mutable StringBuffer class. -- DaveHarris
+
+''Does anyone besides me use StringBuffer instances in Java where they would use instances of Stream (on a String) in Smalltalk? I keep looking for the analogous abstraction in Java: a decorator on an array that lets me iterate through it (using next), peek at it (looking at values without changing the current position), append things to the end, and so forth. I always seem to bounce around between "Iterator", "Vector" and "StringBuffer" in Java -- but I don't know the toolbox that well yet. -- TomStambaugh''
+
+Have you looked at StringReader/StringWriter? -- StevenNewton
+Or StringTokenizer and StreamTokenizer? --NatPryce
+
+''Yes, I started there (StringReader/StringWriter). They're really doing something different, though. StringReader reads into a char[] -- I'm looking for a "next" operation that returns a string. I want to work with instances of String -- not chars, char arrays, and so forth. For example, I want to pass a String to #put and get back a string from #next (and similarly for #peek and #poke).''
+
+''The next thing is that operations on String and File instances should, from the client's perspective, be nearly transparent -- when I want to leave behind a permanent file, I open a "Stream" on a filename. From the caller's side, the API is the same. That way, I can write a set of utilities that does the work and then pass along a Stream on a String for temporary operations and a Stream on a File for more permanent ones. Does this help clarify my desire? Thanks -- TomStambaugh''
+
+What about ObjectOutputStream and ObjectInputStream? You can use these in conjunction with PrintStream. Honestly, though, it just seems like you want a List collection such as LinkedList. You could even implement your own List that uses a StringBuffer as its contents in the case where you'd want the result to be a concatenated string instead of a collection of strings. It's hard to advise without some examples of how you'd like to use it. --RobertDiFalco
+
+-----
+
+Here's how to use String''''''Writer to do what ostrstream does in C++.
+In the JDK, at least, String''''''Writer uses String''''''Buffer, so
+this gives you a fairly friendly way to use String''''''Buffer.
+Wrapping the String''''''Writer in a Print''''''Writer
+gives you the usual print and println methods.
+
+  public String toString()
+	{
+	String''''''Writer stringWriter = new String''''''Writer();
+	Print''''''Writer out = new Print''''''Writer (stringWriter);
+	out.print ("[name='" + name + "'");
+	out.print (" age=" + age);
+	out.print (" gender=" + gender);
+	out.print ("]");
+	return stringWriter.toString();
+	}
+
+----
+
+The String vs. StringBuffer debate is not, as the author of the string.java class assumes, that using 1 StringBuffer is faster than using 1 String.  Rather, it is that calling append() many times is faster than using concatenation many times.  I've posted a test that reflects this at http://www.users.uswest.net/~jgregg3/StringTest.java  Sun's JDK 1.2.2 for NT takes around 1700ms and 424592 bytes of memory in my String test.  Doing the same thing with 1 StringBuffer and many calls to append() takes 16ms and 74544 bytes.  There were similar large differences using 1.2.2 on LinuxPPC.  The practical import of this is that applications that do large amounts of String concatenation, like dynamic SQL builders or text file parsers, should be switched to use StringBuffer.
+
+--john gregg
+mailto:jgregg1@uswest.net
+
+----
+
+First comment:
+
+You can get rid of the extra pop/aload 5 pairs in the bytecode by
+using the following code instead:
+
+  public void useStringBuffer() {
+	String a = "abc";
+	int i = 2;
+	double d = 3.4;
+	String s = new StringBuffer().append(a).append(i).append(d).toString();
+  }
+
+Note that this is using the result of the append() method
+(which returns the StringBuffer instance)
+instead of a local variable reference.
+
+I actually think that this is atrocious coding style;
+methods should not always return a predetermined argument or ''this''.
+Such a return encourages the programmer to use the return value,
+actively defeating any compile-time
+(or, in the case of Java, JIT-time)
+optimizations for things like null pointer checks.
+Since the compiler is not told that the return value can never be null,
+it has to make the null check each time you use a method on the return value,
+instead of being able to make that check once and then be sure
+(since nothing else can reference the local variable)
+that the value hasn't become null in the course of the method call.
+
+
+Second comment:
+
+Microsoft's JVC uses String.concat() instead of StringBuffer.
+Whether this is more or less efficient than using StringBuffer
+depends highly on the underlying implementation of both those classes.
+It does produce marginally shorter bytecode
+(no initialization of a StringBuffer or calling of toString()),
+for whatever good that's worth.
+
+-- AlexPopiel
+
+
+----
+
+If you care about performance, dump StringBuffer and write your own version which doesn't have so many synchronized methods.  There are a pile of bug reports filed with Sun about this; I've found that this can make string concatenation at least an order of magnitude faster.  If you can take a risk, have your FastStringBuffer provide direct access to its char array too if you need that.  Shame Java lacks const. -- JamesDennett
+
+----
+
+This really blows my mind. Everywhre, everywhere, everywhere, I see Java literature advising me to use StringBuffers everywhere because they're "much faster". Just this week, I saw it in a "performance tips" column. TogetherSoft IDE has a code audit facility that flags string concatenations as a potential performance problem. I actually performed the compilation / disassembly myself because I couldn't believe that so many Java experts could be so wrong. What do you know. They're wrong.
+
+Moral of the story: Java experts are all sheep. The emperor has no clothes.
+
+Not quite, see StringBufferExampleTakeThree
+
+The upshot is that the compiler doesn't perform the usual '+' to stringbuf optimization in more complex situations, and that's where it can make a huge difference.
+
+----
+As mentioned above, appending non-final primitive types to String/StringBuffer results in call to String.valueOf() for the primitive value, which creates a new String. That's 2 object allocations per primitive type append, which really hurts when you've got a lot to append!
+
+In fact, it get's worse. Looking at integers, String.valueOf(int) calls Integer.toString(int), which allocates a local char array and eventually a new String, so that's possibly 3 object allocations (one for the array, 2 for the string - strings constructed from char arrays don't share the array). Profiling JDBC and other systems doing a lot of text to number conversion has shown that this can be a real performance bottleneck.
+
+Does anyone know of an implementation of a FastStringBuffer that doesn't require any object creation for appends/inserts, of course, apart from when the buffer itself has to grow?
+
+(A small aside: the author of Integer.toString(int) seems to have gone to a lot of trouble to make the conversion fast (using tables to convert base 10 radix instead of divides) - surely all that is going to be negligible compared to the object allocation overhead? Or is object allocation so fast these days that we don't need to worry about it and the associated garbage collection?)
+
+-- Mat McGowan
+mailto:mdm@revival.force9.co.uk
+
+''In a garbage-collected environment, object allocation overhead can be extremely cheap, as you say.  Consider a stop-the-world compacting collector: after each GC, all the live objects are squished together at one end of the heap.  Allocating an object is then almost as simple as adding the size to the "next object" pointer, checking for overflow, and initializing the fields of the object.  Some extra stuff might need to be done to handle threads (each thread having its own newspace, for example).  In a JIT environment, initialization can sometimes be optimized away.''
+
+Though the more you allocate, the more you have to stop-and-copy, so you're still paying eventually.
+
+
+----
+
+.Net StringBuilder further optimizes the StringBuffer.T''''''oString() operation, by simply using the StringBuilder Char array in order to build the string.  This means that you don't have to create unnecessary garbage.  If you then continue to update the StringBuilder, it will make a copy of the Char array.  So that you effectively get a string that is mutable while under the control of StringBuilder, but then becomes immutable after T''''''oString.  (The semantics are the identical to Java's StringBuffer, its just a cool optimization that I do not think java.lang makes.  Your own FastStringBuffer cannot do this due to java.lang being sealed.)
+
+Also, a .Net string is one object, whereas a Java string is two objects (the class and the array) -- important for such a common object.
+
+It would be interesting to do timings to see what difference this really makes.
+
+Anthony Berglas
+
+''Actually java.lang.StringBuffer performs the same optimization. And even better, according to http://java.sun.com/developer/community/chat/JavaLive/2003/jl0729.html Java 1.5 will have unsynchronized java.lang.StringBuilder as well. The new StringBuilder will also be used by the compiler to optimize String-concatenations.''
+----
+Are we missing the real problem with String and String Buffer?  Why must the compiler and JVM expose these internal implementation issues to the programmer?  When assigning a new value to an existing string, the JVM can do whatever it wants as long as when I ask for its value later, it gives the correct value.  I don't care whether it created a new object off a heap, it reused an existing chunk of memory, or it reused the same object memory which already had space for an expanded value.
+
+After all, the compiler can see a string append operation inside of a loop.  Use C#.Net in Visual Studio 2005 to get source code analysis that warns you to use a StringBuilder instead of a string.  Therefore, this same logic could be put into a compiler so the programmer need not be concerned.  If fine tuning performance is the issue, the syntax should allow the programmer to provide usage information.
+
+* ''These optimizations '''are''' handled by the compiler, just not the first one that translates the source to byte code.  That compiler is more of a translator that tries to keep the byte code simple.  The run-time compiler (such as HotSpot) performs the serious optimizations.  Usage information is gathered from actual usage and applied as needed.  The programmer doesn't need to worry about it, nor do they need to provide usage hints.''
+
+To illustrate, the following three strings can be stored in the same overlapping memory--if the compiler so chooses:
+
+  string a = "foo";
+  string b = a + "bar";
+  string c = a.substring(1,1);
+
+I am ignoring the situation of comparing object addresses (pointers) of strings.  I need to think more about that.
+
+-- DaveEaton
+
+Comparing object addresses of strings has no meaning in Java.
+
+----
+CategoryJava

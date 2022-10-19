@@ -1,0 +1,134 @@
+In JournallingPattern, it was suggested that one write events to a log file, and then verify that the expected events occurred by checking the file.
+
+''Never said nuffin' 'bout no log file. If we are using CheckOutputAutomatically, we can check it in memory. Use of a log file suggests GuruChecksOutput which I disapprove of. -- JF''
+
+There are simple ways to do this, but the discussion quickly turned to complex ways to do it:
+-----
+A StateMachine is useful for simple sets of transformations, not everything
+you would want to do.
+An easy example of a ContextFreeGrammar that cannot be checked by a StateMachine is:
+
+ S -> "open" "close"
+ S -> "open" S "close"
+This is because state machines can only count as high as the number of states they have, whereas this grammar could require counting to an arbitrarily high number. (Of course, I mean a FiniteAutomaton when I say StateMachine).
+
+''However, even if a FiniteStateMachine cannot check all of the constraints, it may still check enough to be useful, and be simpler to implement than a more rigorous check. A StateMachine with a subset of states parameterized by an int would be enough to handle this in practice.''
+-----
+Ah, but you can easily make a state machine to recognize this:
+ S -> ( "open" )+ ( "close" )+
+And in practice this provides much better validation than doing no validation at all.
+
+In the example above, this is what the author wishes to validate:
+ S -> open ( doStuff | flush )* close
+And this grammar is trivial to recognize/validate with a simple state machine.
+-- JeffGrigg
+
+The analysis stage of the FusionMethodology involves the creation of lifecycle expressions. (These are regular expresions that state the allowed order of input and output events in a system.) For example consider the expression ''Editor'' which describes the ordering of events in a wordprocessor (at least in outline).
+
+ Editor = (Create | Load) . (Edit | Read)
+ Create = new . (#out-of-room | #new-doc)
+ Load   = open-doc . (#opened. [#corruption-recovery] |#not-found)
+ Edit   = (modify | append)* . Save
+ Save   = (abandon | save.(#saved |#save-failed))
+ Read   = view | print . (#printed | #print-failed) | search
+
+
+ (x | y) - either x or y may occur at this point
+ (x.y)   - x then y must be done
+ #x      - x is an output event
+ [x]     - x may optionally occur at this position
+  x*     - x may occur zero or more times at this point
+ X||Y    - events from X and Y can be arbitrarily interleaved at this point
+ [Note that recursion is banned.]
+Whilst these expressions capture a significant amount of ordering detail they describe a superset of the actual set of allowed event sequences. They fail to express behaviour that is conditional on output events. For example, the ''Editor'' expression allows the sequence of events:
+  new, #out-of-room, modify, save, #saved
+(i.e. a sequence where the user creates a new document, fails to obtain a new document and somehow modifies the document before saving it(!).)
+
+Note: In the FusionMethodology if an event is sent when it is in contravention of the lifecycle expression, it is ignored.
+
+-- 
+
+The expressions only fail to catch the conditional behaviour because the grammar is wrong!
+
+We can define:
+
+ SuccessfulCreate = new . #new-doc
+ FailedCreate = new . #out-of-room
+ Editor = ( (SuccessfulCreate | Load) . (Edit | Read) ) | FailedCreate
+and then that bad sequence is impossible.
+
+-- JohnFarrell
+
+It's a fair cop - you did restate a lifecycle expression so that you constrain the allowed events based on an output. 
+
+The Fusion book just says "...attempts to make them [lifecycles] express behavior conditional on output events are rarely satisfactory...". So it's not impossible - I wonder if they are suggesting that these sort of expressions become unreadable if you try to express many of these output-based constraints in the same lifecycle?
+
+Although this notation is useful, you still can't express context-sensitive constraints. For example matching opens and closes. Consider how would you constrain the following to match the opens and closes in equal numbers:
+
+ some-process = open* (do-this|do-that)* close*
+--
+
+ some-process = (do-this | do-that)* | (open . some-process . close)
+''(assuming you have recursion)''
+
+I think if the grammar can be rewritten to not use recursion, then you can recognize it with a DeterministicFiniteAutomaton, otherwise you need a more powerful recognizer.
+
+-- JohnFarrell
+
+I should have mentioned that recursion is banned with these expressions... (I've added a note to my original text above.)
+
+''recognize it with a DeterministicFiniteAutomaton''
+
+Exactly - an event filter based on a DFA is the plan expounded in the "implementation" part of ClassicFusion.
+
+--
+----
+''Excuse me, but isn't this technique a bit deep in the bag of tricks for day to day use? When would it be appropriate to pull it out? -- RonJeffries''
+
+I can sense that someone's about to cite DoTheSimplestThingThatCouldPossiblyWork
+and YouArentGonnaNeedIt...
+
+IMHO the lifecycle expressions are useful in their own right (regardless of whether you go as far as the DFA coding). You can express a lot about the dynamic model of a system with just a few expressions - even though the technique has its limitations. (It's a lot more compact than UML sequence diagrams and it's also helpful that you can include one expression in another.)
+
+Suppose you didn't implement the event filter, but instead just logged each event in a database. You'd have an audit log which should conform with the system lifecycle expression.
+
+--
+
+I don't use ChainOfResponsibility every day either, but that doesn't take away from its validity.
+There are common patterns (MarkGrand's Interface), and uncommon patterns (GoF's FlyweightPattern), and damned rare patterns like this one.
+However, I get the feeling it doesn't count as a pattern until we can get one more person to confess they HaveThisPattern.
+Not that JournallingPattern doesn't require all this recognizer stuff in any case.
+If you're just trying to make sure that when you invoke a function you get some output, the recognizer can be as simple as list membership.
+If it's a bit harder, you can use a DFA.
+If it's a lot harder, you can use a CFG.
+And if it's really really hard and you are much smarter than me, you can use a ContextSensitiveGrammar.
+You only have to do what's required, so you did DoTheSimplestThingThatCouldPossiblyWork.
+And I swear, I discovered this pattern because I really did need it.
+
+-- JohnFarrell
+----
+Surely how deep it is in the bag of tricks depends on whether you already have a framework to hand which makes it easy? If you do this kind of thing often, you can make generic tools to instrument the code to produce the journal, and regular expression tools to recognize the patterns. -- DaveHarris
+----
+
+Well for the folks who are waiting for someone to HaveThisPattern, I HaveThisPattern. I'm writing tests for our EnterpriseJavaBeans implementation and one of the parts of the spec is a state diagram of all the states the bean is supposed to go through and the methods that are supposed to be called on it in on the arcs. It was quite easy to write a bean that emitted Token objects in each of the methods and then to shove those tokens through an ANTLR grammar. So basically our bean is a sort of lexer and we used AntlrTranslatorGenerator to generate the parser. And it was trivial to write the grammar, given that we already had a state diagram. Now that we have this framework in place, we can easily compose more complicated tests (what happens if one bean invokes on another bean; do they both go through legal lifecycles?) -- PeterSeibel
+
+I HaveThisPattern too. I also find that with a couple of trusty mental tools it's extremely easy to code recognizers for the regular- or context-free- languages that I encounter in practice. It's often a very fine distinction between a "parser for a context-free language" with an alphabet of high-level objects and "a very simple set of recursive functions".
+
+To illustrate this point, let's write a recognizer for the simple "S" context-free language defined above. This language consists of all strings that start with one or more 'open' tokens followed by the same number of 'close' tokens. Formally you need a push-down automaton to recognize it (a finite state machine plus a stack) so that you can keep track of how many opens you have seen. For this case the stack can be represented as an integer, N: how many 'open's have not yet been closed. The machine can then be coded up like this:
+
+ %% 'S'(Sentence)  return true if Sentence belongs to S, else fail.
+ 'S'(L)  -> opening(L, 0).
+ 
+ %% In this state we are counting 'open' tokens
+ opening([open|T],  N) -> opening(T, N+1);
+ opening([close|T], N) -> closing(T, N-1).
+ 
+ %% In this state we are counting down 'close' tokens
+ closing([],        0)            -> true;
+ closing([close|T], N) when N > 0 -> closing(T, N-1).
+This is an Erlang program, 'S' is a function that recognizes the language "S". This only digs into the FobPocketOfTricks!
+
+The moral is: a lot of languages are really really easy to recognize. I'd also suggest that AnIntroductionToAutomataTheory is one of the coolest computer science books ever written (and I only read half of it). Dare I also say, the methodology that only handles regular languages is not the true methodology. -- LukeGorrie ''(who must admit that the first two programs he smugly posted here recognized the wrong language - so much for bravado!)''
+
+----
+CategoryTesting

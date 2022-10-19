@@ -1,0 +1,95 @@
+''From DoubleCheckedLockingIsBroken''
+
+The above discussion applies to JavaLanguage, but double-checked locking poses problems for CeePlusPlus as well.  See http://groups.google.com/groups?selm=MPG.191d9257dfa5ebf79896db%40news.hevanet.com.
+
+Here's what I use in an embedded system that uses dozens of threaded singletons and has worked fine for many years under very difficult tests and deployment conditions.
+
+Note that there's a separate Service class so that singletonness is separate from the class.
+
+
+ Your''''''Class*  YourClassS''''''ervice::mpSingleton;
+ Your''''''Mutex	YourClassS''''''ervice::mProtection;
+
+
+ Your''''''Class*
+ YourClassS''''''ervice::Singleton()
+ {
+	// First check to see if the singleton has been created.
+	//
+	if (mpSingleton == 0)
+	{
+	// Block all but the first creator.
+	//
+	YourLockG''''''uard lock(mProtection);
+
+	// Check again just in case someone had created it
+	// while we were blocked.
+	//
+	if (mpSingleton == 0)
+	{
+		// Create the singleton Your''''''Class object. It's assigned
+		// to a temporary so other accessors don't see
+		// the singleton as created before it really is.
+		//
+		Your''''''Class* inprocess_singleton= new Your''''''Class();
+
+		// The singleton is created successfully so assign it.
+		//
+		mpSingleton= inprocess_singleton;
+
+	}// still not created
+
+	}// not created
+
+	return mpSingleton;
+
+ }// Singleton
+
+----
+''That doesn't really prove anything -- most of the problems occur on multiprocessor systems with weak memory models, and you haven't said what architecture, compiler, or optimization level you were using.''
+
+And what would that "prove" sufficiently that you couldn't marginalize it
+with more qualifiers?
+
+	 :	Read the DoubleCheckedLockingIsBroken papers again:  the point isn't that double checked locking is broken, the point is that it cannot be fixed.  Really.  Really and Truely.  It only works if written with complete knowledge of both the compiler and the platform, at which point you are literally writing at the level of machine code.  Do you ''really'' want to keep schematics to every CPU series you plan on running your software on?  --WilliamUnderwood
+
+	 :	''No, the paper says double checked locking cannot be fixed given the guarantees the Java memory model gives you (and I think cpp doesn't give them either). It ''can'' work if the right guarantees are provided, which is something I believe the new java memory model does (however, in the new model DoubleCheckedLocking is no longer as efficient as it used to be). I don't know if cpp gives enough guarantees to make it work, but at least the code fragment should be using some 'volatile's to work. As cpp doesn't have any notion of threads, I suppose it doesn't give the nescessary guarantees. I consider it a bug in the language specification.''
+
+''If you are saying you can't write code in C that works everywhere then that is known.
+If you let that stop you from writing code that works on 99% of all platforms that is up
+to you. My code has worked on a lot of platforms. That is good enough for me.''
+
+It shouldn't be. You don't ''know'' that it has "worked"; lock bugs are often low frequency, and hence difficult/impossible to find by testing, including using the customer as your tester. If a program crashes or gets a wrong answer or behaves in a peculiar way once every 2 or 3 months, you may never know it, but it's still a bug.
+
+Here we have a situation that is known '''not''' to be workable. It's unhealthy to ignore a known problem.
+
+Some of the discussion emphasizes compiler optimizations and/or variations in cpu, but the problem is worse than that; it may happen on essentially '''all''' platforms with all cpus, all compilers, all optimization levels, any load level, and any number of threads, simply with varying frequency of occurrence. You won't know otherwise unless you can prove (not test!!) that it works in some given circumstance, and it's pretty predictable that not a soul in the world will do that. Anyone who cared enough would just switch to a safer technique.
+
+So in the face of that, "works well enough for me" means "I don't mind bugs if they don't pop up often", which isn't a very defensible attitude unless e.g. accompanied by some additional argument concerning cost tradeoffs for some particular project, a difficult argument to win, considering the existing discussion about the relatively low cost of switching to a known-correct method.
+
+----
+
+''As cpp doesn't have any notion of threads'' -- really?
+Then what is the purpose of the "volatile" keyword?
+''volatile simply means that the compiler is not allowed to assume that the contents of a location will not change out from under it.  Threads aren't the only reason this can happen (think memory-mapped I/O).  In fact, threads (as we know them) didn't exist on the machines that first implemented C. C and C++ really, truly have no notion of threads. --TimLesher''
+
+''the relatively low cost of switching to a known-correct method.''
+You have stumbled upon one of my pet peeves: alluding to something that you claim exists, but without enough details to allow me find it -- or even recognize it, if I am lucky enough to stumble across it.
+
+What "known-correct method" are you talking about?
+
+* http://en.wikipedia.org/wiki/Double-checked_locking seems to imply that adding "volatile" to the definition of mpSingleton gives correct results in J2SE 5.0, Visual C++ 2005, etc., but not J2SE 1.4 and earlier.
+* grabbing the lock first, every time we check, also gives correct results, although apparently some would disagree that this is a "low cost".
+* I suppose one could write the program to construct the singleton on start-up, before creating any threads ... rather only creating it only if and when it is ever used.
+* Or are you talking about something else?
+
+-- DavidCary
+----
+The "known-correct" methods that I'm aware of are:
+* Eager initialize at startup, rather than lazy initialize at first use. No need for locking if the initialization is only done once, and subsequent access is to a global constant.
+* If library code saddles you with a lazily-initialized singleton or other value, you can turn it into eager initialization by calling the getInstance method and assigning the result to a global constant, and then referencing this constant throughout your code. The lock is only acquired once, at startup. Also, if the library uses double-checked locking and would have potential problems in your threaded code, forcing the resource to be initialized at startup before spawning additional threads besides the initial one prevents any problems. In Java, for example, you might have "public class Main { public static final org.foo.Singleton singleton = org.foo.Singleton.getInstance(); public static void main (String[] args) ..." which forces eager initialization of the library's singleton and puts it in a global constant Main.singleton as soon as your program starts, since you put it in the class with the main method.
+* Lazy initialize, but don't use "getInstance" (or whatever acquires the lock) in a tight loop. Instead, call it once before the loop, assign the return value to a local, and use the local in a loop.
+* In high-throughput event-driven code (servers, most likely) each handler thread (e.g. the daemon threads in an HTTPD) can hold a reference to the instance or whatever is lazily initialized, calling the getInstance (or whatever) function if it's null and assigning the reference, then using it. Checking the local reference for null doesn't require locking, because it's local to the thread. In Java, each thread's run() may have a SingletonHolder (or whatever) instance with a null reference and pass this Holder as a parameter in method calls. The Holder has a getInstance method that returns the internal reference, but first checks if it's null and if it is assigns it from the singleton class's getInstance (or whatever). The latter has normal, correct single-checked locking since it may be called from any thread. The former needs no locking assuming each thread has its own Holder object with a separate reference.
+* No-lock lazy initialization can be done in Java by exploiting the class loader behavior (it's safe, because this behavior is specified in the JLS): your Singleton class (or whatever) has a getInstance method (or whatever) that returns MyInnerClass.instance (or whatever), and has a MyInnerClass inner class that is the real object of interest that contains a statically initialized member "instance" (or whatever), e.g. public static Singleton instance = new Singleton(). The JLS specifies that the MyInnerClass class only gets loaded when code is about to execute that uses it, so when "return MyInnerClass.instance" is first evaluated, that is during the first call to getInstance. The static initialization that creates the instance occurs then. Subsequently retrieving the instance is as cheap as with double-checked locking or eager initialization, but the initialization is actually lazy and threadsafe. I don't know of any language or environment besides Java where this sort of thing works though.
+* Just lock every time, and use a language/environment in which lock acquisition is cheap (aside from the time spent waiting when there's actually contention for the lock).
+* Under some environments and with some CPU architectures, you can redesign your data structures to use interlocked opcodes rather than explicit kernel-implemented locks (for example, http://blogs.msdn.com/larryosterman/archive/2005/03/02/383685.aspx)

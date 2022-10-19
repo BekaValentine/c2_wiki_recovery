@@ -1,0 +1,64 @@
+Snapshot isolation occurs in databases with MultiversionConcurrencyControl, such as OracleDatabase, InnoDb, GemStone, PostgreSql, FireBird, AxionDatabase,  McKoi, and  SqlServer 2005.
+
+MultiversionConcurrencyControl ensures none of the 4 ConcurrentUpdatePhenomena occur without using granular locks - the historical data values are used to preserve isolation.  There are two consequences of this:  it enables much more concurrency than would otherwise be possible, in part because readers are never blocked by writers.  Secondly, the isolation level isn't truly "serializable", in that a serial history can be reconstructed from concurrent transactions, and a few rare anomalies do exist.  
+
+SnapshotIsolation is thus a "new" isolation level - it's been around for a long time, but wasn't being recognized.  The ANSI SQL standard isolation levels in particular are ambiguous, and were critiqued along with a theoretical explanation of SnapshotIsolation here: http://citeseer.ist.psu.edu/berenson95critique.html
+
+----
+One disadvantage of SnapshotIsolation is that multiple concurrent writers to the same table can result in failed transactions that have to be retried by your application. Actually, this has little to do with actual concurrency, it's a question of how write transactions are interleaved. 
+
+Consider this sequence: 
+
+ Open transaction A.
+ Open transaction B. 
+ Have A modify row R, creating R'. 
+ Have B modify that same row R, creating R''.
+ Have A (alternatively B) commit.
+ Then when B (alternatively A) commits, he'll see a conflict.
+
+Indeed he MUST see a conflict because a SnapshotIsolation approach cannot make that sequence of events into a straight sequence, both A and B modified the original version of the row, their transactions can't be lined up sequentially. I.e., if the transactions lined up sequentially, either A must have been working with R'', or B must have be working with R'. Since both transactions thought they were working with R, we have a conflict. In this case, transaction B must be repeated.
+
+''Note that Oracle's behavior is slightly different, since it uses row level locks for write/write conflicts.  Oracle would block B from modifying row R until A commits or rolls back.   If A commits, the conflict is immediately reported to B as an ORA-08177 error.''
+
+See http://mckoi.com/database/maillist/msg03818.html and http://axion.tigris.org/servlets/ReadMsg?list=dev&msgId=308451 discussion of issues with SnapshotIsolation in two databases that support them.
+
+----
+''Whether locks are used is an implementation issue. If the implementation doesn't use locks, or something equivalent to locks that allows transactions to block, then you end up with the problems discussed in the above two links. However, it is possible to avoid these problems, and also to hide the complexity of having to explicitly repeat transactions, without losing performance. Transactions would normally be optimistic, but in the case of a conflict the transaction would automatically be retried in a blocking mode. This should have almost exactly the same performance as optimistic locking when conflicts are rare, but it would also limit excess work due to retries to a factor of 2 in the worst case.''
+
+''I don't know whether there are any implemented databases that use this approach, though. -- DavidSarahHopwood''
+
+It isn't entirely clear to me that the proposed approach is valid (nor am I 100% sure that it is not).  Continuing the "Transaction A" and "Transaction B" example from above, when Tb attempts to commit and finds a conflict, it may not be valid for the database to simply re-open and re-apply Tb--the state of the database after Ta is different than it was when Tb was first attempted.
+
+''By definition, it is valid for a transaction to be automatically retried. In the example, the effect is the same as if transaction A had completed more quickly, before transaction B started. -- DavidSarahHopwood''
+
+* Yes, that would be the theoretical model. Like always the model diverges ever so slightly but essentially from the realities of actual software. The reality is that a transaction encompasses client/server communications, and even if a database server would know to replay a transaction, no client environment that I know of would know how to cooperate. To give a practical example suppose transaction B computed a value inside the client environment, based on the state read from the database as first statement of the transaction. Then sends that value as an insert statement as the second statement and issues a commit. For the server to correctly replay the transaction, it would require the client to restart, read data again,  send a different insert statement. The theoretical model works well if one considers the client within the same scope of DBMS, which is almost never the case in practice. --CostinCozianu
+
+----
+In some SnapshotIsolation implementations, notably Oracle, this isolation level has the side-effect of allowing some "truly" concurrent operations to take place, meaning that some concurrent transactional schedules can't be serially ordered. This means snapshot isolation doesn't fit the exact mathematical meaning of "serializable" isolation, and sometimes requires more explicit locking (SELECT FOR UPDATE) in order to meet such a guarantee.
+
+Example in oracle:
+
+Session 1:
+ create table foo (a_value int);
+ create table bar (a_value int);
+ alter session set isolation_level = serializable;
+ insert into bar select count(*) from foo;
+
+Session 2:
+ alter session set isolation_level = serializable;
+ insert into foo select count(*) from bar;
+ commit;
+
+Session 1:
+ commit;
+ select a_value, b_value from foo, bar;
+
+    A_VALUE    B_VALUE
+ ---------- ----------
+         0          0
+
+In a truly serializable model, one of these transactions had to occur before the other, so Session 2 would block until Session 1 committed. Note this anomaly is only present in Oracle for ''aggregate operations'' such as count(*).  Other databases (at least AxionDatabase) may consider this a conflict, since Session 1 read from FOO while writing to BAR, and Session 2 read from BAR while writing to FOO.
+
+Unfortunately SnapshotIsolation can destroy the performance of some applications, specifically the ones with a relatively large number of concurrent transactions on "hot rows" that take a long time to repeat.  In such cases, a SELECT FOR UPDATE (or equivalent) would be needed to obtain truly serializable isolation.
+-------
+CategoryConcurrency

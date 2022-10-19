@@ -1,0 +1,135 @@
+Some feel it is a design smell to name functions, methods, or classes with tons of variations that should otherwise be parameters, perhaps NamedParameter''''''s.
+
+Before Fix:
+
+ bufferedReader(...)
+ nonBufferedReader(...)
+ encryptedBufferReader(...)
+ nonEncryptedNonBufferedReader(...)
+ etc....
+
+After Fix:
+
+ reader(buffered=[yes/no], encrypted=[yes/no])	// named parameters version
+
+ reader([yes/no], [yes/no])	// positional parameters version
+
+The problem with attributes-in-name is that it can result in a CartesianJoin-like pattern of name combinations, and if more options are later added, then which options become part of the name and which become parameters is arbitrary and confusing. VariationsTendTowardCartesianProduct. 
+
+For an illustration of what this might look like in a more extreme case, let's assume we have 5 possible features (feature A thru E), and these features can be considered Boolean (on or off). The Boolean assumption is generally unrealistic, but used to simplify the example. Further, all combos may not be practical in practice, but we'll ignore this for now. If we produce all possible combinations, we get something resembling:
+
+ class activityFoo_FeatureAoff_FeatureBoff_FeatureCoff_FeatureDoff_FeatureEoff(...){...}
+ class activityFoo_FeatureAoff_FeatureBoff_FeatureCoff_FeatureDoff_FeatureEon(...){...}
+ class activityFoo_FeatureAoff_FeatureBoff_FeatureCoff_FeatureDon_FeatureEoff(...){...}
+ class activityFoo_FeatureAoff_FeatureBoff_FeatureCoff_FeatureDon_FeatureEon(...){...}
+ class activityFoo_FeatureAoff_FeatureBoff_FeatureCon_FeatureDoff_FeatureEoff(...){...}
+ class activityFoo_FeatureAoff_FeatureBoff_FeatureCon_FeatureDoff_FeatureEon(...){...}
+ etc...
+
+There can be up to 32 combinations here (2^5). If we decide to add another feature, then we'd have up to 64 combos. Thus, it can be a smelly design choice to manage features this way. (The above would generally share a parent class.)
+
+
+''The iostreams (CeePlusPlus) library, where you have istream, ostream, and iostream, is bad enough.''
+
+One advantage of named parameters is that often a default can be assigned to simplify the usage and code. It can be very helpful to newbies who would otherwise be overwhelmed with choices. The defaults might be the slower implementation, for example, but the most generic or flexible. In a later optimization code-review pass, one can tweak the options to improve performance.
+
+The only decent justification I have ever heard for attributes-in-names is that it allows the compiler to make optimization decisions at compile time, producing faster code. However, for most domains it is better to tax the machine than to tax the human (developer) in my opinion. It is not 1970 anymore. We should put the human ahead of the machine.
+
+-- top
+
+''The above assumes that it's a good idea to put all reading behavior in a single method. See the DecoratorPattern if you disagree with that assumption.''
+
+The suggestion does not dictate internal implementation. How that is divided/handled is not the issue here. This focuses on bad interfaces.
+
+''A thoroughly confusing response. Above, you suggest writing one method whose internal implementation handles all permutations of buffering and encrypting.''
+
+It does not have to implement each "variation" itself (assuming the implementations are a simple list of mutually-exclusive code snippets, which I suspect it wouldn't be if factored properly.) A case/switch or if-elseif-etc. statement is the most obvious way to handle dispatching to ''other'' methods/functions internally, but I don't think it is the only way. I hope this is not turning into a HolyWar about case/switch or elseif statements.
+
+''Again, very confusing. Switches and ifs are implementation.''
+
+{I didn't say otherwise. I will review it in a few weeks to see if I can find a fresh way to reword it.}
+
+My point is that attributes-in-name makes a poor interface. If one has to (allegedly) accept a poor internal implementation to get a good interface, I think it is probably worth it. A good interface should get priority over good implementation. It would make an interesting conundrum if it really did force such a choice. But so far that has not been established. I would like to see a specimen of it forcing implementation problems.
+
+''But you don't make a case for attributes as indicators of poor interfaces. Perhaps multiple attributes are an indicator, but the DecoratorPattern provides a way to give each interface a single attribute. There's no confusion about which attributes are parameters (none are) and no cartesian join of attributes in names.''
+
+{Decorator is another issue, or perhaps one of many solutions. The biggest problem with attributes-in-name is that it is '''not scalable''', as described above. In the future more variations are usually.}
+
+Note that the decorator pattern assumes things can be implemented via nested wrappings, but not everything can (at least not always conveniently, per TuringTarpit).
+
+''The example above can and is.''
+
+{Okay, in some cases decorator is an option. In others, it is not.}
+
+''What you're calling "attributes" are actually adjectives.''
+
+I am not sure that changes anything. 
+
+----
+
+The rationale for using discrete names rather than parameters is to offload work from the person.
+
+''No, the rationale for using a DecoratorPattern is to allow the user to mix and match features and to add new features as needed. Look at Java's Reader classes. You can make a line number reader that reads from a file reader. You can add a buffered reader between them if you like. You can replace the file reader with a character array reader. You can create a new kind of reader and insert it in the chain where you like.''
+
+Implementation of the classes to be written is simplified if the task is narrowly defined. When of the areas that leads to complexity within a class is when it tries to support multiple modes of operation and conflicts arise. For the design of the calling code, the designer must make the explicit decision of what to call. It is far easier to select an explicit name representing the desired operation type than to have to remember the precise calling syntax to select one of many. Likewise, it is much clearer to read the intent with a well-named class than to have to interpret the intent based on calling parameters. How expressive would "new Reader(true, false);" be to anyone? 
+
+{I believe it is polite to put the needs of the reader/user before that of the API developer. If you wish to break it up into smaller pieces inside, go for it. However, that should be an issue for the developer, not the user.}
+
+''UseEnumsNotBooleans for the parameters, so you could write "new Reader(UNBUFFERED, ENCRYPTED);"''
+
+''Instead of handling multiple modes of operation in one big class, create local/inner/private classes, one for each variant. Reader's constructor could return handles for an instance of one of the variant classes instead of a Reader.''
+
+	 :	Or use reflection / factory pattern to create the correct one. This also gets around the issue that in many languages, it's nearly impossible for ''any'' code to optimize chains of wrapped decorators. I think StrategyPattern might be a better fit: "new Reader(Buffered.class, Encrypted.class, File.class)". This way, it can still be dealt with as wrapped calls if necessary, and yet if the Reader is aware of a class which reads files, encrypts and buffers, then it actually has the option of using it instead. I'm still not entirely sure what the best route is for 
+
+	 :	On a side note, I would also suggest that when you start getting many implementations of something that is commonly used with the decorator pattern (such as BufferedReader, EncryptedReader, FileReader, InputStreamReader), it might be a good idea to move them to their own package, and drop the Reader postfix.
+
+	 :	-- WilliamUnderwood
+
+----
+
+One should note that there isn't any clear point at which Attributes enter the name.  Should an 'object' be a 'reader'? or is 'reader' a 'smell', being an attribute of an object?  Here's a rather contrived example:
+
+ class Object {...};
+ class Date : public Object {
+   virtual int getYear() const { return this_year(); }
+   virtual int getMonth() const = 0;
+   virtual int getDay() const = 0;
+   virtual int getHour() const   { return 0; }
+   virtual int getMinute() const { return 0; }
+ };
+ class J''''''ulyFourth : public virtual Date {
+   final int getMonth() const { return 7; }
+   final int getDay()   const { return 4; }
+ };
+ class J''''''ulyFourthNineteenSeventyThree : public virtual J''''''ulyFourth {
+   final int getYear()  const { return 1973; }
+ };
+ class J''''''ulyFourthNineteenSeventyThreeAtFourThirtyTwoInTheAfternoon 
+  : public virtual J''''''ulyFourthNineteenSeventyThree 
+ {
+   final int getHour() const { return 16; }
+   final int getMinute() const { return 32; }
+ };
+
+ // ... or, perhaps, 
+
+ class F''''''ourInTheAfternoon : public virtual Date {
+   final int getHour() const { return 16; }};
+ class T''''''hirtyTwoMinutesAfterTheHour : public virtual Date {
+   final int getMinute() const { return 32; }};
+ class J''''''ulyFourthNineteenSeventyThreeAtFourThirtyTwoInTheAfternoon_v2
+  : public virtual J''''''ulyFourthNineteenSeventyThree 
+  , public virtual F''''''ourInTheAfternoon
+  , public virtual T''''''hirtyTwoMinutesAfterTheHour
+ {};
+
+DataAndCodeAreTheSameThing.  It's difficult to say at which point something should stop being 'code' and become a 'parameter' to other 'code'.  Perhaps better is to focus on other features: code reuse, encapsulation, learning curve, etc.  Indeed, for popular and combinations of features, perhaps attributes in the name are the way to go.  
+
+And perhaps this issue has to do more with constructors and factories than it has to do with parameters and attributes.  For functional code, for example, what needs to be 'part of the function' is clear based upon the contexts in which the function is used - it will only ever have a limited set of parameters passed its way.  Most of the issues regarding AttributesInNameSmell go away if one discards ''names'' and nominative typing.  If names are optional, and object-classes are anonymous (or only named for convenience of reference), then A''''''ttributesInName isn't special; it simply becomes a way of describing some features imposed by an optionally-named constructor or factory function.
+
+''Perhaps "configuration settings" instead of "attributes" is a better word for it. As far as "popular combinations", I would tend to leave those to app-specific wrappers of some sort. A general-purpose API-builder, such as Sun with Java, should be careful about what they assume will be "popular". Perhaps the "popular" one should be what the defaults are if you don't specify specific attributes, rather than making a formal class for the (assumed) popular combos. Or just recommend certain combos in the doc. --top''
+
+----
+See also: BargainFutureProofing, DataAndCodeAreTheSameThing, JavaLanguage, JavaIoClassesAreImpossibleToUnderstand, PredicateDispatching
+----
+CategoryCodeSmell, CategoryAbstraction, CategoryInterface, CategoryInfoPackaging

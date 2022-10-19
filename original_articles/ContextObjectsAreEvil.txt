@@ -1,0 +1,143 @@
+A ContextObject binds all subsystems together because one object is referencing everything else. This is a CodeSmell. Ideally, you should be able to load subsystems in independently of each other. A ContextObject prevents this. A singleton is much better for this purpose. A singleton is not just for creating objects; it is also a service access point that can be loaded by the appropriate subsystem. Having a singleton represent every service access point allows for seamless vertical integration of cooperating components. A ContextObject creates a swath of horizontal dependencies that only grow and grow uglier over time.
+
+''I disagree. A ContextObject allows separation of the interface from the implementation. It allows different contexts to co-exist in one application; the SingletonPattern allows only one global context.''
+
+'''With singleton:'''
+
+ time = Clock.getInstance().getTime();
+ // returns the "global" time
+'''With context object:'''
+
+ time = context.getClock().getTime();
+ // allows different timezones to coexist within one application
+
+----
+
+''RE: A ContextObject creates a swath of horizontal dependencies that only grow and grow uglier over time.''
+
+I agree that passing ContextObject as a parameter is quite onerous, especially in the more 'static' languages. A potential solution there is to create a 'Context Service' class that can safely be dynamically downcast to the correct interface by the user, thus requiring the user to only be aware of dependencies that the user actually requires, which would limit horizontal dependencies to knowledge of the ContextObject class and the Context Service class. You can also get rid of those dependencies by using a "hidden" variable to pass the ContextObject around, such that only users of the ContextObject are even aware that it exists. Example hidden variables include SpecialVariable''''''s and ThreadLocalStorage; more generally, ExplicitManagementOfImplicitContext describes many such tactics. I suspect that in combination these two features... plus GarbageCollection... tame the 'evil' you see in ContextObject''''''s without any reduction to their value. 
+
+More details of a particular approach in ContextFromThreadLocal.
+
+As far as the "horizontal dependencies" go, those are often EssentialComplexity; there are CrossCuttingConcern''''''s and so there must be cross-cutting parameters. When dealing with any sort of systems software, multiple contexts are the rule rather than the exception, and attempting to simplify the problem by use of SingletonPattern will only introduce AccidentalDifficulty as you use the wrong tool for the job.
+
+----
+''I disagree. A ContextObject allows separation of the interface from the implementation. It allows different contexts to co-exist in one application, the SingletonPattern allows only one global context.''
+
+You already have a context; it's called your program environment. You don't really need another. A ContextObject does clearly allow separation of the interface from the implementation but it doesn't allow interfaces to be used independently of each other, because you must pass context around throughout your application. You've bound them together such that even if a subsystem doesn't use a service out of the context it must load it.
+
+''Do you mean I don't really need more contexts within the same application? What if my application is a container for components? Why must the subsystems (components?) load services which they do not need? Must the context be the factory which loads the service? Why not separate the creation of the service providers from the context?''
+
+'''More modular context:'''
+
+  time = ((Clock) context.getService(CLOCK_SERVICE_ID)).getTime();
+''By the way, in JavaLanguage, the ClassLoader is a de facto ContextObject which allows more singletons to co-exist''
+
+Then why isn't your context the container? Why make up a new object that has nothing to do with your application? The container is at least part of your application and will not have services not required by the container. In addition, every part of the application probably will have a reference to the container anyway.
+
+''Because there is one container and many contexts. Each component lives in its own context provided by the container. If there was one context only, I'd have to configure '''one''' context to suit '''all''' components. With multiple contexts, one for each component, I can configure the components independently from each other. There is no need to load services which are not needed.''
+
+''By the way, in an OperatingSystem, there are many program environments too. Each program can run in its own environment.''
+
+For example? Your definition of a container doesn't match definitions I'm used to. A container is the binding scope. I don't know what a container would really do otherwise. I can imagine providing different services to some contained objects, but I can't imagine passing around this context object that binds everything together unnecessarily.
+
+----
+When I first started doing lots of UnitTest''''''s, I tried using a ContextObject to mock out all the external services I was using - file system, database, etc. I had to pass that context around a lot, and for not much benefit. Later, I wrapped every external service with a class that could be set to a mock value, and I didn't have to explicitly pass the context state to all the classes that were being tested. Your tests have to be smarter - I wound up writing my own abstract test cases - but it seems much easier overall. -- fh
+
+''If you do need context object only for testing, then, I suppose, you can better use SingletonPattern, since the whole application runs in one context only. But if you need more contexts, singletons cannot help you. E.g., if you need to connect to two databases, or to poll more mail accounts, ...''
+
+Right, then you refactor SingletonPattern into non-singleton instances. (Which is probably annoying, depending on what language you're using, but not impossible.)
+
+I guess what I don't understand is this. I can see why you'd need to talk to two different databases, and why you'd need to talk to two different clocks, and why you'd need to poll two different mail accounts. Why does the database, clock, and mail account need to be pulled together into a ContextObject?
+
+''They should not. The '''context object''' should only bind names or identifiers to the service objects. The '''components''' can then find their appropriate service object by asking the context object. The '''container''' inserts the configuration information into components' contexts. The context object itself does not need to understand that the name DB is bound to a data source, MAIL_ACCOUNT to a mail account or PATH to the search path for executable programs.''
+
+If your context object has a database service, logging service, memory service, mail service, etc., these libraries (concrete or abstract) must be included. Now that means any code using the context object is tied to the mail service even if it doesn't use it. That is CodeSmell''''''PlusPlus.
+
+''If the ContextObject is implemented as a record of specifically typed interfaces, that might be a problem (though 'forward declarations' could avoid issues of that sort). But ContextObject can, in many languages, be implemented as a generic collection of ID=>Object, then utilize downcasting.''
+
+-----------------
+
+I was following the path of using "replaceable" singletons while unit testing, but I've now run into the problem where I need two different replacements. Specifically, I'm working on an automated integration-level test, and trying to run client and server objects in the same app. They are stepping on each other in certain places, so I came to the wiki to see what people had to say about this. I can see the problem with a context object that has references to all possibly relevant services - I'm using one and it is starting to smell. I propose another solution:
+
+'''With context id:'''
+
+ time = Clock.getInstance(contextId).getTime();
+ // allows different timezones to coexist within one application
+This way, the context id can be any token, set of tokens, or even null, depending on how much flexibility you need. Importantly, the object which is passed around (that I was thinking of as the context object but which does not match the definition of context object that predominates on this page) does not drag around references to subsystems which are not relevant to the local code scope. Thoughts? -- LouisThomas
+
+''This smells of the ReverseFlyweightPattern.''
+  time = Clock.getInstance(timeZone).getTime(); // reverse instance flyweight w/ one clock for each zone...
+						// actually, the reverse instance flyweight plus the normal flyweight concepts would work here...
+						// one seconds-since-epoch counter for all instances of Clock, and an instance of Clock for each time zone!
+
+----
+This whole discussion SmellsLikeJava. I think you are referring to having a Servlet Context, SessionContext, GlobalContext, etc. These objects model concepts about the interface, not concepts about the application. Interface objects and application objects mix like oil and water. Most of the art of writing an application comes when mixing these domains.
+
+----
+ApplicationProgrammerInterface''''''s in other languages follow a "Context Object" approach also, often in similar circumstances. Although this ''might'' be common in the JavaLanguage world, I don't see anything Java-specific about a ContextObject approach, or for that matter, anything in Java that pushes one toward a ContextObject-approach either. Do you?
+
+----
+I think ContextObject is necessary in most mainstream languages when you have a complex problem. Most mainstream ImperativeLanguage''''''s have a very fixed environment structure, seriously limiting the scope and lifetime of data. The discussion thus far has been about access to services, but traditionally I've viewed Context as an extension to a language's environment model (i.e., the way it manages scope & lifetime of data structures).
+
+ProceduralLanguage''''''s like CeeLanguage have the local procedure stack, global area, and the heap. One procedure can't effectively peek into a prior calling procedure's state; they're all distinct. C "static" variables allow for cheating in terms of lifetimes of data, but not in scope. Clunky manual management (malloc/free) is required for dynamic allocation and reference of data. ObjectOrientedLanguage''''''s extend the environment by unifying the heap with global areas, by segmenting global areas into heap regions ("objects"). They extend the scope to include "inherited" regions. They manage lifetime by either manual (CeePlusPlus) or automatic (GC'd [GarbageCollection]) management.
+
+So with the above languages, you're stuck with "class" or "function" as the means to hold scoped data. That's terribly limiting when your problem domain requires something beyond rudimentary behavior. Life is a bit better in languages like SmalltalkLanguage and LispLanguage, as they have arbitrary LexicalScope (using blocks or closures). JavaLanguage even does this with its InnerClass''''''es, but it's terribly clunky. Apparently DotNet's CLI doesn't have arbitrary closures, though I'm not 100% sure - CeeSharp certainly doesn't use inner classes.
+
+So, given that you're stuck with "class", you might as well make a "class" that references the data needed in any particular context. Hence, the ContextObject. Now a ContextObject CAN be a singleton - but probably not in a concurrent or multi-user system.
+
+A good scenario for context objects (since it was mentioned above) is the WebApplication model used by ActiveServerPages, AspDotNet, WebObjects, ColdFusion, and JavaTwoEnterpriseEdition. The web request is an invocation with state management requirements beyond the language's raw capability. So in this case the problem domain is how to maintain state for web requests running inside a server housing multiple applications. There is the page scope (like a "function call" the immediate LocalVariables), request scope (a single request-response cycle to the server chained through an arbitrary number of filters and processors), the session (a single user across an arbitrary number of requests), and the application ("global" variables, in essence). WebObjects and AspDotNet usually hide the need to use context objects directly, ActiveServerPages and J2EE do not. AspDotNet also adds ViewState (page state that can be re-populated between requests) and Cache scope (session-level data with an LRU policy, like a StatefulSessionBean).
+
+-- StuCharlton
+
+I don't think anyone in this discussion has any idea what a ContextObject is, or has even bothered to read Doug Schmidt's paper on the ContextObject pattern.  Schmidt describes a ContextObject as an object that provides configuration information to subsystems.  In his explanation, he is describing StampCoupling.  This is simply either one of two things: (1) a hack, and not truly object-oriented (2) a demonstration of a complete non-understanding of Creational Patterns in the GoF, as well as how to model parametric polymorphism.  GoF OO Patterns are set-up such that you can avoid situations like StampCoupling with enough abstraction boilerplate.  Schmidt is essentially saying screw that, abstraction is too hard, let's cheat.  If you are going to do StampCoupling, this can be done in two ways.  First, in purely functional programming, this can be done using free composition of free comonads. See: DataTypesALaCarte.  Second, in a pure object-oriented programming language, configuration would be done through parametric polymorphism only.  Context Objects still exist, but they are read-only for configuring subsystems.  Any write-permissions to the Context Object must be modeled by a separate static relationship.  This is an object capability view of computation.  A Concrete Factory must go and get the data necessary for construction from the Context Object.  The Concrete Factory and the Context Object can be said to collaborate with one another, and the Concrete Factory navigates a static relationship to the ContextObject for read permissions.  The Context Object can be as specific as only granting read permissions to the facet of the Context it wants the Factory for the subsystem to see.  Because you don't want to directly couple the ConcreteFactory to the Context Object, you insert an AbstractFactory pattern between the two (the Abstract Factory does not have to be reified as a class or even an object).  Once the system is instantiated, there is little need to continue passing the Context object reference back and forth unless the subsystem was destroyed and reborn, because any passage of the reference to the ContextObject should only imply navigation of that static relationship, and you should consider using behavioral message passing instead, otherwise you are passing the ContextObject to the subsystem expecting the subsystem to write its state -- this can harm the cohesiveness of all other subsystems, and introduce synchronization demands that require transactional interfaces to guarantee without massive explosion in sequential interfaces and atomic guards.  If you can guarantee the subsystem will never "disappear", then this will allow you to create [and maintain] a robust supersystem/subsystem relationship.  -- JohnZBoZabroski
+
+A separate notion is that of a ProcessorContext and a Processor.  In functional programming, this is most naturally modeled using continuation-passing style.  For modularity, you can delimit continuations.  In OO, ProcessorContext is largely irrelevant because arrival order of messages is unknown ahead of time and, very important, object's model hidden state anyway, so external systems cannot possibly have full knowledge of such a ProcessorContext without some form of ComputationalReflection such as ProceduralIntrospection.  Any ProcessorContext in OO would thus be a form of Object-Oriented metaprogramming and an object that directly models the UpdateableStore of a Processor for a VirtualMachine.  -- JohnZBoZabroski
+----
+The thesis of this page is just wrong. And it ends up an argument for GlobalVariable''''''s (doh!). Context objects gain their power by being explicit parameters to functions. This is far preferable to coincidentally available objects. Using the Class to hold singletons is just as horrible as using global variables; indeed, it is worse, since your granularity is restricted and relies on fragile classloader semantics. -- RichardHenderson
+
+----
+I think all of this depends on the kind of references kept in the ContextObject. I can see how an omniscient ContextObject could easily turn an architecture into a BigBallOfMud if it holds references to services and like things that could be gotten from elsewhere (such as from brokers, from naming and directory services, etc.). But on the other hand, if you look at a system from a stimulus/response perspective, there are certain objects, such as the Principal generating the stimulus, and maybe a UnitOfWork, and maybe a CompositeResponseTime measurement, that are very nicely passed through a ChainOfResponsibility via a ContextObject accessible as a method parameter or a ThreadLocalVariable or something. Case in point: how often have you seen the HttpServletRequest/HttpServletResponse/HttpServlet trinity passed separately in method signatures of JSP/Servlet-based ApplicationLayer''''''s? Using an HttpResponseContext instead tidies things up neatly without causing excessive coupling and inappropriate package dependencies. -- RandyStafford
+
+P.S. EvilIsEvil :)
+
+----
+I don't like how much context objects turn up in my code, but they seem better than the alternatives. When more than one Foo object is present, singletons won't work, but context.getFoo() retrieves the one that's relevant at the current code execution point. As long as the context acts as a simple registry, without any more complicated logic, it doesn't turn into a confusing BigBallOfMud. 
+
+----
+What about (JavaLanguage version):
+
+ class SomeClockC''''''lient {
+	private Clock clock;
+	SomeClockC''''''lient (Clock clock) {
+	this.clock = clock;
+	}
+
+	public void someMethod () {
+	// ...
+	time = clock.getTime();
+	}
+ }
+This class's clients would then be responsible for supplying a Clock.  If all objects should use the same Clock, that's doable; if there's a need for separate clocks, that's easily supported too.  Similarly, changing the class to use a Singleton clock is a matter of changing the constructor, or providing a () constructor that obtains one from Clock.getInstance(), or what have you.
+
+I think the point I'm trying to make is that mixing object creation and object use in the same statement is the real source of the problem. -- OwenJacobson
+
+----------------------
+
+Re argument in support of singletons:
+
+'You already have a context; it's called your program environment. You don't really need another.'
+
+This is only true when it is true.
+The whole point of introducing contexts should be that you have already determined that a singleton *isn't* good enough for your whole program environment, i.e. you want a *non-homogenous* programming environment divided into logical zones. ContextObjects are one way to do it. Smuggling stuff in thread locals is another. But globals or singletons just do not address the issue.
+
+----
+
+Proposed solution moved to ContextFromThreadLocal.
+
+----
+
+Related: MagicContainer, ContextObject
+
+----
+CategoryEvil

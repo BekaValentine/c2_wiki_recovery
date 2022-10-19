@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Immutable Objects And Garbage Collection
+      </h1>
+      <p>
+        Immutable objects can be quite beneficial to optimizing <a href="GarbageCollected.html">GarbageCollected</a> code.  Because an <a href="ImmutableObject.html">ImmutableObject</a> cannot be modified, there are many garantees which can be made.  For example, you can't have circular references, and you don't have to worry about modification under the GC's nose.  EDIT:  Well, you don't have to worry about modification under the GC's nose provided that the objects have <em>no</em> mutable structure, including reference counts, which can be modified by threads other than the GC.  Then again, most functional languages have letrec, so you'd have to have circular reference checking either way, so it's easier to just use a mark-and-sweep based GC, like generational GC.  (A surprising amount of garbage collectors are actually refinements on mark-and-sweep.)  You still gain the advantage of never having to "stop the world" until the heap-compression phase, which can be delayed until the heap gets significantly fragmented to require it.
+      </p>
+      <p>
+        The reason is as follows:
+        Consider the following pointer graph.  <em>a</em> and <em>c</em> are mutable container objects, containing <em>b</em> and <em>d</em>, respectively.
+      </p>
+      <code>
+        root<br/>
+        / \                     /// Avoid wiki problems.<br/>
+        a   c<br/>
+        /     \                   ///<br/>
+        b       d<br/>
+      </code>
+      <p>
+        Now, suppose a garbage collection cycle starts.  The ' denotes a value being marked.
+      </p>
+      <code>
+        root<br/>
+        / \                     /// <br/>
+        a'  c<br/>
+        /     \                   ///<br/>
+        b       d<br/>
+        root<br/>
+        / \                     ///<br/>
+        a'  c<br/>
+        /     \                   ///<br/>
+        b'      d<br/>
+      </code>
+      <p>
+        While this is happening, the main process is preparing to do mutating operations on the objects.  After the GC task has finished marking a and b, the task scheduler decides to switch back to the main thread.  The main thread swaps the contained values of a and c.
+      </p>
+      <code>
+        root<br/>
+        / \                     ///<br/>
+        a'  c<br/>
+        /     \                   ///<br/>
+        d       b'<br/>
+      </code>
+      <p>
+        When the GC starts again, it goes on to marking c, and then ends the mark cycle, as it has already marked b.
+      </p>
+      <code>
+        root<br/>
+        / \                     ///<br/>
+        a'  c'<br/>
+        /     \                   ///  <br/>
+        d       b'<br/>
+      </code>
+      <p>
+        The GC then collects the unmarked objects, leaving us with:
+      </p>
+      <code>
+        root<br/>
+        / \                     ///<br/>
+        a'  c<br/>
+        /     \                   ///<br/>
+        ?       b'<br/>
+      </code>
+      <p>
+        However, with immutable objects, this obviously cannot happen.  I will preemptively state that any constructions of objects could set the mark bit based on a global variable that indicates whether the GC is in the collection process or not.
+      </p>
+      <hr/>
+      <p>
+        I've never seen this feature leveraged. Even most toy programming languages that otherwise might leverage this possibility tend to include one or more of the following:
+      </p>
+      <ul>
+        <li>
+           Laziness - even if an object is 'immutable', it might be computed lazily. To avoid multiple evaluations, the result is typically stored into the original object. This can result in a past value pointing to a future value.
+        </li>
+        <li>
+           Recursive 'let' - most languages provide some mechanism to bind previous names to later names and vice versa. You get cycles anyway.  
+        </li>
+        <li>
+           Linearity - in the common case where one is repeatedly updating a large structure and dropping the old one, it is possible to optimize by updating in place. Several languages support this. Haskell supports it indirectly via the 'ST' monad.
+        </li>
+      </ul>
+      <p>
+        Rebuttals:
+      </p>
+      <ul>
+        <li>
+           Yes, but any pointer which is needed for a lazy calculation is obviously being held onto in code.  Thus, the GC can't collect those values until after the lazy value is computed.  After that, any references not used will be collected.
+        </li>
+        <li>
+           GC can be done with mark-and-sweep, and you can still do optimizations based on the "immutable" part.
+        </li>
+        <li>
+           I have no idea how to combat this.  I suppose you could read-lock the mutable structures, halting any threads which were writing to them, but allowing reads to work.  That would rather undermine the point of the system, though.
+        </li>
+      </ul>
+      <p>
+        [Whomever wrote "Rebuttals" here appears to have totally missed the boat. The argument in the top half of <strong>this page</strong> is that immutable objects offer some advantages for garbage collectors. Explicitly stated advantages: (a) <em>you can't have circular references</em>, (b) <em>you don't have to worry about modification under the GC's nose</em>. Laziness and linearity both allow "modification under the GC's nose". Recursive let allows circular references. Laziness, linearity, and circular references are not problems for GC <em>in general</em>, but they defeat the aforementioned alleged advantages of <a href="ImmutableObjectsAndGarbageCollection.html">ImmutableObjectsAndGarbageCollection</a>.]
+      </p>
+      <p>
+        Circular references do not matter under <a href="MarkAndSweep.html">MarkAndSweep</a>, and when using immutable objects, one still gains the advantage of being able to run the GC without locking all of the other threads.  The "no circular references" meant in the case of using refcounting, which can't handle cycles.  A lazy computation-object must have references to anything it needs for a computation, including objects that the computed objects; thus, assuming object-construction is atomic, there is no time when these references can't be traced normally by the GC.  Sorry if that wasn't clear, or if it sounded like I was being argumentative; I was just pointing out that you can still gain the advantages under two out of three conditions.
+      </p>
+      <p>
+        [If you use <a href="MarkAndSweep.html">MarkAndSweep</a>, how do you <em>gain an advantage</em> from avoiding circular references? Does it really count as a gain if you don't take advantage? Simple <a href="MarkAndSweep.html">MarkAndSweep</a> is a bad algorithm for pure languages anyhow - you'll be doing a lot more allocation than you would in a mutation-heavy language. For cheap allocation, you need a bump-pointer nursery. To have a bump-pointer nursery, you need copying collection for at least the nursery generation.]
+      </p>
+      <p>
+        [Anyhow, major FP languages - even the pure ones - support some form of in-place mutation. With Haskell, it's STRef. With DDC and Clean, it's uniqueness typing. Purity and <em>semantic</em> immutability do little to help GC under these conditions.]
+      </p>
+      <p>
+        Remember, a lot of GCs these days are at least <em>based</em> on mark-and-sweep, or doing something similar to mark-and-sweep.  For example, <a href="GenerationalGarbageCollection.html">GenerationalGarbageCollection</a> uses m&s to collect the smaller heap, and every so often to collect the bigger heap.
+      </p>
+      <p>
+        [Typically, copying collection is used on the younger generation, and mark-and-sweep on the older one. It's much more complicated in practice, though. E.g. Haskell can be configured to copy collect the older generation, too, until a certain % heap residency is reached. Also, we would typically 'age' an object for a couple 'steps' in the nursery before promoting it (unless we know it is referenced from immutable state in a later gen) - doing so can greatly cut down the number of objects promoted.] 
+      </p>
+      <hr/>
+      <p>
+        GHC Haskell, at least, uses Generational Garbage Collection.  The following is word-for-word from the Haskell site:
+        <em>Haskell's computation model is very different from that of conventional mutable languages. Data immutability forces us to produce a lot of temporary data but it also helps to collect this garbage rapidly. </em>'The trick is that immutable data NEVER points to younger values. Indeed, younger values don't yet exist at the time when an old value is created, so it cannot be pointed to from scratch.<em>' And since values are never modified, neither can it be pointed to later. This is the key property of immutable data.</em>
+      </p>
+      <p>
+        <em>This greatly simplifies garbage collection (GC). At anytime we can scan the last values created and free those that are not pointed to from the same set (of course, real roots of live values hierarchy are live in the stack). It is how things work: by default, GHC uses generational GC. New data are allocated in 512kb "nursery". Once it's exhausted, "minor GC" occurs - it scans the nursery and frees unused values. Or, to be exact, it copies live values to the main memory area. The fewer values that survive - the less work to do. If you have, for example, a recursive algorithm that quickly filled the nursery with generations of its induction variables - only the last generation of the variables will survive and be copied to main memory, the rest will be not even touched! So it has a counter-intuitive behavior: the larger percent of your values are garbage - the faster it works. </em>
+      </p>
+      <p>
+        The bold sentence is actually true even in the face of letrec.  Letrec allows values which are created at the same time to refer to each other.  However, there still can't be a pointer from an old value (in the "big heap") to a new value (in the "little heap").
+      </p>
+      <p>
+        [Haskell supports mutable state (e.g. IORef, STRef, TVar). Laziness in Haskell can easily bind values from an older generation to a younger one. The runtime tracks both of these conditions as conservative roots (eagerly promoting values referenced due to laziness, allowing references from mutable state to age normally). The sentence you marked in bold is not a <em>truth</em> of Haskell. Rather, it is a tuning assumption - the GC for Haskell is built for that 100:1 (or higher) allocation to mutation ratio. A bump-pointer copy-collected nursery achieves that: it avoids overheads of free-list maintenance, enables fast-as-stack allocation, and (because most objects die young) copy-collection is a huge performance benefit (since it only touches live objects). Keeping the nursery small enough to live inside processor cache is useful for locality.]
+      </p>
+      <p>
+        Anyone have any ideas on how to adapt Generational so that it doesn't require a thread-pause time so that it can change all the pointers?
+      </p>
+      <p>
+        [There are many ideas on that subject. I favor structuring the heap into blocks, and collecting sets of blocks at a time (based on their age and other heuristics). The idea there is to never perform a whole-heap collection - though, I was designing under assumptions of orthogonal persistence and part of the heap in read-only-memory. You might peruse (<a href="http://www.mm-net.org.uk/workshop190404/GHC%27s_Garbage_Collector.ppt),">http://www.mm-net.org.uk/workshop190404/GHC%27s_Garbage_Collector.ppt),</a> and look into bookmarking collection (<a href="http://lambda-the-ultimate.org/node/2391).]">http://lambda-the-ultimate.org/node/2391).]</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryGarbageCollection.html">CategoryGarbageCollection</a>
+      </p>
+    </div>
+  </body>
+</html>

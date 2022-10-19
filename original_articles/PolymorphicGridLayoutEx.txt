@@ -1,0 +1,742 @@
+This is an attempt to refactor the constraint logic (''xxx''isQuota) out of Costin's GridBagLayout example, suggested on SwitchStatementsSmell. I'm not happy with the smelly null methods in A''''''bsoluteRank, but the conditional logic around rowParams and columnParams has been replaced with polymorphism. I find this code easier to understand than the original, but I'm not an objective observer. Feel free to improve and comment. -- EricHodges
+
+''Ha, ha. Your code is still far from "polymorphic". Mind you, as per SwitchStatementsSmell you should replace also, HA_CENTER, HA_LEFT, HA_RIGHT and the other enumerations with polymorphism :)''
+
+As I said above, all I addressed was the "isQuota" stuff.
+
+''But to the point, Rank is an unappealing uncommunicative name. Readers are going to be surprised, provided they haven't read the other one before. Now you set up a complicated and data-redundant scheme in which the owner constructs an owned object AbsoluteRank, and passes itself to the owned with the only purpose that the owned object calls back to him to do a simple addition. In other words you replaced something as simple as:''
+
+			if (paramIsQuota[i]  /*equivalent to quota[i]<=1  */)
+				currentWidth = (int) (h * quotaParams[i]);
+			else
+				currentWidth = fixedParams[i];
+			outCoordinates[i + 1] = outCoordinates[i] + currentWidth + gap;
+''with a hierarchy and an object graph owner->[]owned->owner with cycles, and some extra 80 lines in the file (probably just a third are non-comments), it can't be easier to understand. Plus the innocently named calculatePrefferedSize will apparently side-effect the instance, and it also makes sense only when called in a particular order all the way from inside preferredLayoutSize() call order dependency, I have to balance my head and peruse the scroll bar quite a few times to convince myself that preferredLayoutSize()is correct and I still am not all clear. To each its own, but objectively you cannot justify it. ''
+
+There is nothing called AbstractRank. And I think I removed some data redundancy. You used to have two arrays for row parameter values, with another array to determine which element of those two arrays was in use. I've moved all of that to one array of row values.
+
+''As I said, this was strictly because Java does not support SUM types, in ML this would be one array of values. Strictly speaking I could have kept the original division (0,1) is quota (>1) is fixed size, but it ruined readability. This was just a technicality to get over Java's lack of nsum types. But you created a graph with cycles, just to set up a visistor double dispatch theme.''
+
+I also removed redundant code. You expressed many of the same algorithms twice for rows and columns.
+
+''I acknowledged in the initial post that I have some redundancy in rows versus columns. The pragmatics of it is that it was very difficult in Java to create some closures necessary to break some asymmetry in getWidth/getHeight and comparing the thing that I've done in preferred layoutSize() -> distributeSpace(), I decided that the algorithm in preferredSize() was simple enough, to leave the code in place for readability even if it suffers a bit from redundancy.''
+
+----
+''Just think about the following Costin's little theorem: if one is really ambitious, one can replace all if/then/else (other than those for testing/validating input data which is untyped before you call constructors from it and therefore you can't polymorphically dispatch) with corresponding abstract classes and hierarchies having as state the boolean variable or the switch variable of the conditional, plus''
+*'' all the variables in the conditional branch with which to perform the computation of the branch in the newly introduced object'' 
+*'' '''or''' a pointer back to the context in which to call a segregated method like in visitor double dispatch (exactly what you did below)''
+*'' '''or''' even messier arrangements can be done:).''
+
+''It is clear, I hope, that trying to get rid of all if/else or switches following the above recipe, is a nightmare. Therefore you have to find clear criteria when applying such a recipe is justified as opposed to writing the same thing in more lines of code but with polymorphism. And here comes NygaardClassification to the rescue: your ObjectOriented design should be about finding a useful physical model with significant autonomous entities whose behavior you describe in your classes. It is not, it should be not about taking arbitrary bunches of code and transforming them into classes/objects.''
+
+''Let's agree that in many cases, repeated if/then/elses switches are a smell. But what kind of smell? It is a smell if it indicates the existence of an autonomous entity, worthy to play a part in the object model. In my code I intuitively went with the if/else but now that I check on it the if/else on that constraint that became a hierarchy only occurred in two methods and the branches are trivial. Hey, it's just a simple algorithm (actually two related: one for layout and one for preferred size), if we need to create lots of classes and object arrangements to realize a simple algorithm, we are in trouble.''
+
+We have different ideas about readability. It's easier for me to see that there are two kinds of ranks (fixed and relative) and how their behavior differs. I don't understand NygaardClassification. From where I sit, I've found a useful model with significant autonomous entities. I don't understand what makes one model more or less "physical" than another. And I don't agree that creating lots of classes means I'm in trouble.
+
+''You broke something very important called '''locality of reasoning'''. In the original class, the reader, provided he already understands the contract involved in preferredLayoutSize() and layoutConainer(), can read the code of the algorithms which is not too long and figure it out. Now you created the RankSet and XXXRank that are heavily intertwined, their method calls make sense only when being called from the original place, so instead of reading a screen worth of code in layoutContainer(), I have to keep in my head the interplay of RankSet, Rank, AbsoluteRank, RelativeRank. Reasoning about any of those classes does not make much sense in isolation. And this is the most definitive criteria for goodness of design. So you created 4 more classes, added extra lines of code despite your claim that you eliminated some redundancy, created a call order dependency, yet you claim that you have improved readability. How is that possible?''
+
+It's easier to read (for my brain) because the additional classes and methods introduce abstractions. While reading preferredLayoutSize() I don't have to know what rowSet.calculatePreferredSizes() does, just that the set of rows will calculate its preferred size. 
+
+* ''But that's all that preferredLayoutSize() had to do anyway. So you extracted a simple algorithm that fit into a method into a set of classes, that are now smelly: they are strongly coupled, a call order dependency which is one of the worst kind, have some unnecessary methods because of the problem in replacing sum types with inheritance, all in all they make up for more code than you had initially. Separating details of implementation makes sense in other cases altogether, for example, when calling something like SwingUtilities.invokeLater(lambda(){ textArea.appendText("Hello World")}) - where you don't want to know the details of Swing Threading and of how a text area works in the place where you called them. But here it was not the case, and the bottom line is that you created more code and more coupling. I think you ought to take one step back from MartinFowler and have a look to the good old EwDjikstra'''''''s "A Discipline Of Programming", where he exposes quite complicated algorithms (much more than this simple layout) in a language he designed and that he left it on purpose without procedures so that all the algorithm use nothing but blocks !!!''
+
+Perhaps the algorithm seems simple to you, but it doesn't to me.
+
+The responsibility for determining the vertical size has been delegated to rowSet. If I need to understand what it's doing, I drill down into that method and see that he's calculating the weight of the current component and then asking each rank to participate in the calculation.
+
+''It would have been easier to see for you that there are two kinds of ranks (fixed and relative) if you were accustomed to programming in ML, Haskell or other fp languages that have SUM types, and you accepted that the way to have that in Java is not by polymorphism, but through a discriminator. But looking at the code from an OO perspective, and mind you no OO language (other than ObjectiveCaml of course:) , has SUM types ), you are definitely in "all I have is a hammer" position: all you have is inheritance hierarchies, but you have no SUM type, and you stubbornly refuse to see one when the algorithm cries for such a thing. Those smelly methods that apply to one case but not the other, yet got promoted in the Rank base class, are the definitive sign that you needed a SUM type.''
+
+I didn't refactor your conditional logic to polymorphism because it was particularly smelly. I did so because you said it would answer my questions back on SwitchStatementsSmell.
+
+* ''And that was precisely because it so happened that I revisited this code lately, but it's good so you can have an idea of the cases where ReplaceConditionalWithPolymorphism makes for worse code (more lines of code, more coupling, more smells). In those case you might want to consider ReplacePolymorphismWithConditional.''
+
+''If you go ahead and replace the other SUM types in the code, then you'll see how you are in trouble.''
+
+I'll try it when I get some free time. I've never programmed in ML, Haskell or any fp language, and I doubt I'll have to opportunity to do so in the near future. But I love to know how I am in trouble.
+
+''Next time you are tempted to read an OO book, remember to make time to read a functional one. This exercise is sure to make you a better programmer. Plus OO book are typically on the dispensable side anyways :)''
+----
+
+package home.costin.ui;
+
+import java.awt.*;
+import java.io.ObjectStreamException;
+import java.io.Serializable;
+
+/**
+ * Insert the type's description here.
+ * Creation date: (9/18/2001 10:44:40 AM)
+ * 
+ * License: APACHE LICENSE
+ * http://www.apache.org/LICENSE.txt
+ * @author: Costin Cozianu
+ */
+public class GridLayoutEx implements LayoutManager2 {
+
+	/**
+	 * Enumeration constants to use for Fill values
+	 */
+	public static final FillOption NO_FILL = new FillOption(0), FILL = new FillOption(1);
+
+	private final static FillOption[] FILL_CONSTS = { NO_FILL, FILL };
+
+	/**
+	 * TypeSafe Enumeration for FillOptions
+	 * @author ccozianu
+	 */
+	public static class FillOption implements Serializable {
+		private int i = 0;
+		private FillOption(int i_) {
+			this.i = i_;
+		}
+		private Object readResolve() throws ObjectStreamException {
+			return FILL_CONSTS[i];
+		}
+		public boolean equals(Object o) {
+			if (this == o)
+				return true;
+			else
+				return this.i == ((FillOption) o).i;
+		}
+		public int hashCode() {
+			return i;
+		}
+	}
+
+	/**
+	 * Constants for vertical alignment
+	 */
+	public static final VAlignOption VA_CENTER = new VAlignOption(0),
+		VA_BOTTOM = new VAlignOption(1),
+		VA_TOP = new VAlignOption(2);
+
+	private final static VAlignOption[] VALIGN_CONSTS = { VA_CENTER, VA_BOTTOM, VA_TOP };
+
+	/**
+	 * Type-safe enumeration for vertical alignment
+	 * @author ccozianu
+	 */
+	public static class VAlignOption implements Serializable {
+		private int i = 0;
+		private VAlignOption(int i_) {
+			this.i = i_;
+		}
+		private Object readResolve() throws ObjectStreamException {
+			return VALIGN_CONSTS[i];
+		}
+		public boolean equals(Object o) {
+			if (this == o)
+				return true;
+			else
+				return this.i == ((VAlignOption) o).i;
+		}
+		public int hashCode() {
+			return i;
+		}
+	}
+
+	/**
+	 * Constants for vertical alignment
+	 */
+	public static final HAlignOption HA_CENTER = new HAlignOption(0),
+		HA_LEFT = new HAlignOption(1),
+		HA_RIGHT = new HAlignOption(2);
+
+	private final static HAlignOption[] HALIGN_CONSTS = { HA_CENTER, HA_LEFT, HA_RIGHT };
+
+	/**
+	 * Type-safe enumeration for vertical alignment
+	 * @author ccozianu
+	 */
+	public static class HAlignOption implements Serializable {
+		private int i = 0;
+		private HAlignOption(int i_) {
+			this.i = i_;
+		}
+		private Object readResolve() throws ObjectStreamException {
+			return HALIGN_CONSTS[i];
+		}
+		public boolean equals(Object o) {
+			if (this == o)
+				return true;
+			else
+				return this.i == ((HAlignOption) o).i;
+		}
+		public int hashCode() {
+			return i;
+		}
+	}
+
+	public static class Constraint implements Serializable, Cloneable {
+		private int line = 0, column = 0, rowspan = 1, colspan = 1;
+
+		public Constraint setLine(int line_) {
+			this.line = line_;
+			return this;
+		}
+		public Constraint setColumn(int column_) {
+			this.column = column_;
+			return this;
+		}
+		public Constraint setRowspan(int rowspan_) {
+			this.rowspan = rowspan_;
+			return this;
+		}
+		public Constraint setColspan(int colspan_) {
+			this.colspan = colspan_;
+			return this;
+		}
+
+		public Insets insets = new Insets(0, 0, 0, 0);
+		public Constraint setInsets(Insets insets_) {
+			this.insets = insets_;
+			return this;
+		}
+
+		private FillOption verticalFill = NO_FILL;
+		private FillOption horizontalFill = NO_FILL;
+		public Constraint setVerticalFill(FillOption option) {
+			this.verticalFill = option;
+			return this;
+		};
+		public Constraint setHorizontalFill(FillOption option) {
+			this.horizontalFill = option;
+			return this;
+		};
+
+		private VAlignOption verticalAlign = VA_CENTER;
+		private HAlignOption horizontalAlign = HA_CENTER;
+		public Constraint setVerticalAlign(VAlignOption option) {
+			this.verticalAlign = option;
+			return this;
+		}
+		public Constraint setHAlignOption(HAlignOption option) {
+			this.horizontalAlign = option;
+			return this;
+		}
+
+		public Object clone() throws CloneNotSupportedException {
+			/*Constraint result= new Constraint();
+			result.colspan= colspan;
+			result.rowspan= rowspan;
+			result.column= column;
+			result.line= line;
+			result.insets= (Insets) (insets==null? null : insets.clone());*/
+			return (Constraint) super.clone();
+		}
+
+		private void computeBoundsInsideTheCell(Component comp, int x, int y, int w, int h) {
+			x += insets.left;
+			y += insets.top;
+			w -= insets.right;
+			h -= insets.bottom;
+			Dimension d = comp.getPreferredSize();
+			if (horizontalFill == NO_FILL) {
+				if (d.getWidth() < w) {
+					if (horizontalAlign == HA_LEFT) {
+						w = (int) d.getWidth();
+					} else if (horizontalAlign == HA_RIGHT) {
+						x += (w - d.getWidth());
+						w = (int) d.getWidth();
+					} else if (horizontalAlign == HA_CENTER) {
+						x += (w - d.getWidth()) / 2;
+						w = (int) d.getWidth();
+					}
+				}
+			}
+			if (verticalFill == NO_FILL) {
+				if (d.getHeight() < h) {
+					if (verticalAlign == VA_TOP) {
+						h = (int) d.getHeight();
+					} else if (verticalAlign == VA_BOTTOM) {
+						y += (h - d.getHeight());
+						h = (int) d.getHeight();
+					} else if (verticalAlign == VA_CENTER) {
+						y += (h - d.getHeight()) / 2;
+						h = (int) d.getHeight();
+					}
+				}
+			}
+			comp.setBounds(x, y, w, h);
+		}
+	}
+
+	/**
+	 * A row or column.
+	 */
+	private static abstract class Rank {
+		private float value;
+		protected RankSet owner;
+
+		public static Rank create(float value, RankSet owner) {
+			if (value <= 1) {
+				return new RelativeRank(value, owner);
+			} else {
+				return new AbsoluteRank(value, owner);
+			}
+		}
+	
+		public Rank(float value, RankSet owner) {
+			if (value <= 0)
+				setValue(.1f);
+			else
+				setValue(value);
+			this.owner = owner;
+		}
+
+		public void setValue(float value) {
+			this.value = value;
+		}
+
+		public float getValue() {
+			return value;
+		}
+
+		abstract public int getAdjustableSpace(int adjustableSpace);
+
+		abstract public void calculatePreferredSize(int currentDimension, float totalWeight);
+
+		abstract public int getCurrentSpace(int h);
+
+		abstract public float getWeight();
+	}
+
+	/**
+	 * A set of ranks.
+	 */
+	private static class RankSet {
+		private Rank[] ranks;
+		private int reservedSpace;
+		private float weightSum = 0;
+	
+		public RankSet(float[] rankValues) {
+			ranks = new Rank[rankValues.length];
+			for (int i = 0; i < ranks.length; i++) {
+				ranks[i] = Rank.create(rankValues[i], this);
+			}
+		}
+	
+		public void distributeSpace(int insetOffset, int dimension, int gap, int outCoordinates[]) {
+			outCoordinates[0] = insetOffset + gap;
+			int h = dimension - getReservedSpace() - (ranks.length + 1) * gap;
+			for (int i = 0; i < ranks.length; i++) {
+				outCoordinates[i + 1] = outCoordinates[i] + ranks[i].getCurrentSpace(h) + gap;
+			}
+		}
+
+		public void setReservedSpace(int reservedSpace) {
+			this.reservedSpace = reservedSpace;
+		}
+
+		public int getReservedSpace() {
+			return reservedSpace;
+		}
+
+		public float getComponentWeight(int begin, int end) {
+			float componentWeight = 0.0f;
+			for (int index = begin; index < end; index++)
+				componentWeight += ranks[index].getWeight();
+			return componentWeight;
+		}
+
+		public void calculatePreferredSizes(int begin, int end, int currentDimension) {
+			float componentWeight = getComponentWeight(begin, end);
+			for (int index = begin; index < end; index++) {
+				ranks[index].calculatePreferredSize(currentDimension, componentWeight);
+			}
+		}
+
+		public int getAdjustableSpace() {
+			int adjustableSpace = 0;
+			for (int index = 0; index < ranks.length; index++) {
+				adjustableSpace = ranks[index].getAdjustableSpace(adjustableSpace);
+			}
+			return adjustableSpace;
+		}
+
+		public int getSize() {
+			return ranks.length;
+		}
+
+		public void accumulateWeightSum(float weight) {
+			weightSum += weight;
+		}
+
+		public void accumulateReservedSpace(float value) {
+			reservedSpace += value;
+		}
+
+		public float getWeightSum() {
+			return weightSum;
+		}
+
+		public int getTotalSpace(int gap) {
+			return getReservedSpace() + getAdjustableSpace() + getSize() * gap;
+		}
+	}
+
+	/**
+	 * A rank (row or column) with relative size
+	 */
+	private static class RelativeRank extends Rank {
+		private int preferredSize;
+
+		public RelativeRank(float value, RankSet owner) {
+			super(value, owner);
+			owner.accumulateWeightSum(getValue());
+		}
+
+		public void calculatePreferredSize(int currentDimension, float totalWeight) {
+			int size = (int) (currentDimension * getWeight() / totalWeight);
+			if (size > preferredSize)
+				preferredSize = size;
+		}
+
+		public int getAdjustableSpace(int adjustableSpace) {
+			int requiredSpace = (int) (preferredSize / getWeight());
+			if (requiredSpace > adjustableSpace) {
+				adjustableSpace = requiredSpace;
+			}
+			return adjustableSpace;
+		}
+
+		public int getCurrentSpace(int h) {
+			return (int) (h * getWeight());
+		}
+
+		public float getWeight() {
+			return getValue() / owner.getWeightSum();
+		}
+
+	}
+
+	/**
+	 * A rank (row or column) with absolute size.
+	 * Contains several smelly null methods.
+	 */
+	private static class AbsoluteRank extends Rank {
+
+		public AbsoluteRank(float value, RankSet owner) {
+			super(value, owner);
+			owner.accumulateReservedSpace(getValue());
+		}
+
+		/**
+		 * Smelly null method.
+		 */
+		public void calculatePreferredSize(int ignored, float alsoIgnored) {
+		}
+
+		/**
+		 * Smelly null method.
+		 */
+		public int getAdjustableSpace(int adjustableSpace) {
+			return adjustableSpace;
+		}
+
+		/**
+		 * Smelly null method.
+		 */
+		public int getCurrentSpace(int ignored) {
+			return (int) getValue();
+		}
+
+		/**
+		 * Smelly null method.
+		 */
+		public float getWeight() {
+			return 0.0f;
+		}
+
+	}
+
+	java.util.Hashtable constraints = new java.util.Hashtable();
+
+	/**
+	 * specifies whether or not the row parameters are specified by quota
+	 * if rowParamIsQuota[i]==true then the parameter is a quota
+	 * that specifies how much of the available space should be given to the i-th row
+	 * and should be read from rowParamsQuota <br>
+	 * else the parameter is the fixed height of the row and should be taken from
+	 * rowParamsInt
+	 */
+
+	private RankSet rowSet;
+
+	private RankSet columnSet;
+
+	private int hgap;
+	private int vgap;
+
+	/**
+	 * buffer used to calculate rowCoordinates in layout procedure
+	 */
+	private transient int rowCoordinates[] = null;
+
+	/**
+	 * buffer used to calculate rowCoordinates in layout procedure
+	 */
+	private transient int columnCoordinates[] = null;
+
+	public GridLayoutEx(float[] lineParams, float[] columnParams) {
+		this(lineParams, columnParams, 1, 1);
+	}
+
+	public GridLayoutEx(float[] rowParamValues, float[] columnParamValues, int hgap, int vgap) {
+		if (rowParamValues == null || rowParamValues.length == 0)
+			throw new IllegalArgumentException("Illegal lineParams ");
+		if (columnParamValues == null || columnParamValues.length == 0)
+			throw new IllegalArgumentException("Illegal columnParams ");
+
+		this.hgap = hgap < 0 ? 0 : hgap;
+		this.vgap = vgap < 0 ? 0 : vgap;
+
+		rowSet = new RankSet(rowParamValues);
+		columnSet = new RankSet(columnParamValues);
+		// allocate lineCoordinates buffer
+		rowCoordinates = new int[rowSet.getSize() + 1];
+		columnCoordinates = new int[columnSet.getSize() + 1];
+
+	}
+	/**
+	 * Adds the specified component to the layout, using the specified
+	 * constraint object.
+	 * @param comp the component to be added
+	 * @param constraints  where/how the component is added to the layout.
+	 */
+	public void addLayoutComponent(Component comp, Object constraint) {
+		Constraint source = null;
+		if (constraint == null || !(constraint instanceof Constraint))
+			source = new Constraint();
+		else
+			source = (Constraint) constraint;
+		try {
+			constraints.put(comp, source.clone());
+		} catch (CloneNotSupportedException ex) {
+		}
+	}
+	/**
+	 * Adds the specified component with the specified name to
+	 * the layout.
+	 * @param name the component name
+	 * @param comp the component to be added
+	 */
+	public void addLayoutComponent(String name, Component comp) {
+		addLayoutComponent(comp, new Constraint());
+	}
+	/**
+	 * performs the algorithm for distributing space
+	 * @param d0 int the initial offset from 0 where coordinates start being assigned
+	 * @param length the total length available to be distributed
+	 * @param gap int
+	 * @param reservedSpace int
+	 * @param n int the number of intervals
+	 * @param paramIsQuota boolean[]
+	 * @param quotaParams float[]
+	 * @param fixedParams int[]
+	 * @param outCoordinates [] (out parameter) the vector to store the result
+	 */
+	/**
+	 * Returns the alignment along the x axis. This specifies how
+	 * the component would like to be aligned relative to other 
+	 * components.  The value should be a number between 0 and 1
+	 * where 0 represents alignment along the origin, 1 is aligned
+	 * the furthest away from the origin, 0.5 is centered, etc.
+	 */
+	public float getLayoutAlignmentX(Container target) {
+		return 0.5f;
+	}
+	/**
+	 * Returns the alignment along the y axis.  This specifies how
+	 * the component would like to be aligned relative to other 
+	 * components.  The value should be a number between 0 and 1
+	 * where 0 represents alignment along the origin, 1 is aligned
+	 * the furthest away from the origin, 0.5 is centered, etc.
+	 */
+	public float getLayoutAlignmentY(Container target) {
+		return 0.5f;
+	}
+	/**
+	 * Invalidates the layout, indicating that if the layout manager
+	 * has cached information it should be discarded.
+	 */
+	public void invalidateLayout(Container target) {
+		//nothing is cached
+	}
+	/** 
+	 * Lays out the container in the specified panel.
+	 * @param parent the component which needs to be laid out 
+	 */
+	public void layoutContainer(Container parent) {
+		try {
+			System.out.println("Layout called with dimensions:" + parent.getBounds());
+			synchronized (parent.getTreeLock()) {
+				Insets insets = parent.getInsets();
+				Component[] compArray = parent.getComponents();
+				int ncomponents = compArray.length;
+
+				if (ncomponents == 0)
+					return;
+				int w = parent.getSize().width - (insets.left + insets.right);
+				int h = parent.getSize().height - (insets.top + insets.bottom);
+				if (w <= 0 || h <= 0)
+					return;
+
+				// calculates the beginning of each line in pixel width coordinates
+				rowSet.distributeSpace(insets.top, h, vgap, rowCoordinates);
+
+				// calculates the beginning of each line in pixel width coordinates
+				columnSet.distributeSpace(insets.left, w, hgap, columnCoordinates);
+
+				for (int c = 0; c < ncomponents; c++) {
+					Component comp = compArray[c];
+					Constraint constraint = null;
+					try {
+						constraint = (Constraint) constraints.get(comp);
+					} catch (ClassCastException ex) {
+					};
+					int xx = 0, yy = 0, ww = 0, hh = 0;
+					if (constraint == null)
+						comp.setBounds(-200, -200, 100, 100);
+					else
+						try {
+							xx = columnCoordinates[constraint.column];
+							yy = rowCoordinates[constraint.line];
+							ww = columnCoordinates[constraint.column + constraint.colspan] - xx - hgap;
+							hh = rowCoordinates[constraint.line + constraint.rowspan] - yy - vgap;
+						} catch (A''''''rrayIndexOutOfBoundsException ex) {
+							xx = -200;
+							yy = -200;
+							ww = 100;
+							hh = 100;
+						};
+					constraint.computeBoundsInsideTheCell(comp, xx, yy, ww, hh);
+				}
+			}
+		} catch (Throwable ex) {
+			System.err.println("Exception caught in Layout:" + ex);
+			ex.printStackTrace(System.err);
+			throw new RuntimeException(ex.getMessage());
+		}
+	}
+	/**
+	 * Test method please 
+	 * TO DO: add more options
+	 * @param args java.lang.String[]
+	 */
+	public static void main(String[] args) {
+		try {
+			Frame frame = new Frame("Testing GridLayoutEx layout manager");
+			frame.setSize(600, 400);
+			frame.addWindowListener(new java.awt.event.WindowAdapter() {
+				public void windowClosing(java.awt.event.WindowEvent event) {
+					System.exit(0);
+				}
+			});
+
+			float lineParams[] = new float[] { 50f, .7f, .2f, 50f };
+			float columnParams[] = new float[] { .1f, .5f, .1f, 75f };
+
+			frame.setLayout(new GridLayoutEx(lineParams, columnParams, 2, 2));
+			GridLayoutEx.Constraint c =
+				new GridLayoutEx.Constraint().setColumn(0).setLine(0).setColspan(3).setHorizontalFill(
+					FILL).setVerticalFill(
+					FILL);
+			Button pack = new Button("Pack");
+			pack.addActionListener(new java.awt.event.ActionListener() {
+				public void actionPerformed(java.awt.event.ActionEvent evt) {
+					Frame parent = (Frame) ((Button) evt.getSource()).getParent();
+					parent.pack();
+				}
+			});
+			frame.add(pack, c);
+
+			c.setColumn(3).setLine(0).setColspan(1).setRowspan(1).setInsets(new Insets(0, 0, 10, 10));
+			frame.add(new Button("B2"), c);
+
+			c.setColumn(0).setLine(1).setColspan(3).setRowspan(1);
+			c.setHorizontalFill(NO_FILL).setHAlignOption(HA_CENTER);
+			Button b3 = new Button("B3");
+			b3.setSize(100, 100);
+			frame.add(new Button("B3"), c);
+
+			c.setColumn(3).setLine(1).setColspan(1).setRowspan(1).setVerticalAlign(VA_BOTTOM).setVerticalFill(NO_FILL);
+			frame.add(new Button("B4"), c);
+
+			c.setColumn(0);
+			c.setLine(2).setColspan(3).setRowspan(1);
+			frame.add(new Button("B5"), c);
+
+			c.setColumn(3).setLine(2).setColspan(1).setRowspan(1).setVerticalFill(FILL);
+			frame.add(new Button("B6"), c);
+
+			c.setColumn(0).setLine(3);
+			frame.add(new Button("B7"), c);
+
+			c.setColumn(1);
+			frame.add(new Button("B8"), c);
+
+			c.setColumn(2);
+			frame.add(new Button("B9"), c);
+
+			c.setColumn(3).setHorizontalFill(FILL).setVerticalFill(FILL);
+			frame.add(new Button("B10"), c);
+
+			frame.setVisible(true);
+		} catch (Exception ex) {
+			System.err.println(ex);
+			ex.printStackTrace(System.err);
+		}
+	}
+	/** 
+	 * Returns the maximum size of this component.
+	 * @see java.awt.Component#getMinimumSize()
+	 * @see java.awt.Component#getPreferredSize()
+	 * @see LayoutManager
+	 */
+	public Dimension maximumLayoutSize(Container target) {
+		return preferredLayoutSize(target);
+	}
+	/** 
+	 * Calculates the minimum size dimensions for the specified 
+	 * panel given the components in the specified parent container.
+	 * @param parent the component to be laid out
+	 * @see #preferredLayoutSize
+	 */
+	public Dimension minimumLayoutSize(Container parent) {
+		return preferredLayoutSize(parent);
+	}
+
+	/**
+	 * Calculates the preferred size dimensions for the specified 
+	 * panel given the components in the specified parent container.
+	 * @param parent the component to be laid out
+	 *  It tries to approximate the size the container to the <b>minimum size</b> such 
+	 *  that all components get a size greater than or equal to their preferred size
+	 *  and the rows or columns that are fixed size remain fixed
+	 * @see #minimumLayoutSize
+	 */
+	public Dimension preferredLayoutSize(Container parent) {
+		Component[] compArray = parent.getComponents();
+		for (int x = 0; x < compArray.length; x++) {
+			Component comp = compArray[x];
+			Constraint constraint = (Constraint) constraints.get(comp);
+			Dimension currentDim = comp.getPreferredSize();
+			currentDim.width += constraint.insets.left + constraint.insets.right;
+			currentDim.height += constraint.insets.top + constraint.insets.bottom;
+			rowSet.calculatePreferredSizes(constraint.line, constraint.line + constraint.rowspan, currentDim.width);
+			columnSet.calculatePreferredSizes(
+				constraint.column,
+				constraint.column + constraint.colspan,
+				currentDim.height);
+		}
+		return new Dimension(columnSet.getTotalSpace(hgap), rowSet.getTotalSpace(vgap));
+	}
+
+	/**
+	 * Removes the specified component from the layout.
+	 * @param comp the component to be removed
+	 */
+	public void removeLayoutComponent(Component comp) {
+		constraints.remove(comp);
+	}
+}

@@ -1,0 +1,140 @@
+Here is a summary of the "What is wrong with Globals?" thread on the yahoogroups refactoring list, distilled, summarised and aimed at particular small group of embedded C coders. - JohnCarter
+
+''May I suggest you rename it to ThisIsWhatsWrongWithCeeGlobals. There are already topics about globals in general.''
+
+Can you list a few?  That would help with linking, combining, and reorganizing the pages.
+
+----
+
+There are three major problems here.
+
+'''1) Thread safety - (Race conditions and deadlocks)'''
+
+
+Use of global variables to communicate between threads introduce an exciting new dimension to bug creation, finding and removal.
+
+Typically the application suffers from race conditions and/or dead locks,
+which are...
+
+* amazingly sporadic and usually only found by the customer,
+* and magically disappear when confronted by a debugger.
+
+Splattering the code with the "volatile" keyword and mutexes, whilst a vital and important activity, tends to merely turn race conditions into deadlocks.
+
+The solution is to _not_ communicate between scheduling contexts with globals, but use messages instead.
+
+Exceptions to this rule should be very limited, very well reviewed and very well documented.
+
+This is a multi-threaded application with preemptive scheduler. If an ISR or DSR posts a message, the currently running thread is replaced with the highest priority currently runnable thread.
+
+ie. If you are happily coding along thinking, this is a "Process message, Run to Completion" system. Shit is about to happen.
+
+Big time.
+
+Err. Umm. You guys that are and should be communicating via shared globals, eg. share memory pooled, database, io layer, system error handling, you are remembering the "volatile" keyword aren't you?
+
+Mutexes are _not_ enough.
+
+'''2) Name space clashes.'''
+
+It is interesting to note that we have at least 97 static variables with the same name scattered around the code. The "static" keyword has prevented these instances from been overlayed onto the same memory.
+
+One is left wondering how many of the other 766 global variables are accidental name matches that will cause the most amazingly difficult to find bugs.
+
+This is why the coding standard requires you to use a module "prefix_" on all global variable names.
+
+It is also important to use header files rather than the "extern" declaration in .c files. For example :- If you had say in file A.c
+
+
+    extern int16_t moduleb_global;
+
+and in module B.c
+
+    extern uint16_t moduleb_global;
+
+You would have received a warning from splint, which, since the splint manual warps your mind, you have switched off with 
+
+
+  /*@-exportheadervar@*/.
+
+
+Having silenced splint, the compiler won't warn you and the linker would happily overlay an uint16_t over the exact same memory as an int16_t.
+
+And you will simply never ever find out until the customer starts bellowing in your ear.
+
+'''3) Understandability and Maintainability. (This really is the big one.)'''
+
+
+Good Design is essentially how little you have to read to understand a section of code.
+
+So to understand any code that touches a global, you first have to (in the torso) search _all_ 141774 non-comment non-blank lines in 620 .c files for references to these variables and understand them.
+
+Consider this very simple code segment.
+
+    doStuffWith(a);
+    doStuffWith(b);
+
+Can you swap those two lines of code?
+
+You don't know.
+
+Not until you have considered the effect of doing so on _every_ global _and_ static variable referenced by the function "doStuffWith"" _and_ _every_ function invoked by it recursively.
+
+The presence of globals makes code, stiff, inflexible, fragile.
+
+If a global variable changes, who or what changed it when and why? You don't know and you will have a very hard job finding out.
+
+Globals makes code exceedingly hard to extend, enhance, debug or refactor.
+
+----
+
+
+'''So what to do instead of globals?'''
+
+
+'''Action 1) Decrease the scope of them.'''
+
+
+1a) Try turn _every_ global you use into a file scoped static. (Simply put a "static" in front of it, and take it out of the header file.)
+
+The compiler and linker will whinge if you can't do that.
+
+When the compiler whinges about it, consider wrapping the global in a "getter". This documents to yourself and your successors _and_ enforces that the only external references to this object is "read only".
+
+Very useful.
+
+Appended is a list of candidate variables that probably should be static. (They only have one external reference)
+
+1b) Try turn _every_ file scoped static you use into a function scoped static.
+
+If the compiler whinges, consider passing the variable as a parameter. Yes, I know you can save a byte or two and a clock cycle or two by using a static, but premature optimization is the root of all evil.
+
+1c) Then try turn every function scoped static into an automatic variable.
+
+The bad news is you have to think a bit for this one. Check to see if it wasn't carrying state from one invocation to the next.
+
+The good news is it decreases the memory footprint without increasing any cost.
+
+'''Action 2) Restructure code to eliminate flag passing.'''
+
+Look out for globals or parameters passing flags around, you usually can get rid of them by restructuring your code. Hint: They are typically a "bool_t"
+
+'''Action 3) Make them "const".'''
+
+Yes, I know this is a resource constrained embedded system. So sometimes globals are just too useful to pass up. Consider making them "const". This is good from several points of view.
+
+* It documents something important about the system.
+* The compiler / linker enforces this design decision.
+* The compiler can perform several optimizations.
+* Immutable globals are simply less evil. Many of the dangers of   globals simply don't apply to them.
+
+'''Action 4) Using parameter passing instead.'''
+
+Parameter passing clearly defines the dataflow within the application.
+
+Premature optimization is the root of all coding evil.
+
+----
+see http://groups.yahoo.com/group/refactoring/message/5287
+-----
+CategoryScope

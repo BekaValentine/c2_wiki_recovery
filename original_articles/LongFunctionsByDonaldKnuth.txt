@@ -1,0 +1,231 @@
+Another category of LongFunctionExamples.
+
+DonaldKnuth has a very particular style of programming. We might call it ''lots of little blocks'', as his LiterateProgramming tools allows him to program basically in blocks of code (typically pascal or C) but have this blocks defined and documented separately. Most of his blocks are thus small, however they are not proper functions as the share variables and they act more like C macros, they are pasted into the place where they are called. I'm not sure whether we should count block as they are or whether we should count the result of post-processing these blocks, as they are not proper functional abstractions. I'm sure many LotsOfShortMethods would sneeze at the "understandability" of such sources anyways.
+
+Here are two examples of what we can safely call LongFunctions, and the second one will be pasted in the context of the first one.
+-----
+@<Find optimal breakpoints@>=
+threshold:=pretolerance;
+if threshold>=0 then
+  begin @!stat if tracing_paragraphs>0 then
+    begin begin_diagnostic; print_nl("@@firstpass");@+end;@;@+tats@;@/
+  second_pass:=false; final_pass:=false;
+  end
+else  begin threshold:=tolerance; second_pass:=true;
+  final_pass:=(emergency_stretch<=0);
+  @!stat if tracing_paragraphs>0 then begin_diagnostic;@+tats@;
+  end;
+loop@+  begin if threshold>inf_bad then threshold:=inf_bad;
+  if second_pass then @<Initialize for hyphenating a paragraph@>;
+  @<Create an active breakpoint representing the beginning of the paragraph@>;
+  cur_p:=link(temp_head); auto_breaking:=true;@/
+  prev_p:=cur_p; {glue at beginning is not a legal breakpoint}
+  while (cur_p<>null)and(link(active)<>last_active) do
+    @<Call |try_break| if |cur_p| is a legal breakpoint;
+    on the second pass, also try to hyphenate the next
+    word, if |cur_p| is a glue node;
+    then advance |cur_p| to the next node of the paragraph
+    that could possibly be a legal breakpoint@>;
+  if cur_p=null then
+    @<Try the final line break at the end of the paragraph,
+    and |goto done| if the desired breakpoints have been found@>;
+  @<Clean up the memory by removing the break nodes@>;
+  if not second_pass then
+    begin@!stat if tracing_paragraphs>0 then print_nl("@@secondpass");@;@+tats@/
+    threshold:=tolerance; second_pass:=true; final_pass:=(emergency_stretch<=0);
+    end {if at first you don't succeed, \dots}
+  else begin @!stat if tracing_paragraphs>0 then
+      print_nl("@@emergencypass");@;@+tats@/
+    background[2]:=background[2]+emergency_stretch; final_pass:=true;
+    end;
+  end;
+done: @!stat if tracing_paragraphs>0 then
+  begin end_diagnostic(true); normalize_selector;
+  end;@+tats@/
+
+----
+
+@ Here is the main switch in the |line_break| routine, where legal breaks
+are determined. As we move through the hlist, we need to keep the |active_width|
+array up to date, so that the badness of individual lines is readily calculated
+by |try_break|. It is convenient to use the short name |act_width| for
+the component of active width that represents real width as opposed to glue.
+
+@d act_width==active_width[1] {length from first active node to current node}
+@d kern_break==begin if not is_char_node(link(cur_p)) and auto_breaking then
+    if type(link(cur_p))=glue_node then try_break(0,unhyphenated);
+  act_width:=act_width+width(cur_p);
+  end
+
+@<Call |try_break| if |cur_p| is a legal breakpoint...@>=
+begin if is_char_node(cur_p) then
+  @<Advance \(c)|cur_p| to the node following the present
+    string of characters@>;
+case type(cur_p) of
+hlist_node,vlist_node,rule_node: act_width:=act_width+width(cur_p);
+whatsit_node: @<Advance \(p)past a whatsit node in the \(l)|line_break| loop@>;
+glue_node: begin @<If node |cur_p| is a legal breakpoint, call |try_break|;
+  then update the active widths by including the glue in |glue_ptr(cur_p)|@>;
+  if second_pass and auto_breaking then
+    @<Try to hyphenate the following word@>;
+  end;
+kern_node: if subtype(cur_p)=explicit then kern_break
+  else act_width:=act_width+width(cur_p);
+ligature_node: begin f:=font(lig_char(cur_p));
+  act_width:=act_width+char_width(f)(char_info(f)(character(lig_char(cur_p))));
+  end;
+disc_node: @<Try to break after a discretionary fragment, then |goto done5|@>;
+math_node: begin auto_breaking:=(subtype(cur_p)=after); kern_break;
+  end;
+penalty_node: try_break(penalty(cur_p),unhyphenated);
+mark_node,ins_node,adjust_node: do_nothing;
+othercases confusion("paragraph")
+@:this can't happen paragraph}{\quad paragraph@>
+endcases;@/
+prev_p:=cur_p; cur_p:=link(cur_p);
+done5:end
+
+----
+
+For clarification, I've extracted a "module" source code which will result in one pascal procedure in which all blocks are put together. It has some 100 lines put together with the longest block being 28 lines of code, and the blocks that are taken aside do not make sense on their own (you have to understand the context of the main algorithm).  
+
+ @<Globals...@>=
+ @!module_count:0..@'27777; {the current module number}
+
+ @ The top level of |scan_module| is trivial.
+ @p procedure scan_module;
+ label continue, done, exit;
+ var p:name_pointer; {module name for the current module}
+ begin incr(module_count);
+ @<Scan the \(definition part of the current module@>;
+ @<Scan the \PASCAL\ part of the current module@>;
+ exit: end;
+
+ @ @<Scan the \(definition part...@>=
+ next_control:=0;
+ loop@+  begin continue: while next_control<=format do
+    begin next_control:=skip_ahead;
+    if next_control=module_name then
+      begin {we want to scan the module name too}
+      loc:=loc-2; next_control:=get_next;
+      end;
+    end;
+  if next_control<>definition then goto done;
+  next_control:=get_next; {get identifier name}
+  if next_control<>identifier then
+    begin err_print('! Definition flushed, must start with ',
+ @.Definition flushed...@>
+      'identifier of length > 1'); goto continue;
+    end;
+  next_control:=get_next; {get token after the identifier}
+  if next_control="=" then
+    begin scan_numeric(id_lookup(numeric)); goto continue;
+    end
+  else if next_control=equivalence_sign then
+    begin define_macro(simple); goto continue;
+    end
+  else @<If the next text is `|(#)==|', call |define_macro|
+    and |goto continue|@>;
+  err_print('! Definition flushed since it starts badly');
+ @.Definition flushed...@>
+  end;
+ done:
+
+ @ @<If the next text is `|(#)==|'...@>=
+ if next_control="(" then
+  begin next_control:=get_next;
+  if next_control="#" then
+    begin next_control:=get_next;
+    if next_control=")" then
+      begin next_control:=get_next;
+      if next_control="=" then
+        begin err_print('! Use == for macros');
+ @.Use == for macros@>
+        next_control:=equivalence_sign;
+        end;
+      if next_control=equivalence_sign then
+        begin define_macro(parametric); goto continue;
+        end;
+      end;
+    end;
+  end;
+
+ @ @<Scan the \PASCAL...@>=
+ case next_control of
+ begin_Pascal:p:=0;
+ module_name: begin p:=cur_module;
+  @<Check that |=| or |==| follows this module name, otherwise |return|@>;
+  end;
+ othercases return
+ endcases;@/
+ @<Insert the module number into |tok_mem|@>;
+ scan_repl(module_name); {now |cur_repl_text| points to the replacement text}
+ @<Update the data structure so that the replacement text is accessible@>;
+
+ @ @<Check that |=|...@>=
+ repeat next_control:=get_next;
+ until next_control<>"+"; {allow optional `\.{+=}'}
+ if (next_control<>"=")and(next_control<>equivalence_sign) then
+  begin err_print('! Pascal text flushed, = sign is missing');
+ @.Pascal text flushed...@>
+  repeat next_control:=skip_ahead;
+  until next_control=new_module;
+  return;
+  end
+
+
+----
+
+LiterateProgramming is a very different way of writing code that what most professional programmers do, so comparisons in techniques have an apples-vs.-oranges quality.  While the above example may technically be "one long function" as far as the compiler is concerned, at a human reader's level it exhibits the chunkiness and abstraction provided by LotsOfShortMethods in non-LP code.
+
+What Knuth does with blocks is very similar to what the LotsOfShortMethods proponents do with methods:
+* Each piece has a very descriptive name (Knuth uses entire sentences to identify each piece).
+* Each piece is very small relative to the whole.
+* Small pieces are made up of even smaller pieces.
+
+A big contrast is that Knuth provides lots of commentary, both within the code and within the surrounding documentation sections.  Short-method proponents generally eschew too much commentary, preferring to use identifier names and clear code structure.  But it should be noted that Knuth is a gifted writer, educator, and researcher, and his goals are not the same as those of a professional programmer.  Knuth doesn't have to worry about writing comments in a natural language other than his native tongue, doesn't have to consider whether co-workers will be able to modify or extend his writings, and doesn't need to incorporate the work of numerous authors into a coherent whole.
+
+The readability of Knuth's code ''without'' the accompanying comments and documentation can be questioned -- it would be interesting to look at the TANGLE output corresponding to the above WEB example sections.  But that would not be a fair characterization of the readability: the WEB source and WEAVE output are for reading; TANGLE is really just a compiler stage.
+
+You can expect Knuth to keep his comments in sync with the code, as he works without time pressure and considers the presentation to be as important as the utility of the implementation (maybe even more so).  If you think breaking up code into LotsOfShortMethods is time wasted, you definitely won't have time for LiterateProgramming.
+
+LotsOfShortMethods can be seen as a way for programmers to accomplish some of Knuth's LiterateProgramming goals without the need to be gifted prose writers, the need to use LP tools, or the need to spend time both writing the code ''and'' describing the code.
+
+-----
+'' You can expect Knuth to keep his comments in sync with the code, as he works without time pressure and considers the presentation to be as important as the utility of the implementation ''
+
+I find the literate style very nice because it explains what the code is doing. The
+code is almost incedental to intent, which is what we really want anyway.
+Time pressure and a lack of professionalism is the killer for unit tests
+and every other practice you promote. If you can't keep comments in sync then you can't 
+be expected to be able to do anything else either. You won't make sure a function does 
+just what is named, you won't make sure new unit tests are written, you won't extract 
+out commonly used logic. In short, if you can't expect someone to do the right for the 
+practice you are against (comments) then you can't expect them to do the right things for 
+the practices you like.
+
+''This page is just serving as an example promoting LotsOfShortMethods, I'm not sure the title actually fits.''
+
+They are not exactly methods. In order to figure out the algorithm (either for reading or maintaining) when you jump read another "block", you have to keep in mind the context from which it was invoked. That's why for example, printing the code above, you'll see at the end of the second block (which is section 863) ''This code is used in section 815''. It is not exactly a short method,  you have to have in mind enough context of the calling block to make sense of the called block. There are other instances in which Knuth uses Pascal or C procedures, but these blocks are nowhere near short methods concept. Adding to that the fact that the source code file from which these were extracted is a mighty 24000 lines long, and I'm pretty sure the guys who object to LongFunctions on the ground that they are not maintainable, will not like it at all if they'll have to maintain this style of source code. --Costin
+
+''It's not a short method in the pure sense, but it has the same intentions as short methods, replace block with method in your statement above and we're saying the same thing.  Short methods are just more explicit and allow using the code itself to explain what's going on rather than comments.  Unlike Knuth, most of us don't have the time to write more comments than code.  Literate programming is the intent behind short methods you know.''
+
+If that's the intent, I'm not sure that you succeed. What would you propose as a method name replacement for :
+
+ @<Try the final line break at the end of the paragraph,
+    and |goto done| if the desired breakpoints have been found@>;
+
+Would it be TryTheBreakPointAtTheEndOfTheParagraphAndGotoDoneIfTheDesiredBreakpointsHaveBeenFound ? How about the parameters that you'd have to move along to that method, which DonaldKnuth doesn't have to ? And I'm not sure what you do with the go to. Putting them as the fields of some object is not exactly the same thing, because then you'd have to create lots of MethodObjects, and I just don't see that. In any case the mental flow that you have to go through to understand DonaldKnuth''''''s style is in my opinion more similar to the regular procedural style, including most of the inconveniences of LongFunctions with the most notable exception of better layout, and it's nowhere near the OO style of LotsOfShortMethods. And still, these blocks have much more lines of code than, including several assignments on one line, than the gold standard of LotsOfSortMethods.
+
+Anyway, I've seen nowhere such a code with LotsOfShortMethods that I could honestly say about: hey, this has the same intent as DonaldKnuth style.  
+
+Well, how about something like  
+
+  if(Break''''''Points''''''Found())
+    End''''''Paragraph();
+
+Frankly, any method that big, I would make into a method object.  Solves all the namespace issues, makes sharing variables easy, don't need to pass paramaters, and allow's me to chunk the problem into distinct steps.  There'd likely be one high level manager style function where you'd see the high level logic, and then a bunch of helper functions than just do one piece of the work and get invoked by the manager function.  Frankly, I think we short method folks tend to use objects the way you seem to like to use methods.  We like objects with small methods, you like long functions with whitespace, we're doing the same thing, we just prefer to work at different levels of abstraction.  Objects tend to be my most used unit of abstraction, methods aren't good enough for me to solve complex problems, but they're good at building objects, which can solve those problems.  To put it simply, I hate the regular procedural style, and I despise procedural programming in general, this would looks much cleaner to me as a method object, but to each his own.
+
+''First of all, I don't like you to put words in my mouth and speak to me. I do not prefer long methods with whitespaces. If I write in OCAML I might prefer inner functions, and sometimes anonymous functions at that, not exactly whitespaces. During my current java project, it happened to me  to define two levels of imbrication of inner classes inside a Java method, just because the damn language hasn't got a clue that functions are more fundamental than objects!! These are not different level of abstractions, they are exactly the same levels and kinds of of abstractions with what you'd probably realize with MethodObjects. However, what I do not like to see also, is abstractions used unnecessarily where concreteness is required.For an algorithm where a couple of basic [for/while/if/switch blocks] would suffice, you don't need to split it in methods and method objects, just for the sake of going towards the illusory 5-9 lines idea. And I'm not trying to change your style or anybody else's either, I just want you to acknowledge that reasonable alternative exists.''
+
+Don't get the wrong idea, hell if methods were first class objects in Java/CSharp, I'd use them like that too.  When I work in languages that allow anonymous functions, I tend to use them heavily, same with inner classes.  I recognize that for/while/if/switch works just fine for you, I don't dispute that, I just don't do it myself, I find lot's of small methods work better for me, get's me closer to my own little language rather than just for/while/if/switch.  Like I said above, to each his own.  

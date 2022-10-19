@@ -1,0 +1,113 @@
+The HaskellLanguage is lazy. And so the expression...
+
+    take 10 [1..]
+returns the first ten integers of the list of integers from 1 to infinity. 
+
+    [1,2,3,4,5,6,7,8,9,10]
+But that infinite list, fortunately, is never actually constructed. Actually it is constructed as it is needed. In this case only the first ten integers are needed so only that much of the list is constructed.
+
+Languages like HaskellLanguage hide the overhead (bookkeeping) required to implement LazyEvaluation. Compilers are getting pretty good at minimizing this overhead, but strict languages do not have this overhead at all. Except some strict languages provide explicit lazy programming.
+
+The SchemeLanguage is strict. Just as IF and WHILE are syntax to control evaluation in ProceduralLanguage''''''s, so is DELAY syntax to control evaluation in SchemeLanguage. IF delays the evaluation of the true and false branches. DELAY delays the evaluation of a procedure call.
+
+    (delay (+ 1 2))
+
+does not return 3. Rather it returns a ''promise'' to return 3 ''if'' it is ever needed. DELAY implements CallByNeed or LazyEvaluation in a language that otherwise uses CallByValue or StrictEvaluation. 
+
+The FORCE procedure is used to fulfill the promise.
+
+    (force (delay (+ 1 2))
+
+returns 3. Moreover, DELAY guarantees it will only evaluate the expression once. So a second call to FORCE would return the result of the first call. That result will have been ''memoized''. See MemoizationStrategy.
+
+An infinite list of numbers can be defined using DELAY and FORCE.
+
+    (define (lazy-integer-list)
+      (letrec ((next-number (lambda (n)
+			      (cons n (delay (next-number (+ n 1)))))))
+	(next-number 1)))
+    
+    (define lazy-head car)
+    (define (lazy-tail lazy-list)
+      (force (cdr lazy-list)))
+
+And so...
+
+    (define (take n lazy-list) 
+      (let loop ((i 1)
+		 (l lazy-list)
+		 (r '()))
+	(if (<= i n)
+	    (loop (+ i 1)
+		  (lazy-tail l)
+		  (cons (lazy-head l) r))
+	    (reverse r))))
+
+    (take 10 (lazy-integer-list))
+
+returns the first ten integers without evaluating the rest...
+
+    (1 2 3 4 5 6 7 8 9 10)
+
+----
+
+I wouldn't use
+
+    (define (lazy-integer-list)
+      (letrec ((next-number (lambda (n)
+			      (cons n (delay (next-number (+ n 1)))))))
+	(next-number 1)))
+
+But
+
+  (define (lazy-integer-list)
+    (let next-number ([n 1])
+      (cons n (delay (next-number (add1 n))))))
+
+Doesn't that look quite simpler?
+-- DorKleiman
+
+----
+OcamlLanguage also has explicit laziness.
+
+Like the examples above, to delay an expression, you use the "lazy" construct (syntactically it acts like a function):
+ lazy (1 + 2)
+This expression has type '''int Lazy.t''', and, more generally,''' 'a Lazy.t''' is the polymorphic type of promises to return a value of type''' 'a'''.
+
+To force it to evaluate, you use the Lazy.force function (of course, you can open the Lazy module beforehand if you don't want to prepend the "Lazy." all the time):
+ Lazy.force (lazy (1 + 2))  (* evaluates to 3 *)
+
+Like Scheme above, each delayed expression is only evaluated once, the first time it is forced, and then it is memoized thereafter. This is important to know if your delayed expression has side effects; those side effects will only be performed once.
+
+You can define a type of infinite list, which is a pair of the head value, and a promise of the rest of the list:
+
+ type 'a inf_list = Cons of 'a * 'a inf_list Lazy.t
+
+(Note: Since this algebraic type only has one constructor, the constructor seems kind of unnecessary. i.e. It seems like we should just unwrap the constructor and use the pair directly, like this:
+ type 'a inf_list = 'a * 'a inf_list Lazy.t
+However, this type is cyclic. OCaml won't accept this unless you run it with the "-rectypes" (recursive types) flag. So for convenience, we usually just instead wrap it inside an algebraic type constructor.)
+
+Here is the infinite list of numbers from the Scheme above:
+
+ let rec next_number n = Cons (n, lazy (next_number (n + 1)))
+ 
+ let lazy_integer_list = next_number 1
+   
+Here is the same "take" as the Scheme above:
+
+ let take n lazy_list =
+   let rec loop i l r =
+     if i <= n then
+       let Cons (x,xs) = l in
+         loop (i+1) (Lazy.force xs) (x::r)
+     else
+       List.rev r
+   in
+     loop 1 lazy_list []
+
+ # take 10 lazy_integer_list;;
+ - : int list = [1; 2; 3; 4; 5; 6; 7; 8; 9; 10]
+
+
+----
+CategoryScheme CategoryHaskell CategoryLazyPattern

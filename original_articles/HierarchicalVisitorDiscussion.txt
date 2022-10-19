@@ -1,0 +1,583 @@
+''Discussion about the HierarchicalVisitorPattern...''
+
+''Does anyone have a generalization of this Pattern for graphs? the issue being that graphs don't have leaves'' -- BillDehora
+
+To create a generalization of the hierarchical graph visitor, you must reach nodes by walking the graph.  Choosing the starting point(s) may be difficult for digraphs or disconnected graphs, but might be easy if you have a ''natural'' starting point in the problem domain.  The path from the starting points to the current point must be available for node-processing and decision-making purposes.  This path can be held within the visitor state (assuming all points or edges in the graph derive from a common object).  I'd assume a DFS would be most natural in generalizing from the visitor pattern (which is DFS on trees).
+
+The 'issue' that graphs don't have leaves is less a problem than you're thinking... after all, it is possible that (in the same sense) a tree doesn't have leaves... just a bunch of 'empty' composites.  I think the greater issues will arise from the fact that graphs can be cyclic or have cycles, graphs can be disconnected, graphs can be directed or undirected or (worse) a combination of the two, etc.  Further, the edges on a graph can have properties... sometimes the properties of those edges is more interesting than the properties on the nodes.  Thus, in the general case, you must look at edges as well as nodes.  Now, most of these can be handled... the visitor can hold state as to which nodes have been visited, which edges have been traversed.
+
+* A graph structure will often physically separate the points from the edges, so testing which paths you can take from a given node will involve grabbing all the edges you can travel from the current point and visiting an edge (if the edges have interesting properties... often edges are more interesting than the nodes) then the node beyond that edge (acyclic visitor would track visited nodes and short-circuit the visit to already visited nodes even if it does visit every alternate edge to that node).  
+
+Generalizing the short-circuit decision as to whether to continue processing is the more interesting task.  When you are selectively visiting a graph, it means you have some criterion for deciding what not to visit... or what not to ''traverse'' (which edges to not visit further).  E.g. you might avoid visiting objects in a certain 'region', or traversing edges that pass through that region.  A traversal decision could presumably be made for each edge and each node, but only one of those decisions is actually necessary (if you traverse an edge you WILL visit the node even if you don't go further!).  I'd say the most natural way to do it would be to -always- look at (visit) every edge from a given node, and you can know what node is on the opposite end (by identity), but to make a decision for each edge as to whether to ''traverse'' the edge, which will cause you to visit the node on the other side.  This gives something like the concept of a tourist at a crossroads deciding which way to go (or which paths to take, in this case).  Being at the crossroads requires you've visited it.  Anyhow, the traversal decision must be made with both the edge properties in mind (like security... perhaps you can't traverse certain edges) and the overall context (path thus far, whether you've found what you were looking for, etc.) in mind.
+
+Visit order should be: nodeA(start), edge(nodeA->nodeB), nodeB, edge(nodeB->nodeC), nodeC, edge(nodeC->nodeA) (reject traversal), edge(nodeC->nodeD), nodeD, edge... with (essentially) backtracking when you either lack edges to traverse or decide to not traverse certain edges.  Presumably, the 'visitEnter' and 'visitLeave' could be avoided entirely if the edges carry (intrinsically) information about the nodes they connect.  If you reach nodeD and the next edge is nodeC->nodeE, that means you've backtracked to C (using DFS).  However, receiving something like a 'visitLeave(D)' signal, or even just a 'pop()', when you back up a hierarchy would probably make management of the current path-list more convenient.
+
+''Note: I'm somewhat curious about RobertDiFalco's decision to use visitLeave(Composite) instead of just 'pop()'.  As I understand it, all that is needed is a signal saying you've backed up a step.''
+
+----
+
+The thing I don't like about this is that it fails to separate the command from the query. You end up naming the method either for what it does, or for what it returns. Adding additional methods would make things clearer, and might even be simpler. For example, it becomes easier to implement filters and PrettyPrint''''''ers as decorators: some decorators define the queries while others override the actions. Naming the command and query methods needs some thought ... which is good! -- DaveWhipp
+
+I agree, that's why it is so hard to name. However, we shouldn't let orthodoxy get in the way of its utility or simplicity. It is just so damn easy to use and it works for many different types of traversals. For those that tend NOT to use hiearchical structures (CompositePattern) in general or visitors in specific, then clearly, the HierarchicalVisitorPattern isn't going to seem simple to them. However, it you have used visitors with tree structures, you will be familiar with coming up against the limitations of the VisitorPattern the first time you try to write a formatted tree-listing.
+
+The problem I have with adding methods is that it complicates the class interface, making it more difficult to use. By the way, could you expand a little bit on implementing filters and PrettyPrint''''''ers as decorators? Maybe that's what I'm not getting. I'm not clear what you are proposing to Decorate - the Visitor?!? Either way, I think you've pegged the smell. The behavior it models is a combination of query and control. -- RobertDiFalco
+
+We have a number of different behaviours: filtering, pretty-printing, building path names, running tests, etc. It seems, to me, that we might want to use a filter for any of the 'action' vistors. It is also possible that we can come up with different types of filter. To create concrete vistors for all the different combinations would be somewhat tedious. We can, instead, use decorators. E.g.:
+
+ Visitor* myVisitor = new Pretty''''''Printer(
+     new Results''''''Filter(FAILURES,
+         new Wildcard''''''Filter("*Account*")));
+
+This vistor would traverse the hierarchy using wildcards, select tests that failed, and then pretty-print this list. This is a classic use of the DecoratorPattern.
+
+	* Wildcard''''''Filter: overrides the "enter children?" query
+	* Results''''''Filter: overrides the "process this leaf?" query
+	* Pretty''''''Printer: overrides action methods for suites and test cases.
+
+All these classes inherit from Abstract''''''Visitor which forwards method calls to the next visitor in the chain.
+
+This example might seem to suggest plain old inheritance should be used, but the possibility of combining multiple filters of the same type would seem to preclude this.
+
+An example implementation might be:
+
+ class Results''''''Filter : public Abstract''''''Visitor
+ {
+     public:
+         Result''''''Filter(ResultE r, Visitor* v = 0) :
+             Abstract''''''Visitor(v),
+             m_requiredResult(r)
+         {}
+
+         bool okToProcessTestcase(const Testcase* tc) const
+         {
+             return Abstract''''''Visitor::okToProcessTestcase(tc) &&
+                 tc->result() == m_requiredResult;
+         }
+ };
+
+-- DaveWhipp
+	
+Okay, I see where you are going with the decorators. These are like aggregate visiting strategies that are specialized either for query (filtering) behavior or processing behavior.... The question then would be how would you separate the behavior (forgetting the names for a minute)?
+
+	* boolean shouldVisitChildren( Composite );
+	* boolean shouldVisitNext( Composite );
+	* boolean shouldVisitNext( Leaf );
+
+	* void visitEnter( Composite );
+	* void visitLeave( Composite );
+	* void visit( Leaf );
+
+The problem is that this solution has made the interface more complex. It has doubled in size from the following:
+
+	* boolean visitEnter( Composite );
+	* boolean visitLeave( Composite );
+	* boolean visit( Leaf );
+
+It's not ''that'' bad, the return value is simply the traversal state for the current depth. I dunno, while I agree with you that a SeparationOfConcerns seems to be missing, I am happy with the way the existing interface works in practice. With the smaller interface, one can always create abstract visitor subclasses to separate the query and processing behavior from the basic hierarchical visiting interface -- you can't really go the other way around. -- RobertDiFalco
+
+I don't see why the number of methods is a problem. Individual visitors inherit from Abstract''''''Visitor, so they only have to define those methods they are interested in. The ultimate client of the visitor only sees the constructors. The total number of methods in the interface remains in single digits (i.e. <10) , and each method has a single, well defined, purpose.
+
+You suggest that you can compose visitors using the mixed interface. But your leaf has one explicit query: "do action and return whether to continue". I suggested that we also need an "ok to visit testcase" query: presumably your action would only perform itself if its ok to do so. Thus we have 2 queries and an action. It is not possible to chain visitors that combine these in one method. If you stick with just your single "ok to continue" query, then chaining is possible, but why should a basic PrettyPrint''''''er have to say "its ok to continue". It loads an extra responsibility onto the class that has nothing to do with its purpose.
+
+-- DaveWhipp
+
+You're definitely right on that last point -- you need both for the ''Leaf'' because there is a chain of responsibility. What I mean is that you can compose that abstraction by creating an aggregate visitor with condition members and processing members -- PipesAndFilters. I don't know why I don't like the idea of adding so many methods -- it just smells funny to me. But then again, the current combination of traversal state and traversal behavior doesn't smell all that good either. -- RobertDiFalco
+
+Perhaps a bit of structure can improve the smell. We are using a combination of patterns: lets add one more:
+
+	* Composite -- unifies Test''''''Suites and Test''''''Cases
+	* Visitor -- allows different traversal operations
+	* Decorator -- allows composition of traversal operations
+and now:
+	* SkeletonMethod -- partitions behaviour of visitors.
+
+The Skeleton methods are visitTestSuite -> bool and visitTestCase -> bool. These are defined in the Abstract''''''Visitor to call hooks that can then be defined, as required, in the concrete visitors. This keeps the visitor aspect "pure", whilst providing a clean interface for the definition of traversal operations. -- DaveWhipp
+
+First, thanks for getting into this with me. I've badly needed another ear on this idea for a while now. You may be winning me over -- but I'm not sure...I'm still processing the ideas. I guess the important thing isn't how many members it has but that it allows you to remove the need for two styles of traversals in Composites and Trees. I wonder if this allows one to switch between breadth and depth first traversal. While I do not want to complicate this thing any further, I also don't want to provide a piece-meal solution that still forces clients to create ad-hoc traversal code because the normal method of iteration is not appropriate or general enough. ''Processing...'' -- RobertDiFalco
+
+I don't see much need to worry about depth-first vs breadth-first: our focus is the leaves (test cases), and their order of iteration is unaffected by the depth vs breadth issue. The variation that we are concerned with are variations in the predicates and variation in the action for each test suite and test case. The traversal itself should be hidden from clients.
+
+You can probably implement the two "visit" methods as non-virtual methods in the
+Visitor base class (you could make them virtual, but there's not much benefit). These would be SkeletonMethod''''''s, calling the appropriate virtual methods ("hooks") in the derived classes: these would be clean, either query or command. The base "visit" methods would be mixed command+query, but the visibility is tightly confined (especially if non-virtual) so I wouldn't worry about it. -- DaveWhipp
+
+For now, I'm most comfortable sticking with:
+
+	* visitEnter( node ) -- enter a branch (composite)
+	* visitLeave( node ) -- leaving a branch (composite)
+	* visit( leaf ) -- visit a leaf
+
+The result of these indicate the result of Component::accept which is used as the while condition for each set of siblings e.g., 
+
+   children.doWhile( accept( each ) );
+
+This is simple and not as fully-featured, but the names seem to do a good job of explaining what happens. I still think your ideas are great Dave, and I agree that this solution lacks a SeparationOfConcerns. I'm just not convinced about an alternative solution yet. -- RobertDiFalco
+
+OK, do the simplest thing that could possibly work. My suggestions are less simple than yours (they're a layer on top), so get yours working first. If you start to notice nasty smells from your visitors, then refactor! -- DaveWhipp
+
+One question Dave. Is this the what you are thinking? Without worrying about the actual naming:
+
+ interface T''''''reeVisitor
+ {
+     ''//..Component Processing''
+
+     void visitEnter( Composite node );
+     void visitLeave( Composite node );
+     void visit( Leaf leaf );
+
+
+     ''//..Traversal Processing''
+
+     boolean shouldVisitChildren( Composite node );
+     boolean shouldVisitNext( Composite node );
+     boolean shouldVisitNext( Leaf leaf );
+ }
+
+You would then implement the accept methods for your Composite and Leaf participants something like this:
+
+ boolean Composite::accept( T''''''reeVisitor v )
+ {
+    v.visitEnter( this );
+
+    if ( v.shouldVisitChildren( this ) )
+    {
+       m_children.enumWhile( new Block() {
+           public boolean is( Component each ) {
+               return each.accept( v ); } } );
+    }
+
+    v.visitLeave( this );
+
+    return v.shouldVisitNext( this );
+ }
+
+And....
+
+ boolean Leaf::accept( T''''''reeVisitor v )
+ {
+     v.visit( this );
+     return v.shouldVisitNext( this );
+ }
+
+Is this sort of what you were thinking? If not, could you show me what I've missed? I'm still weighing all this against just having:
+
+ boolean Composite::accept( T''''''reeVisitor v )
+ {
+    if ( v.''visitEnter''( this ) )
+    {
+       m_children.enumWhile( new Block() {
+          public boolean is( Component each ) {
+             return each.''accept''( v ); } } );
+    }
+
+    return v.''visitLeave''( this );
+ }
+
+And for the leaf...
+
+ boolean Leaf::accept( T''''''reeVisitor v )
+ {
+    return v.''visit''( this );
+ }
+
+But I am still thinking about your suggestions! I'm still amazed that I haven't seen this sort of beast yet. I've used it pretty constantly in its original (just 3 method) form for the last two years and it has saved my ass a number of times. I suppose it is these smells that have prevented others from documenting this pattern so I really appreciate your efforts to help me get rid of them. 
+
+''-- RobertDiFalco''
+
+----
+
+This is part of a DOM visitor...
+
+    void XMLVisitor::visitElement(DOM_Element& element)
+    {
+        // Iterate over any attributes of this element
+        DOM_NamedNodeMap attributes = element.getAttributes();
+        int attrCount = attributes.getLength();
+        for (int i = 0; i < attrCount; i++)
+        {
+            DOM_Node attr = attributes.item(i);
+            visitNode((DOM_Attr&) attr);
+        }
+    
+        visitElementChildren(element);
+    }
+
+    void XMLVisitor::visitElementChildren(DOM_Element& element)
+    {
+        // Iterate over any child nodes
+        DOM_Node child = element.getFirstChild();
+        while (child != 0)
+        {
+            visitNode(child);
+            child = child.getNextSibling();
+        }
+    }
+If you overload visitElement(), you are supposed to call the base class version (so that the visiting of the attributes & childs is still active). By the act of overloading, you get the enter/leave events (pre/post the base class call).
+
+The decision whether to iterate over children or not can be had by overloading the second method, and conditionally calling the base class version (or not).
+
+-- JuergenHermann
+
+This seems as limited as the traditional VisitorPattern without being as elegantly implemented. I'm trying to eliminate the need to have two ways of iterating a tree. For example, the XML stuff has both Visitors '''and''' ExternalIteration. Also, it subverts the leaf implementation of ''accept'' because by calling ''visitNode'' '''explicitly''' in the composite visitor implementation. There is tight-coupling between the Visitor and the Data Structure. The ability to track the traversal state requires that the Visitor (rather than the collection itself), control the iteration. For me, this isn't even a visitor but just a recursive function. -- RobertDiFalco
+
+----
+
+This is the basic structure I was thinking of. It doesn't include the decorator stuff (which can easily be added later). I've emphasized the SkeletonMethod''''''s by making the first three methods non-virtual: in practice it may be better to make everything virtual.
+
+ bool Leaf::accept(Tree''''''Visitor* v)
+ {
+    return v->visitLeaf(this);
+ }
+
+ bool Composite::accept(Tree''''''Visitor* v)
+ {
+    return v->visitComposite(this));
+ }
+ 
+ class Tree''''''Visitor
+ {
+   public:
+
+     bool visitLeaf(Leaf* leaf)
+     {
+         if (allowEntryToLeaf(leaf))
+         {
+             processLeaf(leaf);
+         }
+
+         return allowContinueFromLeaf(leaf);
+     }
+ 
+     bool visitComposite(Composite* composite)
+     {
+         if (allowEntryToComposite(composite))
+         {
+              preProcessComposite(composite);
+              iterateComposite(composite);
+              postProcessComposite(composite);
+         }
+
+         return allowContinueFromComposite(composite));
+     }
+ 
+     void iterateComposite(Composite* composite)
+     {
+         for (Composite::iterator
+                 iter = composite->begin();
+                 iter != composite->end();
+                 ++iter)
+         {
+             if (!iter->accept(this)) break;
+         }
+     }
+ 
+     virtual bool allowEntryToLeaf(Leaf*) const 
+     {
+        return true;
+     }
+
+     virtual bool allowEntryToComposite(Composite*) const
+     {
+        return true;
+     }
+
+     virtual bool allowContinueFromLeaf(Leaf*) const
+     {
+        return true;
+     }
+
+     virtual bool allowContinueFromComposite(Composite*) const
+     {
+        return true;
+     }
+
+ 
+     virtual void processLeaf(Leaf*) 
+     {
+     }
+
+     virtual void preProcessComposite(Composite*)
+     {
+     }
+
+     virtual void postProcessComposite(Composite*)
+     {
+     }
+ }
+-- DaveWhipp
+
+Ah, so yours is different from a traditional visitor in various ways. For example, you handle iteration of children in the Visitor itself, rather than the ''accept'' methods of the CompositePattern. For me, this more tightly couples the classes and requires that you either make the visitor a friend (a C++ specific feature) or expose generalized iteration mechanisms from the Composite (making it more vulnerable to mischief). I have to disagree that this is simpler than my original technique. The method you provide publishes two ways to iterate the Tree - (a) the external-iterators exposed by the tree, or (b) the Visitor that ''uses'' these external-iterators. I ''think'' you can get rid of this tight-coupling if you simply remove ''iterateComposite'' and move its implementation to the composite's ''accept'' method. Then the composite doesn't have to expose iterators (or anything). Then the ''visitor'' returns to just being a code-block accepted for each node of the tree. This way, the only coupling between the Visitor and your Tree classes becomes the ''accept'' method -- and nothing else.
+
+The only other nit I would pick is that ''allowEntryToLeaf'' is redundant if you have a ''allowVisitNext'' (i.e. ''allowContinueFromLeaf'') other than the fact that the visitor uses different arguments to make this determination. 
+
+  if ( can visit child1 )
+     visit child1
+  end
+  if ( can continue from child1 )
+     if ( can visit child2 )
+        visit child2
+     end
+     if ( can continue from child2 )
+        if (  can visit child3 )
+           visit child3
+        end
+     end
+  end
+So, while they are slightly different, I'm not sure what behavior they make possible that wouldn't be possible with just having the ''can continue from child''.
+
+-- RobertDiFalco
+
+I'm happy to move the base methods around to wherever they fit best. That's not really important -- I could even claim (half true) that the iterator issue is the reason why I made it a separate method. In c++ I do not see any problem with exposing an external iterator: it allows your composite to play with STL algorithms. In fact, the iteration could be achieved with the 'find_if' algorithm and a negator:
+
+ void Tree''''''Visitor::iteratorComposite(Composite* composite)
+ {
+   find_if(composite->begin(), composite->end(),
+           not1(mem_fun_ptr(&Composite::accept)));
+ }
+(If we invert the 'continue' predicate, then we can omit the 'not1' negater. i.e. allowContinueFromXxx -> stopAfterXxx).
+
+We began this discussion by wanting to avoid mixing command and query in the 'hook' method names. You could move all three base methods into the accept method if you want: the interface used by clients is unchanged. Keeping at the first two (the "visit" methods) in the visitor preserves the feel of the original visitor pattern. This may make it easier to explain/understand.
+
+I do not agree that the 'allowEntryToLeaf" predicate is redundant. If it returns false, then the specific leaf is never processed. It does not stop the iteration in the parent. The 'allowContinueFromLeaf' stops iteration after processing has occurred. If you are overriding the hooks in different classes (either with multiple layers of subclassing, or by using decorators), then the difference is important. (This is why the entry guard should not be in the 'processLeaf' method)
+
+-- DaveWhipp
+
+I've had a chance to think about this a bit more: One thing I haven't liked is the fact that 'accept' returns a bool. This is only needed for termination of iteration of a composite in the visitor, and really shouldn't be needed. Here's my solution: First we eliminate the bool -- 'accept', and thus the 'visitXxx' methods on the visitor, return void. This obviously eliminates the need for the 'return <expr>' statements in the visit methods, and we can also eliminate the 'allowContinueFromXxx' methods.
+
+So now we need to put in place an alternative mechanism for stopping the iteration. First, I'll re-write the 'iterateComposite' method:
+
+ void TreeVisitor::iterateComposite(Composite* composite)
+ {
+     preProcess(composite);
+     for (Composite::iterator
+             iter = composite->begin();
+             iter != composite->end() && !abortIteration();
+             ++iter)
+     {
+         iter->accept(this);
+     }
+     postProcess(composite);
+ }
+The 'abortIteration' method is a hook that replaces all the 'allowContinue...' methods. Its default implementation would, of course, simply return false. Any concrete visitor that wanted to use it would need to define a flag that controls the return value: it becomes easy to abort either one level of hierarchy or, even simpler, the entire iteration.
+
+At the same time, to keep the base class simpler, I would be tempted to remove the entry guards. They are probably best added in a subclass. The visit methods in the base class simply call the process methods (the visitComposite calls iterateComposite). A subclass can redefine these methods to insert the guards;  yet another subclass can provide the m_abortIteration flag with set- and clear- methods. A concrete visitor can choose to derive from either the base class, or one of the utility subclasses. This preserves flexibility and simplicity ... and there is no need to create any of the utility subclasses until you find that you need them -- YAGNI.
+
+-- DaveWhipp
+
+While simpler, the ''abortIteration'' method needs to take the node as a parameter if you want this visitor to be useful for doing best-path node searches. I'm sure you will disagree (and you might be right) but for me it seems like every bit of abstraction is being stripped away from the VisitorPattern in order to create a Swiss-army knife. To me, the result is something that is more like a set of recursive functions on an ExternalIterator. Now, there's nothing wrong with this and everyone has different aesthetics. To make sure I wasn't being unfair, I tried writing some stuff with it and for very simple traversals, it seemed very complicated to use. Lots of members to deal with, and lots of hiding (in various super classes) to simplify its use. You have to ''restrict'' it rather than ''extend'' it. Personally, I tend to get nervous when there are this many pieces to a basic construct -- it just starts looking like ANSI-C code to me. But you have to remember that I'm an extremist. But you can be sure of this, I'm not overly crazy about the alternative, just more comfortable with it. My favorite thing to do is removing behavior, especially behavior that is only ''anticipated'' to be important. 
+
+So, with this in mind. If you take a look at the HierarchicalVisitorPattern it really has the simplest interface it could have -- well, at least the ''smallest''. While I'm not crazy about the booleans either (actually I hate them), they are still simpler to use this way. And, ''for 90% of what someone would want to do with a Composite'', it is sufficient. Best of all, that other 10% can be modeled by adding another layer of abstraction on top of that interface. It can be built on rather than need to be reduced.
+
+Consider your original thoughts about decorators so that you could have some classes that filter the nodes and other classes to processes the valid nodes. This doesn't require ''abortIteration'' or any of the conditional stuff. It can be built on the basic HierarchicalVisitorPattern like so:
+
+    interface Filter
+    {
+        boolean shouldVisitChildren( Composite node );
+        boolean shouldVisit( Leaf leaf );
+    }
+
+    interface Operator extends C''''''lassicVisitor
+    {
+        void visit( Composite node );
+        void visit( Leaf leaf );
+    }
+
+    class F''''''ilteredVisitor extends H''''''ierarchicalVisitor
+    {
+        Items m_filters;
+        Items m_operators;
+
+        ''...''
+
+        public void add( Filter filter ) {
+            m_filters.add( filter );
+        }
+
+        public void add( Operator process ) {
+            m_operators.add( process );
+        }
+   
+        ''...''
+
+        public boolean visitEnter( Composite node )
+        {            
+            ''// Return first that rejects this node''
+            Object rejected =
+                m_filters.detect( new Block() {
+                    public boolean is( Filter each ) {
+                        return '''!'''each.shouldVisitChildren( this ); } } );
+
+            return ( rejected == null );
+        }
+        
+        public boolean visitLeave( Composite node )
+        {
+            m_operators.enum( new Block() {
+                public void run( Operator each ) {
+                    each.visit( node ); } } );
+
+            return true;
+        }
+
+        public boolean visit( Leaf leaf )
+        {
+            ''// Return first that rejects this leaf''
+            Object rejected =
+                m_filters.detect( new Block() {
+                    public boolean is( Filter each ) {
+                        return '''!'''each.shouldVisit( this ); } } );
+
+            if ( rejected == null )  ''// no one rejected''
+            {
+                m_operators.enum( new Block() {
+                    public void run( Operator each ) {
+                        each.visit( node ); } } );
+            }
+
+            return true;                
+        }
+    }
+As you can see, even this simple interface has features we don't use -- such as the boolean results. However, we have built on the basic HierarchicalVisitorPattern (which only has three members!) and provided the filtering behavior that started this discussion as an additional layer. Furthermore, we have decoupled ourselves from the internal representation of the composite class. It only need provide the VisitorPattern ''acceptors'' and need not expose any ExternalIterator''''''s. I suppose it is a matter of taste, but this was my main reason for sticking with the simpler interface. -- RobertDiFalco
+
+I think there must be some fundamental disconnect in our thinking. The examples you previously gave (runnings tests, pretty-printing, wildcard filtering) all seem very simple to me. Method lengths of 1 or 2 lines. I don't even see any complex interfaces (though I'll admit that if you have many different leaf types then any visitor tends to get big). Probably one problem here is that we don't have a clear usage model for the visitor, so we each assume a different usage and thus see different modes of simplicity. I should mention that I do like the idea of defining the interfaces for the filters and operators (though neither handles the abort case yet). More fragmented, and slightly more complex, but  a good tradeoff because it makes other things simpler. Note that you actually have more methods in total, and 3 classes/interfaces that must be extended for each change in the leaf types of the composite. -- DaveWhipp
+
+----
+
+	 :	''"When you want to change the behavior of an object, send it a message. Ask it to do things differently."''
+		''-- I just said it.'' ;->
+
+Q: What object's behavior are you trying to change when you decide not to go down to the children?
+
+A: Well, the code is the loop in the Composite. ... but looping isn't really a property of a composite object, unless it happens to be doing the recursive visiting thing.
+
+I think we have a hidden object here: Consider the clear separation between "Component Processing" methods and "Traversal Processing" methods.
+
+Consider having the Composite class create an "IterationController" object when it starts visiting:
+It would pass this object to child objects (composite and leaf), which would include it in the parameter list of the accept method:
+
+   void accept(Composit''''eRoot *cr, IterationController *ic);
+
+The accept method can then call back to ic->getLevel(), ic->abandonChildren(), ic->abandonAllIteration(), etc.
+
+Thoughts? Comments? Objections?
+-- JeffGrigg
+
+I would ask what benefit is derived from creating this new object? Does it do more than provide a ''literal'' object for traversal state? Upon first appearances it seems to make the interactions even more complex than they already were. There are more interactions because we will have to pass the node to ''abandonChildren'' '''and''' ''abandonAllIteration'' to know if the current node is the one that should cause the iteration to be abandoned. As a result, you now have node processing code in the Visitor as well as the Iteration Controller. State has to be broken up across multiple objects. -- RobertDiFalco
+
+Actually, I was thinking that '''all iteration state''' would be moved to the I''''terationController;
+there would be no state or visitor logic left in the composite - except to create the I''''terationController instance.
+
+That means that you don't need to pass the node (cr) to the abandon*() methods, because the I''''terationController instance is already holding a pointer to the node.
+I would say that the accept method being called could...
+   assert( cr == ic->getNode() );
+''(...making the conventional "Composit''''eRoot *cr" parameter on the accept() method redundant.)''
+
+But the "cr" parameter is convenient, to avoid lots of calls like "ic->getNode()->getPath()". ''(Ick!)''
+-- JeffGrigg
+
+----
+----
+'''Comments:'''
+
+I love this pattern. I intend to combine it with D''''''istributedComposite (http://www.cdegroot.com/cgi-bin/jini?DistributedComposite
+). I think that I understand it all, but it would have been easier if it didn't refer to constructs used in BlocksInJava (another very useful pattern, but a VAST document) - i.e. the detect() methods and the notion of Blocks. Aside from that, great pattern, thanks. -- T''''''omStrickland
+
+It seems to me that a regular VisitorPattern solves the same problems more elegantly. The beauty of it is that ''all control over iteration belongs to the visitor''. The node does not care whether you visit the children in-order, reverse-order, with short-circuiting or not. The limitations described above do not in fact exist.
+
+Here's an example of a short-circuiting file search using VisitorPattern:
+
+  # pseudocode, not tested
+  class FileFinder extends FileSystemVisitor:
+    predicate: method(Node) returns Boolean
+    maxDepth: int
+    depth: int
+    path: String
+    foundFile: String  # null means not found yet
+
+    def findFile(startNode, predicate, maxDepth):
+      this.predicate = predicate
+      this.maxDepth = maxDepth
+      this.depth = 0
+      this.path = '/'
+      this.foundFile = null
+      if maxDepth>0:
+        startNode.visit(this)
+      end
+      return foundFile
+    end
+
+    def visitDirectory(d):
+      depth++
+      path = path+'/'+d.getName()
+      print 'entering: '+path
+      if depth<maxDepth:
+        for child in d.getChildren():
+          child.visit(this)
+   if foundFile is not null: break
+        end
+      end
+      path = path.removeLastSlashToEnd()
+      depth--
+    end
+
+    def visitFile(f):
+      if predicate(f): foundFile = path+"/"+f.getName()
+    end
+  end
+How is HierarchicalVisitorPattern an improvement? -- BrianSlesinsky
+
+I'm not even sure what's being done in this code snippet, but it looks like the "Visitor" is controlling iteration (using external iteration) instead of the "Directory" object.
+
+''It also doesn't avoid visiting every node in the hierarchy.''
+----
+It does, but you have to modify filter implementation for that. I have used this pattern with my own modifications very extensively in our current project. Our purpose is to model a network(SAN) which consists of different nodes (Storage, Host, Switches, Hubs etc). I have a bunch of visitors that does all sorts of things, right from collecting all the nodes the visitor is travelling, to telling me what the max hop ( diameter of the graph) of the network. And then I have a bunch of filters that can filter all hosts that satisfy specific conditions or all switches that have specific characters (example: filter switches to only switches are connected). Filters more or less defines what I can travel and visitor tells me what to do when I travel a node. Filter don't have to go thro' all the nodes to find out if it can travel or not, since the object structure of the user configuration (which has Storage Objects,Switch Objects, Port Objects etc etc) is already known, I use this information to determine whether I even need to consider a node to filter. For example, if I want to filter only unconnected SWPorts (which are switch ports), I would only search under Switches since I already know from the object model only switch has these kind of nodes. You can use compound pattern to combine one or more filters and visitors, and this gives a great flexibility by giving you a new combination. An example is, If I want to collect all ports on a switch connected to hosts, I use a ConnectedToFilter(Host) and SWPortFilter along with a CollectorVisitor that just collects the nodes it visited.
+-- SeshKumar
+----
+On the one hand, controlling the traversal from the Composite side allows the Composite to ask the Visitor what it's doing, if it wants to continue, etc. (maybe even thread synchronizing, but I haven't investigated that possibility yet...). On the other hand, controlling traversal from outside the Composite allows different Visitors to traverse in different ways, depending on the needs of the Visitor. hmmm... What is needed is a Walker class which encapsulates the traversal. It's a pretty simple extension to the existing pattern. Working from the java example above, we need only one more interface:
+
+	public interface Walker
+	{
+	    public void traverse( Composite c, Visitor v );
+	}
+We also need to add a ''sendOff'' method to the Composite interface. This is needed so the Composite can tell it's Visitor when its worn out its welcome, so to speak (i.e., call Visitor.visitLeave()). 
+	
+	public interface Composite
+	{
+	    public boolean accept( Visitor v );
+	    public boolean sendOff( Visitor v );
+	}
+Now, there is a danger here, in that the Walker interface cannot force an implementation to call Composite's ''accept'' and ''sendOff'' methods - the best you can do (afaik in Java) is a meta-requirement, an implementation contract outside the scope of the interface syntax (I'm sure there's some word or even WikiWord to describe this situation in Java - the Collections framework, for instance, runs into the same problem.) But I don't think this is too big of a drawback given the benefits of decoupling the traversal code from the Composite (structural) code:
+* No need write a particular Walker implementation (a traversal method) until you definitely need it.
+* Client code gets to choose which Walker is best suited in the current situation, independently of both the Composite and the Visitor types, and without either needing to be changed.
+* It also still allows the Visitor to decide which branches to take (just not in which order).
+* Traversal methods are written OnceAndOnlyOnce (as opposed to in each Visitor or Composite type).
+* The traversal method(s) can be parameterized easily, like setting a max depth on a DepthFirst traversal. 
+
+Another thing to note here is that the ''accept'' and ''sendOff'' methods of Composite become, in the base case, nothing more than a call to the Visitor's corresponding methods (''visit'' and ''leave''). But, as noted above, it gives a subclass the chance to do things in the time before or after each Visitor call. It also gives the Composite a chance to override the Visitor's "request" to traverse it's children or siblings, say in the case of ConcurrentModification. 
+
+Now, a question. In every instance of the CompositePattern I've seen, a distinction is always made between nodes and leaves. I do not at all see why this is necessary. I understand, of course, that in many situations the leaf nodes must be treated differently, but not in the structural case, i.e., not for purposes of traversal or storage (which is all these base classes should be concerned with). A leaf is just like any other node with 0 Components. Having an isLeaf() method in the Component interface seems a ''much'' simpler way to make the distinction instead of having two interfaces (and thus an extra method in every Visitor implementation). 
+
+So, AnswerMe this: what benefit does a separate Leaf interface provide?
+
+''We prefer to have the appropriate method chosen by type rather than having to insert if...else statement.''
+
+Agreed, but the Leaf interface only solves that problem if the only distinction is between Leafs and Composites. A file system is an excellent example since it would have multiple types of Leaf nodes (regular files, symbolic links, hard links, etc.). So, you would still need to test the type of the Leaf in the Visitor.visit( Leaf ) method. And the same holds true if you have multiple types of internal nodes (directories - local, remote etc.) for the Visitor.visit( Composite ) method. I suppose you could argue that a Filter could handle the situation in the case of multiple Leaf types, but if that's the case, then it can also be used to distinguish between Leafs and Composites. Furthermore, there are many situations in which there is no distinction between a Leaf and Composite, like a class hierarchy. My basic argument is that such distinctions can only be made at the "content" level. So, I repeat my question. Of what benefit is the Leaf interface at the structural level? (AnswerMe please - thanks)
+
+I'm happy to answer, but I'm not sure where you are going with this. In the HierarchicalVisitorPattern leaf nodes are traversed differently than groups. Groups have #visitEnter and #visitLeave while leaf nodes simply have a #visit method. As for there being different types of leaf nodes and group nodes, not wanting to have to add new methods for each new composite subclass, well that is out of the scope of this pattern. This is a problem with visitors in general. You might want to check out VisitorInFrameworks, AcyclicVisitor, or SelectorGeneratingVisitor. -- RobertDiFalco
+
+----
+How would you suggest setting this up when the collections of leaf-node children & composite node children are segregated and must sometimes be visited in different order? (when visiting a composite node, sometimes I want to visit all it's leaf node children first than it's composite children, and sometimes vice versa) (AnswerMe) -- MichaelJohnston
+
+Why would you want to do both for the same structure. If you give me some use cases I might be able to figure something out. If you want to process the children '''before''' the parent, then you can simply encode your visiting logic in #visitLeave instead of #visitEnter. -- RobertDiFalco
+
+----
+You don't need a hierarchical visitor if you put the tree traversal logic in the visitor object. The visitor can do its Enter work, then visit the children, then do the Leave work. -- stmer
+----
+I agree with the point above that you can put the logic in the visitor object, and this simplifies breadth-first versus depth-first traversal. It still does require a Hierarchical Visitor (Or Visitable), by virtue of access each Objects's Children. Each node must be of type IEnumerable.
+
+However, I think there are instances where this is not sufficient (or additional information in needed). Consider an undirected graph with cycles. How do we stop the visitor from going on endlessly. Does our visitor need to know that it is a graph, and may not work or be overkill for a simple tree? How do you mark that an edge or node has been visited? Does the visitor need to keep track of this or would it be better to have the collection (and each node) keep track of this. For an extremely large graph (with possibly an out-of-core traversal), have the visitor keep a list of nodes visited would be problematic. I thought of having any node contain a VisitorState object as part of the IVisitable interface. This would allow the visit to mark each node with any information that would aid in the traversal. A problem with this might be the case where I want to traverse the graph once, but have several visitors. Easily solved with an aggregate visitor, but provides an interesting wrinkle. Frankly, I can see value in both approaches and am not sure whether it is best to put the burden of traversal on the Visitor or the collection. 
+
+If I require each object to support IEnumerable and expose a property of  object TraversalState. Then I can do pretty much everything in the Visitor.
+
+-- Roger Crawfis
+----
+A major problem with storing traversal state at each node is concurrency and supporting multiple visitors at once. FYI. My thoughts on a non-thread safe solution was to use reflection (or dynamic casts) to check that the data corresponded to this type of visitor and that the visitor would have to have a traversal id or number to disambiguate it from a previous traversal. The point is I do not want to traverse the graph to clear out the old traversal state. I know it smells. Any other ideas? -- Roger Crawfis

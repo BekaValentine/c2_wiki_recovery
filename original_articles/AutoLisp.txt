@@ -1,0 +1,134 @@
+AutoLISP is a dialect of the LispLanguage. It is the extension language of AutoCad. 
+
+Its usefulness is in its abilities in aiding AutoCAD operators in their use of AutoCAD in the preparation of vector graphic representations some call "Blue Prints". AutoCAD has gone through transitions which have steadily improved through refinements and additions of internal accessories such a AutoLISP. 
+
+AutoLISP is the scripting language for AutoCAD by Autodesk, a very crippled dynamic SingleNamespaceLisp, based on very early xlisp sources (v1.0), posted by David Betz on UseNet (alt.sources), and without proper copyright laws that time used by Autodesk as their free scripting language. There's an old ByteMagazine article about that.
+
+To keep the language simple, some typical features such as macros, vectors, structs, destructive operations and objects were left out. Memory was low then in the late 80ies. Since then the language itself was not improved at all, to keep things simple and to keep backwards portability. From time to time some library functions were added, such as DCL support (a cross-platform Dialog Control Language). More language features or library functions never made it, besides some utility functions introduced with a compatible third party product Vital Lisp. Autodesk bought it then to replace the old xlisp engine. Now marketed as "VisualLisp", though it's not as "Visual" as the other suites.
+
+The language has several milestones since 1987:
+
+	* autolisp, based on xlisp 1.0 with ent-, ss-, and get- function plus wcmatch, 
+	* extlisp, vmon (virtual memory on), use extended dos memory pages (R10), 
+	* acomp ByteCode compiler for European developers, also xlisp based (R10-R12), 
+	* Vital Lisp, external compiler and development system (R12-R14) ("vill"), 
+	* Reactors and Automation support (vill 3.2), 
+	* VisualLisp, based on vill 3.2. Replaced old AutoLISP in R15 aka AutoCAD 2000. 
+
+----
+It is similar to the EmacsLisp, but has even fewer features. A typical WorseIsBetter example.
+	*Dynamic scope instead of lexical scope as in CommonLisp and the SchemeLanguage 
+	*Immutable ConsCell''''''s, no destructive replacements. Though HenryBaker seems to classify that as advantage. He classifies it as the only LispLanguage with '''only''' functional strings and functional cons cells, though not pure because there's SETQ. http://home.pipeline.com/~hbaker1/ObjectIdentity.html
+	*Only one global UniversalNameSpace, though the latest compiler can optionally separate NameSpace''''''s (aka packages) per document (aka DWG)
+	*No data structures at all (no vectors, structures, classes, hash tables, ...) 
+	*No macros, no optional arguments
+	*Very limited control-structure facilities: only if and cond for conditionals, only while, repeat and for each for iteration. 
+	*It has mapcar and apply, but not reduce .
+
+The pro-side is that it has COM support and a built-in IDE with debugger, stepper, project manager.
+
+The FAQ and some typical AutoLISP development patterns are hosted on the AcadWiki at http://xarch.tu-graz.ac.at/autocad/wiki/AutoLispFaq.
+
+I don't know exactly if you can do ExtremeProgramming in AutoLISP because the description is unclear to me. But I guess so. From my point of view it's even the most extreme development environment. Its IDE is ''better'' than emacs and tightly integrated into the language and the system. Single NameSpace
+and fully functional vars and VisualBasic like unstrictness makes development much easier than with any scheme or CommonLisp system. Not to speak for other languages. ReadEvalPrint is unbeatable. Smalltalk maybe comes close, but haven't tried that yet. Just one thing: The internal AutoLISP IDE lacks a builtin cross-referencer.
+
+-- ReiniUrban
+
+----
+A surprising feature:  AutoLisp insists that fractions be written with a leading zero (e.g., 0.6, not .6).
+If you leave out the leading zero, it may refuse to load the script, due to a "misplaced dot on input" error.
+
+----
+It is easy for the user to cancel a function, but hard to cancel a function gracefully.  
+
+To prepare for being cancelled, a function can set the *error* behavior, to ensure that a proper error message appears, and/or set the system back to the state prior to running the function. 
+	* http://xarch.tu-graz.ac.at/autocad/wiki/BreakLispCommand (BrokenLink)
+	* http://code.acadx.com/articles/ATP102A.pdf
+	* http://code.acadx.com/articles/ATP102B.pdf
+	* http://code.acadx.com/articles/ATP102C.pdf
+	* http://code.acadx.com/articles/ATP102D.pdf
+	* http://code.acadx.com/articles/ATP102E.pdf
+
+For *error* handling one can start with template code and add more case-specific functionality from there. The following *error* handling simply records AutoCad system variables as they are initially set within an AutoLisp command; upon *error* all modified system variables are then reset to their previous values. Also, the UNDO command is often needed to better define transactions in order to achieve proper rollback behaviors.
+
+ (defun C:EXAMPLE ( / olderr sysvars setv unsetvars)
+   (setq olderr *error*)
+
+   (defun setv (var value / oldval)
+     (setq oldval (getvar var)) 
+     (if (not (assoc var sysvars))
+       (setq sysvars (append sysvars (list (cons var oldval))))
+     )
+     (setvar var value)
+     oldval
+   )
+
+   (defun unsetvars ( )
+     (foreach v sysvars 
+       (setvar (car v) (cdr v))
+     )
+   )
+
+   (defun *error* (msg)
+     (unsetvars)
+     (setq *error* olderr)
+     (if (and msg (/= msg "Function cancelled"))
+       (prompt (strcat "Error: " msg))
+       (princ)
+     )
+   )
+
+   ;;set system variables using 'setv'
+   (setv "cmdecho"  0)
+   (setv "texteval" 1)
+   ;;do command related tasks
+   ;;
+   ;;
+   ;;
+
+   ;;clear system variables and reset *error*
+   (*error* nil)
+   (princ)
+ )
+
+And if namespace management is needed/wanted (it's a little tricky in SingleNamespaceLisp) one could structure their AutoLisp code similar to the following. This pattern takes advantange of AutoLisp''''''s DynamicScoping to import requested functions from a namespace, which are then bound to symbols of another defun (most suitably a C: prefixed command). The symbols bound to functions by the import should also be protected (declared local) by listing the symbol names after the formal function params.
+
+  (defun namespace:name_of_namespace (symbols / define functs <-export)
+    (defun define (symb fn)
+      (setq functs (append functs (list (cons symb fn)))))
+    (defun <-export ( )
+      (foreach v symbols
+        (set v (cdr (assoc v functs)))))
+    (define 'setv (lambda (name value / oldval)
+      (setq oldval (getvar name)) 
+       (if (not (assoc name sysvars))
+        (setq sysvars (append sysvars (list (cons name oldval)))))
+      (setvar name value)
+      oldval))
+    (define 'unsetvars (lambda ( )
+      (foreach v sysvars (setvar (car v) (cdr v)))))
+    (define '*error* (lambda (msg)
+      (unsetvars)
+      (setq *error* olderr)
+      (if (and msg (/= msg "Function cancelled"))
+        (prompt (strcat "Error: " msg))
+        (princ))))
+    (define 'deg->rad (lambda (degrees)
+      (* pi (/ degrees 180.0))))
+    (define 'rad->deg (lambda (radians)
+      (* 180.0 (/ radians pi))))
+    ;;...functions of namespace...etc...
+    (<-export)
+  )
+  (defun C:SOME_COMMAND ( / olderr sysvars setv unsetvars) ;;<---- Protect imported symbols
+    (setq olderr *error*)
+    (namespace:name_of_namespace '(*error* setv unsetvars deg->rad)) ;;<---- Import functions here
+    (setv "cmdecho" 0) ;;use imported functions
+    (setv "cmdecho" 1)
+    ;;do command related tasks
+     ;;
+       ;;
+     ;;clear system variables and reset *error*
+    (*error* nil)
+    (princ)
+  )

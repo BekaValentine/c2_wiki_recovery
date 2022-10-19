@@ -1,0 +1,80 @@
+'''Problem'''
+
+SessionBean''''''s are used to indicate the work flow. It is a common practice to wrap a group of EntityBean''''''s in a single session bean (see SessionBeanWrapsEntityBeans). StatelessSessionBeans are per-process and StatefulSessionBeans are per-client. StatelessSessionBeans wrapping EntityBean''''''s is like a DistributedFacade (see FacadesAsDistributedComponents) that gives you a single entry point to all the data related to one work flow and a single StatelessSessionBean can be used by multiple clients. When you use StatelessSessionBeans to operate on multiple EntityBean''''''s, you need to pass the state information since its not there in those StatelessSessionBeans. But what if a single client manipulates on several different types of data? Each one of that distinct Enterprise data has their own StatelessSessionBeans to operate on.
+
+'''Solution'''
+
+You need to maintain their state across different StatelessSessionBeans. You do this by wrapping all the StatelessSessionBeans in single StatefulSessionBeans. Those StatefulSessionBeans can have a persistent EntityBean or another persistent field to indicate its state.
+
+'''Example'''
+
+Consider a Student Portal system. Here every student has his own personalized web-page through which he can register to courses or add online forums he is interested in or he can add any online books from an online library. And each student will be notified via email if there is a new course added or a new topic is posted or a book he is interested is on the web.
+
+So a Student''''''Bean (EB) has to interact with My''''''Courses''''''Bean (SLSB which wraps Registration''''''Bean, Student''''''Bean, Course''''''Bean), with My''''''Library''''''Bean (SLSB which wraps Student''''''Bean and Library''''''Bean), with My''''''Forums (SLSB which wraps Student''''''Bean, Selected''''''Forums''''''Bean).
+
+So our final Stateful Session Bean would look like
+
+''Student''''''Portal''''''Bean { //SFSB''
+
+''public Student''''''Bean student;//EB this is can be CMP or BMP''
+
+''..add functions needed from My''''''Courses''''''Bean, My''''''Library''''''Bean and My''''''Forums''''''Bean''
+
+.
+
+
+.
+
+
+.
+
+
+.
+
+
+
+here even if the student changes his email , the notifications will be sent to his present email. 
+
+-- SeshKumar
+------
+see FacadesAsDistributedComponents, SessionBeanWrapsEntityBeans
+------
+I may be missing something here, but doesn't this require each of the stateless session beans to obtain a reference to each of the entity beans ''at the start of every incoming call?'' 
+
+A stateful session bean can certainly hold references to several stateless session beans, but these stateless session beans cannot hold state to the entity beans between method invocations.  By definition, a stateless bean cannot hold state between method invocations on it. Therefore, the stateless beans will need to
+	* look up the home object for each entity bean it wraps in JNDI,
+	* call an ejbfind(...) on the home object to obtain references to each entity bean it wraps. (This causes the entitybean data to be loaded from the database if it does not already exist in the EJB server.)
+
+This needs to be done for all entity beans the stateless bean references. ie. 
+in the above example, the ''''''MyCourses bean needs to look up RegistrationBean,
+StudentBean and CoursesBean.
+
+I suspect a better alternative is for the StudentBean to directly reference the
+entity beans it requires.
+-- MichaelRichmond
+----
+First let me tell that I think the example I had used above is not conveying the correct reason to use this pattern. If I had to re-think and explain what I had written here few months back, here are my thoughts. Each user is using a 
+state machine. And each user has certain sets of functionality (library, forums, etc.) he has to perform. These groups of functionality (let me call them services) shares a common state. State shared by these services is maintained in the stateful session bean.
+
+ Alternative 1
+   - each service maintaining state (by using a separate SFSB or by some other means.)
+ cons:
+   - Change in state is not reflected over other services
+
+ Alternative 2
+   - Use a persistent storage(database) to store the state and let the services access the state.
+ cons:
+   - state maintained may not have any meaning after current session
+-- SeshKumar
+----
+If this application is web-based it would be better to have ServletWrapsStatelessSessionFacades. The HttpSession object is a far more light-weight and convenient place to store session-state. If the number of JNDI look-ups is problematic then a JNDIFactory (which caches the home-stubs) would be a better solution.
+
+I'm with TylerJewell (see this article for more details http://www.onjava.com/pub/a/onjava/2001/10/02/ejb.html) on this one. A lot of the times that people use SFSBs in web-based systems it's a mistake. -- AdewaleOshineye
+
+''In my experience, clients should maintain their own session state (e.g. via cookies) or the state should be stored in a database. Keeping the state in the middle tier is disastrously fragile (and architecturally unclean). Databases can usually deal with loads of partial state, but middle tiers cannot. Indeed the EJB model seems to be acknowledging this and is moving towards all stateless operation. -- RichardHenderson''
+
+I partially agree. Maintaining state on the middle-tier with something as heavy-weight as a SFSB is a bad idea. However, with modern app servers that can do clever optimizations with HttpSession objects, you get the benefits of session-state held in memory, it's easier to put fairly complicated object graphs in an HttpSession object than inside cookies and you don't have to hit the database on every client request.
+
+If you need persistent state then use the database but if you need to keep an object graph in memory there are few situations where this can't be done with HttpSession objects. Even applications that don't have web front-ends can talk via http to a servlet and get the benefits of light-weight in-memory session state. -- AdewaleOshineye
+
+''See also: DoesAnyoneActuallyUseStatefulSessionBean for yet more reasons why this is a bad idea in most contexts.''

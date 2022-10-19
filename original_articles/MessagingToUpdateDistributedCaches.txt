@@ -1,0 +1,133 @@
+This is another pattern I've seen more than once, but I'm not convinced it's the best solution to the problem.
+
+Let's say we're building a system that keeps a set of very complex data in a relational database. Suppose it's very expensive to pull the data out of the database and into an object form. So to minimize the number of database hits, we either use EntityBean''''''s with Option A caching, or we keep value objects in memory in a singleton. Unfortunately, that means we now have a cache that can get out of sync with the database.
+
+So...
+
+Whenever a change is made to an object on one application server, use PublishAndSubscribe messaging to notify all other application servers that the object has been changed. They can then refresh their internal caches from the database (shared) version at notification time, or simply mark it as "dirty" and read it back from the database whenever anyone asks for it.
+
+''Drawbacks (or why I really don't like this but can't think of a better solution)''
+
+The first problem is that this can result in an '''enormous''' number of messages flying across the messaging system. What's more it's hard for the application servers to figure out ''which'' messages they actually care about.
+
+We've tried to reduce the first problem by simply sending out notifications about the "root" object of a graph whenever any part of the graph changes. We can also hold off notification until all updates complete so that we can remove redundant messages.
+
+We've tried to address the second problem by introducing multiple topics (one for each "root" type).
+
+Any comments? Any better ideas?
+
+-- KyleBrown
+----
+Examples: Oracle9i, 'Persistence' EJB/App Server. Also TIBCO/Rendezvous and MQ series, but needs a bit of work.
+
+This is a classic cache coherency problem. Firstly, data granularity must be controlled to avoid constantly thrashing the cache with data loads. Each update should be small and targeted or else the cache is not helping you much, except to act as a read-ahead buffer, and that doesn't scale if any portion of the data isn't active or relevant. I would avoid the 'root' object solution if possible for this reason. This implies that complex objects are too complex. Normalize them into related entities with their own explicit identity/key.
+
+The second issue is one of detection. Most caching systems sniff the local bus for collisions and updates. On a non-local scale this has to be done explicitly, so a MessageBus (or similar) must be used to distribute updates. If the objects are transactional then it is best to simply mark cache entries as dirty, then reread the entry from the database according to the proactive/reactive (aggressive/lazy) loading specification of the object. Since the object was recently updated it should be in-cache on the server giving only network and mapping-layer expense to deal with.
+
+If granularity is fine enough then the message may include the information to be replaced. This is how most market data services work, essentially broadcasting data to client caches with weak transactions.
+
+Long transactions against the cache will create problems of update collision at the server. Therefore very high performance systems tend to involve the caches in the subtransactions, e.g. marking entries as locked for write if someone is editing it. This is a giant CanOfWorms, however. I would recommend staying on the server if things are looking this sticky, as Costin prefers below. Distributed transactional caches are definitely a last-resort when performance cannot be improved by other means. -- RichardHenderson
+----
+
+Richard, this problems looks ''classic'' but is not quite classic. At least it is very similar with the cache coherency algorithms employed in SMP hardware architectures, and also it has been treated as Virtual Shared Memory problem. It has been shown that a brute force implementation (bus broadcasts to invalidate cache entries, migrating cache entry ownerships, and similar approaches) have no good chance to work. The usual solution is to losen the consistency model for the cache, and complement that with explicit memory barrier opcodes, smart optimizing compilers for losen cache coherency specs, out of order execution and many other wondeful tricks that modern hardware will do for us. Even in this case the subtleties involved in dealing with such an execution model lead to the well known flaw in Java Memory Model signalled by Bill Pugh, and makes writing optimized multithreaded code for SMP systems quite a challenge.
+
+In the case of Oracle 9i, the problem looks really similar, except that Oracle 9i ''owns'' the data, it is the database and not the middleware, so the problem is radically different. Oracle 9i application server advertised something similar (a smart client cache), but when you really take a look at what's happening you'll be dissapointed, it is nothing buta heuristic, non trasactionally consistent approach (with data time-outs and the likes).
+Oracle even claims they have some pending patents related to this thing, but I'd be very curious to see if they really made a theoretical breakthrough or it is the usual blown out of proportion advertising that Larry is well known for.
+
+Now in the case of Entity Beans, the problem is qualitatively different, and better not to open the can of worms. -- CostinCozianu 
+
+----
+
+I think this looks like a bad solution to a false problem. Or a bad approach to a real problem to say the least.
+
+The false problem is that you have to use middleware caching to have transactional performance. Both my previous experiences, as well as the last figures posted at http://www.tpc.org show that doing transactions just by sending SQL to database with no fancy middleware caching, offers you a lot more performance than it is usually needed. Even if you have a more complex data model than is usually exhibited by TPC benchmarks, still if you divide those figures by 2 or 3 there's plenty performance left. 
+
+If you have a way too complex data model, either you could try to simplify it, or if it is really too complex by its nature, I find it highly improbable that it is in the domain of ''large shared databanks'' (OLTP) of the relational databases. I might be wrong but a very complex model is usually either not ''large'' or not ''shared'' (high concurrency), or at the limit if it is inherently too complex AND large AND shared I'm affraid that no technology can help you, you reached a mathematically tough problems :) 
+
+Second, the architecture of an RDBMS engine allows much smarter concurrency control and caching policies then you can ever hope for in a middleware. Unless the middleware is part of the RDBMS itself, and this is only theoretically, because practically production sites making use of fancy middleware features of databases such as Oracle8i or Sybase12 are not quite there yet. 
+
+The bad solution is implementing transactional, concurrency control, and caching logic in the middleware. There's hardly a theoretical model for this yet, the middleware should take total control of the data for this to work (and why would you have a relational database then ??? ). Again, the database is going to enforce concurrency control, transactions and caching anyway, duplicating effort, and making you reinvent the wheel in the middleware.
+
+The really good solution is to forget about entity beans. :) -- CostinCozianu
+
+----
+
+Costin - 
+
+(1) I only mentioned EntityBean''''''s on this page as an option, not the final solution. In fact, the primary group I'm thinking of chose the singleton idea instead.
+
+(2) This customer moved OFF of doing the SQL directly from the UI because the performance was not high enough. They are an extremely technically savvy group with a large group of very intelligent, highly motivated DBA's working closely with the object architects. In fact, the DBA's suggested moving this part off into the middleware.
+
+(3) And yes, it is large (one of the largest brokerages in the world) and complex (portfolio and wealth management with all the financial analysis therein) and shared (but only part of it is shared - the rest isn't which led us to the above caching solution for the (mostly) non-shared part).
+
+''Yup, I have refactored/optimized similar systems, though I kept the cache local to the database as the network was okay and we used Sybase which has an excellent cache. -- rh''
+
+----
+
+Well, this totally changes the problem. Because when I read '' Unfortunately, that means we now have a cache that can get out of sync with the database. '' combined with the Entity Bean Option A, this leads me to believe you were talking about highly transactioned portions of the sdat model.
+
+I guess it would be interesting if you could better pinpoint the essence of the problem. Just MessagingToUpdateDistributedCaches in the general scenario won't work, for the reasons described above, but for some particular cases you might find reasonable solutions.
+
+I don't know the exact details maybe I'd beter wait but I've seen cases when:
+	*A) The cache needs not be trasactionally consistent. For example in case of the Nasadaq quotes shown on internet, the fact that you see a price per share is informing. The more in sync with real time the better, but that doesn't mean you're actually gonna get it in a deal. 
+	*B) The cache needs to be transactionally consistent. Just for the sake of example some pricing for products for an online shop. You have to have the actual price, but the prices are changed infrequently compared with the amount of transactions that use a specific price. Also, in this case a small amount of data compared with the size of the database.
+
+So it all depends on many factors, and one very important thing is the database product. Some of them are able to stick some tables in the cache so that they don't get thrashed in the overall database page swapping, and you'll always get fast responses. Others have messaging facilities built-in, including for Java language, so you could invalidate the cache upon a trigger. General purpose solutions probably don't stand a chance to work. -- Costin
+
+And I still wouldn't give up so easily on a SQL based approach, can you share with us some info like number of queries, volume of data (no. of rows and size), no. of table joins, queries per seconds? Tuning a complex database such as Oracle might yield improvements in one or two orders of magnitude sometimes. Of course there are also problems that are intractable just by database tuning, but I always hoped such problems are very rare. And it comes down to personal experiences in the end, and a little to personal bookshelves. -- CostinCozianu
+
+----
+Surely this is an anti-scalability pattern. The more caches you add the slower the whole thing gets. Still, is it fast enough? It would be nice to see some tests ramping up a server farm from 1 machine to 50 or so. Anyone got some spare machines lying around?
+
+It is interesting that Microsoft has never used this technique in its shipped products and doesn't recommend trying it. IMDB got dropped. Also I read that Microsoft, when researching people who'd tried to build this kind of system, almost always ended up with a slower end result than just using SQL Server. They said that most programmers don't have the time or knowledge to develop caching to the same kind of speeds inside a RDBMS such as SQL Server.
+
+Given the current pace of speed increases in Intel based hardware it may be worth just waiting and throw hardware at it :-)
+
+[deleted bickering]
+----
+
+Hi Kyle. We do what you describe in our system, and it works very well, though our data is not very complex. Our database is actually a hierarchical configuration registry, so it's easy to subscribe to the right granularity (e.g. "these keys" or "these subtrees"). Since people can subscribe to only what they're actually interested in, we include all information (actual new values, etc) in the notifications. We also send a single message containing a list of all the relevant changes that were made per transaction on the database, so that the subscribers can process them atomically.
+
+Seems like a nice way to do things to me. However, our data is conveniently structured, is small, our writes are infrequent, and we typically have high speed links between nodes - so most of the potential troubles aren't significant to us. We use this same pub/sub scheme both for syncing remote nodes (they subscribe to the whole thing) and for finer-grained event notifications to components who need to act on changes.
+
+Incidentally, our GUI uses this same system to keep an up-to-date view of the system. It's nice that one simple mechanism serves for keeping nodes synchronized, taking appropriate action on changes, and supporting a GUI. -- LukeGorrie
+
+But are those notification messages an integral part of the transaction? This is why the pattern is unlikely to work in case you need 100% transactional consistency of the caches. -- Costin
+
+Costin - In the cases where I implemented this we explicitly knew (and stated) ahead of time that there was a chance that the caches could get out of sync with each other on a notification failure. However, it was determined that it was a risk we could take. In general any time you have a messaging system you can end up with two transactions - one on either end of the conversation - that are not tied together. -- KyleBrown 
+
+Kyle, of course I didn't want to question the validity of any particular approach, the one who is ''in situ'' always knows better what are the exact requirements, but I was trying to classify some situations where the pattern might apply, or might not apply. Further, I think that it is worth investigating that when we decide to apply MessagingUpdateDistributedCache, what's the best way to apply it, and what are the implications. I think it would take some refactoring to make this thing a pattern, and we could start by classifying the situations in which this pattern might apply. 
+
+From my perspective one should always start with optimizing the database queries to the maximum, because analyzing the implications of not 100% transactionally consistent data is a lot more work. And if we accept that we might have not fully consistent caches, we further have to analyze the implication of asynchronous messaging (what is the time frame of possible incosistencies), messaging failures (what should we do if the message to update a cache fails), what guarantees can we make about allowed ''levels'' of inconsistencies, and a lot of other messy aspects. -- CostinCozianu
+
+----
+
+I completely agree, Costin! Starting with optimizing the database is always the best approach. A cache should never be a "first choice" but always a fallback position when your first choice fails for one reason or another. I think each of these subjects you mention are good topics for discussion. Let's start with one (see below) and then add in the others as we go on... -- KyleBrown
+
+''What to do in case of messaging failure''
+
+Some possibilities are:
+(1) Include an attribute on the messages that indicate an ordering of messages - if a message is "missed" by a cache, the cache declares itself invalid and dumps its state.
+
+(2) Have the caches be time-based. Every so often they declare themselves invalid. This minimizes the amount of time that an inconsistency can be around, but does not eliminate the possibility.
+
+(3) On every query to the cache do a FAST query of the back-end database to see if a "last changed" timestamp is the same...
+
+Others? Pros and cons? (Costin - your input is welcome and appreciated...)
+
+''(Space left for direct responses)''
+
+In the system I described above, we have a pretty simple way of dealing with consistency and failure. The system is a Client (which has the "cached" data) and a Server which has the real database. The client's cache is only for reading; it calls the server to do writes. The client and server are connected by a TCP socket. After a transaction has changed some relevant data, the server sends a single message to the client containing all the changes, and the client atomically incorporates them into its cache. So at all times the client's cache is "self-consistent", although it gets new values a short time after they are committed.
+
+Failure is detected in one of two ways: the TCP socket breaks, or the server doesn't respond to one of the client's periodic "ping" messages fast enough. If either of these happen, we flush the whole cache, re-connect with a new socket, then grab a copy of the current values and re-subscribe to database events.
+
+This simple scheme gives a few nice invariants:
+	* TCP's reliable delivery means you can never silently lose an update "in the middle"
+	* The data in the client always "makes sense" (atomically updated)
+	* The client always either has data that's no more than ''ping-timeout'' (e.g. 30 seconds) old, or it is aware that there is a problem and is trying to reconnect.
+
+Not ideal for all situations, but pretty simple if you can tollerate asynchronously updating the cache (which usually happens well within a second, anyway), and have a suitable mechanism for the atomic updates. Also this MessagingToUpdateDistributedCaches seems most appropriate when you're likely to do a lot more reads than writes, otherwise Kyle's "get if modified since" idea sounds better to avoid sending a lot of changes that aren't useful.
+
+But probably the biggest factor will be finding what fits in with what you already have. I imagine that EJB, common databases, etc have their own ideas about how things should operate. My Erlang program might very well not be portable to a J2EE/SQL/... environment. -- LukeGorrie
+
+''Read caching is a nice little speedup. I have used server-side caching in PushDocQueryInSql. There is a tension between pushing data and pulling it. Generally, pushing does not scale well. Similarly pulling doesn't buy you much even if it is only a version query on an object. To get around this I used a server-side register of each client's view of the data. It acts as an event filter. Secondly, I push out asynchronously, in bunches. Updates are sent out periodically, not as they come in. This avoids saturation of the message bus. This also transparently aggregates compound changes to the same object. -- RichardHenderson''

@@ -1,0 +1,267 @@
+A nice pattern to be used especially when designing highly reusable classes/functions, with lots of options. We try to achieve EconomyOfExpression for the client context, as well as InformationHiding as much as possible. In particular by language features such as KeywordParameterPassing (Lisp, PL/SQL,Ada'95, ObjectiveCaml, most Unix utilities with regards to command line invocation) strongly supports these properties and we want to emulate this behavior in language without support for KeywordParameterPassing, following the principle ProgramIntoaLanguage.
+
+-----
+
+In language such as Java, C++, C#, a serious limitation is lack of KeywordParameterPassing. This makes creating frameworks with LongParameterList unlikely. Often times I've seen people avoid a design with LongParameterList just because it is thought ugly in Java. C++ went only a quarter of the way towards a good language design solution and it has default values. But that is a half-baked horror!! We'll see why.
+
+A LongParameterList is typical of an operation provided by a highly reusable framework, that has a lot of '''options'''. For example a Xerces SAX Parser has a long list of boolean options: whether or not to validate, to warn of various warnings, to load external dtds, to continue after errors, etc. Most of these do have sensible defaults, so in a language with default parameters, a call to the parse operation is just a one liner, where the client can affect just the paramters he's interested in, something like:
+	ParserUtility.parse inputStream saxHandler ~namespaces:false  ~validate:false ~loadExternalDTDs:false
+Now following the idiomatic standard, if I were to design the ParserUtility class, I obviously could not do it. How about in C++? Well, in C++ it is even worse, because the designer can mistakenly create something like:
+	Class::method( option1=true, option2=false, option3=true, ..., optionN = false)
+And courtesy of C++, if the client needs to alter the rightmost or last option, optionN, he needs to specify all the other options:
+	object.method( false, false, false, true, ..., true) 
+Now we have to copy (meaning duplicate) the default parameters from the source code of Class to the place of the call. That's what I call coupling indeed. And for example if the user was to use something like the copy command on the Unix command line from a C++ API (see LongParameterList) he may become aware not only of the existence and position of all the other parameters, but also the client becomes aware of their default values. How about if the default values are not fixed but only chosen later depending of the mandatory input (for example, if the source directory resides on a network SAMBA file system, a lot of parameters do not even make sense). So C++ default parameters are clearly unsatisfactory in the general case.
+
+
+'''Therefore:''' EmulateKeywordAndDefaultParameters :
+
+From the general method:
+	public class OuterClass {
+	...
+	methodName ( <mandatoryParams>, <optionalParams> )
+	...
+	}
+
+refactor to a MethodObject. The preference in Java is for an InnerClass named MethodNameOperation, having a private constructor taking the mandatory params. The fields of the inner class should correspond to both optional and mandatory params.
+
+  OuterClass {
+  ...
+  public class MethodNameOperation  {
+	<fields from mandatory params>
+	<field from optional params >
+	private MethodNameOperation(<mandatoryParams>) {
+		// assign the mandatory fields here
+	}
+  ...
+  }
+
+Then for each optional param, put the default value in the initialization of the corresponding fields, for example what in another language might be:
+	method ... ?(param1:int = 1 ) ...
+in Java will reflect in the inner class:
+	int param1=1
+For each optional parameter create a ''X''(value) method in the inner class that allows the client context to set the value of the parameter:
+	public class MethodNameOperation
+	...
+	public MethodNameOperation Param1(int value_) { this.param1= value_; return '''this'''; } // you may add some checking here 
+
+Please note that '''return this''' is essential for the syntactic trick we need to support in the client code. Add to the M''''''ethodObject a prototypical method call() or execute():
+	public class MethodNameOperation {
+	...
+	public <result type> call() {
+	// here you use all the parameter/fields LongParameterList
+	}
+	}
+
+	 :	''Added sometime later. I was bothered by the violation of EconomyOfExpression that is apparent in the client context where the invocation looks something like this:  new MethodObject(value1, value2).ValueX(x).ValueY(y).call() . Surely the last call is superfluous. Therefore to my surprise I invented UseTheUndescore so that if the functional object is f, rather than writing.''
+	 f.call()
+	 :	''I can now write:''
+	 f._()
+	 :	''So if you are like me, you'll like _() much better as a notation than the bulky call() or execute(). I have used this pervasively in my Java code and I have been relatively pleased with the results. --CostinCozianu''
+
+Now we replace the original method in the OuterClass:
+	public class OuterClass {
+	....	
+	public MethodNameOperation methodName(<mandatoryParams>) { return new MethodNameOperation(<mandatory params>);}
+	}
+	
+So in the end, we offer a more convenient call to the client. Instead of
+	object.methodName( < LongParameterList >)
+the client can now write:
+	object.methodName(<mandatoryParams>). setParameterX(ValueX)...setParameterY(valueY).call()
+He need not set any optional parameters because they are already set to default values in the initializer of our method object. Thus he effectively has now KeywordParameterPassing.
+
+In the form above the pattern still preserves the positional form for mandatory parameters. This is because the general rule for good design of LongParameterList is that only very few parameters should be mandatory (strictly the minimum required), and the rest (which may be a lot -- try a ''man find'' command in Unix) should have sensible default values or otherwise should be able to have empty values. Therefore if you have only a few mandatory params (2,3 and at a maximum 4), it is generally no problem for the client to pass params by position. It also easier and faster to type.
+
+The pattern can easily be adapted to emulate KeywordParameterPassing even for the mandatory params, but if you have only 2 or 3 mandatory params this is not warranted. It will be more mess and won't make the code any clearer. But if you have 4 or more mandatory params, that is a strong CodeSmell: try to change at least some of them from mandatory to optional by providing sensible values. Have pity on the guy who calls you! If you still thik you have to have lots of mandatory params go ahead and make them "keyword enabled" (left as exercise for the reader).
+
+''Added bonus'''. In languages with keyword params the user of the call has to remember the name of your formal keyword correctly (possibly including the case). But now in Java your users will be able to use the (in)famous ControlSpace and the modern Java IDE will present a list of the options to be set. Advantage, Java!
+
+
+'''Example''': transform the code from
+
+  class ParserUtility {
+
+  public static void parse ( InputStream is /*M*/, Handler handler /*M*/, 
+			boolean validating /*O=true*/, boolean namespaces /*O=true*/,
+			boolean loadDTDs /*O=true*/ ... )
+
+	// where M means mandatory, O=x means optional with default value x
+  }
+to:
+  class ParserUtility {
+  ...
+  public static class ParseOperator {
+	InputStream is;
+	Handler handler;
+	validating= true;
+
+	loadDTDs= true;
+	namespaces= true;
+	// all the other defaults 
+	private ParseOperator( InputStream is_, Handler handler_) { 
+	/*check the parameters and set the fields*/
+	 this.is= is_;
+	 this.handler= handler_;
+	}
+
+	public void execute() {
+	// call the parsing operation here with all the parameters
+	// Now the LongParameterList appears OnceAndOnlyOnce
+	realParser.parse(is, handler, validating, namespace, loadDTDs, ... )
+	}
+
+	public ParserOperator setValidating( boolean validating_ ) {
+	//check and set the optional parameter, 
+	//the checking part is skipped here for brevity
+	this.validating=validating_;
+	return '''this'''; // this allows for the syntactic trick on the client	
+	}
+
+	public ParserOperator setLoadExternalDTDs( boolean loadExternalDTDs ) { this.loadDTDs= loadExternalDTDs; return this }
+	// ... so on so forth
+	} // End of class ParserOperator
+
+
+	//now the method formerly with many parameters takes just the mandatory params
+	public ParserOperator parse ( InputStream is, Handler handler )  {
+	  return new ParserOperator (is, handler);
+	}
+ }
+
+Now after the designer of the reusable code went through all this hoopla, the client has the satisfaction to EmulateKeywordAndDefaultParameters:
+	ParserUtility.parse(is, handler).setValidating(false).setLoadExternalDTDs(false).setNamespaces(false).execute();
+Compared to:
+	ParserUtility.parse is handler  ~validating: false ~loadExternalDTDs: false ~namespaces: false
+The Java solution has the same readability and decoupling benefits of real KeywordParameterPassing (actually if we get rid of Java setXXX convention and we put just validating(false) it looks almost identical. 
+
+Ok, that's basically it. -- CostinCozianu
+-----
+''Would an accurate paraphrase of this be "turn optional method parameters into static public properties"?''
+
+Actually the aparatus behind it is not at all interesting per se, and I wouldn't want to formulate a profound design pattern from here (like identifying new objects trying to pop out from the code) -- actually that's a drawback I think in many refacttoring patterns: that they make the details have some kind of importance as elements of OO design.
+
+The bottom line is to faithfully emulate the syntax for the call in a language with keywords and optional parameters. That's why for example I prefer to have an inner class and not an ArgumentObject so that the call can be
+ /*-1-*/	object.method(<mandatory params>).OptionK(ValueK).OptionV(ValueV)._()
+and not 
+ /*-2-*/	object.method( new ArgumentObject ( Value1, Value2, ..., ValueN) )
+I hold that the firts form has an obvious EconomyOfExpression advantage over the second form.
+
+The first line communicates to the reader that it is a simple method call, and I don't want the caller to spend several lines of code trying to make a call, like in the XML parsing example posted on KeywordParameterPassing. The second thing that is very important is to communicate are the names that are attached to the values, cause I had the pleasure to see APIs looking like this:
+	// guess what the hell is happening below
+	// if you wonder about the strings they're gonna be packaghed in XML so that's why they are strings
+	object.method( "Something Readable","1001", "0", "1",  "true", "false","0","1","true", "false", "false", "false" "true");
+Under the IntroduceArgumentObject, I still see a lot of code out there written like:
+/*-3-*/
+       ArgumentType argument= new Argument(<mandatory params>);
+       argument.setOption1(value1);
+       ...
+       argument.setOptionN(valueN);
+       object.method(argument);
+And in fewer cases developer apply the '''return this''' trick, so you see a better form of IntroduceParameterObject:
+/*-4-*/
+       object.method(new ArgumentType(<mandatory params>).setOption1(Value1).setOptionN.(ValueN))
+Which is more esthetically pleasing. But if we hold that the best EconomyOfExpression is done via KeywordParameterPassing, then the form -1- is still closer to the ideal form:  no superfluous "new ArgumentType" sidetracks the reader from the intention of the expression, which is simply a function call wi8th keyword and optional parameter. Therefore in my view this is a better form of expression than that obtained with IntroduceParameterObject. --Costin
+       
+        
+Another important decision is that the name of the auxiliary class is hidden. Actually that's a recurring pattern in my designs, whenever a class is just an auxiliary to a principal class, like it is in this case - it merely serves for synctactic trick, I want it hidden in the namespace of the main class. This way, when somebody looks at the package view in an IDE, or just at the list of java files in the directory, he only sees the important classes and not the insignifiant details.
+
+----
+
+Another approach is a "string" parameter that is parsed into local values. One basically creates an API to parse it and put it into a local associative array:
+
+  myFunc(11, 22, "foo=7, bar='ffg'");
+  ...
+  function myFunc(a, b, c) {
+     myParams = parseParams(c);  
+     print("bar=" . myParams['bar']);
+  }
+
+This can get fancier. For example, an alternative or extra for the 4th line:
+
+     myParams = parseParams(c, "foo='',bar='x'");  // 2nd param specifies the defaults
+
+A simpler approach is to put parentheses around Boolean-like flags:
+
+  myFunct(11, 22, "(bold)(padleft)(shade)");
+
+This approach works reasonably well if there are a lot of on-off type of switches. It is also relatively easy and fast to parse, even in SQL expressions. I tried using commas, but they didn't work as well and in not as many languages. Often I find that only about 1 in 5 new parameters need to be anything other than on-off flags. Thus, the need to introduce a former parameter can be cut into about 1/5.
+
+Another option is to use simple letters. However, these have obvious problems in the self-documenting department.
+
+--top
+
+----
+
+''Originally, the string parameter approach was described on another page and moved here.  On the same page, for contrast, the following OO approach was described below.  Although the MethodObject approach is described above, the following is intended to complement the string parameter approach.  And, from the admittedly biased position of being the author, I feel it is a clearer example than the one above. If it isn't, please feel free to delete it.  DeleteWhenCooked''
+
+A parameter class is created, as follows:
+
+ class Parms {
+   private boolean bold = false;
+   private boolean padleft = false;
+   private boolean shade = false;
+   private Colour colour = new Colour(255, 255, 255);
+   // ...etc...
+   public Parms doBold() {bold=true; return this;}
+   public Parms doPadleft() {padleft=true; return this;}
+   public Parms doShade() {shade=true; return this;}
+   public Parms setColour(Colour c) {colour=c; return this;}
+   // ...etc...
+   public boolean isBold() {return bold;}
+   public boolean isPadleft() {return padleft;}
+   public boolean isShade() {return shade;}
+   public Colour getColour() {return colour;}
+ }
+
+Then you can use it like this:
+
+Assume you have the following procedure or method with a Parms parameter. 
+
+ void myFunct(int x, int y, Parms p) {
+   ...
+   if (p.isShade()) {
+     ...
+   }
+   ...
+ }
+
+You can invoke it like this:
+
+  myFunct(11, 22, (new Parms()).doPadleft().doBold().doShade().setColour(128, 128, 0));
+
+If all you need are the defaults, it becomes this...
+
+  myFunct(11, 22, new Parms());
+
+...or maybe even this, assuming appropriate logic in myFunct:
+
+  myFunct(11, 22, null);
+
+Note the use of 'return this' in the relevant methods so that their invocations can be chained, as shown above.
+
+This approach is relatively faster than the string method described above and the syntax is checked at compile-time -- at the expense of a bit more code.  It also supports more than just boolean parameters, though obviously the string-based technique can be extended to parse anything you like.  In the absence of an object-oriented language, similar mechanisms can be built using C structs (or some equivalent in whatever language you're using) and associated functions/procedures to manipulate them.
+
+-- DaveVoorhis
+
+''If one is using a dynamic/lax typing language or style, that compile-time checking is not an issue. Further, the string approach(es) allows one to store or use parameters to and from a database if necessary (it is poor normalization, but many-to-many tables can be overkill sometimes). It is also shorter, prints easily when debugging, and works in just about any language. But, to each their own.''
+
+It's only shorter if you entirely discount the string parser; the string method exhibits poorer performance; and compile-time checking is often desirable.  As for printing easily when debugging, simply implement a toString() method in the Parms class.  
+
+Should dynamic strings be a desirable means of setting parameters (as from a database, though I'm not sure how that turns into poor normalization or what it has to do with many-to-many relationships), an appropriate parseParams(...) method can be implemented in or inherited into the Parms class.  -- DaveVoorhis
+----
+I'm shocked that nobody has brought up taglists.  These were used to very good effect in AmigaOS, for example, to replace long argument lists.  I'm also aware of at least one X11 widget library which did something similar.  I'm not sure which came first; probably the latter, but the technique applies generally.  '''However,''' it requires varargs support to implement well.
+
+QNX uses a somewhat related mechanism.  You have a parameter block PB, and a set of flags indicating which fields of the PB you'd like to affect.  For example:
+
+  PB.foo = 2;
+  PB.bar = "Hello world";
+
+  result = doSomethingWith_using_(mandatoryInputHere, &PB, PBF_FOO | PBF_BAR);
+
+This way, you have a finite list of parameters, while still having the flexibility of optionally setting only those parameters you'd like.  --SamuelFalvo
+
+----
+See also ArgumentObject or IntroduceParameterObject from MartinFowler's RefactoringImprovingTheDesignOfExistingCode.
+----
+CategoryRefactoring, CategoryLanguageFeature
+

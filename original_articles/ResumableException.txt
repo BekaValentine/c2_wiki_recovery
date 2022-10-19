@@ -1,0 +1,116 @@
+The idea that ExceptionHandling can efficiently '''resume''' operation without knowing exactly '''how''' to resume operation. 
+
+Related: AbortRetryIgnore, CommonLispConditionSystem, MaskInterrupts, PassAnErrorHandler
+
+-------------
+
+'''ResumableException C++ Examples (From my LambdaTheUltimate Post)'''
+
+If the C++ stack had 'restart points' that it could return to after an exception, it would vastly help for modularity by reducing undesired coupling between policy and mechanism (as described in  this paper).
+
+The trick is to provide more than one resumption point (so that policies have an actual choice), to properly handle asynchronous exceptions, to do so in a manner reasonably symmetrical to the exception handling mechanisms, and to do so efficiently - where the static and runtime costs of doing so are, ideally, no more than the costs of the existing exception handling mechanisms.
+
+It's doable! A solution is described below.
+
+*The 'exception handler' block executes at the top of the local stack much like a local function. Some special handling is provided to appropriately handle both the dynamic context and the ability to call more functions. This behavior is already common to commercial implementations of C++ exception handling, and so should not be problematic.
+*The exception handler can 'resume', at which point execution would unwind the stack to the appropriately labeled resumption point that is on a stack frame between the exception handler frame and the signaling event. During stack unwind, any destructors (or 'finally' blocks in Java) are called appropriately. The benefit here is to allow the policy to select a given resumption point that partially unwinds the stack (whereas one currently unwinds all the way to the exception handler).
+*The resumption point can accept a parameter in much the same way as the exception handler receives an exception. This allows resume-with-parameters.
+*The exception handler could perform any of its normal behaviors just as it does today, with leaving the exception handler block or returning from the function causing the stack to unwind all the way to the exception handler.
+
+For syntax, it would be necessary to mark certain regions as 'restartable' such that they can be found by the exception handler in the same way the exception handler itself was located. A given restart might be selected under a number of conditions. If parameters are required for the restart, there would need to be a block associated with each restart condition prior to entering the restartable action. For symmetry, one might simply put 'restarts' on the opposite side of the 'try' block from the 'catch' blocks.
+
+In the example, I call the resumable blocks reset, and so the try/catch duo becomes reset/try/catch. In Java, it would become reset/try/catch/finally. The behavior of a reset block is to accept the parameter it receives (if a name was specified), execute any behavior inside the following block, then pass control to the try block. When initially entering the try block, reset blocks are simply skipped.
+
+
+ namespace std { 
+  template<typename T> class continue_with{ 
+     private: T t; 
+     public:  T const& value(); 
+  }; 
+  class signal : public exception {};
+  class div_by_zero : public signal{}; 
+  // the above would presumably override 'what()'
+  // Assume C++ is modified to throw 'div_by_zero()' 
+  //  after a division by zero error.  
+ }
+
+ double divide(double a, double b) {
+  reset(std::continue_with<double> const& cwd) { return cwd.value(); }
+  try { return a/b; }
+ }
+
+ double randf(double a, double b) {
+  try { return a + divide(divide(rand(),RAND_MAX+1),(a-b))); }
+  catch(div_by_zero const&) { resume(continue_with<double>(0.0)); }
+ }
+
+The above is a trivial example, intended more to indicate syntax than anything else. If one called randf(1.0,1.0), one would get 1.0 back because the failed 'divide' throw an exception but then would 'continue with' 0.0.
+
+One thing to note is that the resume action seems to be assuming, without testing, that the given resume type is available. Presumably there would be another exception (perhaps unresumable_exception) if this were not the case! While one could catch 'unresumable_exception' to try a variety of possible resumptions, it would be convenient to have another keyword, resumable(type) to dynamically test whether a given resumption condition is available. To be symmetrical, one might also want to add a catchable(type) to test whether a given type will be caught if thrown.
+
+This whole approach to resumable exceptions also introduces the possibility of very cleanly handling asynchronous exceptions, which would include kill signals, timeouts, thread interrupts or alerts, alarms, etc. Basically, an asynchronous signal would itself execute much like a function at the top of the stack that throws an exception. If the interrupt needs to be fully resumable, it simply needs the correct 'reset' behavior:
+
+ class signal_kill { class ignore {}; };
+
+ void kill(void*) {
+  reset(signal_kill::ignore&) { return; }
+  try { throw signal_kill(); }
+ }
+ void sure_kill(void*) { throw signal_kill(); }
+
+ void black_knight(int hitpoints) {
+  try {
+    while(hitpoints > 0) {
+      sleep(3000);
+      // output snarky comments, swing sword
+    }
+  } catch(signal_kill const&) {
+    --hitpoints;
+    if((hitponts > 0) && resumable(signal_kill::ignore)) {
+      cout << "I fight on! Tis only a flesh wound!" << endl;
+      resume(signal_kill::ignore());
+    }
+    // if code reaches this point then black knight is dead
+  }
+ }
+
+ void goodknight(bool bHasExcalibur, int patience, Thread* opponent) {
+  // assume Thread.interrupt(void (*pfn)(void*),void*) will push an event 
+  // to execute in the given thread (much like a signal handler) at the 
+  // top of the stack when interrupts are unmasked or ASAP. Might cause 
+  // a CPU interrupt if other thread is active. 
+  while(patience-- > 0) {
+    sleep(3000); // can only get one good blow in every 3 seconds
+    if(bHasExcalibur) { opponent->interrupt(&sure_kill,0); }
+    else { opponent->interrupt(&kill,0); }
+    if(opponent->is_terminated()) {
+      cout << "Good night." << endl;
+      return;
+    }
+  }
+ }  
+
+The above does ignore a few difficulties, such as receiving asynchronous interrupts while handling asynchronous interrupts, and properly catching the results. In this case it would work out well enough, though the black knight might die in the middle of saying "I fight on!" if he lost the last of his hitpoints in another asynchronous call. (Because the exception handler unwinds the stack only after resuming, the same handler would receive all of the sig_kill calls until the black_knight dies, but the handler itself could be sitting on the stack in various states of resumption.) In the more general case, something like an RAII based interrupt mask might be appropriate to avoid dealing with reentrant signal handlers.
+
+ class TIMask { // thread.interrupt() mask
+   private: bool bMasked;
+   public: TIMask() { bMasked = get_current_thread()->mask_interrupts(); }
+   public: ~TIMask() { if(bMasked) get_current_thread()->unmask_interrupts(); }
+ }
+ void kill(void*) { 
+   TIMask m; // blocks other signals until after returning from 'signal_kill' exception handler.
+   reset( signal_kill::ignore&) { return; }
+   try { throw signal_kill(); }
+   // would use '''finally''' clause in Java instead of TIMask.
+ }
+
+
+Anyhow, I seriously think this is workable with and reasonably symmetrical to the existing exception handling capabilities found in languages like C++, Java, and C#. As in, we could have it in an experimental version of C++ and ready for integration with whatever comes after C++0x or the next version of Java.
+
+''For clear semantics you should consult the article cited in AbortRetryIgnore. But yet, this sketch looks promising.''
+
+Indeed. That paper is a bit thick, but helps cover the reasons for ResumableException much more clearly. The approach advocated in AbortRetryIgnore, using continuations, is actually much more generic than ResumableException... but has an associated larger cost in terms of potential memory and temporal overhead. ResumableException as described in this section can be optimized to the point it meets the CeePlusPlus maxim: you don't pay for resumptions that you don't use.
+
+''See FunctoidsInCppMonadExamples for a first try at implementing some of this in C++.'' -- JohnFletcher
+----
+CategoryException

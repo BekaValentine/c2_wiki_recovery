@@ -1,0 +1,595 @@
+'''S'''NUSP's '''N'''ot '''U'''nix, but a '''S'''tructured '''P'''ath: A revised version of PathLanguage, by DanielBrockman. The advantages of SNUSP include well-defined semantics (like BrainfuckLanguage, PATH is semantically ambiguous in many ways), an arguably cleaner instruction set, and optional support for advanced features such as subroutines and concurrency.
+
+The SNUSP instruction set is divided into three levels, each adding to the previous level.
+
+'''Core SNUSP''' is basically BrainfuckLanguage with a two-dimensional code space. This instruction set is as powerful as any of the variants normally used in PATH, but contains fewer instructions. Core SNUSP trades Brainfuck's two looping instructions, ''']''' and '''[''', for the four basic flow-control instructions:
+* '''\''' (LURD)
+* '''/''' (RULD)
+* '''!''' (SKIP)
+* '''?''' (SKIPZ)
+The remaining Brainfuck instructions are equivalent to the Core SNUSP instructions:
+* '''<''' (LEFT)
+* '''>''' (RIGHT)
+* '''+''' (INCR)
+* '''-''' (DECR)
+* ''',''' (READ)
+* '''.''' (WRITE)
+
+'''Modular SNUSP''' adds a subroutine mechanism in the form of two instructions:
+* '''@''' (ENTER)
+* '''#''' (LEAVE)
+See SnuspCallingConventions.
+
+'''Bloated SNUSP''' adds a second data memory dimension, concurrency, and random direction:
+* ''':''' (UP)
+* ''';''' (DOWN)
+* '''&''' (SPLIT)
+* '''%''' (RAND)
+
+The language is officially documented on the EsotericProgrammingLanguage wiki:
+* http://esoteric.voxelperfect.net/wiki/SNUSP
+
+A nearly complete specification is here: http://www.quirkster.com/iano/snusp/snusp-1.0-spec-wd1.pdf . There's a couple of things that are still undefined for basically no reason.
+
+----
+IngyDotNet released (spring 2013) a SNUSP processor, complete with a curses-based debugger!  To install, get cpanm:
+
+* Get cpanm: curl -L http://cpanmin.us | perl - App::cpanminus && cpanm --local-lib=~/perl5 local::lib && eval `perl -I ~/perl5/lib/perl5/ -Mlocal::lib`
+* Install: cpanm Language::SNUSP Curses
+* Have fun!: cpanm --look Language::SNUSP && snusp --debug examples/fizzbuzz.snusp
+----
+'''ConvertSpacesToTabsNotForCode!!!'''
+----
+
+''In the spirit of BefungeLanguage, SNUSP could be described as a cross between Brainfuck and Lemmings. My favorite thing about these Path-derived languages is that loops really look like ''loops''. And the modular features make function calls look like boxed annotations. -- IanOsgood''
+
+''There is a Perl interpreter and a Perl tracer (using curses) further down the page. For the full IDE experience, one could write an interpreter/tracer in one's favorite editor's macro language. This would be a snap in EmacsLisp, for instance. For maximum pain, one could develop an editor where SNUSP ''was'' the macro language!''
+
+----
+Here's an example of a Modular SNUSP program that multiplies two single-digit numbers. The pipes (|) and equality signs (=) are designated no-op instructions used to keep track of the flow of the program (such staked-out paths are termed ''wires''). The asterisks are used here to separate the library functions from the main program. The at signs (@) are the starting points of subroutine calls (mnemonic: the at sign looks like a round-trip).
+  read two characters    ,>,==\  *    /=================== ATOI   ----------\ 
+  convert to integers /=/@</@=/  *   // /===== ITOA  ++++++++++\ /----------/
+             multiply @ \=!\=========/ //           /++++++++++/ \----------\ 
+         convert back !/@!\============/            \++++++++++\ /----------/
+ and print the result \/  \.#    *                  /++++++++++/ \--------#
+ /====================/          *                  \++++++++#
+ |
+ |    /-<+>\                    #/?=<<<<\!>>>>\                   />>+<+<-\ 
+ |   #\?===/! BMOV1 =====\       \->>>>+/    //  /======== BSPL2 !\======?/#
+ |    /->+<\         /===|=========== FMOV4 =/  //                /<<+>+>-\ 
+ |   #\?===/! FMOV1 =|===|==============\  /====/  /====== FSPL2 !\======?/#
+ |                /==|===|==============|==|=======/
+ |           * * *|* | * | * * * * * * *|* | * * *                /+<-\ 
+ |           * />@/<@/>>@/>>===\ /====>>\@<\@<\  *   /==== ADD2  !\>=?/<#
+ \===== MUL2 =?/>@\==<#<<<==\  \!\<<<<@\>>>>-?/\ *  //            /-\ 
+             *    \\        \/@========|======</ * //  /== ZERO  !\?/#
+             * * * \\* * * * | * * * * | * * * * *//  //
+                    \\       |         \==========/  //
+                     \======!\=======================/
+''I realized one thing while looking at this code. It's similar to a silicon chip's design. So how does Snusp/BeFunge/Path/Biota compare to Verilog and VHDL?''
+----
+'''Implementations'''
+
+Copy the following program into 'snusp.pl'. The SNUSP code is in STDIN, and the READ instruction takes data from the arguments.
+Run it like this:
+
+ perl snusp.pl < multiply.snusp 2 3  # to multiply 2 by 3
+----
+ #!/usr/bin/perl
+ 
+ # A Modular SNUSP Interpreter
+ # Copyright (C) 2004  Rick Klement
+ 
+ use strict;
+ 
+ my ($dy, $p, $dir, $run, $code, @data, @stack, $op) = (1, 0, 1, 1, '', 0);
+ $code .= $_, $dy < 2 + length and $dy = 2 + length while <STDIN>;
+ $code =~ s/^.*/$& . ' ' x ($dy - 2 - length $&) . "\n"/gem;
+ my $ip = index $code, '$'; # find first $ or first char
+ $ip = 0 if $ip < 0;
+ my %instructions = (
+   '>'  => sub { ++$p },                                             # RIGHT
+   '<'  => sub { $run-- if --$p < 0 },                               # LEFT
+   '+'  => sub { ++$data[$p] },                                      # INCR
+   '-'  => sub { --$data[$p] },                                      # DECR
+   ','  => sub { $data[$p] = ord shift @ARGV },                      # READ
+   '.'  => sub { print chr $data[$p], "\n" },                        # WRITE
+   '/'  => sub { $dir = abs $dir == 1 ? -$dy * $dir : $dir / -$dy},  # RULD
+   '\\' => sub { $dir = abs $dir == 1 ? $dy * $dir : $dir / $dy},    # LURD
+   '!'  => sub { $ip += $dir },                                      # SKIP
+   '?'  => sub { $ip += $dir unless $data[$p] },                     # SKIPZ
+   '@'  => sub { push @stack, [ $ip + $dir, $dir ] },                # ENTER
+   '#'  => sub { @stack ? ($ip, $dir) = @{pop @stack} : $run-- },    # LEAVE
+   "\n" => sub { $run-- });                                          # STOP
+ 
+ while($run and $ip >= 0 and $ip < length $code)
+   {
+   $op = $instructions{my $ch = substr $code, $ip, 1} and &$op;
+   #print "op: $ch (@data)[$p]\n"; # uncomment for trace
+   $ip += $dir;
+   }
+ exit $data[$p];
+----
+''Simpler logic for '/' and '\':''
+   '/'  => sub { $dir = -$dy / $dir },                             # RULD
+   '\\' => sub { $dir =  $dy / $dir },                             # LURD
+''-- IanOsgood''
+
+BMOV1, FMOV1, and FSPL2 have been corrected. These fixes were found using
+the following interactive tracing program ''(now new and improved (+ some fixes) :)'':
+----
+
+ #!/usr/bin/perl
+
+ # A Modular SNUSP Debugger
+ # Copyright (C) 2004  Rick Klement
+ # Copyright (C) 2013  Rick Klement
+
+ use Curses;
+ use Term::ReadKey;
+ use strict; # animate.pl - show calculation using Curses
+ # allow backing up out of STOP
+
+ my @restart = ( $^X, $0, @ARGV );
+ my $filename = shift;
+ open IN, $filename or die "$! opening $filename";
+ my $input = do{ local $/; <IN> };
+ close IN;
+
+ my ($dy, $dir, $p, @data, @stack, $op, $code, $ch) = (1, 1, 0, 0);
+ $code .= $_, $dy < length and $dy = length for $input =~ /^.*\n/gm;
+ $code =~ s/^.*/$& . ' ' x ($dy - length $&) . "\n"/gem;
+ $dy += 2;
+ my %lurd = (-1, -$dy, -$dy, -1, 1, $dy, $dy, 1);
+ my $ip = $code =~ /\$/ * $-[0]; # find first $ or first char
+ my @out = ();
+ my %instructions = (
+   '>'  => sub { $data[++$p] += 0 },                                  # RIGHT
+   '<'  => sub { --$p >= 0 or $dir = 0 },                             # LEFT
+   '+'  => sub { ++$data[$p] },                                       # INCR
+   '-'  => sub { --$data[$p] },                                       # DECR
+   ','  => sub { $data[$p] = ord shift @ARGV },                       # READ
+   '.'  => sub { push @out, chr $data[$p] },                          # WRITE
+   '/'  => sub { $dir = -$lurd{$dir} },                               # RULD
+   '\\' => sub { $dir =  $lurd{$dir} },                               # LURD
+   '!'  => sub { $ip += $dir },                                       # SKIP
+   '?'  => sub { $ip += $dir if $data[$p] == 0 },                     # SKIPZ
+   '@'  => sub { push @stack, [ $ip + $dir, $dir ] },                 # ENTER
+   '#'  => sub { @stack ? ($ip, $dir) = @{pop @stack} : ($dir = 0) }, # LEAVE
+   "\n" => sub { $dir = 0 });                                         # STOP
+
+ initscr();
+ ReadMode cbreak;
+
+ my $count = 0;
+ my @history;
+ my $key;
+ my $sleep = 0.1;
+ my $pause = 0;
+ my $number = 0;
+ my $y = 0;
+
+ eval # here so crashes will still restore ReadMode and window
+   {
+   addstr($y++, 0, $&) while $code =~ /.+/g;
+   addstr(++$y, 0, "(space)togglepause (g)oto n (CR)step (BS)backstep (ESC)clear n");
+   addstr(++$y, 0, "(r)estart (q)uit (+)faster (-)slower");
+   $y += 2;
+
+   while(1)
+     {
+     if($ip < 0) {$ip = 0; $dir = 0}
+     if($ip >= length $code) {$ip = length($code) - 1; $dir = 0}
+     $pause = 1 if $dir == 0;
+     if($dir and (not $pause or $key eq "\n"))
+       {
+       $pause = 1 if $number and $count == $number - 1 or $key eq "\n";
+       $op = $instructions{$ch = substr $code, $ip, 1} and &$op;
+       $ip += $dir;
+       $history[$count++] ||= [$ip, $dir, $p, [@data], [@stack], [@ARGV], [@out] ];
+       }
+     my $n = 0;
+     $#data > $p and $data[-1] == 0 and pop @data;
+     my $brace = join '', map { $n++ == $p ? "[$_]" : " $_ " } @data;
+     my $s = "out: @out  t: $count  n: $number  sleep: $sleep\ndata: $brace   ";
+     addstr($y, 0, $s);
+     clrtoeol();
+     move( int($ip / $dy), $ip % $dy);
+     refresh;
+     $key = ReadKey($pause ? 0 : $sleep);
+     $key =~ tr/\r/\n/; # raw mode :)
+     if($key eq 'q' or $key eq 'r') {last}
+     elsif($key eq '+') {$sleep /= 2}
+     elsif($key eq '-'){$sleep *= 2}
+     elsif($key eq "\e"){$number = 0}
+     elsif($key =~ /\d/){$number = 10 * $number + $key}
+     elsif($key eq ' '){$pause = not $pause}
+     elsif($key eq 'g' || $key eq "\x08" and $number < @history)
+       {
+       $count = $key eq 'g' ? $number : $count - 2;
+       $count < 0 and $count = 0;
+       ($ip, $dir, $p, my $data, my $stack, my $argv, my $out) =
+         @{$history[$count++]};
+       @data = @$data;
+       @stack = @$stack;
+       @ARGV = @$argv;
+       @out = @$out;
+       }
+     }
+   };
+
+ ReadMode 0;
+ endwin();
+ exec @restart if $key eq 'r';
+
+
+----
+
+''How about a Bloated SNUSP interpreter and Modular SNUSP compiler at http://www.baumanfamily.com/john/esoteric.html. Too bad it only works in Windows. (update: a new version that compiles to C, might be faster, and should be portable is on the website)''
+
+----
+
+As a learning exercise, I've created a pure JavaScript implementation for Modular SNUSP that lives entirely within a web page: http://www.quirkster.com/snusp/snusp-js.html. I'm also working on a similar interpreter for Ward's BiotaLanguage. -- IanOsgood
+
+----
+'''Multiplication'''
+
+Here's another multiplier (SNUSP rules require starting at the $ if there):
+                                                        /-\ wiki protection
+                    #==========================.======<=\?/!=>===============\ wiki protection
+                                                                             |
+ start here -->$ ,@\>,@\< !/=========================?\ >>> !/=======?\ <<<@\/
+                   |   |   \<< /?===\! > /?======\! >-/      \>>>+<<<-/     |
+                   |   |       \-<+>/    \->+>+<</                          |
+         /=========/!==/                                                    |
+         |/=================================================================/
+         ||
+         |\= ItoA ++++++++++++++++++++++++++++++++++++++++++++++++#
+         \== AtoI ------------------------------------------------#
+----
+And another... This one has some more compact loops; it finishes in half the steps of the one above. (Great, I'm spending my time optimizing useless languages; I need a life...)
+
+Note: wiki doesn't like having '''\''' on the end of a line. I've fixed some other examples above. -- IanOsgood
+ \    [a][b]  [c]      [a]  [b]  [c]     [a]  [_][b]
+ |    [0][a+b][a+c]    [a+c][b+c][0]     [a+b][_][0]
+ |   #/?<<+>+>-==\     /==-<+<+>>?\#    /==-<<+>>?\#
+ |    \->+>+<<!/?/#   #\?\!>>+<+<-/    #\?\!>>+<<-/
+ |          /==|=========|=====\   /-\    |
+ \,@\>,@\<?!/>@/<-?!\>>>@/<<<-?\=>!\?/>!/@/<<=itoa=\ wiki protect
+    |   |   \=======|==========/   /-\  |          |
+    |   |           \done======>>>!\?/<=/          |
+    \==!\atoi--------------------------------------|----------#
+ #.++++++++++++++++++++++++++++++++++++++++++++++++/
+----
+'''Division'''
+
+I could barely understand the DIV routine below, so I designed my own. The stack effect is [a][b]->[a/b][a%b].
+    /==!/!#------------------------\!\ atoi
+    |   |   /==!/!#++++\           \=/
+ $,@/>,@/@\@/.<@/.#   /+\ itoa
+          |       /=\/+++\ wiki
+ /==div===/       \!\++++/
+ |                   \++/
+ |    /-\             \/
+ \?\<!\?/#!===+<<<\      /-\ wiki
+   \<==@\>@\>>!/?!/=<?\>!\?/<<#
+        |  |  #\->->+</
+        \=!\=?!/->>+<<?\#
+              #\?<<+>>-/
+The algorithm is repeated decrement. In the following equivalent pseudo-code, cells 0-3 are represented by variables a-d respectively.
+ c=a (a=0)
+ loop:
+   d=b (b=0)
+   while (d!=0):
+     if (c==0) d=0 return a,b
+     b++ c-- d--
+   a++
+----
+
+Really, this language is ''designed'' to implement the AckermannFunction, so here it is in all its glory. I tested that A(3,1) = 13 and A(3,2) = 29, but you'll have to be the one to try A(3,3). ;-) ''I did, and it works just fine :-)''
+
+ \  /==!/atoi------------------------------------------------#
+ |  |   |       /=========\!==\!====\   (recursion)
+ \,@/>,@/=ACK==!\?\<+#    |   |     |   A(0,j) -> j+1
+  j   i           \<?\+>-@/#  |     |   A(i,0) -> A(i-1,1)
+                     \@\>@\->@/@\<-@/#  A(i,j) -> A(i-1, A(i, j-1))
+           [0]->[2]    |  |     |
+          #/?<<+>>-\!==/  |     \==!/-<<+>>?\#  [2]->[0]
+           \->>+<<?/#     |        #\?>>+<<-/
+                          |
+                          \@\>>>@\<<#    copy [1]->[3] and advance
+           [1]->[3][4]      |    |
+          #/?<<<+>+>>-\!====/    \==!/-<<<+>>>?\#    [4]->[1]
+           \->>+>+<<<?/#            #\?>>>+<<<-/
+''We could employ TailRecursionElimination by replacing '''@/#''' with '''/'''.''
+----
+Another interesting property of this language is bi-directional flow of control. It is like DNA transcription in this regard. For example, consider the loops which move a value up and down one cell:
+       #                 #
+ up1=?!/->+<?\#  down1=?!/-<+>?\#
+      #\?<+>-/          #\?>+<-/
+Note how similar they are. Wouldn't it be nice to eliminate the duplication? We can! We can make a single loop with multiple entry points, each one circulating in a different direction:
+         #    #
+ up1===?!/->+<\ wiki protection
+         ?    ?
+ down1=?!\<+>-/
+         #    #
+
+    /==!/==atoi=@@@-@-----#                                        
+    |   |                                                          
+    |   | [j]{i} -> {A(i,j)}, where A is the Ackermann function    
+    |   |       /=========\!==\!====\   ** recursion **
+ $,@/>,@/==ack=!\?\<+#    |   |     |   A(0,j) -> j+1              
+  j   i           \<?\+>-@/#  |     |   A(i,0) -> A(i-1,1)         
+                     \@\>@\->@/@\<-@/#  A(i,j) -> A(i-1,A(i,j-1))  
+                       |  |     |                                  
+  {a}[ ][0]  #      #  |  |     |             /+<<<-\              
+  {0}[ ][a]  /-<<+>>\!=/  \=====|==!/========?\>>>=?/<<#  {a}[ ][0]
+   (a > 0)   ?      ?           |   \<<<+>+>>-/           [a]{ }[a]
+  [0][ ]{a}  \>>+<<-/!==========/                                  
+  [a][ ]{0}  #      #                                              
+
+This technique can also be used to optimize runs of + or -. For example here are some progressively optimized versions of the itoa and atoi routines frequently used for I/O.
+ itoa++++++++++++++++++++++++++++++++++++++++++++++++#  n+1 = 49
+We can halve the number of operations by adding a reflector at the end and a valve at the beginning:
+ atoi!/------------------------=!\\ n/2 + 9 = 33 (9 overhead)
+      #                          \/
+If we are space constrained, we can fold once.
+ atoi!/------------\ n/2 + 11 (12 overhead)
+   //!=------------/
+   \/ #
+Still too constrained? Bi-directional doesn't just have to be back and forth, it could be horizontal vs. vertical:
+     /\/\/\ wiki
+ itoa++++++\ n/2 + 2a + 2b = 44 (2a+2b=20 overhead)
+    /++++++/
+    \++++++\ wiki protection
+    /++++++/
+    \/\/\/#
+Even better, these two methods can be combined, so that each + does quadruple duty! Each + is executed once from each direction of the compass.
+      #/\/\ wiki
+ itoa!\++++\ n/4 + 2a + 2b + 6 = 32 (4a+4b+8=36 overhead)
+      /++++/
+    /=\++++\ wiki protection
+    \!\/\/\/
+If you want four times a triangular number, you can eliminate some reflections with a diamond-shaped container:
+ itoa!#++\   40/4 + 8/2 + 10 + 8 = 32 (26 overhead)
+        /+\ wiki
+  /=\  /+++\ wiki
+  \!\++++++/
+       \++/
+        \/
+You can also play tricks with the call stack:
+ itoa=@=@=@=++++++#
+ atoi=@@@@=@@=--#
+ itoa=@@@+@+++++#
+Exercise: what sequence is this describing?
+ =+#
+ =++#
+ =+++#
+ =@+++#
+ =@@+++#
+ =@@@+++#
+ =@@@@+++#
+ =@@@@@+++#
+ =@@@@@@+++#
+ =@@@@@@@+++#
+ =@@@@@@@@+++#
+ =@@@@@@@@@+++#
+Truly, Snusp is a language for RealProgrammer''''''s! -- IanOsgood
+----
+Another canonical example: NinetyNineBottlesOfBeerOnTheWall!
+
+   /=!/===========!/+++++++++# +9
+   |  |  /=!/='9'=@/!/!/++++++++++++++++++++++++++++++++++++++++++++++++# +48 (itoa)
+   |  |  |  |  /+++++|+|++++++++++++++++++++++++++# space (32)
+   |  |  |  |  |     \=\@++\!+++++++++++++\!+++++\ wiki
+   9  9 '9''9' space      'b'            'o'    't'
+ $@/>@/>@/>@/>@/>=========@/>============@/>====@/>++++++++++\n  setup
+   /====================================loop==>\!>\!=<<<<<<<</
+   \@\@\>cr.@\<?\<->+++++++++>->+++++++++\     |  |
+     ! |     |  \===-========>=>-==BCD==!\<@\<?/<?/# no more beer!
+     /=|=====|==============================/
+     | |     \<++t.<<----a.>----k.<++++e.<_.>>++++o.-n.<e.<_.>-d.>+o.>+++w.<-n.<<_.\ wiki
+     | |     /                                                                     /
+     | |     \>---a.>n.<+++d.<_.>>++p.<---a.>>----s.s.<<<_.>>-------i.>+t.<<<_.\ wiki
+     | |     /                                                                 /
+     | |     \>a.>>--r.<++++++o.>+++u.<-n.<+++d.>>>cr.<-T<+O<--B<<<#
+     | !
+     \@\<<<_.>>o.-n.<<_.>>>++t.<<+++h.---e.<_.>>>+++w.<<----a.>--l.l.>>CR.<---T<+++O<+B<<<#
+       |
+       \9.>9.>_.>B.>O.>T.t.<---l.<+++e.>>-s.<<<_.>>+++O.<+f.<_.>----b.+++e.E.>>-R.#
+
+Much shorter than the Brainf**k version. -- IanOsgood
+----
+They shouldn't have mentioned BrainF*** on the OddWordProblemSolutions page, 'cause I had to do this:
+
+ ,@\=\   Odd word problem in SNUSP
+   | !
+   | /=====\ loop
+   | @     |  /====,.<\                 even words: verbatim
+   | \=======!\@\@\>?!/-<#
+   | |     |    | |
+   | | /=\ |    | | /<.!/?\>!/-<+>?\<#  odd words: reversed
+   | | | @ |  /=!=!=\!@,\-/#<\?>+<-/     (recursion)
+   | | | \===!\@\@\==>?!/-<#
+   | | | | |    | |
+   | @ | @ |    | |  /=,<-\             eat spaces
+   \!\==!\======|=|=!\@\>?/<#
+     | | | |    | |    |      /======@@@@=----# 
+     | | | |    | \===!\=====@/?\>+<\   test for space (32)
+     | | | |    |               \==!\@@@@=++++#
+     | | | |    |
+     @ | @ |    |         /======@=@@@-----#
+     \==!\=====!\========@/?\>+<\       test for a '.' (ASCII 46)
+     > | > |                \==!\@=@@@+++++#
+     ? | ? |
+     \==!\===-<.#    done? emit '.' and quit
+     @ | @ |     /-\                    emit a space
+     \==!\===@\.!\?/<#
+     | | | |  \@@@@=++++# (ASCII 32)
+     \=/ \=/ loop upwards
+
+Using the perl script, each letter is an argument, like this:
+ perl snusp.pl < oddword.snusp f i r s t ' ' s e c o n d ' ' t h i r d .
+----
+Thanks, Daniel, for coming up with such a nice minimal 2D language!
+----
+'''Is there a simple way to translate an arbitrary Brainfuck program into Core SNUSP?'''
+
+Well,
+ a[bc]d
+translates to
+ a!/=?\d
+   \cb/ 
+so since the rest of the Brainfuck instructions are equivalent in Core SNUSP, it appears all you have to do is start with the innermost bracket pair and add loops as you walk out.
+
+As a slightly more complex example,
+ a[b[c]d]e
+would be
+ a!/=====?\e
+   \d/?\!b/
+     \c/
+----
+'''Does the second data memory dimension add enough convenience to motivate its existence?'''
+
+The second data memory dimension enables each thread to have its own infinitely growing stack -- something that would not be possible using only one dimension without fragmenting the stacks and severely complicating subroutine interfaces.
+
+----
+'''Would it make sense to pull the second data memory dimension instructions up into Modular SNUSP?'''
+
+When using just one thread, the other data memory dimension does not seem to add anything of value. Some have suggested that subroutines use lower memory strips for local data, but this is unnecessary since conventionally they can allocate as much memory as they want rightwards (this works just like the C stack).
+
+----
+'''Subroutine wishlist'''
+
+	* Multi-digit PRINT; decimal would be cool, but hexadecimal might be easier and still almost as cool. ''[Done, see below.]''
+	* Square root
+
+----
+'''Multi-digit PRINT'''
+
+Here you go:
+        /======recurse======\    #/?\ zero
+ print=!\>++++++++++@\@\?!\@/<@\.!\-/
+                     | |  \=/  \=itoa=@=@@@@=+++#
+                     | |
+        /===divmod===/ \=swap=<@\>@\>@\<#/?>+<-\ down1
+        |           #           |  \=!\?!\-<+>?/#
+        |    /=!/=?!/->>+<<?\#  |        #
+        |    |  |  #\?<<+>>-/!?=/ up2
+        |    |  |           #
+        |    |  |   /->->+<\  /-\ zero
+        \==<@/>@/>>!\?!\=<?/>!\?/<<#
+             \=====+<<</
+For best results, edit the perl scripts above not to print a newline for '.'.
+
+This one is more efficient, using a specialized routine for the mod and div by the base, i.e. 10:
+        /recurse\    #/?\ zero
+ print=!\@\>?!\@/<@\.!\-/
+          |   \=/  \=itoa=@@@+@+++++#
+          !     /+ !/+ !/+ !/+   \    mod10
+          /<+> -\!?-\!?-\!?-\!?-\!
+          \?!\-?!\-?!\-?!\-?!\-?/\    div10
+             #  +/! +/! +/! +/! +/
+-- IanOsgood
+
+''Awesome, Ian, thanks! I like how the former can easily be adapted to output in any base; at the same time, I'm amazed by the beauty of the latter. -- DanielBrockman''
+
+I adapted it from the PathLanguage example.
+
+'''Square root'''
+              />!/?\>=!/?\>!/=======?\<<<#
+              |  \-/<-=\-/  \>>>+<<<-/
+ sqrt=>+<=!/?!/->-?\+>?/\ wiki
+           \\!=<<+>/<<+>/
+            \===<++/
+-- IanOsgood
+----
+'''BubbleSort'''
+
+From notzeb on the XkCd forums, I present this rectangle of awe:
+
+ /.\/,\/<=\#>/?<<<+\/\   wiki
+ !-</\?</!\@!\->+>>/-|
+ /\\?>\//<\/=!/<=?\<//
+ ?-?>||?<\</<\\->-//!=
+ \/<\/#|<|+?/-<+<<\|/\   wiki
+ \=/!/</|#\-\?>>>+/!/|
+ $@!\\!?/!<\>/>+<<\\/-
+ /\\/\+>,=?/#\>-=?/<</
+It should sort the characters in the input stream and output them in ascending order. I've modified my interpreter to return zero on EOF to allow this program to run. -- IanOsgood
+----
+What would happen if we added the two remaining Brainfuck instructions (i.e., the looping brackets) to SNUSP? Granted, that still wouldn't make it copy-and-paste-compatible -- since the SNUSP interpretation of newline is quite different from that of Brainfuck -- but it might still be a useful addition to the language.
+
+With Brainfuck brackets, the following very common and bulky SNUSP construct (the simple loop)
+ ==!/=======?\#
+    \hgfedcba/
+could be reduced to the much simpler
+ [abcdefgh]#
+I haven't really thought about how it would interact with the subroutine mechanism, and I can't immediately see how it would affect SNUSP programming in general:
+* Would it displace any of the current control flow instructions, or can they work together to make a more powerful and expressive language?
+* Would any new cool idioms emerge? (I'm still in complete awe at Ian's call-stack tricks.)
+** Yeah, I've discovered a weird base 1.6 number system using @ and + for digits. I wrote a little Forth program to help me search for short and efficient representations for big constants.
+* Other thoughts?
+
+One thing adding the looping brackets clearly would do is render the two-dimensional control flow instructions essentially superfluous. However, that doesn't really bother me, since they no doubt still serve a very useful purpose. (Indeed, without them, subroutines are practically useless.)
+
+It would also introduce the first SNUSP run-time error: unmatched right square bracket.
+
+''Are the semantics of '[' and ']' defined when executed from any direction? What happens if you come at one of the brackets in your example from the top, bottom, or right? Down with the oppression of directionality!!''
+
+The simple way of implementing them would be to not have the approach direction matter.
+When right bracket is encountered, return to top left bracket on stack.
+Then it becomes like @ and # with the added power of conditionals.
+Indeed, you could replace @ and # with these, but it would make a lot of the above tricky programs much longer. -- DavidRutter
+----
+Have you considered adding a SNUSP variant which would utilize repeating instructions? It's not as beautiful as pure Brainfuck,
+but it can greatly simplify some programs. I created a Brainfuck variant that followed these rules:
+All 8 Brainfuck instructions are executed normally, however the instructions +,-,<, and > can be followed by a single hexadecimal.
+A short example CNBF (Constant Number Brainfuck program):
+ >+++++[<++++++>-]< Would calculate the value of 30.
+ >+5[<+6>-]<        Also calculates the value of 30.
+
+BrianThompson
+
+''I'm leary of adding meaning to characters that could otherwise be used as inline comments. 30 could be calculated by +@@@@++++# in Modular SNUSP.''
+----
+Since the Bloated SNUSP concept doesn't scale very well, I'd like to scrap it and move to SRFI-style extensions. Under this scheme (no pun intended), SNUSP would be the minimal turing-complete language, while everything else would be defined as coherent extensions: SNURFIs. Every logical unit of functionality in Modular SNUSP and Bloated SNUSP would be isolated. Even the '''skip''' instruction could be pulled out of the basic language and into, say, SNURFI 1 -- though that would probably be overdoing it.
+
+Possible SNURFIs:
+
+	* '''modularity''': Adds the same things as Modular SNUSP currently does.
+	* '''concurrency''': Adds the thread primitives currently residing in Bloated SNUSP.
+	* '''non-determinism''': Adds the '''rand''' (%) instruction currently residing in Bloated SNUSP.
+	* '''brainfuck looping''': Adds the Brainfuck looping instructions (i.e., [ and ]).
+----
+Here's a proposed notation for stack effect:
+    /==!/==atoi=@@@@=@@=--#
+    |   |
+    |   | (Did I get this right?)
+    |   | [j]{i} -> {A(i,j)}, where A is Ackermann's function
+    |   |       /=========\!==\!====\   ** recursion **
+ $,@/>,@/==ack=!\?\<+#    |   |     |   A(0,j) -> j+1
+  j   i           \<?\+>-@/#  |     |   A(i,0) -> A(i-1,1)
+                     \@\>@\->@/@\<-@/#  A(i,j) -> A(i-1,A(i,j-1))
+  {a}[ ][0]  #      #  |  |     |
+  {0}[ ][a]  /-<<+>>\!=/  \=====|==@\>>>@\<<#  {a}[ ][0]
+   (a > 0)   ?      ?           |   |    |     [a]{ }[a]
+  [0][ ]{a}  \>>+<<-/!==========/   |    |
+  [a][ ]{0}  #      #               |    |
+                      {a}[ ][0][0]  |    |  [0][ ][ ]{a}
+                      {0}[ ][a][a]  |    |  [a][ ][ ]{0}
+                     #/?========\!==/    \==!/=======?\#
+                      \->>+>+<<</            \>>>+<<<-/
+(Code stolen from above.)
+
+Each bracketed expression represents a memory cell. Curly brackets are used around the current memory cell; square brackets are used elsewhere.
+
+The first array of cells represents the situation before the subroutine call; the second array the situation after the subroutine has returned. The two arrays are separated by an arrow which can be omitted when the arrays are written on separate lines.
+
+Empty cells (i.e., [ ] or, alternatively, [_]) can contain anything and will not be touched by the subroutine. (Thus, {a}[ ][b] -> {b}[ ][a] is sugar for {a}[x][b] -> {b}[x][a].) Trailing [0] cells are implied and can be omitted (see SnuspCallingConventions).
+
+''I prefer to use the long established stack effect notation from ForthLanguage: ( before -- after ) where the top of stack (higher address) is to the right. In this notation, my div routine has effect ( numerator denominator -- div mod ) or more tersely ( n d -- n/d n%d ). -- IanOsgood''
+----
+See also: PathLanguage, BrainfuckLanguage, BefungeLanguage, EsotericProgrammingLanguage
+----
+CategoryProgrammingLanguage

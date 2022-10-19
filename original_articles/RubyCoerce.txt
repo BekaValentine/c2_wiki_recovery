@@ -1,0 +1,237 @@
+RubyLanguage has a coerce feature which allows the evaluation of expressions such as 
+
+ 1 + x
+where x is of a user-defined type which is such (either numerical or symbolic) it is reasonable to define addition to a number. For example, it could be a complex number. The use of coerce enables the return of an object of type x. This is of great use when wanting to interface a class written in CeePlusPlus which has overloaded operators and where it makes sense to combine constants and variables in an expression to be evaluated.
+
+For some built-in types of RubyLanguage, coerce is already defined and works without user intervention.
+
+In my work I have been interfacing CeePlusPlus to RubyLanguage using the SimplifiedWrapperAndInterfaceGenerator. I then provide the coerce function in the interface definition. My design aim is that for the user the expression
+
+ A + B
+should yield the correct type and result for any valid combinations of types of variable A and B, and correspondingly for other operators.
+
+-- JohnFletcher
+
+----
+You can use RubyCoerce to make your operators commutative. Let's say you have your own Vector type, and you define a multiplication operator for it. You want multiplication by a number to be commutative: v * n == n * v. The expression 'v * n' calls
+
+ class Vector
+   def *(value)
+     self.class.new(@x * value, @y * value)
+   end
+ end
+That's fine and dandy. You're really invoking 'v.*(n)'
+
+Doing the multiplication the other way around necessitates defining a coerce method. The expression 'n * v' calls
+
+ class Vector
+   def coerce(other)
+     return self, other
+   end
+ end
+''which then automagically calls 'self.*(other)' ''. This is just your own multiplication method defined earlier. In your coerce method, you want the type you are "coercing" to, to be first in the return list. In other words, the first object in the list is the object that will receive the '*' method, and the second object in the list is the argument to the '*' method.
+
+Unfortunately, this coerce method makes ''all'' your Vector operators commutative, which might not be appropriate.
+
+-- ElizabethWiethoff
+
+----
+''Moved from JohnFletcher...''
+
+John, thanks for the tip about RubyCoerce. I've written there about how to make operators commutative. But it appears to work on ''all'' the operators, which is not always desirable. Any advice you have about making only ''some'' operators right associative would be great. I've been going through an icky old CeePlusPlus book and doing a few of its exercises in RubyLanguage. One silly exercise has me multiplying a "rectangle" by a constant and also subtracting a constant from a rectangle. I want multiplication but not subtraction to be commutative. PythonLanguage has me so spoiled; overloading left and right associative operators is explained all on the same page of the docs. For Ruby, I have to wander around the internet looking for hints and asking some nice person named JohnFletcher for help. -- ElizabethWiethoff
+
+''You could punt on subtraction and division: add negatives and multiply by reciprocals. -- IanOsgood''
+
+Hi, Ian. I have two difficulties with your suggestion. Let's take subtraction.
+* When subtracting 'number - rectangle', how can I tell within Rectangle#coerce that I arrived there from Numeric#'''-''' and not, e.g., Numeric#'''*''' ?
+* The exercise has me doing 'rectangle - number', which is easy. But what if I want 'number - rectangle' to raise an exception?
+-- Eliz
+
+I'll have a look at this with some examples of my own, but no time right now. My gut reaction to the problem of minus is that the secret is in the coerce itself. You have 
+
+     return self, other
+if instead you do 
+
+     return other, self
+Then the order of the operands is reversed. The variable ''other'' gets ''coerced'' to be the same type as ''self'' and so it becomes valid to call members of your object applied to ''other'' which now has the type of ''self''. Will supply examples later. I am working in interface code written for the SimplifiedWrapperAndInterfaceGenerator to interface CeePlusPlus code to RubyLanguage, where I have to build the vector myself.
+
+-- John
+
+Thanks, John. I thought of that while I was falling asleep last night (to KernighanAndRitchie). That will define 'number - rectangle' just fine. But what if, for the sake of exercise, I want this to raise an exception? -- Eliz
+
+''Would that be an exception if the coerce was not valid? I'll think about that.''
+
+This example is from the page http://wiki.rubygarden.org/Ruby/page/show/CoerceExplanation
+
+   def coerce(other)
+      if Complex.generic?(other)
+        return Complex.new(other), self
+      else
+        super
+      end
+    end
+This shows how the ''Complex'' defined in RubyLanguage does this. It checks to see whether it can handle the case and then passes it up the line. I have tried it out with a number of things, such as trying to add a string to a Complex. It comes back with a variety of error messages, depending on the case. I guess you could put your own exception code instead of the ''super'', in some case you want to handle.
+
+Here is some code from the SWIG interface, which looks like C++ except that there is ''self'' instead of ''this''. This is using the SWIG ''extend'' facility to add a member function available only in the target language (Ruby) to a class in C++ which is being interfaced. Here, ''coerce'' is being overloaded on specific C++ types, and the call will fail at the Ruby level on argument type if it is fed the wrong type of argument.
+
+   std::vector<ex > coerce(int c) {
+         std::vector<ex > v(2);
+         v[0] = ex(c);
+         v[1] = *self;
+         return v;
+   }
+This is the code that handles class ''ex'' and an int. Notice that v[0] receives the value of the input variable ''c'' but transformed to type ''ex''. ''Note that ex is the GiNac class for an expression and can hold a number. Also that SWIG provides the means (not shown here) to turn the return type into a Ruby array.''
+
+Ruby usage looks like this
+
+ require 'ginact'
+ include Ginact
+ x = Gsymbol.new("x")
+ ex = Ex.new(x)
+ puts 1+ex
+ puts 1-ex
+Ginact is my SWIG package for GiNac. This code produces the output
+
+ 1+x
+ 1-x
+-- JohnFletcher
+
+----
+I think I got it all figured out. Here's the exercise from my old CeePlusPlus book. A Rectangle has length and width attributes. The following operators (among others) are defined, where r is a rectangle and n is a number:
+* r1 + r1 performs r1.length + r2.length, r1.width + r2.width
+* r + n performs r.length + n, r.width + n
+* n + r performs r.length + n, r.width + n (commutative with r + n)
+* r1 - r2 performs r1.length - r2.length, r1.width - r2.width
+* r - n performs r.length - n, r.width - n
+The above operators should return a fresh Rectangle, not modify a rectangle in place. The following operation is undefined:
+* n - r should raise exception or fail to compile
+
+The specs are easy to implement in PythonLanguage by defining __add__, __radd__, and __sub__ methods. Notice I can make addition commutative without screwing up subtraction. Because I do ''not'' define __rsub__, I automatically get "Type''''''Error: unsupported operand type(s)" when I try n - r. That's good.
+
+ class Rectangle(object):
+     def __init__(self, length=0, width=0):
+         self.length = length
+         self.width = width
+     
+     def __add__(self, other):
+         try:
+             return self.__class__(self.length + other.length, 
+                 self.width + other.width)
+         except Attribute''''''Error:
+             return self.__class__(self.length + other, self.width + other)
+     
+     def __radd__(self, other):
+         return self + other # commutative
+     
+     def __sub__(self, other):
+         try:
+             return self.__class__(self.length - other.length, 
+                 self.width - other.width)
+         except Attribute''''''Error:
+             return self.__class__(self.length - other, self.width - other)
+     
+     def __str__(self): return '(%(length)s, %(width)s)' % vars(self)
+
+ print Rectangle(3, 4) + Rectangle(5, 5)
+ print Rectangle(3, 4) + 5
+ print 5 + Rectangle(3, 4)
+ print Rectangle(3, 4) - Rectangle(1, 1)
+ print Rectangle(3, 4) - 1
+ print 5 - Rectangle(3, 4) # exception!
+In RubyLanguage, I have to horse around creating a Rectangle#coerce method and inspecting the call stack. I coerce a plain number to a Rectangle. This allows Rectangle#+ to compute n + r. It also allows the computation of n - r, which I don't want. So then, in the Rectangle#- method, I inspect the call stack. Interesting enough, `coerce' never shows up in the stack. But if I came from a call to subtraction with coercion, `-' is the first item in the stack and that's what I look for.
+
+ class Rectangle
+   attr_accessor :length, :width
+   
+   def initialize(length=0, width=0)
+     @length = length
+     @width = width
+   end
+   
+   def +(other)
+     if other.respond_to?(:length) and other.respond_to?(:width)
+       self.class.new(@length + other.length, @width + other.width)
+     else
+       self.class.new(@length + other, @width + other)
+     end
+   end
+   
+   def -(other)
+     if caller[0] =~ /`-'/
+       raise Type''''''Error, "arg to left of `-' must be #{self.class}"
+     end
+     if other.respond_to?(:length) and other.respond_to?(:width)
+       self.class.new(@length - other.length, @width - other.width)
+     else
+       self.class.new(@length - other, @width - other)
+     end
+   end
+   
+   def coerce(other)
+     [self.class.new(other, other), self]
+   end
+   
+   def to_s
+     "(#{@length}, #{@width})"
+   end
+ end
+ 
+ puts Rectangle.new(3, 4) + Rectangle.new(5, 5)
+ puts Rectangle.new(3, 4) + 5
+ puts 5 + Rectangle.new(3, 4)
+ puts Rectangle.new(3, 4) - Rectangle.new(1, 1)
+ puts Rectangle.new(3, 4) - 1
+ puts 5 - Rectangle.new(3, 4) # exception!
+Unfortunately, the 'caller' method results are Ruby version dependent, as JohnFletcher discovered. So the big question is, how can n - r be disallowed without calling the 'caller' method? Back to the drawing board.
+
+Here Rectangle is defined as earlier but with a simplier subtract method and a change in coerce. I also derive a new class:
+
+ class Rectangle
+   def -(other)
+     if other.respond_to?(:length) and other.respond_to?(:width)
+       self.class.new(@length - other.length, @width - other.width)
+     else
+       self.class.new(@length - other, @width - other)
+     end
+   end
+
+   def coerce(num)
+     [Bogus''''''Rectangle.new(num, num), self]
+   end
+ end
+ 
+ class Bogus''''''Rectangle < Rectangle
+   def -(other)
+     raise Type''''''Error, 'Rectangle subtraction from Numeric not allowed'
+   end
+ end
+This solution has the "advantage" of being "ObjectOriented" (coming from an old fogey proceduralist at heart) because it coerces the number to a SpecialCase object. I'm still unhappy, though, about the hoops I have to jump through to do this exercise in RubyLanguage compared to PythonLanguage or CeePlusPlus.
+
+To top it off, I've discovered a problem when chaining operators. The aforementioned addition and subtraction tests work fine. But here's the rub. Suppose you have n1 + r - n2 or n + r1 - r2. The first operand (a number) gets coerced to a Bogus''''''Rectangle and the addition is performed. The result is a new ''Bogus''''''Rectangle''. Then when a legitimate-looking subtraction is performed, you get an error. That's because Rectangle#- creates a fresh object with self.class.new, which when subclassed, is a Bogus''''''Rectangle. Well, I could have Rectangle#- return just a Rectangle.new, but that makes the Rectangle class less friendly for other subclassing. Arg. I think I need to experiment with making Bogus''''''Rectangle an InnerClass...
+
+'''Ta-da!''' The trick is to extend the coerced Rectangle object with a module that redefines subtraction. Rectangle is as usual but for its coerce method. Also, I've defined the special module ''within'' Rectangle because I don't imagine unrelated classes using it.
+
+ class Rectangle
+   module Not''''''Subtractable
+     def -(other)
+       raise Type''''''Error, "#{self.class} subtraction from Numeric not allowed"
+     end
+   end
+   
+   def coerce(num)
+     crippled_rect = self.class.new(num, num)
+     crippled_rect.extend(Not''''''Subtractable)
+     [crippled_rect, self]
+   end
+ end
+The addition, subtraction, and chaining tests behave as desired, and Rectangle is nicely subclassable if desired. Plus, this solution strikes me as very Ruby-ish. Ship it!
+
+I can't believe all the gyrations I've gone through in the past couple weeks to finally come up with this. What's surprising is, I dynamically ''replace'' a method. This isn't standard RuntimePolymorphism, I'm not doing a canonical DesignPattern, you won't find this in the RefactoringBook, and I don't think you can depict this in a UnifiedModelingLanguage diagram. I've come to the conclusion that RubyLanguage isn't just nice (and poignant), but impressive; it's groundbreaking in ObjectOrientedDesign. It surely leaves, e.g., JavaLanguage (feh!) in the dust. Pardon me while my head explodes.
+
+-- ElizabethWiethoff
+
+----
+At the moment this is a conversation. It could be refactored to be more generally useful when we stop needing to talk. -- John
+
+----
+CategoryRuby

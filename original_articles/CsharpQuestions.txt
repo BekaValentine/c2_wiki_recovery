@@ -1,0 +1,386 @@
+'''C++ with Managed Extensions allows creation of better ComInterOp components through Pinvoke and ItJustWorks. Has Csharp got anything that do similar things so C++ need not to be used?''' -- DavidLiu
+
+ComInterOp with C# (and any .NET language) doesn't need explicit PInvoke calls. The SDK includes tools that generate the interop assemblies for you. To call COM components from .NET you link against those interop assemblies and create instances of the types exported from them. To expose types through COM, you annotate your classes and interfaces with COM interop attributes to specify GUIDs etc and use SDK tools to register them in the system registry. For more information about this, read the extensive documentation on the MSDN.
+
+C++ with Managed Extensions is obsolete and has been superseded by C++/CLI. Neither are necessary for COM interop. They are usually used to interop with native C++ code that does not expose COM interfaces.
+
+----
+(Moved from Delegate''''''Questions)
+'''Why does the following C# program not compile?''' 
+
+Because the signature of Method1 doesn't match the signature of the delegate Ptr. Method return types cannot be overloaded. -- JimArnold 
+
+	public delegate object Ptr(string input);
+
+	public class DelegateTest?
+	{
+		public static void Main()
+		{
+			DelegateTest? test = new DelegateTest?();
+			Ptr method1 = new Ptr(test.Method1);
+			Ptr method2 = new Ptr(test.Method2);
+		}
+
+		public string Method1(string input)
+		{
+			return "";
+		}
+
+		public object Method2(string input)
+		{
+			return "";
+		}
+	}
+Method 'DelegateTest?.Method1(string)' does not match delegate 'object Ptr(string)' 
+
+''Because method one isn't compatible with the delegates signature. Delegates don't consider the inheritance chain, it's just like method overloading, it just considers static types. The signature of the method must exactly match the signature of the delegate.''
+
+----
+'''Method Overloading'''
+
+Consider three classes in three different projects:
+
+Project One:
+	public class One {}
+
+Project Two:
+	public class Two
+	{
+		public void method(int i) {}
+		public void method(One o) {}
+	}
+
+Project Three:
+	public class Three
+	{
+		Two two = new Two();
+		two.method(1);
+	}
+
+Project Two obviously has to have a reference to Project One. But the compiler also asserts that Project Three must have a reference to Project One. It seems that that if there are multiple overloadings of a method with the same number of parameters you have to have references to ''all'' the types of ''all'' those methods. This seems a little absurd, because it's pretty clear which method I want to dispatch to. What am I missing here?
+
+----
+Can someone explain why/how classes handle delegates differently than struct? This is a serious flaw IMO, and is very misleading. Here is code that inverts a boolean based on the definition of the enclosing block (class vs struct):
+
+	using System;
+	namespace Test
+	{
+	class Test
+	{
+		delegate void aDelegate();
+		struct Block	//DIFFERENT RESULT with: class Block
+		{
+			bool test;
+			public Block(int x)
+			{
+				test = true;
+				''''''DelegateToMakeTestFalse(new aDelegate(''''''MakeTestFalse));
+				Console.WriteLine(test);
+			}
+			void ''''''MakeTestFalse()
+			{
+				test = false;
+			}
+			void ''''''DelegateToMakeTestFalse(aDelegate adelegate)
+			{
+				adelegate();
+			}
+		}
+		static void Main()
+		{
+			new Block(0);
+			Console.''''''ReadLine();
+		}
+	}
+	}
+-- BrianG
+
+----
+''Answer: Some folks at work helped me figure this out. At the point where you create the delegate (new aDelegate(...)), the struct referenced by "this" must be packaged up along with the member function reference. Since it's a struct, one can't just copy the reference; instead, a boxed copy is made. Thus, MakeTestFalse() ends up operating on a different struct instance than DelegateToMakeTestFalse() does. This strikes me as really odd. To myself, I've been thinking of delegates as closures, with 'this' being an implicit local variable that gets closed over. This behavior differs from my simple model. It seems that the .NET framework designers (not the C# designers) made things easy on themselves here, by not supporting real closure over arbitrary types of variables. I'll have to come up with a test using anonymous delegates to see if this behavior extends to ''any'' closed-over struct-type variable. -- DanMuller''
+
+You can't have it both ways. Structs are more efficient than objects because they are stack allocated and follow a stack discipline (references to them cannot escape the stack "scope". As a result if you want them to behave like objects, they are automatically boxed. So there's no surprise that a delegate which can escape the stack discipline will have all its references to structs (as well as integer and other non-object variables) automatically boxed. Don't use structs if you don't like them and everything works as expected.
+
+''Whoa. This is one of many reasons that I avoid using structs except as raw data. That kind of behaviour is damn strange. I also see why most of the standard MS structs have all-readonly fields - events make a mess. Too bad that making all-readonly structs in C# is a giant headache due to the pain of creating so many constructors. Perfect example of place where a good macro language is needed - but instead, if it is ever solved it will be solved with yet-another-syntactic-hack. -- MartinZarate''
+
+''Yes, it does make sense that the object referred to by 'this' has to be boxed in this situation. After some further thought, it occurs to me that the language inconsistency leading to this surprise lies elsewhere: In the handling of 'this' in struct instance methods. Consider that 'this' is usually treated as an immutable, implicit variable in instance methods. When it's an object reference, you can't change the object referred to, although of course you can change the object. In a struct instance method, 'this' isn't an object reference variable; it's a struct type variable. It should ''still be immutable'', meaning that you shouldn't be able to change the state of the struct instance. This would be a bit limiting, but not terribly onerous given the usual uses of struct types. If the handling of 'this' were consistent in this regard, then the example above would be invalid, and the boxing of 'this' in similar situations would be undetectable.''
+
+''No, wait, I take that back. It would still be detectable. A change made to the struct instance by code outside of a method would still not be reflected in what the delegates see, so this would still be detectable. -- DanMuller''
+
+Shouldn't the C# compiler at least flag it as a warning? Reminding any delegate use in a struct of this behaviour? This IMO lessens the 'purity' of the language when you have clearly unexpected behaviour without any compiler-detectable warning.
+
+''Structs are nothing more than objects with Value type semantics. That is, at ''any and all times it is passed around, a new copy is made (with a single exception). ''(Stack is irrelevant and an implementation detail. The C# spec says so. See also: http://blogs.msdn.com/b/ericlippert/archive/2009/04/27/the-stack-is-an-implementation-detail.aspx. Many structs end up in the heap for various reasons). If you properly understand the full implications of value semantics, it's obvious why this happens: the delegate copies the variable's content upon creation. On a class (reference type), this copies the reference. In a struct, this copies the entire object. Therefore, any and all changes to the delegate's this won't ever propagate outside of scope. In general, structs shouldn't even BE used unless you want said semantics (Go read Eric Lippert's blog for more about this). Using them for speed is a nano-optimization. (Save particular cases, like game code where you're churning through matrices 60 times per sec).
+Regarding the above exception: ref/out parameters. These work by aliasing the variable name rather than copying the variable's content (be it a class' reference or a struct's value), so they're always referencing the exact same thing both in and out of scope. Naturally, this makes changes on structs visible from the outside.
+(Speaking of mutating structs: In general, everyone agrees that's a bad idea (Once again, Eric Lippert's blog for more about this) but it's not critical enough to be fixed on following versions of C#)
+BTW: C# 4.0 makes readonly struct creation easier through named and optional parameteres.''
+----
+Why will example1 compile but example2 wont? Assume a base class named Base and a derived named Derived:
+	example1:
+		void Foo(Base b) {...}
+		Derived d = new Derived();
+		Foo(d);
+	example2:
+		void Foo(ref Base b) {...}
+		Derived d = new Derived();
+		Foo(ref d);
+I want to pass in either the base or derived and use reflection on it. -- BrianG
+
+''In general (i.e. unless it's a struct), objects are passed by reference anyway.  Example 2 isn't type safe.  To put it in C++ pointer terms:''
+
+	example1:
+		void Foo(Base* b) { b->twiddle(); }
+		Derived* d = new Derived();
+		Foo(d);
+	example2: // not type safe but may not be obvious
+		void Foo(Base** b) { (*b)->twiddle(); }
+		Derived* d = new Derived();
+		Foo(&d);
+	example3: // not so subtle anymore
+		void Foo(Base** b) { *b = new Base(); }
+		Derived* d = 0;
+		Foo(&d);
+
+''example3 leaves d pointing to a Base that is not a Derived.''
+
+''What example2 is trying to do is pass a reference to a slot that holds a reference to Derived, to something that's expecting a reference to a slot that holds a reference to Base.  This is not type safe because you can assign a reference to any Base to b's referent - including one which is not a Derived. -- JeffreyHantin''
+
+----
+
+This is a design question: In general, should you use the full power of the generics list (such as System.Collections.Generic.List<string>) in a return value or just string[]? I love the .AddRange, .ToArray and other powerful features of the former, but are you increasing coupling and exposing too much of the internals by forcing the caller to use generics? -- BrianG
+
+''I've run into this, and I may not be any wiser than you on it. Either way, you're forcing them to except a certain implementation from you; you might as well send the more general one that can be 'downgraded' easily. I would view it as reasonable to standardize on passing List<T>, since that is the choice of ''type'' (unfortunately tied to implementation) that immediately exposes the most functionality. Calling .ToArray() occasionally has not been a problem for me. --JesseMillikan''
+
+Some more ideas: Return the most limited interface that suits your goals, e.g. ICollection<string> or even IEnumerable<string>:
+
+		static ICollection<string> GetStrings()
+		{
+			return new string[] {"A", "B", "See"};
+		}
+		static void Main(string[] args)
+		{
+			ICollection<string> ss = GetStrings();
+			ss.Add("Boo!");
+			...
+
+''FxCop generates a warning on returning a concrete parameterization of List<T>.  The recommended alternative is in fact to return IList<T> or similar. --jh''
+
+Or, let the caller tell you what kind of collection they want:
+
+		static T GetStringCollection<T>() where T : ICollection<string>, new()
+		{
+			T result = new T();
+			foreach (string s in new string[] { "A", "B", "See" })
+				result.Add(s);
+			return result;
+		}
+		static void Main(string[] args)
+		{
+			IList<string> ss = GetStringCollection<IList<string>>();
+			ss.Add("Boo!");
+			...
+-- DanMuller
+
+''...JesseMillikan wishes he had thought of that last one. :) I do think it's good to expose a minimal amount; but since I view lists from a LispLanguage slant, I view less capable list classes as being somewhat pointless unless you ''can't'' expose the extra functionality. On the other hand, I've started passing viewed data as IBindingList, rather that System.Data.DataView/Table/Set or a 3rd party class (IC1ReportRecordset, EntityCollection) so that I'm just seeing one consistent type. Maybe someone could advise ''me'' about how they do that? :)''
+
+----
+
+Something in .NET breaks/disallows declaring static methods in a derived class when the base implements and interface that specifies the same method. I cannot find a way to do this:
+		interface MyInterface {
+				void Blah();
+		}
+
+		class MyBase : MyInterface {
+				public abstract void Blah();
+		}
+
+		class MyDerived : MyBase {
+				public new static void Blah() {}
+		}
+
+I cannot find a way to compile it. How can I place it in an interface, force the declaration of the method in the derived, and make it static? There are many reasons why it must (IMO) be designed this way since generics force you to jump through inheritance hoops, so refactoring is out.
+
+-- BrianG
+
+Static methods cannot override inherited methods.  Would the following do?
+
+    interface M''''''yInterface
+    {
+        void Blah();
+    }
+
+    abstract class M''''''yBase : M''''''yInterface
+    {
+        abstract public void Blah();
+    }
+
+    class M''''''yDerived : M''''''yBase
+    {
+        private static void B''''''lahImpl() { }
+        override public void Blah() {
+            B''''''lahImpl();
+        }
+    } 
+
+Nope, I need to enforce a contract: if you derive from me, you must implement this method and it must be static. I need 'abstract static' but .NET disallows it because it wrongly assumes that I care about polymorphism. I don't care about it, I only use the 'abstract' keyword to force the derived implementation. I need the keyword 'mustimplemementasstatic'. Hmm, just found someone with the same problem on http://www.dotnet247.com/247reference/msgs/41/207886.aspx and the conclusion is .NET cannot do it. The workaround I'm going to use is make an NUnit test to check every derived class in the assembly for a 'static Blah()' method and fail if it finds one that doesn't have it. Then CruiseControl will burp if someone doesn't implement the contract.
+
+In your situation, I would suggest the less ideologically correct idea of placing the operation directly on the instances, and come up with some scheme for using it when there is no legitimate instance around. Unfortunately, constructors don't inherit. Otherwise, you could produce one special constructor that won't do any initialization, so that "new MyDerived(true).FauxStatic()" is a shortcut for using it.
+
+That is assuming that you can't do a general refactoring of the classes, in which case I would create a tree of classes that provide both a method for constructing an object of your base type, as well as the 'static' method. I do think it's a shame that C# (especially 1.0) forces this sort of large-scale thinking for such small problems. --JesseMillikan
+
+You can't do this for the same reason you can't require that derived classes all expose a public constructor with the same signature.  There are two sides to the coin.  The reasoning they use to leave this out is that inheritance is meaningless in these cases.  When you invoke a static method or a constructor, you must always invoke it using the name of the concrete class.  You can't call a static method virtually through a base class, and you can't call a constructor that way either.  The other side of the coin is that there is a reasonable workaround in the case of constructors, namely AbstractFactoryPattern.  You may be able to come up with a workaround for static methods in the same spirit as AbstractFactoryPattern.  Also, look at using a .NET class attribute on each derived class, where the attribute constructor takes the static method's info as a parameter.  I'm guessing that you are wanting to use the reflection features of .NET to call these static methods in a pseudo-polymorphic way.  Is that correct?  Keep in mind that while reflection is real convenient in some cases, it also causes the language to be self-referential, and therefore provably incomplete, as I understand it, thanks to GoedelsIncompletenessTheorem.  If you try to use reflection in this way, you'll keep running into things like this that just don't work out in the details.  -- MichaelSparks
+
+The desire for static methods in the contract is a smell.  BrianG says he doesn't want polymorphism, but he wants them all to have the same name.  Somethings wrong with the intent. -- EricHodges
+
+First, since he ''said'' he was going to go off and solve it a certain way and hasn't responded to anything else, I'm going to guess that this is mainly an academic discussion now. Otherwise I wouldn't chatter so much.
+
+Like me take a stab at what the smell is. The major smell is that there is an operation associated with an object type that is not being implemented as a method on the type. This makes sense to me; I would guess that it returns some metadata about the type that will be used in a 0-to-N instance situation (Say, to populate a datagrid with some changing columns and headers) where there is not necessarily an instance to use. In a situation like the example I gave, what would ''you'' suggest doing that would smell less? Keep in mind that he is probably not supposed to change the existing to the classes in order to add this aspect.
+
+I only think it smells that he won't mention the need he's trying to fill, but that's probably because he just wanted a language answer, and not an ideological discussion like we're starting now. --JesseMillikan
+
+I might suggest a new class that plays the role of a metaclass.  Something that keeps track of instances of M''''''yInterface and knows how to blah the set of them, perhaps.  I really don't know what his motivation is, so I can't give a good suggestion.  -- EH
+
+I need to enforce derived classes to have a static factory constructors named 'New' and 'Get(id)'. The reason is deployability - this is an N-tier solution with mobile objects, if it used normal constructors it would instantiate the object locally which is physically unacceptable in our design. We need to swap around the location of certain derived classes. The base class has additional shared/required functionality. So I need a base class that forces all derived classes from it to have static factory methods - impossible in .NET. The use of the constructors are in reflection. I read a report template with delimited fields corresponding to class names (Person.Surname). I must then reflect and invoke the Person class factory getter, grab the reflected surname property value, and populate the report. -- BrianG
+
+Then try my suggestion.  Create another class that has the new and get methods.  They don't belong on M''''''yInterface.  A method on M''''''yInterface applies to a single instance of that interface.  It sounds like you want methods that apply to all instances. -- EH
+
+By using reflection (and this does sound like a defensible application of it), you are entering more deeply into the world of DynamicTyping. Don't worry about the fact that you can't get the compile-time assurance that you're seeking regarding these static methods. You'll find out at run-time if they're missing. It's not a bug, it's a feature. It's really just a different way of programming, neither new, nor radical, nor wrong. Perhaps just unfamiliar if you've been using nothing but ManifestTyping for a long time.  If possible, set up UnitTests to verify the conditions you're concerned about. -- DanMuller
+
+.NET could enforce compile-time safety by semantically allowing 'abstract static' then generating a compiler error on polymorphic use of the base class (and enforcing static in derived). They chose not to, so it is a lack of a feature. You are forced to implement the contract in NUnit instead of .NET. -- BrianG
+
+But that would only close one hole. Using reflection as you are, there are plenty of additional holes. You could get a delimited field that doesn't reference any class, or that references a class that was never intended to be instantiated this way, or that only coincidentally has the static methods you're looking for, or someone could add the static method and forget to inherit from the required base class. That's the nature of using reflection this way. The run-time check for your static method is basically free, since you'll have to look the method up using reflection anyway, and that will either fail or succeed. It's a losing battle to pile features onto already-complex manifestly typed languages in attempts (often failing) to close very small holes when much bigger ones can't be - more and more complexity for smaller and smaller gain. In the face of such dynamic systems, there's no substitute for dynamic testing - and unit tests can easily check a lot more stuff than this requested language feature could. Omitting reflection from the equation, I can't think of any mistake that this addition could prevent that isn't covered by other mechanisms already.
+
+Who decides whether objects are created locally or remotely? If you package that into a static method of each class, you'll need the complete code for each class in each client, even if the objects are never created locally. If the decision actually has nothing to do with the class, but depends on dynamic system state, this could be handled by a single factory class that forwards creation requests to a remote service for non-local objects, returning a proxy (which will probably only need to support the base class interface). The remote method just needs to be able to look constructors via reflection, as does the local method for locally-created objects.
+
+-- DanMuller
+
+----
+
+Is there a way to foil the compiler by accepting a Type and then invoking a 'bound' generic type on it (runtime downcasting). I know this won't compile, looking for a refactoring or a workaround for:
+
+    private void UseNode<T>() where T : INodeObject
+    {
+    }
+    private void treeList1_Click(object sender, EventArgs e)
+    {
+        Type nodeType = treeList1.Selection[0].Tag.GetType();
+        UseNode<nodeType>();
+    }
+
+ATM I have to do something like this (I tie string to an enum but it still sucks):
+
+    private void treeList1_Click(object sender, EventArgs e)
+    {
+        Type nodeType = treeList1.Selection[0].Tag.GetType();
+        switch (nodeType.Name)
+        {
+            case "IHateBeingForcedToUseSwitchesType"
+                UseNode<IHateBeingForcedToUseSwitchesType>;
+                break;
+            case "WhyAreGenericsHackedType"
+                UseNode<WhyAreGenericsHackedType>;
+                break;
+            ...tons of duplicate code...
+        }
+    }
+-- BrianG (BTW, thanks for all your help and advice Dan!)
+
+Are the types being used with UseNode<T>() available for modification? My first guess is that those types should all implement an interface that declares a non-generic method to do whatever UseNode<T>() is supposed to do. This hypothetical method would be called from treeList1_Click, presumably with '''this''' as an argument, or with some arguments that derive from the private state of '''this'''. Hard to tell if this would work without a lot more context, though.
+
+If that's not available, perhaps because the types used with UseNode<T>() aren't available to be modified, then things do get a bit difficult. I think your specific question is: "given a type known only at run time, how do I invoke a generic method instantiated for that type?" (I don't know if the term "instantiation" is used in C# or CLR documentation, but that's the term you'd use in C++.) I believe the answer is yes, but after a brief perusal of the MSDN, it looks quite complicated. Take a look, e.g., at the documentation for System.Reflection.Emit.MethodBuilder.MakeGenericMethod(), and then follow the link under the heading "Other Resources".
+
+Chances are that there's an easier way to do whatever it is you're trying to do, but your explanation is too sparse. For instance, I'm having a real hard time imagining what the heck UseNode<T>() would want to do that requires it to be generic.
+
+-- DanMuller
+
+I agree with Dan; give details about where you're getting the items to put in the tree. I'm guessing that you actually know all the types at compile time, you just don't know an easy way to get them into the UI and back. 
+
+If the operation doesn't belong in the types you're talking about, e.g. it's a specific user interface action, you could wrap each type in a class with a simple interface. If you just need one operation for each item, you could close over each type with an inline delegate containing the statically typed action, and store the delegate in the UI instead.
+
+--JesseMillikan
+
+Sorry but both of those suggestions simply shift the duplication from one area to another instead of removing it. I don't want each type to duplicate the same implementation, I want to use a generic implementation that works with any type. BTW, the business use is a GUI tree where each tag corresponds to a business object. The UseNode calls up a form for the object and attaches it to the right panel, sets visible, docks, etc. It's a shame that generics forces you to roll your own polymorphism in a switch statement for this problem. --BrianG
+
+But, if the code is the same for each type, why does the type have to be known? If UseNode is, for instance, binding to members of the objects using reflection, wouldn't it be adequate to declare UseNode to take an object of type '''object'''? You're still not telling us enough about the problem to justify the implementation choice that you seem to have already made -- a choice that goes against the grain of the language, and thus does warrant justification. The very nature of generics is that their use requires compile-time knowledge of type arguments. It's not "a shame", it's how they work. So they may well be the wrong vehicle for what you're trying to accomplish. -- DanMuller
+
+That aside, here's a bit of working code that does something related to what you want. It is from a brand new "Windows Application" project with a ListBox and TextBox on the main form. The only "repetition" I see is that you need to include the type when adding the items. This may get you something like what you want, without having to move to run-time.
+
+ namespace WindowsApplication1 {
+     public partial class Form1 : Form {
+         public delegate void Empty(); 
+         public Form1() {
+             InitializeComponent(); 
+             AddItem(1);
+             AddItem<Form>(this);
+             AddItem(this);
+        }
+         public void AddItem<T>(T t) {
+             listBox1.Items.Add((Empty)
+                 delegate() {
+                     UseNode<T>(t);
+                 });
+         }
+         public void UseNode<T>(T t) {
+             textBox1.Text = typeof(T).ToString();
+         }
+         private void listBox1_SelectedIndexChanged(object sender, EventArgs e) {
+             Empty f = (Empty)listBox1.SelectedItem;
+             f();
+         }
+     }
+ }
+
+--JesseMillikan
+
+Here is a revised example to illustrate more of the bizarre behavior:
+
+    using System;
+    class Test
+    {
+	    delegate void a''''''Delegate();
+	    struct Block	//DIFFERENT RESULT with struct<=>class
+	    {
+	    	    public int test;
+		    public Block(int x)
+		    {
+	    	    	    test = 0;
+	    	    	    new aDelegate(S''''''etT''''''oOne).Invoke();
+		    }
+	    	    void S''''''etT''''''oOne()
+		    {
+	    	    	    test = 1;
+		    }
+	    }
+	    static void S''''''etToT''''''en(Block block)
+	    {
+	    	    block.test = 10;
+	    }
+	    static void Main()
+	    {
+	    	    Block block = new Block(0);
+	    	    Console.W''''''riteLine(block.test);
+	    	    S''''''etT''''''oTen(block);
+	    	    Console.W''''''riteLine(block.test);
+	    	    Console.R''''''eadLine();
+	    }
+    }
+
+-- BrianG
+
+
+How is this related to the discussion that you tacked it onto?
+
+This is an entirely different problem, which is also discussed earlier on this page. (In response to an earlier question by you, I see!) You need to understand that struct instances, in C# (and in the CLR in general) are not objects in the same sense that class instances are. A struct instance is not normally allocated on the heap. In order to get a reference to a struct, it has to be "boxed". Your example shows one of many ways that this can bite you. When you create a delegate, it implicitly includes (if necessary) a reference to the object that it's associated with. If that "object" is actually a struct instance, then the delegate will reference a boxed ''copy'' of the original instance. So, no visible side-effect in the original struct instance.
+
+My opinion is that structs should be used rarely, and should preferably be designed as immutable value objects.
+
+-- DanMuller
+
+Immutability being a good thing *anyway*, it doesn't have much to do with getting this right. .NET calls structs "Value Types", and the semantics are roughly the same as for primitives. You don't have to make `int` immutable in order to know its going to behave the same way `struct Block` does in the example above.
+
+If you pass a struct or class by value in C++, you get the same thing btw.
+
+Treat these things not as `objects`, but as `values` and you'll be fine.
+
+----
+CsharpVsNativeCode
+
+FebruaryZeroSeven

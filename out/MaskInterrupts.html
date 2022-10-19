@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Mask Interrupts
+      </h1>
+      <p>
+        One of many <a href="JavaIdioms.html">JavaIdioms</a>.
+      </p>
+      <p>
+        <strong>Context</strong>
+      </p>
+      <p>
+        Consider an operation that involves blocking the calling thread, but can't be interruptible -- either because it is messy to clean up in case of an interruption, because it must fulfill an interface that can't throw <a href="InterruptedException.html">InterruptedException</a>, or because it is known that the block is always very short and so adding "was interrupted" to the operation's possible outcomes is trouble for no benefit.  The obvious solution is to wrap each interruptible call (which typically must already be in a predicate-checking loop) with a try-catch for <a href="InterruptedException.html">InterruptedException</a>:
+      </p>
+      <code>
+        public class Patience {<br/>
+        private final DataProcessor d;<br/>
+        //...<br/>
+      </code>
+      <code>
+        public int cookData() { // Reason #2: does not throw <br/>
+        synchronized(dataSrc) {<br/>
+        //Reason #1: The processor and the source need to do some setup,<br/>
+        //which we don't want to have to undo because of an interrupt.<br/>
+        d.prepare(dataSrc);<br/>
+        //Reason #3: the data source never goes long without having data<br/>
+        //because it will fall back on default data automatically.<br/>
+        while(!dataSrc.hasData())<br/>
+        <strong>try {</strong>dataSrc.wait();<strong>}</strong><br/>
+        <strong>catch(InterruptedException e) {}</strong><br/>
+        return d.process(dataSrc.getData());<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        <strong>Problem</strong>
+      </p>
+      <p>
+        Unfortunately, this implementation means that any client can no longer reliably use interrupts for their own purposes:
+      </p>
+      <code>
+        class Chef extends Thread {<br/>
+        private volatile boolean makeDish;<br/>
+        private final Patience breadAnalyzer;<br/>
+        //...<br/>
+      </code>
+      <code>
+        public void request() {makeDish=true; interrupt();}<br/>
+        public void run() {<br/>
+        while(true) {<br/>
+        if(makeDish) {/*...*/}<br/>
+        else {<br/>
+        //Adjust oven temperature periodically based<br/>
+        //on texture of contained food.<br/>
+        adjustTemp(breadAnalyzer.cookData());<br/>
+        try {Thread.sleep(15000);}<br/>
+        //Hm, somebody wants our attention; check the flag again:<br/>
+        catch(InterruptedException e) {}<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        The function request() is now broken, because if it happens to send an interrupt during the call to cookData(), the next sleep (for 15 seconds!) will happen anyway.  In this case, simply adding "if(!makeDish)" in front of the try block will fix the problem, but the author of Cook doesn't know that it's necessary, since cookData() <em>isn't interruptible</em>!  <em>(If anyone has a better example that couldn't be so easily fixed, please contribute it!)</em>
+      </p>
+      <p>
+        <strong>Solution</strong>
+      </p>
+      <p>
+        The solution is very straightforward:
+      </p>
+      <code>
+        public class Patience {<br/>
+        private final DataProcessor d;<br/>
+        //...<br/>
+      </code>
+      <code>
+        public int cookData() {<br/>
+        synchronized(dataSrc) {<br/>
+        d.prepare(dataSrc);<br/>
+        <strong>boolean interrupted=false;</strong><br/>
+        while(!dataSrc.hasData())<br/>
+        try {dataSrc.wait();}<br/>
+        catch(InterruptedException e) {<strong>interrupted=true;</strong>}<br/>
+        <strong>if(interrupted) Thread.currentThread().interrupt();</strong><br/>
+        return d.process(dataSrc.getData());<br/>
+        }<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        In this version, any interrupts are converted into one interrupt (like POSIX signals, they coalesce) that is re-delivered at the end of the function.  The next time that the thread tries to wait (like the sleep() in Cook), a new (but conceptually the same) <a href="InterruptedException.html">InterruptedException</a> will be immediately thrown.  In other words, the function no longer ignores interrupts, but rather masks them so that they take effect at the next cancellation point.
+      </p>
+      <hr/>
+      <p>
+        <strong>Q:</strong> Is there a reason to lose the exception data? or does InterruptedException not provide subclassing? Is something like the following possible? 
+      </p>
+      <code>
+        InterruptedException iex = null;<br/>
+        while(!dataSrc.hasData()) <br/>
+        try { dataSrc.wait(); }<br/>
+        catch(InterruptedException e) { iex = e; }<br/>
+        if(null != iex) Thread.currentThread().interrupt(iex);<br/>
+        return d.process(dataSrc.getData()); <br/>
+      </code>
+      <p>
+        I'll admit Java is not my primary language here, so let me know if it can't be done or if there is no reason to do it.
+      </p>
+      <p>
+        <strong>A:</strong> An InterruptedException provides in its backtrace the function that got interrupted; it would be confusing to have the exception in the example thrown by sleep() but reported as coming from the wait() inside cookData().  Moreover, the exception is generated (by the runtime) at the time it is thrown, not at the time the interrupt() happens, so there simply is no Thread.interrupt(InterruptedException) method to call.  (Such a method wouldn't work in general anyway, because another thread may have already called or be planning to call interrupt() itself and so your InterruptedException might get ignored or overwritten; only one interrupt can be pending at a time, and it's simply a boolean flag until it gets thrown as an exception.)  Other, more minor points include that your code would still lose all but the first such exception, and that InterruptedExceptions don't have much in the way of useful data other than the traceback anyway.  Finally, we really want to give the appearance that cookData() doesn't get interrupted, so it's proper for the resulting exception to imply that the interrupt happened later.
+      </p>
+      <p>
+        <em>Ah, I see...</em>  I must admit the fact that exceptions are treated as excuses to carry backtraces has always pissed the heck out of me (give me <em>continuations</em>, not backtraces! simply allow inspection on continuations if I need them for debugging! related: <a href="AbortRetryIgnore.html">AbortRetryIgnore</a>). And interrupt exceptions really could (& should) carry more information (including source, privilege/capability/authorization, and a message indicating purpose, such as timeout, alarm, kill signal, etc.). As far as losing all but the last interrupt, one could easily create a queue of one or more interrupts to be packaged into an 'DelayedInterruptsException extends IterruptedException' class. But there isn't much point if the interrupts really do carry as little information as you say.
+      </p>
+      <p>
+        Thanks for the prompt answer. I hear Java got better after the 1.2 days (which was when I last used it).
+      </p>
+      <p>
+        <strong>continued:</strong> In Java, both exceptions and interrupts are lower-level than what it sounds like you're wanting; the interrupt is merely a tool to allow another thread to reconsider what it's waiting on.  Nothing stops you from supplying data (like your purpose message) to the thread before you interrupt it; you just have to write the thread's code to know about the message and consult it when it wakes up.  Menawhile, it's certainly true that <a href="ResumableException.html">ResumableException</a>s would be nice, but where it's really important to have them you can introduce a state machine (perhaps within the <a href="CommandPattern.html">CommandPattern</a>) that remembers where the exceptions were thrown and then provide a retry() method that does the right thing without having to involve the client in the details of the resumption logic.
+      </p>
+      <p>
+        <em>Yes, one can always</em> Greenspun a solution with enough hacking, building a virtual machine within the virtual machine. Doing so sort of defeats the purpose of working in the host language, though, and usually hinders interoperability. Solutions need to be standard or idiomatic if they are to also be modular. Exceptions and interrupts <em>could be</em> higher level in Java with interrupts still serving the purpose you stated: allowing another thread to reconsider what it is doing. The <em>fundamental purpose of exceptions</em> is to allow programmers to separate error-handling policy from the code that identifies the error; use of <a href="ResumableException.html">ResumableException</a>s is one solution that makes doing so truly feasible, especially if multiple options for resumption with standard semantics (abort, retry, ignore, fail, return, etc.) are made available and can be wrapped and/or added to by intervening exception handlers. With modern Java-style exceptions a decider of error handling policy (who picks the path to take after an error) is often limited by not knowing how to accomplish it unless placed very close to the error itself, which in practice forces exception-handling to occur close to the exception, which requires integrating error-handling policy with the code itself, which ultimately defeats <em>the fundamental purpose of exceptions</em>. Providing backtraces is pointless for this purpose.
+      </p>
+      <p>
+        Perhaps this interesting conversation should be moved to and enshrined upon another page?
+      </p>
+      <hr/>
+      <p>
+        This is exactly why I consider that interruption should be part of the internal implementation of a class and should not be exposed outside. You want to interrupt me? Fine, call any cancel() method and I'll take care of sending the appropriate signals or whatever. There is no cancel or something method and you want to interrupt me? Too bad, nothing is designed to do so, and <strong>do not try to blindly interrupt me and expect to get some sensible result</strong>. Remember that interrupting a read operation will not result in an <a href="InterruptedException.html">InterruptedException</a> but in an IOException.
+      </p>
+      <p>
+        There are several advantages with that approach:
+      </p>
+      <ul>
+        <li>
+           Since nobody is supposed to interrupt any thread that has not specifically be designed to be interrupted, you now know exactly how to react to an <a href="InterruptedException.html">InterruptedException</a>: a bug that should be handled the way any other internal error is treated in your application (i.e. log an error, throw a runtime exception, whatever).
+        </li>
+        <li>
+           For the small set of threads that actually do expect interruption, you can make the cancel or abort method closely collaborate with that thread. For instance, the thread can report whether it is safe to interrupt now, or if you'd better just flag the abort boolean to true since we're processing some client code that is not designed to be interrupted.
+        </li>
+      </ul>
+      <p>
+        -- <a href="PhilippeDetournay.html">PhilippeDetournay</a>
+      </p>
+      <p>
+        If you want to subclass 'Thread' so you can override the interrupt methods (or wrap a thread so you can control access to it) for a particular task, then go ahead. But it doesn't even make sense to implement an 'interrupt' method on most classes, and it is often necessary to separate the interruption policy VERY far from the code being interrupted.  In fact, even with your proposed approach of providing a 'cancel' operation, the interruption policy is usually operating at the very <strong>bottom</strong> of the thread's stack, whereas the code immediately being interrupted by any sort of asynchronous exception is operating at the very <strong>top</strong> of the thread's stack. 
+      </p>
+      <p>
+        Unless you plan on tightly coupling the code at <strong>every</strong> point in the stack to the task in which it is running, you <strong>will</strong> need to apply a policy at the top of that stack for this and that bit of code which must not be interrupted. That is, you'll need to catch or prevent the interrupt and somehow delay it - you'll need to <a href="MaskInterrupts.html">MaskInterrupts</a>. Not even <a href="AbortRetryIgnore.html">AbortRetryIgnore</a> will avoid that requirement: it would only make resumption and alternative behaviors easier. I.e. your proposed solution will not <em>actually</em> solve the problem unless you sacrifice modularity. 
+      </p>
+      <hr/>
+      <p>
+        My issue with the "interruptible class" idea is that classes aren't threads (except, of course, when they extend Thread).  In general, thread B has no idea which object thread A is using at the moment (and no way of reliably using such information before it becomes invalid if it did know), so it can't call a nice cancel() method.  Now, if what B knows is that, say, a particular data object is invalid, it can call a recalculate() method on it that, if it were appropriate, might interrupt() the thread (if any) that was using it.  But if what B knows is that A itself is doing something "wrong" (because of information that A may have checked before it changed, say), its only real recourse is to use interrupt() directly on A, in which case every class into which A may have called needs to handle interrupts gracefully (if it is interruptible at all).
+      </p>
+      <p>
+        As for IO exceptions, interrupting a read is supposed to throw an InterruptedIOException that tells you where reading stopped so that you can resume it without loss of data.  However, I must say I don't know how that plays into, say, a Reader that is interrupted mid-character.
+      </p>
+      <p>
+        -- DavisHerring
+      </p>
+      <p>
+        It seems (from the <a href="InterruptedException.html">InterruptedException</a> page) that InterruptedIOException subclasses IOException... which, in Java, means it cannot simultaneously subclass <a href="InterruptedException.html">InterruptedException</a>. Your advice is still useful in terms of masking <em>asynchronous</em> exceptions in general, but it <em>would</em> be much easier to actually implement this advice if all such exceptions could be matched against a single rule. As is, you may need several rules:
+      </p>
+      <code>
+        try {<br/>
+        ...<br/>
+        } catch(InterruptedException iex) {<br/>
+        ...<br/>
+        } catch(InterruptedIOException iioex) {<br/>
+        ... copy and paste code under iex ...<br/>
+        } catch(StupidTimeoutExceptionOrWhatever  stexor) {<br/>
+        ... copy and paste code under iex ...<br/>
+        }<br/>
+      </code>
+      <p>
+        The developers of Java have made many poor design decisions (enough to have me running away when I tried Java 1.2). Its asynchronous exceptions and interrupts clearly aren't shining examples of foresight, modularity, safety, and interoperability.
+      </p>
+      <hr/>
+      <p>
+        I agree that if the job you want to interrupt is at the bottom of the stack, tighlty coupling the abort method with the interruption implementation is not something you want to do. Now my point with the IOException is that, by default, any piece of code is not "InterruptSafe", and catching <a href="InterruptedException.html">InterruptedException</a> is not going to help you a lot. So if you plan to have interruptible jobs running at the bottom of the stack, you'd better plan it from the beginning and ensure that the entire stack can be safely interrupted at anytime (and good luck with that). My personal (YMMV etc) experience about Java's thread interruption is that it is equivalent to POSIX signals: avoid them unless absolutely necessary and prefer an had-hoc implementation for aborting lengthly tasks. Interrupt is nice to abort <em>this specific</em> wait operation, <em>this specific</em> socket accept or <em>this specific I/O read</em>, but should not be used as a generic task control mechanism as (as already explained by others on this page) it is too limited and under-specified.
+      </p>
+      <p>
+        -- <a href="PhilippeDetournay.html">PhilippeDetournay</a>
+      </p>
+      <p>
+        RE: <em>"by default, any piece of code is not "</em>InterruptSafe", and catching <a href="InterruptedException.html">InterruptedException</a>"<em> - and that is where </em><a href="ResumableException.html">ResumableException</a>s come in. <a href="AbortRetryIgnore.html">AbortRetryIgnore</a> is (in general) about separating error handling mechanism from policy, but in the context of asynchronous exceptions there is an especially powerful incentive to capture the current continuation prior to entering the exception handling code. This would allow a variety of interesting behaviors, such as saving the continuation to checkpoint a program, or inspecting the continuation to profile the program, or switching to a different continuation in order to schedule a variety of threads, or aborting the continuation because the soft kill signal was delivered but still issuing the continuation to execute code in every <strong>finally</strong> block (from <strong>try/catch/finally</strong>) between the thread base task and the top of the stack in order to cleanly free up resources and abort transactions. 
+      </p>
+      <p>
+        Really, the poor safety for asynchronous exceptions in Java seems to be because the designers forgot that <a href="LanguagesAreOperatingSystems.html">LanguagesAreOperatingSystems</a>, and they failed to design accordingly. This certainly isn't a necessary problem in every language out there. In the context of Java in particular I'll agree with Philippe, but I think it is a problem that should be fixed <em>by fixing Java</em> rather than by creating complex workarounds and state machines and command patterns and idioms and so on.  (<a href="DesignPatternsAreMissingLanguageFeatures.html">DesignPatternsAreMissingLanguageFeatures</a>, or at least exhibit a <a href="MissingFeatureSmell.html">MissingFeatureSmell</a>). Java is somewhat fortunate in that one actually can go about 'fixing Java' without seeking everyone's permission. That's what motivated such things as the <a href="GroovyLanguage.html">GroovyLanguage</a> and the <a href="PizzaLanguage.html">PizzaLanguage</a> which can compile into JVM bytecode.
+      </p>
+      <hr/>
+      <p>
+        <em>aborting the continuation because the soft kill signal was delivered but still issuing the continuation to execute code in every finally block (from try/catch/finally) between the thread base task and the top of the stack in order to cleanly free up resources and abort transactions</em>. This is exactly what ThreadDeathException is all about, and it has been deprecated because it was intrinsically unsafe - you typically don't design your code to be ready to cope with exceptions being thrown from <em>i++</em>. Managing to get abortable code in a non-toy, multithreaded environment is quite difficult (but possible as illustrated by databases) and I wouldn't add this kind of features in any mainstream language (here Java) as people are already confused enough with basic error management (catch(Throwable th) {} anyone? Or let's remember the goold old ON ERROR RESUME NEXT).
+      </p>
+      <p>
+        -- <a href="PhilippeDetournay.html">PhilippeDetournay</a>
+      </p>
+      <p>
+        Whether or not you're designing to support interrupts, kill signals, hibernation, etc. you're going to be dealing with them in any non-trivial application whether or not you 'support' it. Ignoring them in language design is sort of a head-in-the-sand solution - unless your language is one of those 'toy' environments. Indeed, because supporting interrupts and abortable code in a concurrent 'quite difficult' but suffering them is nonetheless necessary, I'd say it is exactly the sort of thing mainstream languages need to make easier... by, for example, supporting:
+      </p>
+      <ul>
+        <li>
+           resumption, restarts, and other policy decisions after interrupt (in much the same manner as exceptions)
+        </li>
+        <li>
+           user-defined interrupts that can carry arbitrary content (rather than restricting users to just the few provided by the host <a href="OperatingSystem.html">OperatingSystem</a>).
+        </li>
+        <li>
+           transactions to undo damage and maintain consistency (though 'isolated' transactions are never interrupted in a semantic sense).
+        </li>
+        <li>
+           and the ability to easily <a href="MaskInterrupts.html">MaskInterrupts</a> to delay their handling for code that cannot be safely interrupted (where transactions and resumption won't help).
+        </li>
+      </ul>
+      <p>
+        A lot of that 'confusion' with basic error management that exists probably exists because the mainstream languages don't make thinking about error management easy. The tools one has to uniformly express and deal with errors are return values and expressions, and so programmers try to contort and shove every problem into one of those two boxes.  If people are equipped with the right tools to solve certain problems, they'll have an easier time understanding those problems.
+      </p>
+      <p>
+        <em>I'll recant the above:</em> a language <em>could</em> aim to constrain programs in order to make explicit 'thread' interrupts meaningless - i.e. if you cannot explicitly sleep or block while waiting for input, or if access to any given input is <em>never</em> exclusive (i.e. support for one->many pipes, no mutexes), then you simply don't need interrupts. <a href="EeLanguage.html">EeLanguage</a> follows this basic design, except with a simple tweak where one can create a promise and allow it be filled via a race-condition (thus allowing something like interrupts - InterruptsAreRaceConditions). Similarly, a language could make the 'safe' interrupt areas more explicit... i.e. if one aims for disruption tolerance, then dropping certain messages (esp. those marked 'unreliable') is one mechanism to cause an interrupt.
+      </p>
+      <hr/>
+      <p>
+        Using interrupt() just for aborting specific wait() is an inherently bad idea. Just use an explicit boolean variable synchronized under the same semaphore as the wait() call. Add the earlier proposed cancel() call with a notify() call within, and it works nicely. Or post a message to an explicit Queue. And so on.
+      </p>
+      <p>
+        You want to interrupt just a 'generic' thread? Fine, but then you are definitely looking for killing the thread (to quickly release resources referenced from its stack as well as the native stack itself - ever seen those no-longer-needed [read] I/O a background thread stuck upon while the user already closed the window, browser terminated connection, etc?) - any other 'generic interrupt action' you could think of? But then, upon catching the <a href="InterruptedException.html">InterruptedException</a> the appropriate action would be to return from the current method (with error code), set exit flag, or better throw some suitable exception, maybe even ThreadDeathException - anything is better than mindlessly re-raising the interruption flag. But calling interrupt() in the 'generic' thread is potentially very dangerous anyway: it might be doing write I/O for example. Unless the thread code (including all future changes) is completely under your control, you never know what is going to happen there for sure.
+      </p>
+      <p>
+        No performance benefits from using interrupt() too: you anyway need to pass at least one write and then at least one read memory barriers (the implicit interrupt flag is volatile at least), and that's already equivalent to entering/exiting a synchronization block.
+      </p>
+      <hr/>
+      <p>
+        <a href="OctoberZeroEight.html">OctoberZeroEight</a>
+      </p>
+    </div>
+  </body>
+</html>

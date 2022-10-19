@@ -1,0 +1,226 @@
+'''Problem:''' An XmlLanguage (or similar) document format is too hard to process.
+
+'''Context:''' Some of the data has significant internal structure (we'll say that the ''logical data'' is ''buried''), and the code to extract the buried data has to be duplicated by each consumer.
+
+'''Solution:''' Change the format so that each individual datum is isolated in a container of its own, but avoid unnecessarily splitting atomical data.
+
+Laziness is about the only thing that may with right encourage you to keep the internal structure. If at all possible, you should definitely extract any data ''now'' that you think may need to be treated individually at some later point, because at that later point, extracting the data can, and probably will be, very impractical.
+
+On the other hand, data can be split and split until there's only ones and zeros left, but this is also highly impractical. Luckily, context almost always makes it obvious to which degree a chunk of data should be split until the components can be considered effectively atomical. ''Hint: any kind of list should almost never be considered atomical.''
+
+'''Resulting Context:''' It is no longer necessary to perform lexical scanning in order for a processing application to pull out the data. Now is a good time to GroupRelatedData.
+
+'''Known Uses:''' This usually happens when data is hastily converted from one format to another, causing chunks of encoded structured data to be copied verbatim into the new format. The processing tools for the new format are then completely oblivious to this hidden structure, but the fact that the data ''is'' logically structured remains, and the problem arises once someone wants to extract and use the buried data.
+
+Much criticism against XsltLanguage assumes a source document that contains buried data. The problem strikes unexpectedly hard in this case, because XSLT has very poor string-parsing capabilities. This fact should not really be any more surprising than the fact that regular expressions have very poor XML-parsing capabilities, but for some reason people seem to expect any language to let you munge strings at blazing speed.
+
+'''Author:''' DanielBrockman 2004-01-20
+----
+First, let's see some abstract examples to help illustrate the essence of the problem. (Real-world examples are discussed further down.)  In the examples, XML is set in normal font, while EssExpressions are set in italics.
+
+Note: I will primarily be using XML for the examples, since this does not seem to be as much of a problem in, e.g., the S-expressionized part of the world. I don't know whether this is because it's easier to write good S-expressions or because smarter people write them - my guess is that both factors play their part. I've added S-expression examples for completeness, but in many cases they just look completely silly.
+----
+
+'''Polygon example'''
+
+Bad -- unprocessable ''(does not isolate each datum)'':
+ <polygon>1 6 3 5 4 6</polygon>
+ ''(polygon "1 6 3 5 4 6")''
+Even worse -- laughable ''(does not isolate each datum, and contains unnecessary line noise)'':
+ <polygon>1, 6, 3, 5, 4, 6</polygon>
+ ''(polygon "1, 6, 3, 5, 4, 6")''
+Good -- processable ''(isolates each datum)'':
+ <polygon>
+	<coordinate>1</coordinate>
+	<coordinate>6</coordinate>
+	<coordinate>3</coordinate>
+	<coordinate>5</coordinate>
+	<coordinate>4</coordinate>
+	<coordinate>6</coordinate>
+ </polygon>
+''Problem is that this scale poorly. If your data contain large arrays of integers, it makes the file unnecessary big and slows down parsing.''
+''Isn't there a better way ? Maybe XML needs some way to say "there starts a list of coordinate elements, separated by the , character", followed by''
+''comma separated values that would be implicitly treated by the parser as individual elements like show above.''
+
+
+ ''(polygon 1 6 3 5 4 6)''
+Note that wrapping the numbers in the S-expression would be pointless, since S-expressions has built-in support for lists of numbers, while XML does not support numbers nor lists of character data. So ''don't'' do the following:
+ ''(polygon''
+ ''  (coordinate 1)''
+ ''  (coordinate 6)''
+ ''  (coordinate 3)''
+ ''  (coordinate 5)''
+ ''  (coordinate 4)''
+ ''  (coordinate 6))''
+''(See GroupRelatedData for the rest of the story.)''
+
+'''Triangle example'''
+
+Bad -- unprocessable ''(does not isolate each datum)'':
+ <triangle>2.4 5.0 7.5</triangle>
+ ''(triangle "2.4 5.0 7.5")''
+Good -- processable ''(isolates each datum)'':
+ <triangle>
+	<side>2.4</side>
+	<side>5</side>
+	<side>7.5</side>
+ </triangle>
+ ''(triangle 2.4 5.0 7.5)''
+Equally good ''(isolates each datum)'':
+ <triangle a="2.4" b="5" c="7.5" />
+ ''(triangle (a 2.4) (b 5) (c 7.5))''
+Bad -- laughably impractical ''(splits data unnecessarily)'':
+ <triangle>
+	<side>
+	<float>
+	<integral-part>2</integral-part>
+	<decimal-part>4</decimal-part>
+	</float>
+	</side>
+	<side>
+	<integer>5</integer>
+	</side>
+	<side>
+	<float>
+	<integral-part>7</integral-part>
+	<decimal-part>5</decimal-part>
+	</float>
+	<side>
+ </triangle>
+ ''(S-expression equivalent too silly)''
+----
+Examples actually encountered in the wild follow.
+----
+
+'''Apple's new plist format'''
+
+Awful original -- unprocessable ''(among other things, lots of buried data)'':
+ <plist version="1.0">
+	<dict>
+	<key>A''''''nimateSnapToGrid</key>
+	<string>true</string>
+	<key>E''''''mptyTrashProgressWindowLocation</key>
+	<string>79, 44</string>
+	<key>F''''''ileViewer.L''''''astWindowLocation</key>
+	<string>228, 140, 1,091, 826</string>	''<!-- what does this even mean? -->''
+	</dict>
+ </plist>
+Better -- processable ''(isolates a respectable amount of data)'':
+ <plist version="1.0">
+	<dict>
+	<key>A''''''nimateSnapToGrid</key>
+	<boolean value="true" />
+	<key>E''''''mptyTrashProgressWindowLocation</key>
+	<point x="79" y="44" />
+	<key>F''''''ileViewer.L''''''astWindowLocation</key>
+	<rectangle x1="228" y1="140" x2="1091" y2="826" />	''<!-- guessing -->''
+	</dict>
+ </plist>
+The structured keys is a tricky case. If we were using a lighter format, such as S-expressions, we could easily break it up into components with minimal cost. Since there's no such thing as an anonymous list in XML, and each datum has to be isolated, the following is probably the best we can do:
+ <plist version="1.0">
+	<dict>
+	<key>A''''''nimateSnapToGrid</key>
+	<boolean value="true" />
+	<key>E''''''mptyTrashProgressWindowLocation</key>
+	<point x="79" y="44" />
+	<key>
+	<subkey>F''''''ileViewer</subkey>
+	<subkey>L''''''astWindowLocation</subkey>
+	</key>
+	<rectangle x1="228" y1="140" x2="1091" y2="826" />	''<!-- guessing -->''
+	</dict>
+ </plist>
+In this case I decided that they keys could probably be considered more or less atomical, and so avoid this extra structure. However, since I don't really know how this data is going to be used, this may be a bad decision.
+
+''(See GroupRelatedData for the rest of the story.)''
+
+'''The BS 7666 Address Format'''
+
+BS7666 is a British standard for addressable units of land, essentially building plots. The standard originally used fixed- and variable- width text records. When it translated, erm, effortlessly into XML, the fixed width records (PAON, SAON) weren't split apart, and ended up as ''variable'' width elements in the XML. A PAON just represents things like '22 Acacia Avenue' or 'Next to front gate, Hill Farm'. Here's the original definition, for the text format:
+
+	Primary and secondary addressable object name field structures
+	Character 
+	position     Usage
+	.1-4	Number
+	.5	Suffix
+	.6-9	End of range number
+	.10	Suffix to end of range number
+	.11-100	Text
+
+And here's what made it into the schema: 
+
+	<xsd:simpleType name="PAONtype">
+	<xsd:restriction base="xsd:string">
+		<xsd:minLength value="4"/>
+		<xsd:pattern value="[0-9 ]{4}[A-Z ]([0-9 ]{4}[A-Z ][a-zA-Z0-9:;<=>\?@%&'\(\)\*\+,\-\.  ]{0,90})?"/>
+	</xsd:restriction>
+	</xsd:simpleType>
+
+(from http://www.govtalk.gov.uk/documents/BS7666-v1-4.xsd)  BTW; sharper eyes in the audience will note that PAONType has a minLength of 4 chars while the regexp has a minimum of 5...
+
+Its common for these things to have no numeric identifiers, so you get 10 spaces at the start on named buildings, e.g. "Buckingham Palace". Because the datum aren't isolated, the whole is easily corrupted by trimming whitespace, and this always happens somewhere or other. House numbers are also what users expect to see - not PAONs - so every consumer of BS7666 has a PAON parser to deal with this mess, and a formatter to fill it back in when details get edited. It should be pretty obvious, even to the most junior consultant hired by the Cabinet Office to write this thing that this Makes No Sense.
+
+----
+''(original discussion from XmlSucks follows)''
+
+XML is too verbose to do hand editing in a lot of situations. Again, this does not apply to text documents such as web pages, but things like common formats for configuration files. Here is Apple's old plist format and the new XML one:
+ {
+	A''''''nimateSnapToGrid = true; 
+	E''''''mptyTrashProgressWindowLocation = "79, 44"; 
+	"F''''''ileViewer.LastWindowLocation" = "228, 140, 1,091, 826"; 
+ }
+
+ <?xml version="1.0" encoding="UTF-8"?>
+ <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+ <plist version="1.0">
+	<dict>
+	<key>A''''''nimateSnapToGrid</key>
+	<string>true</string>
+	<key>E''''''mptyTrashProgressWindowLocation</key>
+	<string>79, 44</string>
+	<key>F''''''ileViewer.L''''''astWindowLocation</key>
+	<string>228, 140, 1,091, 826</string>
+	</dict>
+ </plist>
+I think the XML format here was a mistake. I would love to see a common format for configuration files, but I don't think XML is it.
+
+''Maybe, but the Apple XML design is pretty weak in itself:''
+ <?xml version="1.0" encoding="UTF-8"?>
+ <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+ <plist version="1.0" >
+	<p key="A''''''nimateSnapToGrid">true</p>
+	<p key="E''''''mptyTrashProgressWindowLocation">79, 44</p>
+	<p key="F''''''ileViewer.L''''''astWindowLocation">228, 140, 1,091, 826</p>
+ </plist>
+''And if the values aren't structured, you could use attributes there as well (but it's often the case values need to be structured and keys don't). The other problem with flat lists is that properties often to to be related with each other, be in a list or point to another properties file. When you have tree shaped configurations (and it's not uncommon), XML is useful (and so are sexprs) to avoid private conventions. Finally, another thing that makes XML valuable is the encoding declaration, though people don't talk about the value of Unicode so much -- BillDehora''
+
+Let's try an S-expression using standard CommonLisp lexical syntax:
+ ((animate-snap-to-grid t)				;; we have a real boolean true object, folks! ''um, no you don't''
+	(empty-trash-progress-window-location (79 44))  ;; list object containing two integer objects
+	((file-viewer last-window-location)			;; let's use a list to represent a structured key name
+	((228 140) (1091 826))))
+It's tempting to wrap some useless syntax around this like (plist (dict ...))) but that is just useless bloat. The meaning of the form is implicit from the context in which it is used. Complex number objects could be used instead of lists to represent 2D coordinates, like #c(79 44) or #c(228 140). The key (file-viewer last-window-location) implies that keys can have a path-like structure, so the dictionary could in principle support queries like "give me all the file viewer properties", or "give me the last-window-location property of the file-viewer".
+
+''Can somebody tell me what the legal values of A''''''nimateSnapToGrid, E''''''mptyTrashProgressWindowLocation, and F''''''ileViewer.L''''''astWindowLocation are based on the original Apple plist or the S-expression? If the Apple DTD had this information then your validating XML parser could make sure that the XML config file had only valid settings.''
+
+A quick glance at the Apple DTD reveals that it does not have that information and can't be used to validate the content of those elements.
+
+''[Yes, sadly.]''
+
+As far as I know it would be impossible to write a DTD that would validate that. Those aren't tags, they're CDATA. I've seen validators used well, but Lispers probably don't write them because they just pass around the code that interprets the document in the first place -- which already handles errors when it sees them. They never intended s-expr to be a universal data format between languages other than Lisp.
+
+''Hmm. So, Apple didn't bother filling out their DTD, eh? Oh, well. And as far as CDATA goes, that's just more laziness. The reason for using a validating parser is to ''validate'' the XML contents. If you don't provide constrained data then you might as well go home.''
+
+''Um, why do you want to "pass around" program as well as data? My clients ''want'' their machine setup data as far away from the code as it can get. XML Schema provides a way to detoxify the setup data before the machine ever sees it. Pretty cool, actually.''
+
+The dictionary construct is just lazy and poor modeling. The description would be shorter and more descriptive if real attributes were used. Because Apple does something stupid doesn't mean you have to.
+
+''Apple plists look so ugly as XML because they are simply being used as the serialization format for Cocoa and Core Foundation objects. As such, they can only describe generic types and collections. Plists at heart are serializations of CFDictionaries (hash tables) which contain other generic types (CFBoolean, CFData, CFDate, CFNumber, CFString) and collections (CFArray, CFDictionary). This definitely limits the ability verify a plist, but allows one to preserve and instantiate a hierarchy of objects to and from a plist file.''
+
+----
+These could be put into a database but it would take ''too much work upfront'' right? That is why people use these text formats.. because databases take too much design work and too much concentration? --DevilsAdvocate
+
+The way to solve the database problem might be to make a miniature database that is extremely easy to use, even easier to use than SQLite.. but SQLite isn't a database anyway,  so..... maybe a miniature version of Tutorial Dee or miniature RelProject... a really terse short easy to setup version of it, or something. Dunno, just brainstorming. 
+
+----
+CategoryXml, CategoryRefactoring

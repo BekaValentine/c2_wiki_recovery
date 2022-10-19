@@ -1,0 +1,188 @@
+Inner classes in Java capture ("close over") the lexical scope in which they are
+defined. But they only capture variables that are declared "final".
+
+This is a problem when the closure is intended to modify such a variable. (The
+rationale for the limitation is that it simplifies the compiler writer's job!)
+
+To overcome this limitation declare the variable as a final reference to a mutable object, such as an array of size one.
+
+For example, here is a counter to count the elements in a collection...
+  final int[] count = {0};
+  collection.foreach(new ElementVisitor() {
+    void visit(Object object) {
+      count[0]++;
+    }});
+  System.out.println("The collection has " + count[0] + " elements!");
+-- PatrickLogan
+
+(I modified Eclipse's compiler to do this automatically with non-final outer vars that you assign to: http://bagotricks.com/blog/2006/07/31/full-closures-for-java/ BrokenLink 20080930 try: http://web.archive.org/web/20070124212317/bagotricks.com/blog/2006/07/ -- Tom Palmer)
+
+----
+One couldn't have just said "final int count = 0;" ? Why not? (Clearly I know little about Java.) Thanks!  --RonJeffries
+
+Inner classes (closures) are only allowed access to final variables in the lexical scope in which they are created.  Final variables are constant, so the code above couldn't use a final counter variable because it would not be allowed to modify the counter.
+
+This constraint makes it much easier for compiler writers to implement inner classes.  They do not have to implement the trick shown above in their compiler, which would be inefficient for large numbers of variables, and they do not have to create each stack frame on the heap, which would be necessary if inner classes could modify variables in their enclosing lexical scope.
+
+--NatPryce
+
+As far as I know, can the inner classes declared in methods access only final variables of the methods, because they can survive the method call. The final variables can be copied, when the instance of the inner class is created. Since they are final = immutable it is no problem that the method uses the original and the instances of the inner class the copies. Example:
+
+  interface Puncher {
+    public int Punch();
+  }
+  
+  class Test {
+    public Object gimme() {
+      int x = 0;
+      return new Puncher {
+        public int punch() {
+          return ++x; // is not allowed
+        }
+      }
+    }
+  }
+
+what would you expect should the following code do?
+
+  Test test = new Test();
+  Puncher puncher = test.gimme();
+  System.out("Puncher returned: " + puncher.punch());
+
+--GregorRayman
+
+
+
+Java "final" is like C/C++ "const."
+The difference is that C/C++ require const variables to be initialized at construction, while Java lets you defer this to the first assignment statement.
+
+No, Java final is not even close to C++ const. Final is just a minor feature chiefly useful to send hints to the compiler to enable optimization/comditional compilation. const is a semantically rich property of C++ which would be a very welcome addition to java.
+
+''Yeah, this couldn't be further from the truth, final is nothing like C++ const.''
+
+-----
+JeffGrigg Java-ised an alternative suggested by RonJeffries:
+Use an object to encapsulate the integer:
+  public class M''''''utableInteger { public int value; }
+  
+  final M''''''utableInteger count = new M''''''utableInteger();
+  count.value = 0;
+  collection.foreach(new E''''''lementVisitor() {
+    void visit(Object object) {
+      ++ count.value;
+    }});
+  System.out.println("U''''''seMutableInteger visit count = " + count.value);
+(The java.lang.Integer class encapsulates integers, but it's immutable.  So it can't be used here.)
+
+''[Note: I have this too. The array solution is for those times when you need to use a primitive (or any immutable type such as String) but are unable to incurr the overhead of a class (the array solution is faster). However, most of use have a set of default mutable classes for each primitive type as well as the immutable classes in Java:''
+
+ public class Mutable
+ {
+     public static class Integer { public int    value; }
+     public static class Long    { public long   value; }
+     public static class String  { public String value; }
+ }
+
+ final Mutable.Integer counter = new Mutable.Integer();
+ sequence.enum( new Block() {
+     public void run( Object each ) {
+         ++counter.value; } } );
+ 
+''You get the idea. The each have the same interface and class naming convention. Of course, this will be a lot easier in Java 1.4 when generic types will be supported. By the way, take a look at BlocksInJava for how a partially simulate code blocks. --rad]''
+
+-----
+[The above is] pretty much how the IDL to Java mapping works
+(in order to pass "out" or "inout" parameters, a Holder object is created.
+The role of the holder is to provide a wrapper around the real value). 
+
+About inner classes. Somebody could misread ''Inner classes (closures) are only allowed access to final variables in the lexical scope in which they are created''
+
+It should be: an inner class can only access variables which are local to 
+the lexical scope if the variables have been declared final (actually,
+it should be a much cleaner sentence than that). The point is that an 
+inner class can access "outer class" state and local state that has been 
+declared final. 
+
+-- WilliamGrosso
+-----
+With this example problem, one could easily use a Java "Local Class" in the method instead of an "Anonymous Class."
+Then the problem of final variable access goes away:
+  class L''''''ocalVisitor implements E''''''lementVisitor {
+    int count = 0;
+    public void visit(Object obj) { ++ this.count; }
+    public int getCount() { return this.count; }
+  };
+  
+  L''''''ocalVisitor visitor = new L''''''ocalVisitor();
+  this.performVisitation(vData, visitor);
+  System.out.println("C''''''ountInLocalClass visit count = " + visitor.getCount());
+-- JeffGrigg
+----
+The top of the page claims that the limitation is there to make the implementation
+easier. That's not the motivation. The motivation is to preserve the
+threading model. One thread should not be allowed to modify a local
+variable in the stack of another thread, which would be possible if an inner
+object were allowed access to mutable locals. The issue arose during the
+initial public review of Sun's proposal for inner classes, which
+contained that error. --TomCargill
+
+I see. And that would be bad because...?
+
+Why can't the compiler can implement a workaround like the ones on this page?
+
+''The motivation is to preserve the threading model.''
+
+I'm not sure I understand. The Java compiler doesn't put the synchronize keyword around all my methods so that instance variables are protected. Why should it do more when accessing locals detached into a closure? Why limit the language based on the lowest common denominater of programmer. -- RobertDiFalco
+
+Because it's Java. Isn't that one of its design goals? -- SunirShah
+
+If that were the case it wouldn't even have anonymous inners!!'
+
+
+Why shouldn't one thread be able to modify a variable in another thread?  It is possible to synchronise those threads by using an object as a mutex/condition.  E.g.
+
+ void notAllowedInJavaButPerhapsItShouldBe() {
+     int counter = 0;
+     Object monitor = new Object();
+     
+     new Thread() {
+         public void run() {
+             for(;;) {
+                 synchronized(monitor) {
+                     counter++;
+                     monitor.notifyAll();
+                 }
+             }
+         }
+     } ).start();
+
+     for(;;) {
+         synchronized(monitor) {
+             monitor.wait();
+             System.out.println("counter = " + counter);
+         }
+     }
+ }
+
+I don't know about the whole threading model motivation, but I do know that allowing only final variables let's them use stack-based activation records instead of heap-based ones.  Since a final variable doesn't change, an anonymous inner class merely takes a copy of it so it never actually accesses the original except during instantiation.  If it were allowed to access local variables, then there could be problems if the enclosing function returned and it's locals were overwritten by another function's locals.  Heap-based activation records could handle this but they decided not do go that route. -- Kannan
+
+Hi, here's what Guy Steele had to say:
+http://article.gmane.org/gmane.comp.lang.lightweight/2274
+So it seems to have largely been the necessity to *implicitly* (und thus unexpectedly for some programmers) allocate something on the heap just in case that e.g. the inner object lives longer than the stack frame or accesses the variables from another thread.
+
+I am not sure, how important it is to remove Java's restriction, but think about this: The original example had the inner object use the local variable as an "accumulator" for the count, but the example with the LocalVisitor shows that we can easily keep this as a field in the inner class; could this be done as easily in e.g. Lisp (without OO features, assuming just a plain functional language)? If not, we have shown that in such a language the restriction would be bad while in Java it is not so critical.
+-- MartinValjavec
+
+----
+
+I happened across this page while implementing a (subset-of-) Scheme compiler (called Ur-Scheme) --- in fact, specifically at the point where I was writing the logic to figure out which local variables I'd have to implicitly heap-allocate instead of allocating on the stack, so that they would survive as long as some closure was referencing them.  Are there better terms for "variables bound in an enclosing lexical scope" and "variables bound in this scope and captured by a nested closure"?
+
+Incidentally, I'm planning to allocate each variable separately, which might be harder on the GC but will improve GC precision in scopes with several different closures.
+
+Hopefully I can post Ur-Scheme to kragen-hacks soon.  It's *almost* to the point where it can compile itself...
+
+-- KragenSitaker
+
+----
+CategoryClosure 
+CategoryJava

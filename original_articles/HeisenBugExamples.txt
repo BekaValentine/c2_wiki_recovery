@@ -1,0 +1,70 @@
+Discussion and definition of what these are examples of can be found at HeisenBug.
+----
+Like subatomic particles, the very act of looking for a HeisenBug in a distributed computer network causes it to move to another machine.
+
+----
+The specific context was a Smalltalk-80 image on a Unix workstation. We noticed that when we left the Smalltalk image running (with the cursor over one of its windows) unattended for a long time (like an extended lunch) and returned, the system was hung and the screen was filled with a ''huge'' stack of walkbacks. Yet, as soon as the mouse moved, the screen cleared, everything came back to life, and all was well.
+
+The problem turned out to be a consequence of an unanticipated interaction between the Unix scheduler and the ST-80 process scheduler. Unix gradually lowers the priority of user processes that appear to be unattended. ST-80 spawned a new (Smalltalk) process on each heartbeat interrupt to check and update the cursor position. Each of these was then terminated (and became garbage) when the update was finished. The Smalltalk VM requires a certain number of cycles in order to actually terminate the completed process, remove it from the stack, and garbage collect it. As the Unix scheduler lowered the priority of the ST-80 system process, it reached a threshold where the Smalltalk VM no longer had enough time to finish terminating the interrupt process before it lost its time-slice. Thus, the Smalltalk stack grew and grew, filled with processes that were about to die (as soon as the VM had a chance to kill them). Eventually, the VM ran out of stack space and began posting walkbacks on each heartbeat interrupt. This eventually paralized the VM, and thus (apparently, although not actually) the whole workstation. Moving the mouse caused the OS to elevate the priority of the ST-80 process. The Smalltalk VM then handily and properly disposed of all the dead Process instances, cleaned up the garbage, and happily resumed normal behavior.
+
+Stoney called it a "HeisenBug" because any effort to inspect it, including remotely, changed the OS priority and caused the problem to disappear.
+
+-- TomStambaugh
+
+----
+'''Context: '''An old version of ParcPlace Smalltalk (v2.5 and earlier) is running under Unix 4.2. The mouse is someplace over the area managed by ST. Everything is fine. The user gets up and goes to lunch.
+
+'''Symptom: '''On returning from lunch, the user finds (to her chagrin) that the screen has filled with a huge stack of complainers, one above the other, each complaining about being unable to create a process. All visible system activity has ceased. The entire system appears to be seriously wedged. Her first action is to move the mouse (while hollering for the nearest admin heavy). The windows all disappear; within seconds, all is well. The system, including Smalltalk environment, appears to be undamaged & unchanged.
+
+'''The HeisenBug: '''Smalltalk, at that time, listened to the heartbeat, and received an event every 16.7 msecs (or thereabout). Each of these did nothing; a (Smalltalk ) process was forked, it ate the event, and died. The 4.2 operating system reduces the priority of processes that have been idle a long time, giving them a smaller and smaller slice of the system. The Smalltalk process eventually was sliced so thinly that it did not have enough time to finish terminating the event consuming process. Therefore, the process stack began to grow. Each new event compounded the problem, until Smalltalk could spawn no more processes, at which point it stopped taking events off the queue, choking the OS. As soon as the user moved the mouse, the OS elevated the priority of the Smalltalk OS process. It was then able to terminate the stack of Processes waiting to die, so that everything returned to normal.
+
+I've grown fuzzy on the details (its been 10 years), but this is about right.
+
+'''The Challenge: '''The challenge was to find a way to make the problem stay around long enough to identify and solve it. Any naive interaction with the process caused the problem and all the data needed to solve it disappear.
+
+-- TomStambaugh
+----
+At a talk recently, the speaker claimed that NT's file system thread ran at user priority. To stabilize his large application, which would create a large number of files in bursts and then try to open them again, he first tried sleep/retry error recovery logic, then hit on the idea of running his application at a priority lower than "user" priority. This goes a ways toward explaining the intermittent, unrepeatable failures I see when pushing NT very, very hard. --DaveSmith
+----
+We once had a problem with thread scheduling and, lacking a debugger for the environment, put in some print statements. Of course, the print stream had a lock, so it kicked the threads into doing what we intended. I forget how we escaped... --SteveFreeman
+----
+Data overrun problems almost always disappear when you compile in debug mode. Uninitialized data problems can be dependent on what program you run ''before'' you link. --RonJeffries
+----
+Using a debugger to set break points, or to single-step through a process in a multithreaded program is a great way to obscure HeisenBug''''''s.
+-----
+HeisenBug''''''s occurred quite often when I designed hardware.  The capacitance of the attached probe was sufficient to change the timing on the board, making the error go away.  Or pulling the board out onto an extender cooled it off enough that the heat-based problem went away.  We had to learn a vocabulary of these and guess when they were present.  --AlistairCockburn
+-----
+
+HeisenBug''''''s sometimes occur in software written in Eiffel, or any other language that (1) allows side-effects in functions and (2) has the ability to enable or disable assertion monitoring at runtime.
+
+An observed problem in such a system can be masked when, in an attempt to isolate it, you switch on assertion monitoring and some side-effect in an assertion function masks the original problem.
+
+----
+
+Some stealth virus writers use these techniques deliberately e.g. using cache covered data to decide a branch. Debuggers tend to change the cache, signalling the virus to get out of Dodge. Most of these techniques were developed as anti-piracy measures. Rather like weapons development in the real world :).
+
+----
+I witnessed a HeisenBug back in college.  Another team was trying to read a magtape backwards into a buffer (this was a normal operation, nothing weird) and print the buffer.  It printed garbage.  So they added a dump just before the print to see the status of the program... and it started printing the buffer correctly!  Remove the dump, garbage again.
+
+Turned out they were using a "read" instead of "read and wait until done" command.  Adding the dump took just long enough for the read to finish.
+----
+Microsoft's Visual C++ initializes unused memory to certain values when you run a debug build inside the debugger. When you run the exactly same executable outside the debugger, the unused memory gets initialized to different values. If your application reads from memory before you write to it, or if you access deallocated memory the program may behave differently inside and outside the debugger.
+
+In Microsoft's Foundation Class library, handler routines for UI events are put in a table of function pointers. The construction of this table is hidden behind layers of macros. Some of these macros cast function pointers to be what MFC is expecting, regardless of the function's real signature. If your handler routine has the wrong signature you won't get any compilation warnings. The bizarre symptom of this error is a crash ONLY in release builds, never in debug builds.
+
+-- EricRunquist
+
+Damn, if only I'd read this page about three weeks ago -- I was having exactly this problem with MFC.  I'd changed the handler macro referring to one of my functions, without realising that the new macro wanted the function to take one more argument.  In MFC-world, the callee cleans up.  The caller was pushing 3 args, the callee was cleaning up 2.  The stack went haywire, and the wheels fell off, in such a way that (even with debug information turned on, but optimisations turned off) the stack trace was worthless.  This only occurred in a release build, as EricRunquist says.  I'd resigned myself to a day binary-chopping through my changes of the previous day to find the point at which I broke it, when I decided to compile the application with a newer version of Visual C++ (we're still using VC6 for our projects, but we've got VC7 installed on a couple of boxes).  It turns out that the new version of MFC no longer uses C-style casts; it now uses static_cast.  This caused a compile error, pointing me directly at the source of the problem.
+
+Lessons learned: don't leave it too long before trying out a release build of your application, and (when easily done) try a different (or newer) compiler or library.
+
+-- RogerLipscombe
+
+----
+See HeroicDebugging for more war stories:
+
+See JeffGrigg's story on "3rd party geometry library" bug for an example of debugger interference.  (Not multi-threaded; the debugger's use of the stack at breakpoints caused problems.)
+The story is about halfway down page HeroicDebugging with a few more details at ContradictionIndicatesFalseFact.
+
+----
+See also: BohrBug, DistributedComputing, HeisenbergUncertaintyPrinciple, ProgrammerProximityDetector

@@ -1,0 +1,151 @@
+Global variables are bad.
+
+
+Module-level scoping isn't that much better (IE: form-level in VB, source-file-level in C/C++).
+
+Sometimes the best way to reduce coupling is to just pass functions/methods the data they need, as parameters.
+
+''(However, if you make a habit of this, you may later find that you need to RefactorParametersToMemberVariables, to build well-formed classes.)''
+
+-----
+
+Needs examples. Generally, I'd stay away from this. When is it useful?
+
+''Most obvious example typically occurs in bloated classes -- those that have too many member variables and methods.  VisualBasic forms often fall into this category.  By changing methods from "access variable from enclosing scope" to "accept variable as a parameter," one reduces coupling.  This enables refactoring the method out to a function library or off into another class.''
+
+Before:
+  Form:
+  Dim moConn As ADODB.Connection
+  Private Function SelectCustomerStuff(ByVal iAmAParm as Integer) As ADODB.Recordset
+     ' <lots of stuff, including a SELECT statement using 'moConn' variable>
+  End Function
+After:
+  Form:
+  Dim moConn As ADODB.Connection
+  Private Function SelectCustomerStuff('''ByVal oConn As ADODB.Connection,''' ByVal iAmAParm as Integer) As ADODB.Recordset
+     ' <lots of stuff, including a SELECT statement using 'oConn' variable>
+  End Function
+----
+
+I see where you're going now. How about this progression?
+
+Start:
+  Form
+    Dim moConn As ADODB.Connection
+    Private Function SelectCustomerStuff(ByVal iAmAParm as Integer) As ADODB.Recordset
+      ...
+      Set SelectCustomerStuff = '''moConn'''.Execute("SELECT * ...")
+      ...
+    End Function
+     
+    Private Sub Form_Load()
+      Dim rs As ADODB.Recordset
+      Set rs = '''SelectCustomerStuff(8)'''
+    End Sub
+
+Next:
+  Form
+    Dim moConn As ADODB.Connection
+    Private Function SelectCustomerStuff('''ByVal oConn As ADODB.Connection,''' ByVal iAmAParm as Integer) As ADODB.Recordset
+      ...
+      Set SelectCustomerStuff = '''oConn'''.Execute("SELECT * ...")
+      ...
+    End Function
+
+    Private Sub Form_Load()
+      Dim rs As ADODB.Recordset
+      Set rs = '''SelectCustomerStuff(moConn, 8)'''
+    End Sub
+
+Next:
+  Form
+    Dim moConn As ADODB.Connection
+    Private Sub Form_Load()
+      Dim rs As ADODB.Recordset
+      '''Dim o as Class'''
+      '''Set o = new Class'''
+      Set rs = '''o.SelectCustomerStuff(moConn, 8)'''
+    End Sub
+
+  '''Class'''
+    '''Public''' Function SelectCustomerStuff(ByVal oConn As ADODB.Connection, ByVal iAmAParm as Integer) As ADODB.Recordset
+      ...
+      Set SelectCustomerStuff = oConn.Execute("SELECT * ...")
+      ...
+    End Function
+
+Next (Now we can apply RefactorParametersToMemberVariables):
+  Form
+    Dim moConn As ADODB.Connection
+    Private Sub Form_Load()
+      Dim rs As ADODB.Recordset
+      Dim o as Class
+      Set o = new Class
+      '''o.Init(moConn)'''
+      Set rs = '''o.SelectCustomerStuff(8)'''
+    End Sub
+
+  Class
+    Private moConn as ADODB.Connection
+
+    Public Function SelectCustomerStuff'''(ByVal iAmAParm as Integer)''' As ADODB.Recordset
+      ...
+      Set SelectCustomerStuff = '''moConn'''.Execute("SELECT * ...")
+      ...
+    End Function
+
+Etc. Until you can finally move moConn out of the form. Is that the general idea? Maybe there's a more direct route.
+
+What about a combination of MoveField and MoveMethod?
+
+-----
+
+Actually, I had in mind something like this...
+
+Start:
+  Form 1:
+    Dim moConn As ADODB.Connection
+    Private Sub Form_Load()
+      Dim rs As ADODB.Recordset
+      '''Set moConn = ConnectToAdoDatabase()'''
+      Set rs = SelectCustomerStuff(8)
+    End Sub
+    Private Function SelectCustomerStuff(ByVal iAmAParm as Integer) As ADODB.Recordset
+      ...  Set SelectCustomerStuff = moConn.Execute("SELECT * ...")  ...
+    End Function
+
+to maybe...
+  Form 1:
+    Dim moConn As ADODB.Connection
+    Private Sub Form_Load()
+      Dim rs As ADODB.Recordset
+      Set moConn = ConnectToAdoDatabase()
+      Set rs = SelectCustomerStuff('''moConn,''' 8)
+    End Sub
+  '''Module 2:'''
+    Private Function SelectCustomerStuff('''ByVal oConn As ADODB.Connection,''' ByVal iAmAParm as Integer) As ADODB.Recordset
+      ...  Set SelectCustomerStuff = moConn.Execute("SELECT * ...")  ...
+    End Function
+
+But there's something to be said for putting all the SQL in a class.
+(It helps you get to MockObject, for instance.)
+  Form 1:
+    Private Sub Form_Load()
+      Dim rs As ADODB.Recordset
+      '''Dim oSql As New FormSql'''
+      Set rs = '''oSql.'''SelectCustomerStuff(8)
+    End Sub
+  '''Class FormSql:'''
+    Dim moConn As ADODB.Connection
+    Private Sub Class_Initialize
+      Set moConn = ConnectToAdoDatabase()
+    End Sub
+    Private Function SelectCustomerStuff(ByVal iAmAParm as Integer) As ADODB.Recordset
+      ...  Set SelectCustomerStuff = moConn.Execute("SELECT * ...")  ...
+    End Function
+''But that's really a different refactoring.''
+
+-----
+Opposite of RefactorParametersToMemberVariables
+-----
+CategoryRefactoring, RefactoringLanguage

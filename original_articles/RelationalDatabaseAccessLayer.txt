@@ -1,0 +1,85 @@
+The RelationalDatabaseAccessLayer is one of the pattern languages of the ArcusProject, written by WolfgangKeller and JensColdewey. It describes how to connect to a relational database from ''non-OO systems'' when you want to be open for further optimization. This is different to the CrossingChasms language of KyleBrown, which describes how to make ''objects'' persistent using a RelationalDatabase.
+
+We workshopped the pattern language on PLoP 96. Thanks to all participants for their suggestions.
+
+You can download the complete language from http://www.objectarchitects.de/ObjectArchitects/orpatterns/index.htm.
+Please send us any comments you have.
+
+[Old broken link: http://www.sdm.de/g/arcus/cookbook/relzs/]
+
+JensColdewey
+
+----
+
+A relational database layer is the minimum requirement for anything claiming to be an ApplicationServer. ''does this mean a an OODB does not qualify as an application server? what about GemStone?'' In an EjbServer, the access layer is EntityBean''''''s, while in AtgDynamo it is the RepositoryApi. The end result is to convert a table or resultset into a JavaBean or something like it.
+
+-- WillSargent
+
+----
+
+Who sez entity beans are "the" access layer in an EjbServer? What if you think entity beans suck, and you just want to use plain old java domain objects O/R mapped to an RDBMS in your app? It's still an EJB app, assuming your ApplicationBoundary is implemented with session beans. GemStonej does have a relational "access layer" - an OEM'd O/R mapper (CocoBase) over pooled JDBC connections - and therefore accommodates those who insist on O/R mapping, and meets your "minimum requirement" to be an application server. But it's a lot easier and faster to just persist the domain objects natively in GemStone's object repository. And beans, schmeans - how about just converting a row of a table (more likely, a join result) into a (graph of) plain old DomainObject(s)? -- RandyStafford
+
+After struggling with Entity bean performance and concurrency issues in WebLogic 5.1, I gotta say I agree. --BrianSlesinsky
+----
+''Moved from P''''''atternDatabaseLayer''
+
+Databases are very complicated.
+
+In order to simplify your life, and enable yourself to rely on tight, tested code, you need to encapsulate as much as possible about them behind a layer that is easy to work with.
+
+Here is what ours looks like in perl:
+
+DBI
+
+db handle
+  connect($database) returns $db handle. 
+
+  $db->scalar($sql, @bind_vars) returns a *single* value.
+  $db->list($sql, @bind_vars) returns a *column* as a list.
+  $db->hash($sql, @bind_vars) returns a *single* hash of columns to values.
+  $db->hashes($sql, @bind_vars) returns a list of hashes. 
+
+  do($sql, @bind_vars) returns nothing; affects database directly.
+
+Each of the methods in db blows up if anything is weird. with the most informative error message possible. Thus, scalar is used *only* for filling a scalar variable with a single-row, single column SQL query result. (Bind params are used for automatic quoting.)
+
+tablerow class/object
+  we AUTOLOAD strings like /^$column$/ as database column accessors
+  we AUTOLOAD strings like /^set_$column$/ as database column *set* accessors. 
+  insert(%column_values) *creates* a database row and returns an object for it implemented with a hash of columns up to date with defaults. 
+  $class->get($id) returns an object implemented with an up-to-date hash of columns->values.
+  $class->get_list(@ids) returns a list of objects from a list of ids.
+  delete() deletes the current table row and makes the object vanish (it'll blow up if you try to call anything on it.
+
+  There is no new method, since that is ambiguous with creating the object and creating the table row. at least, that is what we(I) tell ourselves.
+
+  tablerow will blow up if you attempt to use it on a table that doesn't have a primary key. 
+All the code in each of the layers is fairly slow. however, it is all fairly easy to test. Occasionally, for performance, we use shortcuts across the layers, but only when profiling shows that it is a bottleneck. Until then, we do load testing to discover what needs profiling. the shortcuts are invariably more complex, so outside of tight loops it is typically sufficient to work with the slower, tested, straightforward code.
+
+In most cases, the system requires that you know sql, and the difference between a single row-single column query, a column query, a list query, and a hash query. The code is written to tell you if you say you are going to do that and step outside the bounds. Classes that inherit from "tablerow" typically implement methods that are peculiar to the table's environment in the system.
+
+What I think this means to a non-perl programmer? build your database layers like this: 
+
+KNOW SQL. Or use a full object relational mapping and don't touch the database. not knowing sql will cause you to write bad code. it will also make it so that you can't tell what your code is actually doing to the database, and the database is prone to anger.
+
+Build your schema with the code in mind
+  All tables need a single column primary key. This allows clean lookups.
+  Preferably, all foreign keys are named with the table name + "_id".
+Have a class that is a database connection specifier.
+  Run your sql through this class.
+  Contain defaults for the connection parameters.
+  This layer should take care of "object quoting", whatever that means to you.
+  The methods in this class should return its results in terms of the easily available generic types.
+Have a class that is a table specifier.
+  Run your objects through subclasses of this class.
+  Update the database as often as is feasible. prove it when it isn't feasible.
+  Use lots of sql snippets (well-factored, of course) 
+Make as much of the interface look like the language of the program you are working on, while retaining the intuitive understanding that you are parsing and using appropriately chunked SQL snippets. Use the code to generate and templatize common bits of sql for solving various tasks.
+
+-- JeffBay
+
+----
+Overlaps much with DatabaseAbstractionLayer
+
+----
+The alternatives are GenericDataModel, etc??

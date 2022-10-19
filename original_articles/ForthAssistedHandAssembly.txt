@@ -1,0 +1,116 @@
+Assembly language and Forth get along pretty well. Here's a simple BusyWaiting loop written for the x86 in a Forth assembler. One instruction or macro per line:
+
+  CODE BUSYWAIT ( n -- )
+    1 CHECK_POP
+    *BEGIN
+      EAX DECL<-
+      CMP ALU.L#8 ,EAX 0 C,
+      ?NE JCCB *AGAIN
+    MOVL<- EDX ,[EDI]
+    MOVL<- EAX ,D8[EDI] 4 C,
+    LEAL EDI ,D8[EDI] 8 C,
+    NEXT;
+
+Lots of notes about it.
+
+	* CODE tells Forth we're starting to define an assembly-language word. BUSYWAIT is the name of the word.
+	* ( n -- ) is a comment that tells humans that BUSYWAIT pops n from the stack and pushes nothing.
+	* In this forth, EDX:EAX contains the top of the stack. But we're only using the low 32 bits for the delay count. So the delay count is already in EAX when we start out.
+	* CHECK_POP is a macro. It pops 1 from the stack at assembly-time, and generates code to make sure there is at least one item on the stack at runtime. The macro even generates code to throw an exception if there is nothing on the stack.
+	* *BEGIN is a macro. It pushes the current location on the stack at assembly-time.
+	* EAX DECL<- is the first real instruction. It decrements the contents of the EAX register.
+	* CMP ALU.L#8 ,EAX 0 C, is the second real instruction. Cryptic mess, isn't it? Well, in x86 assembler, ALU instructions are encoded pretty similarly, so CMP just pushes an identifier (an integer code) on the stack at assembly-time, then ALU.L#8 uses it to generate an instruction. In this case, a ''compare'' instruction, which compares a 32-bit register or memory location to an 8-bit immediate value, which will be sign-extended by the hardware before the comparison. ,EAX is the first operand. 0 C, adds the immediate byte, zero. So we're comparing EAX to zero.
+	* ?NE JCCB *AGAIN is the third real instruction. Since the x86 encodes jumps pretty similarly, ?NE pushes a byte on the stack at assembly-time, and then JCCB pops it off to encode a jump instruction from it. ?NE means "if not equal," so this produces a jump-if-not-equal. Jump ''where'' if not equal? *AGAIN pops a location off the stack. This happens to be the location pushed there by *BEGIN, so that's where.
+	* Now if the jump isn't taken, we need to pop the Forth stack. This is a 64-bit Forth written in 32-bit assembly code, and EDX:EAX contains the top of the stack. (EDX contains the high 32 bits and EAX contains the low 32 bits.) EDI is the stack pointer. So the next instructions follow.
+	* MOVL<- EDX ,[EDI] generates an instruction which MOVes 32 bits (L) from the contents of memory at EDI to EDX.
+	* MOVL<- EAX ,D8[EDI] 4 C, generates an instruction which MOVes 32 bits from the contents of memory at [EDI+4] to EDX. The ,D8[EDI] notation means to use EDI with an 8-bit displacement; 4 C, is used to write that displacement.
+	* LEAL EDI ,D8[EDI] 8 C, loads EDI with the ''effective address'' of [EDI+8], which is EDI+8. I could just as well have written ADD ALU.L#8 ,EDI 8 C,
+	* NEXT; is a macro that generates code to return to Forth.
+
+It's easy to write an x86 assembler in Forth. I originally called this one "Forth-assisted hand assembly" but it is actually quite powerful. MOVL<- for example is defined as "8B C," and "EDX" is defined as "10" and ",[EDI]" is defined as "7 OR C," so the code produced for MOVL<- EDX ,[EDI] is 8B 17 which is the correct code.
+
+Have fun with that one... -- EdwardKiser
+
+By the way, I am at some point going to publish this Forth... I'm not just talking about the Forth source for the assembler; I have written an entire Forth implementation which includes this assembler, and it is the entire implementation that I am going to publish.
+
+''The general idea seems pretty handy, but I'm confused. Why are some things prefix and others postfix? E.g. "EAX DECL<-" being postfix, and "MOVL<- EDX ,[EDI]" being prefix? I must be missing some rather large issue here.''
+
+No, it's just that EAX DECL<- is a one-byte instruction. In this case, EAX is a general word that is used by lots of instructions. It pushes a constant on Forth's stack. A word like ,[EDI] will pop that off the stack and build a MOD/R/M byte. But DECL<- will pop the same value off the stack and build a decrement instruction.
+
+It is also possible to write DECL ,EAX but that produces a two-byte instruction. DECL emits the first byte, FF, and then pushes a value on the stack. ,EAX pops that off and builds a MOD/R/M byte.
+
+What's happening here is that I'm following the byte order of the x86 as closely as I can. I want to avoid putting lots of stuff on the stack while building an instruction. The most nearly opposite case would be to push ''everything'' on the stack and then write a single word which compiles any instruction based on its description on the stack.
+
+''I see. Hmm. Does this end up being mnemonic in practice? You don't have to memorize 1 byte vs two byte, it's just implied by the semantics of the instruction? Consistency of syntax would be nice...''
+
+I use a cheat sheet.
+----
+There is no agreed upon syntax for Forth assembly code.  I've seen stuff as simple as "a b mov" to parsers that can handle MASM format verbatim.  F83 for Intel chips commonly came with two assemblers, one prefix (like MASM) and one postfix (like Forth).  One particularly well implemented assembler comes with Pygmy Forth.  Here is a nice tutorial on building a 6809 Forth assembler:
+* http://www.zetetics.com/bj/papers/tcjassem.txt  (part 1)
+* http://www.zetetics.com/bj/papers/6809asm.txt  (part 2)
+* http://www.zetetics.com/bj/papers/6809asmlisting.txt (the assembler itself, shorter than either part of the paper!)
+As shown in the article, Forth assemblers make good use of the CREATE DOES> defining-word construct to efficiently define whole classes of assembly mnemonics, as opposed to the above technique of having to put all the pieces together for each instruction.  For example, the above CMP word would perhaps have been defined by an "ALU" defining word, so that one need only write "A 0 CMP#L".
+
+''(Well, there are eight ALU operations, and something like nine addressing modes. Using CREATE DOES> would have required me to define 72 words, and that's not counting the defining word with the CREATE and the DOES in it, whereas by breaking it apart, I need only seventeen words.)''   ...but you have inconsistent syntax and need a cheat sheet.  :)  I'm glad it works for you, but it is confusing to at least two of us (and I know Forth and x86 assembly). 
+
+''As do I. -- dm''
+
+Just pointing out that there are other ways to do it that put a little more burden on the assembler wordset and less burden on the programmer.
+
+''I agree. This is the sort of thing that forces a tool to be single-use or single-user, for the sake of making the implementation easier. For reusability or wider adoption, more consistency and ease of use is important, at the cost of more implementation difficulty.''
+
+''I wasn't previously familiar with this approach to assembly, though, and I think it's a brilliant idea in the right niche, so I'm glad to see any example of it. -- dm''
+
+''P.S. I also would encourage you to go ahead with your intention to publish it. It's interesting to see small minimal attacks on problems.''
+
+It isn't much of a burden to think in terms of phrases instead of words. If you wanted to encode a deck of cards, it might be better to define ACE, JACK, QUEEN, KING, HEARTS, SPADES, DIAMONDS, and CLUBS. Then write ACE SPADES and 3 HEARTS and so forth. Much better than defining 52 words.
+
+''I certainly agree, but that has nothing to do with our responses. We're talking about consistency, not about pre-defining the world vs using atoms to make molecules.''
+
+Writing CMP ALU.L<- and ADD ALU.L<- and CMP ALU.B<- is exactly that; using atoms to make molecules. There are eight ALU instructions (ADD, ADC, SUB, SBB, AND, OR, XOR, CMP) and at least eleven addressing modes (ALU.L<-, ALU.L->, ALU.B<-, ALU.B->, ALU.W<-, ALU.W->, ALU.L#8, ALU.B#8, ALU.L#32, ALU.W#8, ALU.W#16). This is from memory and I may be wrong about the exact spelling of some of them. But the usage is consistent once it's been explained. The ones with pound signs require an appropriate MOD/M specification and an immediate value; the ones with arrows require an R followed by a MOD/M. Thus:
+ 
+   ADD ALU.L<- EAX ,[EDI]               \ add long at [EDI] into EAX
+   ADD ALU.L-> EAX ,[EDI]               \ add EAX into long at [EDI]
+   ADD ALU.W<- AX ,BX                   \ add BX into AX (16-bit)
+   ADD ALU.B-> DL ,[EDI]                \ add DL into byte at [EDI]
+   ADD ALU.L#8 ,EAX 55 C,               \ sign-extend 55 to 32 bits and add it into EAX
+   ADD ALU.L#32 ,EAX 55555555 L,                    \ add 55555555 into EAX
+   ADD ALU.L#32 ,D8[--] EAX*4 +EDI 3 C, 55555555 L, \ add 55555555 into [3 + EAX*4 + EDI]
+
+I just sprung the notation for SIB bytes onto you... sorry... but you can substitute XOR for ADD and everything else works the same way.
+
+DECL is a little different but it's a different kind of instruction; it has two variants.
+
+   EAX DECL<-   \ one-byte version
+   DECL ,EAX    \ two-byte version
+   DECL ,[EDI]  \ only possible with two-byte version
+
+The example at the top of the page is way too short to show how consistent the syntax is. There are only four or five instructions in the whole example. Instructions of similar types tend to have very similar syntaxes.
+
+''That's encouraging. I'll be interested to see your release.''
+
+----
+
+Any news on this project? -- GarryHamilton
+----
+I'm interested in this as well.
+
+However, the x86 assemblers are vastly more sophisticated than for other CPUs.  The assembler I wrote for the 65816 is somewhat similar to what is described here though.  All 255 opcodes have their own Forth word (e.g., LDA(,Y), STZ,X, etc), and then I place the operands down with '''1,''' , '''2,''' , or '''3,''' depending on the length of the operand (1, 2, or 3 bytes, respectively).  The original idea for this came from a close associate of mine on the 6502.org web forum, so this is not my original idea by any means.  For example, to clear the screen on a Commodore 64:
+
+: CLS
+  LDX#, 0 1,
+  LDA#, $20 1,
+  BEGIN, STAA,X, $0400 2,
+         STAA,X, $0500 2,
+         STAA,X, $0600 2,
+         STAA,X, $0700 2,
+         INX,
+  0<>, UNTIL, ;
+
+--SamuelFalvo
+----
+One frustration with ForthAssistedHandAssembly is that it does not support 64-bit code or the REX prefix byte. This could be changed, but it will require some retooling.
+
+There is a similar but completely un-Forth-like project on Google Code called AsmJit: http://code.google.com/p/asmjit/ . I have looked at its documentation but cannot find where you make it call Windows API functions such as Rtl''''''Add''''''Function''''''Table or Rtl''''''Install''''''Function''''''Table''''''Callback. This means you cannot JIT-compile a "frame function." On 64-bit Windows systems, proper exception handling requires that only frame functions can call other functions. Frame functions have to have certain types of prologs and epilogs, and Function Table metadata has to describe them. (Leaf functions are exempt from this requirement but cannot call other functions.) The Compiler class in AsmJit has Prolog and Epilog functions, but I don't think they have anything to do with Function Tables in x64 Windows.
+----
+CategoryForth AssemblyLanguage

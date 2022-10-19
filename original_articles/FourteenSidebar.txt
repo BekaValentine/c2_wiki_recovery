@@ -1,0 +1,104 @@
+See ExtremeProgrammingChallengeFourteen
+----
+'''In progress, but please pitch in, I'm admittedly confused.'''
+
+DonWells suggests that there are internal defects in the methods as written. I don't see them. Here's some discussion to help me get a new angle on testing these deals, because right now I don't see a bug and my translated tests aren't seeing one either.
+
+Let's look at one of the routines for internal defects. I'll state my assumptions here about what Java will and won't do. If one of them is wrong due to my lack of J-knowledge, please correct me.
+
+ .synchronized Object take() throws InterruptedException? {
+ .  while( occupied == 0 )
+ .    wait();
+ .  notify();
+ .  --occupied;
+ .  takeAt %= buffer.length;
+ .  return buffer[takeAt++];
+ .}
+
+'''Assumptions from reading the Java concurrency material'''
+
+The writeup says: "Any method or code block marked as synchronized is executed in its entirety (unless explicitly suspended via wait) before the object is allowed to perform any other synchronized method called from any other thread."
+
+Further, it says that a wait() suspends the thread on an internal queue and releases its lock.
+
+Let's suppose that occupied == 0. Two other threads send take() to the same BoundedBuffer. One enters, waits, the other enters. Now we can have two threads hanging in the wait loop on tale. Indeed, we can have any number. No take can ever notify() until there are some put()s.
+
+Sooner or later put() will be sent, and notify() will happen. The writeup says: "A notify invocation results in the following actions:
+	1. If one exists, an arbitrarily chosen thread, say T, is removed by the Java run-time system from the internal wait queue associated with the target object.
+	2. T must re-obtain the synchronization lock for the target object, which will always cause it to block at least until the thread calling notify releases the lock. It will continue to block if some other thread obtains the lock first.
+	3. T is then resumed at the point of its wait. "
+
+Suppose a raft of takes are waiting and a raft of puts occur in a convoy owing to some scheduler anomaly. The 0th put finds occupied ~= buffer.length and executes entirely, leaving putAt = 1; occupied = 1. Then, and only then, the 1st put runs, leaving putAt = 2; occupied = 2.  ''If I can't assume this is the only thing that can happen, then I don't understand Lea's writeup. Please correct me.''
+
+put 3 and 4 can run ditto, leaving putAt = 4; occupied = 4 = buffer.length. If any more puts get selected, they hang. Sooner or later the scheduler selects a take. ''(Or is this the bug, that the scheduler in its arbitrariness may never select an eater? Hmm ...)''
+
+-----
+Exactly, that's why bounded buffers usually have two conditions, notFull and notEmpty, for this kind of synchronization. Getters and putters are looking for different events. So the put code might be (I can't quite remember the syntax):
+
+ .synchronized public put(Object object) {
+ .  while (isFull()) {
+ .    wait(notFull);
+ .  }
+ .  addObject(object);
+ .  if (1 == size()) 
+ .    signal(notEmpty);
+ .}
+
+Do have a look at that Birrell paper I referenced in ExtremeProgrammingChallengeFourteen. It's very good on this sort of thing. --SteveFreeman
+
+Are you suggesting that the conditions TomCargill wrote aren't OK? I would agree that they aren't particularly clear. Do you see a method being entered when it shouldn't be? If so, how?  Thanks. --rj
+----
+I see some of the confusion here. Java does not have the notion of a
+ConditionVariable, or equivalently there is just one implicit
+ConditionVariable associated with each lock. The wait and notification use
+the lock generically with a GuardCondition expression that determines when
+the needed condition has been satisfied. --TomCargill
+----
+Does the following refactoring help?
+
+ .class BoundedBuffer {
+ .  private Object[] buffer = new Object[4];
+ .  private int putAt, takeAt, occupied;
+ .
+ .  synchronized void put(Object x) throws InterruptedException {
+ .    while( isFull() )
+ .	wait();
+ .    notify();
+ .    ++occupied;
+ .    putAt = successorCyclic(putAt);
+ .    buffer[putAt] = x;
+ .  }
+ .
+ .  synchronized Object take() throws InterruptedException {
+ .    while( isEmpty() )
+ .      wait();
+ .    notify();
+ .    --occupied;
+ .    takeAt = successorCyclic(takeAt);
+ .    return buffer[takeAt];
+ .  }
+ .
+ .  private boolean isFull() {
+ .    return occupied==buffer.length;
+ .  }
+ .
+ .  private boolean isEmpty() {
+ .    return occupied==0;
+ .  }
+ .
+ .  private int successorCyclic(int index) {
+ .    return (index+1)%buffer.length;
+ .  }
+ .}
+
+--TomCargill
+
+''Well, the refactoring didn't help me. I thought it was more clear in the original form. But then I'm an old C person, so the metaphors carry over. BTW, I'm still out of things to test and am just waiting to see what the defect is, to learn something, and to see whether I can devise a test then. --RonJeffries''
+
+You need #notifyAll, #notify assumes only a single waiting thread.
+
+''Correct.  That's the bug that started this whole discussion: What would a test that detects that bug look like?''
+
+Ah, sorry, I was late into this. That's an interesting question and one that would be difficult to answer without being able to override #wait, #notify, and #notifyAll. Could I use some maximum latency schemes? Let me think about this, but with a maximum latency, you maybe be able to detect this in less than a couple of seconds. But then I'd have to add a TIME_OUT argument to the #wait messages and possibly another state variable to B''''''oundedBuffer? I suppose this would be seen as instrumenting and, thus, not meet the requirements of the challenge?  ''Processing...''
+
+''I would do fancier testing as a research project (to learn how to do it), but not in production.  Consider that ConcurrencyUnitTestWaynesAttempt, for all its faults, will detect not just the known concurrency bug but probably several others, required no obfuscating modifications of the class being tested, reliably demonstrates the presence or absense of the bug, was completed in about half an hour, and is simple.  That's not bad.  It could be better, but it's good enough for now.  I also would not write this test up front, but only when I knew (or suspected) a concurrency bug.  Concurrency bugs are hard to test for; I prefer to start testing for them once I suspect a problem. -- WayneConrad''

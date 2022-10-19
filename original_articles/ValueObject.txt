@@ -1,0 +1,162 @@
+See also: ValueObjectHypotheses, ValueObjectsCanBeMutable, ValueObjectsShouldBeImmutable, ValueObjectsShouldBePassedByValue, ValueObjectFramework, JavaValue, ValueObjectLiterature, ProtoValue
+
+Examples of value objects are things like numbers, dates, monies and strings. Usually, they are small objects which are used quite widely. Their identity is based on their state rather than on their object identity. This way, you can have multiple copies of the same conceptual value object. ''Every $5 note has its own identity (thanks to its serial number), but the cash economy relies on every $5 note having the same value as every other $5 note.''
+
+So I can have multiple copies of an object that represents the date 16 Jan 1998. Any of these copies will be equal to each other. For a small object such as this, it is often easier to create new ones and move them around rather than rely on a single object to represent the date.
+
+A value object should always override .equals() in Java (or = in Smalltalk). (Remember to override .hashCode() as well.)
+
+A value object is not a BusinessObject/ReferenceObject.
+A BusinessObject/ReferenceObject is something you find in the world, while a ValueObject is a measure or description of something.
+-----
+
+http://www.riehle.org/computer-science/research/1998/ubilab-tr-1998-10-1.html presents an in-depth discussion of why and where you want value objects and how to implement them efficiently in different languages.
+
+Chapter 9 of FunctionalPatternSystemForObjectOrientedDesign describes ValueObject.
+
+I haven't read it yet, but there is an article on ValueObject(s) in the July/August 1998 issue of the JournalOfObjectOrientedProgramming. It is 'Values and Objects Revisited' by PeterVanDerWerf. -- MichaelFeathers
+----
+Someone good with C++ can explain what to do with that language for value objects.
+
+ValueObjectsShouldBeImmutable
+
+Compare this with a ReferenceObject.
+
+-- MartinFowler
+
+''Comment: In C++, you typically implement value objects using reference-counted copy-on-write classes (body/handle idiom). JimCoplien explains this idiom well in his book on Advanced C++. Otherwise, see our technical report. -- DirkRiehle''
+
+If the definition of value object is an object whose identity is defined by its state rather than by its address, I'm inclined to think that they are defined in C++ as objects that override the copy constructor, assignment and comparison operators to assign and compare state between two objects. Overriding the assignment operator is key and means that in C++ ValueObjectsCanBeMutable and usually are. The aliasing problems addressed in ValueObjectsShouldBeImmutable are generally taken care of by using pass-by-value semantics. -- PhilGoodwin 
+
+I think there's a useful distinction to be drawn between assignment and mutation in general, especially in C++. Say you have a plain old int, "i," whose value is five. This object is mutable in the sense that, yes, you can change it. But ''what'' you're changing is not ''the'' value, but ''which'' value. In other words, if I assign a value of ten to "i," I'm not effecting any mutation upon the value "five;" I'm ''replacing'' the value "five." Such is the general case with value types in C++. In some sense, assignment for a value type on which assignment is the only "mutating" operation can be thought of as a shorthand for a manual destructor call followed by a placement new. Borrowing from the "Point" example below, modulo stylistic choices:
+
+    struct point {
+    	const int x;
+    	const int y;
+
+    	point (const point&) = default;
+
+    	point& operator = (const point& other) {
+    		this->~point ();
+    		return *new (this) point (other);
+    	}
+    };
+
+Even this is really a folded version of a pair of types, one of which represents ''the'' point (x, y), the other ''a'' point (x, y). We fold them together because C++ makes it so much cheaper and easier than putting "the" objects on the heap, and implementing "a" objects as references thereon (IIRC, this is the behaviour (though not necessarily implementation) Scheme defines for integers: as though an integer is a ''reference'' to ''the'' value encoded). The latter approach, I suspect, is a potential reason to argue that ValueObjectsRequireGarbageCollection. -- StuartOlsen
+
+----
+In C++, creating a ValueObject is almost trivial. For example:
+
+class Point {
+  public:
+	Point( int x, int y ): _x(x), _y(y) {}
+
+	int getX() const { return _x; }
+	int getY() const { return _y; }
+	void setX( int x ) { _x = x; }
+	void setY( int y ) { _y = y; }
+
+  private:
+	int _x;
+	int _y;
+	}
+
+Now you can declare both mutable and immutable Point objects:
+
+ Point aMutablePoint( 4, 10 );
+ const Point anImmutablePoint( 5, 5 );
+
+The compiler will not allow you to call setX() or setY() on anImmutablePoint, since they are not declared as const methods.
+
+Of course, you can get around this if you really want to:
+
+((Point) anImmutablePoint). setX( 7 );
+
+but this is cheating - akin to writing self-modifying code.
+
+-- RussellGold	
+----
+You need to be aware of the difference between logical state and physical state. Sometimes, what RussellGold calls "cheating" above is due to this difference.
+
+LogicalState is when the externally visible behaviour of an object depends on its history. PhysicalState is about its implementation. For example, updating a cache usually means a change in the physical state but not the logical state. 
+
+Optimizers are usually interested in implementations and the physical state. For example, to store a value object in ReadOnlyMemory, its physical state needs to be immutable. Programmers are usually interested in interfaces and logical state. They want to be free to change implementation state, introduce caches etc. This can invalidate the assumptions the optimizer makes.
+
+Thus in the context of ValueObject(s), these two forces are present and in conflict. Care may be needed to balance their requirements. (Modern C++ has extra language features to help, including
+''const'',
+''mutable'',
+''<const cast>'')
+-- DaveHarris
+----
+Given that
+	* ValueObjectsShouldBeImmutable, and that
+	* ValueObjectsShouldBeSideEffectFree (i.e. all non-constructor methods are queries or accessors)
+
+... ValueObject''''''s become particularly amenable to processing with PipesAndFilters-style architecture (since ordering of processing becomes irrelevant).
+
+--
+----
+Sometimes you have too many arguments for a SingleStepConstructor to be convenient. Then you may have a 2-phase object: it's mutable during the set-up processes, but then becomes immutable once it is complete. Or you have set-once variables. Thus:
+	void synchronized setTarget( Point target ) {
+		Assert.assert( this.target == null );
+		Assert.assert( target != null );
+		this.target = target;
+	}
+This falls short of a full ValueObject but has many of the advantages. -- DaveHarris
+
+----
+
+If I had too many arguments for a single constructor call, I would create a 'warehouse' object and pass that to my object's constructor. I can even modify the warehouse object (which is mutable) incrementally and when it's just right, pass it to my object, which sets its own state within its constructor, so it can still be const. (This is related to MementoPattern, except the memento is created from scratch, rather than from an existing object). Anyone else HaveThisPattern? (I've ''wanted'' to say that!) -- JoshuaJuran
+
+Such an object is called an EssenceObject.
+
+''Kinda sounds like a BuilderPattern. -- CraigPutnam''
+
+----
+'''Here are some examples of value object classes:'''
+
+	* The elements of the periodic table. (Atomic number, atomic mass, group and so on  shouldn't change over time.)
+	* The instances of a class that represents a www client request.
+	* The direct instances of classes that model enumerated types.
+
+'''There is an interesting proposal for immutable value classes in Java''':
+http://java.sun.com/people/jag/FP.html#classes
+
+--
+
+In Java, hashcode of ValueObject must be calculated only once and then reused.  ''(Or, more accurately, if equals() returns true for two objects, then the result of hashCode() must be the same for each.  You can calculate the value as much as you want as long as that rule is upheld.)''
+
+-- KirillStepanosov
+
+
+I have a couple of nice (IMHO) base classes for c++ that wrap a pointer to create a concrete object that has either value- or reference- semantics: http://www.geocities.com/dave_whipp/manage.html 
+
+''(BrokenLink, available instead at http://web.archive.org/web/20091025210910/http://geocities.com/dave_whipp/manage.html )''
+
+See also: 
+	 :	SeparateTransactionProcessingFromArchival 
+	 :	http://wiki.cs.uiuc.edu/cs497rej/Value+Object
+
+----
+
+Sun uses the term ValueObject to refer to a local cache of instance variables from a remote object. Perhaps a better name for their pattern would be RemoteValuesCache or something similar.
+
+	* http://java.sun.com/j2ee/blueprints/design_patterns/value_object/
+
+''More like a portable version of the heavy server-side object.'' -- GeraldoXexeo
+
+Hehe, looks like they *did* change the name:
+
+	* http://java.sun.com/blueprints/patterns/TransferObject.html
+
+(now I have to go and rename all of my ValueObject''''''s, I guess ...) -- MikeColbert
+
+see DataTransferObject -- BenArnold
+
+One of the ObjectObject''''''s
+
+----
+There is a very insightful lecture on this topic by Rich Hickey (creator of Clojure) titled 'The Value of Values':
+http://www.infoq.com/presentations/Value-Values
+----
+CategoryObjectFunctionalPatterns

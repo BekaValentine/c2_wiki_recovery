@@ -1,0 +1,230 @@
+At the bottom of this page are two Python scripts, ''history.cgi'' and ''diff.cgi''.  These are CGI scripts that pull data from the C2 wiki and generate a somewhat friendly history listing and version diff, respectively.  To use them,
+
+	1 Copy the scripts to files in your web space named ''history.cgi'' and ''diff.cgi''.
+	1 Configure your web server to treat these files as CGI scripts.
+	1 Invoke the history script as htt''''''p://url/history.cgi?Pag''''''eName.
+	1 Display the difference between individual page versions by selecting the versions and clicking the "Compare" button.  The default is to compare the most recent version with the prior version.
+
+'''Observations'''
+
+	1 The scripts have been used on Python 2.2.2.  They may run on Python 2.1, but will not run on 1.x versions.
+	1 Some pages (such as WikiWikiSandbox at the moment) were deleted but reinstated before the older versions had vanished from HistoryPages.  So some older versions are mixed with newer versions.  Because history.cgi sorts by the version number, this can cause an inversion where older instances precede the current instance.  With a little bit of effort the script could be changed to sort by timestamp instead.  This is left as an exercise for the reader.
+	1 Not all versions are present.  The C2 wiki collapses together versions by a single author.
+	1 It is recommended to create your own copies of the scripts and use them only for yourself.  A public script would be unadvisable because Ward has mechanisms in place to limit flurries of requests from the same IP.  In the case of public scripts the requests all come from the single IP hosting the script.
+	1 It is possible to correlate the output of RecentPosts with the HistoryPages and display even more information about [most] versions.  This is not as trivial as it seems, because the timestamps on RecentPosts are the times the edits were saved, while the timestamps on HistoryPages are the times the respective versions were ''superseded''.  This feature is left as an exercise for the reader.
+	1 Not much error checking, nor is it UnitTest''''''ed.
+	1 You can create a WikiBookmarklet to take whatever wiki page you're viewing and show the history for that page.
+
+'''Samples'''
+
+You can see a sample snapshot of ''history.cgi'' at http://andstuff.org/wiki/history.html?WardCunningham.  The "Compare" button for the snapshot is hard-wired to a comparison of revisions 688 and 689, which shows some of the capabilities of the color-coded diff (borrowed from JotEngine and MoinMoin).
+
+----
+
+'''history.cgi'''
+
+  #!/usr/bin/python
+  # This script is public domain
+  
+  import urllib
+  import os
+  import re
+  
+  try :
+    page = os.environ['QUERY_STRING']
+  except :
+    page = ""
+  
+  if page == "" :
+    print "Content-type: text/plain"
+    print
+    print "Please indicate a page name"
+    exit()
+  
+  stream = urllib.urlopen('htt''''''p://c2.com/wiki/history/' + page)
+  history = stream.read()
+  stream.close()
+  
+  stream = urllib.urlopen('htt''''''p://c2.com/cgi/quickDiff?' + page)
+  diff = stream.read()
+  stream.close()
+  
+  versions = []
+  re.sub(r'(HREF="(\d+)">\d+</A> +([-0-9A-Za-z]+ [0-9:]+))', lambda match: versions.insert(0, [int(match.group(2)), match.group(3), "htt''''''p://c2.com/wiki/history/" + page + '/' + match.group(2)]), history)
+  re.sub(r'(Revision (\d+) made ([0-9]+ [a-z]+ ago))', lambda match: versions.insert(0, [int(match.group(2)), match.group(3), "htt''''''p://c2.com/cgi/wiki?" + page]), diff)
+  versions.sort()
+  versions.reverse()
+  
+  print "Content-type: text/html"
+  print
+  print "<html><head><title>History of " + page + "</title></head>"
+  print "<body><h1>History of <a href=\"htt''''''p://c2.com/cgi/wiki?" + page + "\">" + page + "</a></h1>"
+  print "<form action=\"htt''''''p:diff.cgi\" method=\"get\">"
+  print "<input type='hidden' name='page' value='" + page + "' />"
+  print "<table>"
+  count = 0
+  for version in versions :
+    count = count + 1
+    if count == 1 : latestsel = "checked='checked' "
+    else :          latestsel = ""
+    if count == 2 : lastsel = "checked='checked' "
+    else :          lastsel = ""
+    print "<tr><td><input type='radio' name='v1' value='" + str(version[0]) + "' " + lastsel + "/></td>"
+    print "    <td><input type='radio' name='v2' value='" + str(version[0]) + "' " + latestsel + "/></td>"
+    print "    <td><a href=\"" + version[2] + "\">Revision " + str(version[0]) + "</a></td>"
+    print "    <td>" + version[1] + "</td></tr>"
+  print "</table>"
+  print "<input type='submit' name='submit' value='Compare' />"
+  print "</form>"
+  print "</body></html>"
+----
+
+'''diff.cgi'''
+
+  #!/usr/bin/python
+  # This script is public domain.
+  
+  import re
+  import cgi, cgitb; cgitb.enable()
+  import urllib
+  
+  def getcur(page) :
+    stream = urllib.urlopen('htt''''''p://c2.com/cgi/wiki?edit=' + page)
+    text = stream.read()
+    stream.close()
+    match = re.search(r'<TEXTAREA[^>]+>(.*)</TEXTAREA>', text, re.DOTALL)
+    if match is None : result = ""
+    else             : result = match.group(1)
+    result = result.replace('&lt;', '<')
+    result = result.replace('&gt;', '>')
+    result = result.replace('&quot;', '"')
+    result = result.replace('&amp;', '&')
+    return result
+  
+  def diff(s1, s2) :
+    from difflib import Sequenc''''''eMatcher
+  
+    s1 = s1.replace('&', '&amp;')
+    s1 = s1.replace('<', '&lt;')
+    s2 = s2.replace('&', '&amp;')
+    s2 = s2.replace('<', '&lt;')
+  
+    seq1 = s1.splitlines()
+    seq2 = s2.splitlines()
+  
+    seqobj = Sequenc''''''eMatcher(None, seq1, seq2)
+  
+    linematch = seqobj.get_matching_blocks()
+  
+    if len(seq1) == len(seq2)        and linematch[0] == (0, 0, len(seq1)) :   # No differences.
+      return '<strong>No differences.</strong>'
+  
+    lastmatch = (0, 0)
+    end       = (len(seq1), len(seq2))
+  
+    result = "<table class='diff'>\n"
+  
+    for match in linematch :              # Print all differences.
+      if lastmatch == match[0:2] :        # Starts of pages identical.
+        lastmatch = (match[0] + match[2], match[1] + match[2])
+        continue
+  
+      result = result                + "<tr><td colspan='2' style='background-color: #c0c0c0; color: #000000;'><strong>"                + "Line " + str(lastmatch[0] + 1) + ", removed:"                + "</strong></td><td colspan='2' style='background-color: #c0c0c0; color: #000000;'><strong>"                + "Line " + str(lastmatch[1] + 1) + ", added:"                + "</strong></td></tr>\n"
+  
+      leftpane  = ""
+      rightpane = ""
+      linecount = max(match[0] - lastmatch[0], match[1] - lastmatch[1])
+      for line in range(linecount) :
+        if line < match[0] - lastmatch[0] :
+          if line > 0 :
+            leftpane += '\n'
+          leftpane += seq1[lastmatch[0] + line]
+        if line < match[1] - lastmatch[1] :
+          if line > 0 :
+            rightpane += '\n'
+          rightpane += seq2[lastmatch[1] + line]
+  
+      charobj   = Sequenc''''''eMatcher(None, leftpane, rightpane)
+      charmatch = charobj.get_matching_blocks()
+  
+      if leftpane == "" and rightpane == "" :
+        ratio = 1.0
+      else :
+        ratio = charobj.ratio()
+  
+      if ratio < 0.5 :                    # Insufficient similarity.
+        if len(leftpane) != 0 :
+          leftresult = "<span style='color: #ff0000;'>" + leftpane + "</span>"
+        else :
+          leftresult = ""
+  
+        if len(rightpane) != 0 :
+          rightresult = "<span style='color: #ff0000;'>" + rightpane + "</span>"
+        else :
+          rightresult = ""
+      else :                              # Some similarities; markup changes.
+        charlast = (0, 0)
+        charend  = (len(leftpane), len(rightpane))
+  
+        leftresult  = ""
+        rightresult = ""
+        for thismatch in charmatch :
+          if thismatch[0] - charlast[0] != 0 :
+            leftresult = leftresult                          + "<span style='color: #ff0000;'>"                          + leftpane[charlast[0]:thismatch[0]]                          + "</span>"
+          if thismatch[1] - charlast[1] != 0 :
+            rightresult = rightresult                           + "<span style='color: #ff0000;'>"                           + rightpane[charlast[1]:thismatch[1]]                           + "</span>"
+          leftresult = leftresult                        + leftpane[thismatch[0]:thismatch[0] + thismatch[2]]
+          rightresult = rightresult                         + rightpane[thismatch[1]:thismatch[1] + thismatch[2]]
+          charlast = (thismatch[0] + thismatch[2], thismatch[1] + thismatch[2])
+  
+      leftpane  = leftresult.replace('\n', '<br />\n')
+      rightpane = rightresult.replace('\n', '<br />\n')
+  
+      result = result                + "<tr><td colspan='2' style='background-color: #cfffcf; color: #000000; width: 50%;'>"                + leftpane                + "</td><td colspan='2' style='background-color: #ffffaf; color: #000000; width: 50%;'>"                + rightpane                + "</td></tr>\n"
+  
+      lastmatch = (match[0] + match[2], match[1] + match[2])
+  
+    result = result + '</table>\n'
+  
+    return result
+  
+  form = cgi.Fiel''''''dStorage()
+  
+  page = form.getfirst('page', "")
+  v1 = form.getfirst('v1', "")
+  v2 = form.getfirst('v2', "")
+  
+  stream = urllib.urlopen('htt''''''p://c2.com/wiki/history/' + page + '/' + v1)
+  v1 = stream.read()
+  stream.close()
+  
+  stream = urllib.urlopen('htt''''''p://c2.com/wiki/history/' + page + '/' + v2)
+  v2 = stream.read()
+  stream.close()
+  
+  if not re.search(r'<TITLE>404 Not Found</TITLE>', v1) is None : v1 = getcur(page)
+  if not re.search(r'<TITLE>404 Not Found</TITLE>', v2) is None : v2 = getcur(page)
+  
+  print "Content-type: text/html"
+  print
+  print "<html><head><title>Differences for " + page + "</title></head>"
+  print "<body><h1>Differences for <a href=\"htt''''''p://c2.com/cgi/wiki?" + page + "\">" + page + "</a></h1>"
+  print diff(v1, v2)
+  print "</body></html>"
+
+
+
+
+
+
+
+
+----
+
+See
+PageHistory
+WikiHistory
+
+----
+CategoryCoding
+

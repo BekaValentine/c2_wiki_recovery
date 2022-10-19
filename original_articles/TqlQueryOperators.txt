@@ -1,0 +1,217 @@
+Tops' QueryLanguage. See TqlRoadmap for an introduction.
+----------------
+'''QUERY OPERATORS''' 
+
+None of the following operations change the table they act on (updates will be described at a later time). Thus, they follow the functional programming "no side-effects" rule. Generally the operations return another (virtual) table. "RT" is short for "result table". The final returned query result ("result set") is that value of the last operation. "Expr" is an abbreviation for "expression". The descriptions below assume familiarity with TqlColumnTable''''''s.
+
+For expressions, if an operation involves 2 tables, such as Join, then one can supply "a." and "b." prefixes to column names to distinguish between the first table and the second. If not supplied, the interpreter assumes "a." if there is a naming conflict, meaning the first table is assumed[3]. See TqlPrefix for details.
+----------------
+Here's a '''brief summary''' of the most common SMEQL operators roughly in order of importance:
+
+* '''calc'''(table, columnTable) // ''similar to SELECT clause in SQL''
+* '''filter'''(table, expression) // ''similar to WHERE clause in SQL''
+* '''group'''(table, columnTable) // ''roughly similar to GROUP BY in SQL''
+* '''join'''(table_1, table_2, expression)
+* '''orderBy'''(table, columnTable, [sequenceColumn]) // ''sorts or produces sequence numbers''
+* '''union'''(table_1, table_2) 
+
+-----------------
+'''DESCRIPTIONS''' (Full list)
+
+'''Calc'''
+
+  RT = calc(table, columnTable)
+Purpose: Alter, filter, or rename columns. Similar to SQL "Select" clause. 
+
+''table:'' Input table
+
+''columnTable:'' A column table with at least "expr" and "col" columns. (See TqlColumnTable)
+
+Example: Combine the values for two regions into one column.
+
+  rt = calc(byRegion, [productID, (northTotal + southTotal) total])
+  
+  Table: byRegion
+  
+  productID  northTotal  southTotal
+  ---------------------------------
+  10             20          10
+  11            100         200
+  12             15          15
+  13             10          25
+
+  table: rt
+
+  productID  total
+  ----------------
+  10           30  
+  11          300
+  12           30
+  13           35
+
+Notes: An empty column table is equivalent to "*" in SQL's SELECT, thus "calc(myTable,[])" is comparable to "SELECT * FROM myTable".
+
+'''Filter'''
+
+  rt = filter(table, expr)
+Purpose: Filter rows by a given boolean expression [2]. Similar to SQL "Where" clause.
+
+'''Join'''
+
+  rt = join(table_1, table_2, expr)
+(thorough description coming later)
+
+Note: If columns between the two tables have the same name, the first table's column will be assumed. If an alias is needed to preserve columns, then use the Calc operation first to generate an alias. The "a." and "b." notation (described above) can also distinguish between columns of the two tables with "a." for the left-side table and "b." for the right-side table[1][3].
+
+'''leftJoin'''
+
+  rt = leftJoin(table_1, table_2, expr)
+(thorough description coming later)
+
+Note: Overlapping columns are subject to the same rules as the "Join" operator.
+
+'''Group'''
+
+  rt = group(table, columnTable)
+Purpose: Provide aggregate information. Similar to SQL's GROUP BY option.
+
+''table:'' Input table
+
+''columnTable:'' A column table. "Compute" can only be used if all values are the same for the given group. If not, an error is triggered. (Such duplication may suggest bad normalization of table design, but in practice one is often stuck with bad designs and must find ways to live with them.)
+
+Example: grades = group(exams, [studentID, avg(score) grade])  // average grade per student
+
+Note that the "groupingExpr" parameter has been removed from the draft because it appears to be unnecessary. It would have been an expression that determines how to group related items. If the expression is blank, a totalling is assumed (one result record). See discussion below about the reason for removal.
+
+
+'''Order By'''
+
+  rt = orderBy(table, columnTable, [infoColumn])
+Purpose: To sort results, or at least provide a sequence number. The orderBy function generates:
+* An optional sequence number that starts at 1.
+* If the orderBy is ASCending, 'A' will have a lower "order" number than 'Z' (assuming ASCII character set).
+* If the orderBy is DESCending, 'A' will have a higher "order" number than 'Z' (assuming ASCII character set).
+
+''table:'' Virtual or actual table to performing ordering on.
+
+''columnTable:'' Used to determine sorting criteria and ranking. The "order" column determines the sort ranking. If you need to sort on an expression instead of just columns, use the Calc operation first. If the column table is empty, sorting on the primary key is assumed. More on this in "Notes" below. Use "DESC" or "DESCENDING" as the expression for descending order.
+
+''infoColumn:'' An optional column name (string expression) that produces a column that stores the sequence number resulting from the sorting. Sorting is not generally recognized as a "true" relational operator. But, an operator that returns a sequence can still be a valid relational operator, and has many uses.
+
+Notes: The primary key is assumed to be tacked on to the "end" of the sorting criteria. This ensures that the results are deterministic, a requirement of relational theory. Thus, if two columns are specified as the sorting criteria, the primary key is assumed to be the third column (and more if the key is compound). It also means that sorting is on the primary key if no explicit sorting criteria are given. 
+
+Sorting in the middle of a multi-operation query is generally futile if a specific output order is expected; for only the final operation affects the actual result order (if supported). However, the "infoColumn" value can still be used for other later computations if "in the middle" since it is a reference-able column in the resulting intermediate table or final result.
+
+To ponder: Should it be "order" instead of "orderBy"?
+
+'''Cols'''
+
+ rt = cols(stringExpr)
+Purpose: Converts a string with column-related information into a Column Table. Generally considered a "syntactic convenience operation". See description given earlier [relink]. It may be abbreviated "c", which is a shortcut version of the same operation. This is because it is used so frequently.
+
+(Square brackets are used instead for some examples. See TqlOverloading.)
+
+'''Union'''
+
+ rt = union(table_1, table_2)
+Purpose: Combines (adds) two tables into one result table. Columns that don't match (based on name and type, if using a typed database) will be excluded from the result.
+
+'''Unique'''
+
+"Calc" and "Union" do not necessarily return unique results. If uniqueness is desired, then the "Unique" operator can be used. (Uniqueness of row sets is a controversial topic in the relational world. See HowOtherQueryLanguagesAddressSqlFlaws for a discussion.)
+
+'''Schema'''
+
+  rt = schema(table)
+Purpose: Returns a Column Table with schema info. The column "col" will contain the column name and "expr" will contain column type info from the database engine. The type info depends on the specific database engine or driver. For example, an Oracle engine may return "VARCHAR2(30)". TQL does not endorse any particular type system. "Op" may also be populated to give info about very base types to reduce the need to parse and map the "expr" column. It may contain "Char" for character info, "Number" for numeric columns, and perhaps others such as "Date", depending on the database engine. TQL operations that match columns based on type, such as Union, generally will compare on base types, if available from the driver. This allows columns with specific types such as "Integer", "Decimal", and "Float" to all be merged or treated as the same general type.
+
+--------
+'''Speculative Operators'''
+
+* Maybe we could use a "subtraction" or "nonJoin" operator to make it easier to implement what would be "NOT IN" in SQL. One can use a left join and then use the empty cells to find the subtracted set, but that is kind of round-about.  --top
+
+* A "crossTab" operator(s) for cross-tab transformations. 
+
+* Graph traversal operator(s). (A sample is laying around here somewhere, I just forgot where it is.)
+
+* Operators that can access imperative languages for imperative looping. See IteratorVersusQuery.
+
+* An '''exclude'''(...) operator that removes given columns from the emitted columns:
+
+     x = calc(myTable, [a,b,c,d,e])  
+     exclude(x, [c,d])  // result columns: a, b, e
+
+* TqlDataAlterationOperators
+
+* CartesianJoin(...) or Cartesian(...)
+
+* Example of defining a view is given below
+
+* "Run" operation to run a list of operations. See TqlImplementation for more.
+
+--------
+
+'''Discussion'''
+
+I am leaning toward removing the expression parameter in the Group operation. The TqlColumnTable parameter may be sufficient if we supply an ordering in the column-table. Those column-table columns without an operation would be considered the grouping critera. The only reason I can think of having an expression parameter or a second column table is if the order (as listed in column list) of the result columns differ from the order of the grouping columns. However, it is probably a rare enough case such that one can rely on the Calc() operation to adjust such when it does occur. 
+
+ SQL:
+
+   select count(*) as cnt, aaa, bbb, avg(ccc)
+   from t
+   group by aaa, bbb
+
+ TQL (or SMEQL):
+
+   group(t, [count() cnt, aaa, bbb, avg(ccc)])  // square-bracket syntax variation
+ 
+ or
+
+   group(t, coltab)
+
+ table: coltab
+
+ ...op..|..expr.|.col.|order
+ .------|-------|-----|-----
+ .count.|.......|.cnt.|.1
+ .......|..aaa..|.....|.2
+ .......|..bbb..|.....|.3
+ .avg...|..ccc..|.....|.4
+
+(Dots to prevent TabMunging)
+
+In some dialects of SQL, if you put a column in the Count function it will not count those rows that have Null in the column. The TQL approach shown here does not prevent such a convention.
+
+--top
+
+---------
+
+Perhaps the closest SQL equivalents should be used for familiarity, such as "Select" for "Calc" and "Where" for "Filter". I chose names I felt were the most meaningful, but entrenched convention and familiarity may trump such. --top
+---------
+
+'''Defining Views'''
+
+Here's a draft sample for defining views, including user-defined viewed:
+
+ view myView(t: table, e:expression, s:scalar) // parameter types optional
+   x = filter(t, e)
+   orderBy(x, [a, b], s)  // last operation returns result table
+ end view
+ ...
+ myResult = myView(foo, bar, zig)
+
+Expressions are evaluated inside the function, not at the calling point. (I'll also consider curly braces over end-x block syntax.)
+
+-------
+Footnotes
+
+[1] If one wanted to join 3 tables, then they'd have to use two "join" statements. This may seem annoying at first, but other techniques can be used to minimize the need for such constructs. See TqlChainedJoin and AlternativesToNaturalJoins for more. 
+
+[2] A way to dynamically generate an expression list from a TqlColumnTable (virtual or actual) should perhaps be considered so that QueryByExample is easier to implement. Perhaps it can be a function so that one can "chain" expressions for forming an expression string such as "qbe(myAndTable) or qbe(myOrTable) and not qbe(myNotQuery)". More pondering on this is needed. -t (Mar. 2012)
+
+[3] In addition to the "a." and "b." prefixes, perhaps "left." and "right." prefixes could ''also'' be permitted as alternatives being arguably friendlier than single letters. (Apr. 2014)
+
+------
+Future or alternative operations are mentioned or linked in the TqlRoadmap.
+----
+CategoryTql CategoryQueryLanguage

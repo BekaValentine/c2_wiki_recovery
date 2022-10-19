@@ -1,0 +1,146 @@
+I'm interested in a sketch of the accumulated wisdom about ImplementingLisp.
+
+Here are some specific questions I've wondered about:
+
+* How is lambda implemented?
+* What's at the very lowest level, where the code meets the metal/OS.
+* I've heard rumors of a ByteCode set for Lisp. Does anyone know of one, and how it was implemented?
+* Is there an open-source Lisp, and if so, a roadmap through its innards?
+
+-- TomStambaugh
+
+----
+
+Here is an attempt at describing a basic blueprint for a Lisp interpreter.  It is not the only way to structure the system, but it seems to be a simple way for a hobbyist implementation.
+
+There is a 323 line implementation of this blueprint, with no GarbageCollection and very little error checking, at http://www.sonoma.edu/users/l/luvisi/sl3.c
+
+'''GarbageCollection''':
+*This is closely tied to the list structured memory.  It can be ignored if you aren't going to be doing real work.
+
+'''List structured memory''':
+*You need a way to manipulate cons cells, symbols, integers, primitives, and user defined procedures in your implementation language.
+
+'''Environment handling''':
+	Lookup:	Find the value of a symbol in an environment.
+	Extension:	Create a new environment given an old environment, some symbols, and their new values.
+
+'''Input/Output''':
+	read:	RecursiveDescentParser for reading in EssExpression''''''s.
+	print:	Simple recursive procedure to print out EssExpression''''''s.
+
+'''Evaluator (EvalApply)''':
+	eval:	Evaluate a form.  Looks up symbols.  Handles special forms.  For applications, delegates evaluation of subforms to evlis and delegates the actual application to apply.
+	apply:	Unwraps user defined procedures, adjusting environment appropriately and delegates evaluation of body to begin.  Applies primitives in an implementation dependant manner.
+	evlis:	Takes a list of forms.  Evaluates each one (using eval) and returns a list of the results.
+	begin:	Takes a list of forms.  Evaluates each one (using eval) and returns the result of the last evaluation.
+
+'''Interface''':
+	ReadEvalPrintLoop:	Evaluates (print (eval (read))) over and over so that the user (probably you) can type in Lisp expressions and see what they evaluate to.
+
+If you are writing your LispLanguage interpreter in LispLanguage itself, you get the GarbageCollection, the list structured memory, and the I/O for free.  This is called a MetaCircularEvaluator.  There is a partial MetaCircularEvaluator in WhyLisp.  StructureAndInterpretationOfComputerPrograms has a good discussion of this process, as does "The Art Of The Interpreter" (see below).
+
+If you are using something like CeeLanguage for your implementation, you can start by implementing just the list structured memory, read, and print.  Then run (print (read)) in a loop.  The other parts can then be added to the working system incrementally.
+
+If you are happy without TailCallOptimization or FirstClassContinuation''''''s (ContinuationExplanation, ContinuationImplementation), then you can just go ahead and write the evaluator recursively as described above.
+
+If you want TailCallOptimization, then you will either need to tail call optimize the interpreter or represent the control stack explicitly.  If you write a MetaCircularEvaluator in SchemeLanguage, you're most of the way there.  In a language like CeeLanguage or CommonLisp which has GoTo, the interpreter can be tail call optimized by inlining begin() and apply() into eval(), and replacing eval()'s tail recursive calls with assignments and GoTo''''''s that target the beginning of the function.  ParadigmsOfArtificialIntelligenceProgramming explains how to do this, and there is an example in C at http://www.sonoma.edu/users/l/luvisi/sl5.c
+
+If you want FirstClassContinuation''''''s, then you have a few options:
+* If you have TailCallOptimization, you can convert the source program into ContinuationPassingStyle (using a CpsTransformation) before interpreting it, so the control stack is represented explicitly in the transformed source code.  ''Lambda The Ultimate Declarative'' (ftp://publications.ai.mit.edu/ai-publications/pdf/AIM-379.pdf) and ''RABBIT: A Compiler for SCHEME'' (ftp://publications.ai.mit.edu/ai-publications/pdf/AITR-474.pdf) have good descriptions of how to convert SchemeLanguage code into ContinuationPassingStyle.
+* If you are writing your interpreter in a language which has TailCallOptimization, you can write the interpreter in ContinuationPassingStyle.  When creating a continuation for the interpreted program, you just encapsulate the interpreter's current continuation.  See http://fresh.homeunix.net/~luke/misc/foo1.lisp for an example of doing this.  Also, StructureAndInterpretationOfComputerPrograms describes this idea in their description of the "Amb Evaluator", although it is in the context of implementing backtracking in the interpreted language, not continuations.
+* You can represent the control stack explicitly in the evaluator, so that it can be easily encapsulated in and restored from a FirstClassContinuation.  See the ExplicitControlEvaluator in StructureAndInterpretationOfComputerPrograms and the SchemeLanguage interpreter in ''An Interpreter for Extended Lambda Calculus'' (ftp://publications.ai.mit.edu/ai-publications/pdf/AIM-349.pdf) (written in MacLisp, but it should be understandable by someone familiar with CommonLisp) for good examples of how to do this.  If you build a SECD machine based implementation (see below), you can wrap up the current state of the machine in a continuation, and restore it when the continuation is called, adding the continuation's argument to the stack after restoration.
+
+Implementing FirstClassContinuation''''''s is probably not worth the effort for your first crack at an evaluator.
+* Especially if implementing in a lower level language; it is quite hard (at least conceptually, with many, many pitfalls) to implement full-fledged '''efficient''' FirstClassContinuation''''''s from scratch in e.g. CeeLanguage. Doing so really well requires significantly more understanding of multiple topics, than if one's implementation language is Scheme (although there are pitfalls there, too). See LispInSmallPieces for deepening of understanding.
+
+----
+
+'''Some books that may be of interest''':
+	LISP 1.5 Programmer's Manual:	This is the grandaddy of all Lisp books.  It describes the implementation of LispOnePointFive, one of the first full featured Lisp implementations.  Available for free online from http://www.softwarepreservation.org/projects/LISP/book
+	StructureAndInterpretationOfComputerPrograms:	Contains a thorough treatment of a MetaCircularEvaluator, a description of translating Lisp code into instructions for a register machine (aka a normal computer), and a good discussion of implementing list structured memory.  Brief treatment of GarbageCollection.  Weak on I/O.  Available free online from http://mitpress.mit.edu/sicp/full-text/book/book.html
+	LispInSmallPieces:	Includes multiple interpreters and two compilers (one to ByteCode, and one to CeeLanguage) for SchemeLanguage.  Weak on GarbageCollection, I/O, and the implementation of list structured memory.
+	ParadigmsOfArtificialIntelligenceProgramming:	Includes a SchemeLanguage interpreter and compiler.  The compiler targets a virtual machine which is also implemented.  Weak on GarbageCollection, I/O, and the implementation of list structured memory.
+	AnatomyOfLisp:	Out of print.  Decent treatment of all aspects of a Lisp system.  Discusses implementation techniques for older features that are not often present in current Lisp systems, such as DynamicBinding and computed gotos in the "program feature".
+	GarbageCollectionBook:	''Garbage Collection -- Algorithms for Automatic Dynamic Memory Management'', by Richard Jones and Rafael Lins. ISBN 0471941484 .  Strong on GarbageCollection (heh heh).  Discussion of implementing list structured memory, and particularly latent typing, is woven through the book.
+	EssentialsOfProgrammingLanguages:	Develops interpreters and a compiler for a language that has SchemeLanguage like semantics but a more conventional syntax.  Good coverage of ContinuationPassingStyle and how to implement dynamic-wind.  Decent coverage of input.  Weak on GarbageCollection, output, and the implementation of list structured memory.
+	FunctionalProgrammingApplicationAndImplementation:	by Peter Henderson.  Has a good description of the SECD machine (see below), including an outline of a VirtualMachine implementation in a PascalLanguage like PseudoCode, a compiler (written in LispKit Lisp) that compiles his LispKit Lisp to the SECD VirtualMachine, and a little bit on I/O, list structured memory and GarbageCollection.  Unfortunately, the only mention I've found of TailCallOptimization is in an exercise 6.6 on page 196 where it asks the student to explain how "AP RTN" is redundant and how to fix it.  The dialect which it implements is a little bit weird.  For example, the scheme code "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) fact)" would look like "(letrec fact (fact lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))".
+	LispaPortableImplementation:	S. Hekmatpour,1989
+
+'''Some web sites of interest''':
+	http://library.readscheme.org/page8.html :	Lots of links to many good papers worth reading.
+	http://www.schemers.org/ :	Links to many implementations of SchemeLanguage.  The most popular dialect of LispLanguage to write subsets of, and to implement LispLanguage subsets in.
+	http://www.iro.umontreal.ca/~boucherd/mslug/meetings/20041020/minutes-en.html :	Has a nice video on a simple Scheme to C compiler based on Closure and CPS conversion.  This is nice to see in conjunction with Queinnec's LispInSmallPieces and the Lambda Papers.
+
+'''Some papers of interest''':
+	http://www.schemers.org/Documents/Standards/R5RS/ :	The current SchemeLanguage standard.
+	An Interpreter for Extended Lambda Calculus ftp://publications.ai.mit.edu/ai-publications/pdf/AIM-349.pdf :	The original SchemeLanguage paper.
+	The Art of the Interpreter or the Modularity Complex (Parts Zero, One, and Two) ftp://publications.ai.mit.edu/ai-publications/pdf/AIM-453.pdf :	This paper includes many small interpreters and examines how different changes impact the usability of the language.
+	Representing Type Information in Dynamically Typed Languages ftp://ftp.cs.indiana.edu/pub/scheme-repository/doc/pubs/typeinfo.ps.gz :	How to keep track of what things are of what type.  Useful in implementing list structured memory.
+	An Introduction to Scheme and its Implementation ftp://ftp.cs.utexas.edu/pub/garbage/cs345/schintro-v14/schintro_toc.html :	Just what the title says.
+	Definitional Interpreters for Higher-Order Programming Languages http://www.brics.dk/~hosc/local/HOSC-11-4-pp363-397.pdf :	This paper has a fairly thorough discussion of how to implement things like FirstClassFunction''''''s and FirstClassContinuation''''''s in an interpreter when the language you are writing the interpreter in does not support those features.
+
+----
+'''Implementations (open-source)'''
+
+Google for "SECD machine" for one possible implementation. Also look for LispKit, using which I implemented a variant of the LispLanguage in a weekend.
+*"The Mechanical Evaluation of Expressions" by PeterLandin is the original paper that describes the SECD machine.  It also introduced "closures".  http://www3.oup.co.uk/computer_journal/hdb/Volume_06/Issue_04/060308.sgm.abs.html (BrokenLink, but the WaybackMachine has it http://web.archive.org/web/20030106035107/http://www3.oup.co.uk/computer_journal/hdb/Volume_06/Issue_04/060308.sgm.abs.html)
+*''Functional Programming Application and Implementation'' by Peter Henderson ISBN 0133315797 describes both the normal SECD machine, and some extended variations with support for backtracking and LazyEvaluation.
+*''Recursive Programming Techniques'' by W. H. Burge ISBN 0201144506 has a decent description of the SECD machine.
+* LispMe (http://www.lispme.de/lispme/index.html), a SchemeLanguage implementation for PalmOs, is based on the SECD machine (http://www.lispme.de/lispme/doc/lm_hood.htm).
+*http://en.wikipedia.org/wiki/SECD_machine
+*http://skelet.ludost.net/sec/
+*http://skelet.hit.bg/SECD/
+*http://www.brics.dk/RS/03/33/
+
+Lispkit:
+
+LispKit is an implementation of a Lisp like PurelyFunctional language with LazyEvaluation based on the SECD machine.  A reference implementation of the VirtualMachine is written in Pascal, and the compiler and many other utilities are written in LispKit Lisp.
+
+*http://en.wikipedia.org/wiki/Lispkit_Lisp
+*http://www.cs.uml.edu/~giam/DPL/Code/lispkit/LKIT-2/
+*''Functional Programming Application and Implementation'' by Peter Henderson ISBN 0133315797
+*''The LispKit Manual'' by Peter Henderson, Geraint A. Jones, Simon B. Jones ISBN 090292818X (available new at http://www.amazon.co.uk/exec/obidos/ISBN%3D090292818X/portlandpatternrA/202-6035609-5372633)
+*http://www.cybercomms.org/LispKit/ has a port of the reference implementation to the GNU Pascal compiler.
+
+DougMerritt wrote: In no particular order, open source Lisps I have lying around my hard disk after searching for such in 2003:
+
+* Budd (Tim Budd's; missing URL right now)
+* CMUCL
+* C to Lisp translator (Zetalisp C compiler, now in public domain). http://www.bitsavers.org/bits/TI/Explorer/zeta-c/ And before you ask, no, it's not trivially portable to Common Lisp
+* Guy Steele's "FOO" language, as found on the ll1.mit.edu mailing list (very small demo implementation of call with continuations)
+* ISLISP Commercial License Required.  (originally "International Standard" but at JohnMcCarthy's request, no longer labeled "standard", because no Lisp should be). European Lisp, basically. http://christian.jullien.free.fr/ 
+* MacLisp: 1976 DEC10 assembler implementation. Available but not likely to be of interest. Reference manual may be more interesting. 
+* SIOD: Scheme In One Defun
+* Xlisp 2.0: experimental programming language written by David Betz combining some of the features of LISP with an object-oriented extension capability. Tom Almy extended XLISP to bring it into closer conformance with Common Lisp. ftp://cs.orst.edu:/pub/xlisp/ or ftp://sumex-aim.stanford.edu:info-mac/dev/ or ftp://glia.biostr.washington.edu:/pub/xlisp or CMU AI repository
+* Xlisp Plus: Upgrade to Xlisp. http://almy.us/~aalmy/xl304src.zip
+* Lisp in Awk: http://www-2.cs.cmu.edu/afs/cs/project/ai-repository/ai/lang/lisp/impl/awk/ and also http://accesscom.com/~darius/hacks/awklisp.tar.gz
+** short article about it: http://lemonodor.com/archives/000040.html (''actually that is an 'awk' in Lisp, not a Lisp in Awk'')
+* CLiCC (Common Lisp to C Compiler): http://www-2.cs.cmu.edu/afs/cs/project/ai-repository/ai/lang/lisp/impl/clicc/0.html
+* CL.EL (Common Lisp compatibility package for GNU-Emacs Lisp): http://www2.cs.cmu.edu/afs/cs/project/ai-repository/ai/lang/lisp/impl/el_cl/0.html
+* ECoLisp (ECL), an Embeddable (into C apps) Common Lisp implementation: ftp.icsi.berkeley.edu/pub/ai/ecl
+* Generalized LISP. D.C. Smith, Aug 1990. A coordinated set of high-level syntaxes for Common LISP. Contains Mlisp, Plisp and ordinary LISP, with an extensible framework for adding others. Written in Plisp. ftp://bric-a-brac.apple.com/dts/mac/lisp
+* jlisp: Jeff's Lisp Interpreter (1994 alt.sources); designed to be used as an embedded interpreter and is easily interfaced with C/C++. ftp.ee.rochester.edu:/pub/weisberg/jlisp-1.03.tar.gz
+* LILY: C++ Class Library for writing Lisp-style C++ code (1993). Includes some example programs from Winston's Lisp book recoded in Lily. Most or all of chapters 17 (Symbolic Pattern Matching), 18 (Expert Problem Solving), and 23 (Lisp in Lisp) are implemented in the examples. This package is mainly useful in academia for instructors who wish to teach AI techniques in C++. The garbage collection mechanism is rather slow, making it unattractive for industrial use. sunsite.unc.edu:pub/packages/development/libraries/lily-0.1.tar.gz
+* l2p: Lisp To Perl. Translates programs written in a slightly unusual dialect of lisp into executable perl programs. The dialect of lisp used is similar to scheme. lisp2perl.tar.gz
+* Lispme: Lisp/Scheme for Palm Pilot. http://www.lispme.de/lispme/index.html
+* RefLisp is a small Lisp interpreter written in C++ for Unix(Linux) and Windows(Cygwin). It features include:  inbuilt web server with Lisp Server Pages, XML parser,	MD5 crypto checksum,  regular expression matching for strings (regex), Embedded SQL (sqlite)  GNU Public License. The interpreter is shallow-binding (i.e., everything has dynamic scope) and is close in semantics to the original MIT Lisp. RefLisp is a "Lisp1". Common Lisp (CL) compatibility macros are provided, and most of the CL examples in "Lisp" by Winston & Horn have been run on RefLisp. http://www.ozemail.com.au/~birchb/reflisp/index.html
+* WCL is an implementation of Common Lisp for Sparc based workstations (1994). WCL provides a large subset of Common Lisp as a Unix shared library that can be linked with Lisp and C code to produce efficient and small applications. For example, the executable for a Lisp version of the canonical ``Hello World!'' program requires only 40k bytes under SunOS 4.1 for SPARC. cdr.stanford.edu:/pub/wcl/ (Or CMU Lisp Repository)
+
+I have a similar list of Scheme implementations but now I'm all tired out from editing the above. -- dm
+
+''Scheme open source implementations'' (also see SchemeImplementations)
+* Rabbit - Steele's famous Scheme compiler. http://www.accesscom.com/~darius/hacks/RABBIT
+* DrScheme http://www.drscheme.org
+* Scheme to Common Lisp translator (scm2cl), part of scmxlate by Dorai Sitaram.
+* Scheme written in CMU Common Lisp by Jonathan Rees. http://swiss.csail.mit.edu/ftpdir/pseudo/pseudo-2.12.tar.gz
+* libscheme for C: 
+* links: http://www.ccs.neu.edu/home/will/Research/schemedocs.html
+
+Some of the above links are taken from sometimes-stale package documentation and may be broken links, but nonetheless, only software that was available '''somewhere''' on the net as of Dec 2003 is listed, even if I neglected to keep a note of its new location after I searched it out and downloaded it. In particular it is common for older software to be found only in the AI repository.
+
+Also see http://library.readscheme.org/page8.html for a bibliography with links to papers discussing "Compiler Technology/Implementation Techniques and Optimization" for the SchemeLanguage.
+
+''Discussion moved to ImplementingLispDiscussion''
+----
+CategoryLisp

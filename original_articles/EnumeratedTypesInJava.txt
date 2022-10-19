@@ -1,0 +1,498 @@
+Java includes typesafe enums in "Tiger" (SDK 1.5): http://jcp.org/aboutJava/communityprocess/jsr/tiger/enum.html
+
+The following discussion is referring to Java 1.4 and earlier.
+
+http://developer.java.sun.com/developer/bugParade/bugs/4401321.html also has a lengthy (and rather unproductive) discussion on the subject.
+
+----
+
+One of the things that I found surprising while learning Java is that it doesn't support C's enum keyword, which provides a mapping for an ordered set of constants.  In the February 1997 issue of the JavaReport, ScottOaks presents a cute way of doing what are in effect enums in Java, which EricWhite elaborates on in the September issue.
+
+The basic idea is this -- create a class (say called Month) that has a set of private static int mappings for your "base" types.  e.g.,
+
+  private static int jan = 1;
+  private static int feb = 2;
+  // ...
+
+Now, create a set of public static Months that represent the actual enumerations:
+
+  public static Month JAN = new Month(jan);
+  public static Month FEB = new Month(feb);
+  // ...
+
+Next create a protected static array holding the enumerated types:
+
+  protected static Month[] elements = {JAN, FEB, MAR, ...
+
+And then write instance methods that return integer and String values from your Month type.  Next build static class methods that lookup the proper Month value from String or integer representations.  Finally, build a Java Enumeration that can enumerate over the Months.
+
+This is a pretty cool implementation of the FlyweightPattern that gives you a lot of flexibility in building these enumerated types -- much more so than C's enum construct.  It leaves you thinking how you ever got along using the clunkier way of doing things!
+
+KyleBrown
+----
+
+ /* File: Months.java */
+ /* Enumeration of internal states */
+ import java.util.Enumeration;
+ public class Months {
+	public static String [] months = { "JAN", "FEB" , "MAR" };
+	public static Enumeration elements() {
+	return new M''''''onthsEnumerator();
+	}
+ }
+
+ class Months''''''Enumerator implements Enumeration {
+	private int idx = 0;
+	public /*static*/ boolean hasMoreElements() {
+ 	return (idx < Months.months.length);
+	}
+	public /*static*/ Object nextElement() {
+ 	return Months.months[idx++];
+	}
+ }
+
+The months of the year always the same. 
+You see the M''''''onthsEnumerator is created each traversal with
+an independent cursor (idx), showing the actual state. I think that's it, what we need. (a fixed Enumeration!)
+
+Bernhard Kanz (bernhard@fh-rosenheim.de)
+----
+If you just need unique values without caring what they are, you can use the simpler:
+  class My''''''Color {
+	public static final My''''''Color RED = new My''''''Color();
+	public static final My''''''Color GREEN = new My''''''Color();
+	public static final My''''''Color BLUE = new My''''''Color();
+	protected My''''''Color() {}
+  }
+
+This gives My''''''Color.RED a unique value. You can use it in '''if'''
+statements and hashtables, but not
+'''switch'''
+statements. It will be statically type-checked (which is the biggest problem with faking enums with ints).
+
+Be aware that enums were left out of Java for a reason: they are not very extendable. Code like:
+
+  if (color == My''''''Color.RED) {
+	// ...
+  } else if (color == My''''''Color.GREEN) {
+	// ...
+  } else // (color == My''''''Color.BLUE) {
+	// ...
+  } 
+
+will fail when someone adds a new color. For this were virtual functions invented. -- DaveHarris
+
+-----
+But these values are of the same type so 'virtual functions' wouldn't be able to distinguish between them. To do so would require making RED, GREEN etc subclasses of the Color class. In some cases that may be appropriate, other times enumerated types may be more appropriate.
+-- JonHanson
+
+-----
+Dave's implementation has one limitation.  It won't work if you ever want to store these values outside the VM (persistence).  Consider what happens when you serialize and de-serialize a My''''''Color, for example.
+-- BillKayser
+
+-----
+
+Okay - so why not add the state data to Dave's implementation. We dont have to care about the values
+but we might still care about their order and sequence.
+We can have a protected class constant that is initialized
+to zero that essentially serves as an instance counter.
+Each instance initializes its color value with the
+instance count:
+
+  class Color {
+	protected static int numColors = 0;
+	protected static Vector colorVector = new Vector();
+
+	private int	colorNumber;
+	private String  colorName;
+
+	protected Color(String name) {
+	this.colorName = name;
+	this.colorNumber = numColors++;
+	colorVector.addElement(this);
+	}
+
+	public String name() { return this.colorName; }
+	public int ord() { return this.colorNumber; }	
+
+	public static final Color RED = new Color("RED");
+	public static final Color YELLOW = new Color("YELLOW");
+	public static final Color BLUE = new Color("BLUE");
+	
+	// ...
+  }
+
+That seems like a bit less effort than what Kyle was
+describing (though still far more than it has any right to if you ask me -- sorry but there's just no way it should take such an enormous amount of effort and code to do something so incredibly basic and straightforward as enumeration constants). Of course the vector is less efficient than the array ;-) It's at least as easy to code up methods to convert a color name/number to a Color, or to get the first color (colorVector.firstElement()) or last color (colorVector.lastElement()) in the set.
+
+This wont have the persistence problems that Bill mentioned. It can also be easily extended by creating more static instances of the class (or a subclass) to add more colors (with unique values) for all of them (but they dont have too much control over the ordering of the new colors with respect to the existing ones, they will always come later-on in the color-number range). Of course you should probably pass the currently known range-size to the vector constructor for efficiency reasons.
+
+In fact, I think this comes closest to getting the full range of 'enum' functionality in C++ (if that is indeed what you want). One could create a second constructor which also lets you specify the value to use for the instance being created. The class "instance counter" would instead simply be a "next value to use" and would always be "one plus the last value used" (which of course would be the ''default'' for the next instance that did not explicitly specify a value):
+
+  class Color {
+	protected static int sequenceNum = 0;
+	protected static Vector colorVector = new Vector();
+
+	private int	colorNumber;
+	private String  colorName;
+
+	protected Color(String name) {
+	this.colorName = name;
+	this.colorNumber = sequenceNum++;
+	colorVector.addElement(this);
+	}
+
+	protected Color(String name, int number) {
+	this.colorName = name;
+	this.colorNumber = sequenceNum = number;
+	++sequenceNum;  // set default for next instance
+	colorVector.addElement(this);
+	}
+
+	// ...
+  }
+
+In this manner, you could use this kind of "enum" not only for sequentially ordered discrete sets, but also for things like bitmasks, and combinations (so that the value of GREEN might actually be the sume of BLUE + YELLOW), and even aliases for the same value (e.g. BLUE_GREEN, GREEN_BLUE).
+One might argue vociferously that 'enums' in Java shouldn't be like this - but if you really want the full C++ enum functionality, that's about as close as it gets.
+
+-- BradAppleton
+
+''If you use a vector, you can use colorVector.size() instead of numColors. Arguably this makes clearer the class invariant that "colorVector.elementAt(i).colorNumber == i". Your last example no longer provides that guarantee, which is probably a bug. -- DaveHarris''
+
+------
+
+This way of implementing enums in Java is great, and I've even written a little compiler to automate the task (and to test a lexer/parser package I have written).  However, they have the disadvantage that they are not Serializable or Externalizable and cannot readily be made so.  E.g: adding implements Serializable will not do the trick.
+
+Instead, the handle/body idiom needs to be used.  The handle is what clients see as the "enum" while the body holds the values of the enumerated constant.  The body class is implemented as shown above, and so provides the limited set of predefined enum values.  As many handles can be created as necessary and each is initialised with one of the body objects as its value.  The handle is Serializable or Externalizable:  it's write method writes the int value of its body object to the stream while its read method reads an int value from a stream and then translates that into the appropriate body object.
+
+-- NatPryce
+
+''They thought of this. You must implement the readResolve() method, which allows the deserialized object to substitute another object in place of itself. Add the following method to Brad's first example:''
+
+	public Object readResolve() throws java.io.Object''''''Stream''''''Exception {
+	Enumeration e = colorVector.elements();
+	while (e.hasMoreElements()) {
+		Color c = (Color)e.nextElement();
+		if (colorNumber == c.colorNumber) return c;
+	}
+	throw new java.io.Invalid''''''Object''''''Exception("Invalid colour value");
+	}
+
+''...and of course make Colour implement java.io.Serializable. -- DavidPrice''
+
+----
+
+I've seen several pieces of C code that implement Pascal-style
+enumerated types. In Pascal you can write a for loop that
+uses the order in which enumerated identifiers are declared within 
+an enumerated type. I don't like the way this tends to get used. 
+
+Consider:
+  enum hobbs { hobbAikido, 
+		hobbRocketCatching,
+		hobbMountainClimbing,
+		hobbVaxRestoration}
+People write loops to traverse through each symbol, first-to-last,
+and they hard code things like
+  for (i = hobbAikido; i <= hobbVaxRestoration; ++i) {
+	// ... do whatever...
+  }
+I want to produce abstract "first" and "last" symbols, so
+that I can change the order and number of hobbies whilst minimising
+the amount of loop code that will need fixing.
+So I found I can do:
+ enum hobbs { hobbAikido, 
+		hobbFirst = hobbAikido,
+		hobbRocketCatching,
+		hobbMountainClimbing,
+		hobbVaxRestoration,
+		hobbTormenting,
+		hobbLast = hobbTormenting}
+Now you can write:
+ for (i = hobbFirst; i <= hobbLast; ++i) {
+	// ... do whatever...
+ }
+and:
+ for (i = hobbLast; i >= hobbFirst; i--) {
+	// ... do in reverse order of hobbies
+ }
+...thus isolating the loops from the actual first and last values.
+
+Does anybody know if the official C/C++ standards allow this type of usage?
+I've looked at K&R's Ansi C book and I can't see objections to this style
+of enum in there. I hope it's not just an "accident of gcc".
+
+----
+
+''It's guaranteed by C++. Nowadays one might write an iterator template in the STL style, or at least use ++i instead of i++ :-)  -- DaveHarris''
+
+See also DefineConstantsInInterfaces.
+
+----
+
+I like Brad's way of doing this.  But what particularly peeves me
+about Java is that statics are not inherited properly.  In other
+words, I'd like to define an Enum superclass, along the lines of:
+
+ public abstract class Enum {
+
+	private int number;
+
+	private string name;
+
+	private static Vector itemVector = new Vector();
+
+	protected Enum (String name) {
+	this.name = name;
+	this.number = itemVector.size();
+	itemVector.addElement(this);
+	}
+
+	public String getName() { return this.name};
+	public int getNumber() { return this.number};
+ }
+
+This would reduce the amount of code in each subclass.  Of
+course, this doesn't work in Java, because static members
+behave like Smalltalk Class variables, as opposed to Smalltalk
+Class-Instance variables.  Anyone have a good way to work
+around this (other than Smalltalk, of course ;-)
+
+JaredNedzel
+
+I can think of two ways, off the top of my head...
+
+1) Use the TemplateMethodPattern in the Enum class to get a reference to the static vector used by a concrete class.
+
+ public abstract class Enum {
+	private int number;
+	private string name;
+ 
+	protected Enum (String name) {
+	this.name = name;
+	this.number = itemVector().size();
+	itemVector().addElement(this);
+	}
+
+	public String getName() { return this.name };
+	public int getNumber() { return this.number };
+ 
+	protected abstract Vector itemVector();
+ }
+
+ public class Month extends Enum {
+	private static Vector items = new Vector();
+  
+	public static Month JAN = new Month();
+	// ... etc ...
+  
+	protected Vector itemVector() { return items; }
+ }
+
+
+2) Use a static hash-table in the Enum class to hash from the Class objects of the concrete classes to vectors for those classes.
+
+ public abstract class Enum {
+	private int number;
+	private string name;
+  
+	private static Hashtable vectors = new Hashtable();
+
+	protected Enum (String name) { 
+	this.name = name;
+	this.number = itemVector().size();
+	itemVector().addElement(this);
+	}
+  
+	public String getName() { return this.name };
+	public int getNumber() { return this.number }; 
+
+	private abstract Vector itemVector() {
+	Vector vec = (Vector)vectors.get( getClass() );
+	if ( vec == null ) {
+	  vec = new Vector();
+	  vectors.add( getClass(), vec ); 
+	}
+	return vec;
+	}
+ }
+
+This approach needs some care to avoid keeping objects alive that should be reclaimed as garbage.  Cunning design with the java.lang.ref package is required.
+----
+When not giving explicit numbers to constant i.e. using the index of the enum pool, we are at the mercy of the JVM initializing the static fields on class loading in the right order. This order is textual order according to the The Java Language Specification.
+i.e. when defining constants like this:
+final static Month JAN = new Month();
+final static Month FEB = new Month();
+give JAN an index 0 and FEB an index 1.
+If I understand 'textual order' correctly,
+swapping the two lines will get you in serious trouble,
+if you have serialized constants out there.
+
+JochenBedersdorfer
+----
+I see your point that allowing the JVM to initialize the constants is probably ProgrammingByCoincidence.  A couple of possibilities are:
+
+1) as Brad's example illustrates, add an "ordinal" or "number" parameter to the constructor, such that part of instantiating an instance of a EnumeratedType subclass is to provide the instance's ordinal.  Write your constant initialization expressions to pass both the ordinal and the name.
+
+2) as illustrated in Kyle's initial posting, define one set of constants that establish the ordinal values and a second set of constants with instances of the class bound.  The first set of constants become arguments to the instantiation of the second set.
+
+3) use a static initializer in subclasses to force instantiation of instances in a specific, predictable order (in which case you wouldn't need the additional parameter on the constructor).  I have mixed feelings about this solution, as I guess I haven't gotten comfortable with using static initializers (lingering Smalltalk biases perhaps).
+
+Does anyone have any opinions about which of these approaches is better, or have additional alternatives?
+
+DaveMuirhead
+
+	1. The constructor only needs to be passed the instance's name if you need toString.  If you don't need toString, skip the name.
+	1. Very often you don't really need the value.  In that case, don't have the constructor take a value.
+	1. If the instances need a value and that value can be automatically generated (by auto-increment, for example), then you probably don't really need the value.
+	1. If the instances really do need a value, just pass it into the constructor.  Don't define another named constant for it.
+
+----
+
+I just want to add a remark to the enum implementations presented at the beginning of this page. There is one thing why I don't like them very much. Returning a human-readable version of an enum doesn't make much sense if you have to do internationalization and localization. One common design rule in I18N/L10N is, that you do conversion from/to local-specific representations on the "borders" of the application only. That is, where data is entered, and where data is displayed (in the GUI). Internally, one just uses local-independent information. So you are able to concentrate on a very few spots in a large application.
+
+Having enums which have an own representation deep down in the code just makes things harder.
+----
+
+I disagree with the above... First of all, I18N/L10N tackles the presentation portion of an application, so effectively enums do not cross that boundary. Finally, if source codes were to be "I18N/L10N"-ed, then we shouldn't code in Java at all since the language's in English, not in our mothertongue....
+
+Taking the example (just) above, the GUI is localized, but the parameters passed in to construct the GUI is (gasp!) still in English!!! (e.g. BorderLayout.PAGE_START)
+
+And what's wrong with human-readable source codes? Every programmer knows how to code, but only those who are good write human-readable ones... [a quote i can't remember who to give credit to]
+
+Therefore, enum, when used properly, is a good thing.....
+----
+Unlike many other versions here, this is tamperproof, threadsafe, and pretty much industrial strength.  Read ''Effective Java'' section on java versions of C patterns for more info. 
+
+ import java.util.Arrays;
+ import java.util.Collections;
+ import java.util.Iterator;
+ import java.util.List;
+
+ /**
+  * A typesafe enumeration of the months.
+  * 
+  * Immutable, Thread safe, and resolves properly on deserialization.
+  *
+  */
+ public final class Month implements Comparable, java.io.Serializable {
+	// Public constants
+
+	public static final Month JAN = new Month("January");
+	public static final Month FEB = new Month("February", 28);
+	public static final Month MAR = new Month("March");
+	public static final Month APR = new Month("April", 30);
+	public static final Month MAY = new Month("May");
+	public static final Month JUN = new Month("June", 30);
+	public static final Month JUL = new Month("July");
+	public static final Month AUG = new Month("August");
+	public static final Month SEP = new Month("September", 30);
+	public static final Month OCT = new Month("October");
+	public static final Month NOV = new Month("November", 30);
+	public static final Month DEC = new Month("December");
+
+	private static final Month[] MONTH_ARRAY =
+		{ JAN, FEB, MAR, APR, MAY, JUN, JUL, AUG, SEP, OCT, NOV, DEC };
+
+	public static final List MONTHS =
+		Collections.unmodifiableList(Arrays.asList(MONTH_ARRAY));
+
+	// Month implementation
+
+	// count will be seen as zero despite its value unless it's before the
+	// public constant declarations
+	private static int count = 0;
+
+	final String name;
+	final int number;
+	final int days;
+
+	private Month(String name) {
+		this(name, 31);
+	}
+
+	private Month(String name, int days) {
+		this.name = name;
+		this.days = days;
+		this.number = ++count;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public String getAbbev() {
+		return name.substring(0, Math.min(3, getName().length()));
+	}
+
+	public int getNumber() {
+		return number;
+	}
+
+	public int getDays() {
+		return days;
+	}
+
+	public String toString() {
+		return name;
+	}
+
+	public int compareTo(Object o) {
+		return getNumber() - ((Month) o).getNumber();
+	}
+
+	Object readResolve() throws java.io.ObjectStreamException {
+		return MONTH_ARRAY[number - 1];
+	}
+ }
+
+----
+An article by Vladimir Roubtsov on the JavaWorld web site, at http://www.javaworld.com/javaworld/javatips/jw-javatip122.html, describes a problem with the type-safe enumeration scheme.  Essentially, it is possible for a class to be loaded into the system several times by different class-loaders.  A J2EE application, or a JSP application where the JSP is updated and reloaded, can cause multiple versions of a class to be in the system, and then you don't have object invariance.  I'm not sure this is too much of a problem, however.  But wiser minds than I can argue the situation.
+
+You can also use the enumeration classes in the Jakarta Commons Lang project at http://jakarta.apache.org/commons/lang.html.  Look for Enum, V''''''aluedEnum, and E''''''numUtils.  Strangely enough, to avoid class loader problems, you should test these enumerations for equality using ''equals'', not ''=='' ''so long as you account for the fact that classes loaded from different classloaders are not equal''.
+
+They give this example:
+
+  '''public final class''' C''''''olorEnum '''extends''' Enum {
+	'''public static final''' C''''''olorEnum RED	= '''new''' C''''''olorEnum("Red");
+	'''public static final''' C''''''olorEnum GREEN = '''new''' C''''''olorEnum("Green");
+	'''public static final''' C''''''olorEnum BLUE  = '''new''' C''''''olorEnum("Blue");
+
+	'''private''' C''''''olorEnum(String color) {
+	super(color);
+	}
+ 
+	'''public static''' C''''''olorEnum getEnum(String color) {
+	'''return''' (C''''''olorEnum) getEnum(C''''''olorEnum.'''class''', color);
+	}
+ 
+	'''public static''' Map getEnumMap() {
+	'''return''' getEnumMap(C''''''olorEnum.'''class''');
+	}
+ 
+	'''public static''' List getEnumList() {
+	'''return''' getEnumList(C''''''olorEnum.'''class''');
+	}
+ 
+	'''public static''' Iterator iterator() {
+	'''return''' iterator(C''''''olorEnum.'''class''');
+	}
+  }
+
+They state: ''The getEnum and iterator methods are recommended. Unfortunately, Java restrictions require these to be coded as shown in each subclass.''
+
+The Enum class was written by Stephen Colebourne. 
+
+-- EricJablow
+----
+An overview article I hacked out based on working with the Java 1.5 pre-releases:
+
+  http://www.langrsoft.com/articles/enum.html
+
+Note that it doesn't address the fact that you can override method definitions at the level of each enum constant, an interesting concept at best.
+
+--JeffLangr
+----
+See also: ConstantTable
+-------
+CategoryJava

@@ -1,0 +1,299 @@
+This small example is a practical demonstration of EjbFlaws in action. The assumption of the whole EJB effort is that it will offer developers an ObjectOriented "view of data", and it will totally isolate them from the so called "low level" (sic! compare to the "high level" EjbQueryLanguage) PersistenceLogic. This turns out to be an incredibly bad idea.
+
+----
+
+Let's take a simple example present in all the books on databases: let's assume that Suppliers supply Parts to Projects, where we choose to "model" the three as entities. Ooops, here we have a ternary relationship, and god forbid that we might encounter a relationship with a degree greater than 3. Could we model this relationship in the CMP/EJB-QL data model, without any significant distortion (like "objectifying/entitifying" parts_to_suppliers)? It turns out that the said committee hasn't figured out that binary relationships are not the only relationship in the real world. -- CostinCozianu
+
+To be more clear, here is the database schema:
+
+ CREATE TABLE Suppliers(
+  Supplier_Name VARCHAR(100) NOT NULL PRIMARY KEY
+  -- other fields skipped like  
+ );
+
+ CREATE TABLE Projects (
+	Project_Name VARCHAR(100) NOT NULL PRIMARY KEY
+  -- other fields skipped
+ );
+
+ CREATE TABLE Parts (
+  Part_Code VARCHAR(15) NOT NULL PRIMARY KEY
+  -- other fields skipped
+ );
+ 
+ CREATE TABLE R_SuppliersParts (
+  Supplier_Name VARCHAR(100) NOT NULL,
+  Part_Code VARCHAR(15) NOT NULL,
+  CONSTRAINT R_SupplierParts_PK PRIMARY KEY (Supplier_Name, Part_Code),
+  CONSTRAINT R_SupplierParts_FK1 FOREIGN KEY (Supplier_Name) REFERENCES Suppliers(Supplier_Name),
+  CONSTRAINT R_SupplierParts_FK2 FOREIGN KEY (Part''''''Code) REFERENCES Parts(Part''''''Code)
+ ); 
+ -- meaning: Supplier [Supplier_Name] can supply Part [Part_Code]
+
+ CREATE TABLE R_ProjectsParts (
+  Project_Name VARCHAR(100) NOT NULL,
+  Part_Code VARCHAR(15) NOT NULL,
+  CONSTRAINT R_ProjectsParts_PK PRIMARY KEY (Project_Name, Part_Code),
+  CONSTRAINT R_ProjectsParts_FK1 FOREIGN KEY (Project''''''Name) REFERENCES Projects(Project''''''Name),
+  CONSTRAINT R_ProjectsParts_FK2 FOREIGN KEY (Part_Code) REFERENCES Parts(Part_Code)
+ );
+ -- meaning: Project [Project''''''Name] needs part [Part''''''Code]
+
+ CREATE TABLE R_SuppliersPartsProjects (
+  Supplier_Name VARCHAR(100) NOT NULL ,
+  Part_Code VARCHAR(15) NOT NULL,
+  Project_Name VARCHAR(100) NOT NULL,
+  CONSTRAINT R_SuppliersPartsProjects_PK PRIMARY KEY (Project_Name,Part_Code,Supplier_Name),
+  CONSTRAINT R_SuppliersPartsProjects_FK1 FOREIGN KEY (Project_Name, Part_Code) 
+	 REFERENCES R_ProjectsParts(Project_Name, Part_Code),
+  CONSTRAINT R_SuppliersPartsProjects_FK2 FOREIGN KEY (Supplier_Name, Part_Code) 
+	 REFERENCES R_SuppliersParts(Supplier_Name,Part_Code)
+ );
+ -- meaning: Supplier [Supplier_Name] has been accepted to supply Part [Part_Code] to Project [Project_Name]
+
+The first part of the challenge is merely to model this information in an Entity/EJB model. The second part works like this UserStory: 
+
+''"For some particular projects the project manager can decide that only those suppliers can qualify that can offer '''all''' the parts needed for that project. Therefore we need a screen where the project manager can see which suppliers qualify."''
+
+So assuming that you're totally abstracted from the database as per EJB/CMP/EQL propaganda, you use Java and EQL and whatever else to get this user story done.
+
+----
+
+Here is a simplified version of the above schemas. "ID" is a primary key, and "Ref" is a foreign key. If the conventions are followed, then the other stuff is usually superfluous. I find this style quicker to grok than an "Oracle dump" of schemas. -- top
+
+  Table: suppliers
+  ---------------
+  supplierID
+  supplierTitle
+  ....
+
+  Table: projects
+  --------------
+  projectID
+  projectTitle
+  ....
+
+  Table: parts
+  ---------------
+  partID
+  partTitle
+  ....
+
+  Table: R_supplierParts
+  ---------------
+  supplierRef
+  partRef
+  ....
+
+  Table: R_projectParts
+  ---------------
+  projectRef
+  partRef
+  ....
+
+  Table: R_supplierPartsProjects
+  ---------------
+  supplierRef
+  projectRef
+  partRef
+  ....
+----
+
+I have some questions or issues about the above schema. First off, there seems to be different kinds of "suppliers". One is "possible suppliers" for parts, and the other is actual suppliers of parts per project. They seem intermixed above, making it confusing. Am I missing something?
+
+''One is the potential suppliers, and the other is the formally selected suppliers for a given project based on the potential list. I don't see where they are intermixed. Perhaps we don't need the general part-suppliers list, but maybe the company needs a "rough" catalog of possible suppliers to get things up and going quickly rather than start procurment research from scratch for each project.''
+
+Second, using project names for primary keys is a no-no in my experience. Project names can change. Better use an auto-number there.
+
+''Agreed. But I think this is an old example based on early documents from DrCodd. Back then generated keys were not in vogue yet. It seems many held to the belief that there were natural domain based keys to be used. In practice this was often not the case. Auto-generated keys are often safer because they are divorced from attributes that may change over time [there is an existing topic on selecting keys around here somewhere.]''
+
+Actually, of course Dr. Codd was right and topmind and others got it wrong. Auto-generated keys are mostly (except on rare occasions) for people who do not understand relational.
+
+''I thought it was debated somewhere, but I could not find it. Therefore, how about we take this to AutoKeysVersusDomainKeys.''
+
+----
+
+An N-ary relationship would be solved with an intermediate entity with relationships to the associated entities, just like how it's solved with an associative table. I don't think "objectifying" this relationship distorts it anymore than the intermediate table does. There's a 1-1 correspondence between associative tables and classes when dealing with Ternary or N-ary relationships, this is the same for object relational mapping tools. The associative table is 'hidden' in EJB 2 CMP when it's a binary relationship, as it should be.  
+
+''Well, things are not quite as clear as you present it. You call an '''entity''' something that is really a '''relation'''. All you really need would be a single javax.ejb.Relation for all the relations you have in the model, and the underlying framework could easily handle all the details, if it was thought out properly - they would be just different instances of the Relation class. The objectifying of relations is confusing at best, but you have to manage it as entity create lots of entries in XML files, Java interfaces, all the goodies associated with the EJB development and deployments. Not quite SimplestThing. ''
+
+In your example, if I had a Part, Supplier, Project, and Supplier''''''Part, give me some queries & I'll tell you how it would be done in EJB QL.  
+
+For example, if I wanted to find all the parts on a project for a particular supplier, ejbSelect would probably go on the supplier, and I'd use:
+
+ SELECT sp.part FROM
+ Supplier''''''Part sp WHERE
+ sp.supplier = ?1 AND sp.project = ?2
+
+This would translate into SQL as:
+
+ SELECT (part fields) FROM Supplier''''''Part sp, Parts p
+ WHERE sp.supplier_id = <supplier_id>
+	AND sp.project_id = <project_id>
+	AND sp.part_id = p.part_id
+
+This doesn't pollute the relational model. It just leverages it and keeps me from having to deal with hundreds of lines of JDBC code (assuming full CRUD operations, optimistic concurrency conflict checking, foreign key constraint ordering, etc).  Naturally if all I wanted to do was query the database and return the results, I wouldn't go through the hassle of EJB (which is one reason I don't recommend it for most websites). I'd use it for business transactions that can get rather complicated (derivative pricing, inventory transfer, shipment scheduling, book-keeping, etc.).
+
+-- StuCharlton
+
+''Exactly for the business transactions that would get pretty complicated, you'd be in murky waters using Entity/EQL models, as the examples on this page show.'' 
+
+----
+
+Re: ''There's a 1-1 correspondence between associative tables and classes when dealing with Ternary or N-ary relationships,...''
+
+If it is one-to-one, then don't we have a OnceAndOnlyOnce violation here? Why store the schema in two different places?
+
+----
+
+''Hundreds of lines of JDBC code is a slight exaggeration, should we say.''
+
+Write me a data access API for an object with 8 fields with optimistic conflict checking. It will be a few hundred lines of Java code (and it would be in ADO.NET too). In EJB, it's tens of lines of boiler-plate code, much less. It's a matter of what you're trying to accomplish. If you're just trying to do a simple query & display results, EJB doesn't give you much. If you want fully data managed object, it's pretty good.
+
+''Anyways, the subject of this page is the EjbQueryLanguage. After we agree that it and the underlying model are pretty much flawed, we can find how they compare to alternatives. I have developed lots of applications, including an O/R mapping framework with no Entity, no EQL, and many others have done it also, so I have a strong suspicion that we can do pretty well without them.''
+
+Certainly one can do O/R mapping without EJB. If you can do so, more power to you. I'm in favor of EJB and EJB-QL because it's a mainstream approach to O/R mapping that is "good enough" for most purposes. It's not the only game in town. I'd usually recommend against rolling your own OR framework because other vendors have done a pretty good job of that already.
+
+''And you also miss another point entirely: EJB doesn't pollute the relational model because it has absolutely nothing to do with it. Browse the whole EJB spec and search for relation or relational operator or relational algebra or relational calculus. There's none, hence it has nothing to do with relational other than it falls back to it for a comfortable implementation. What Entity CMP is failing to do, is to have at least the level of modeling offered by EntityRelationship model some 25 years ago.''
+
+I didn't miss that point, I was under the impression you were angry with entity beans because they pollute the relational model, but I think I understand better, that you're more frustrated that it doesn't have the same "expressive power" (i.e. declarative data selection & manipulation). I would argue this is by design. It's not a data model, it's a behavioral model for making scalable objects. EJB is not set or data-oriented, it's a framework standard for a traditional OO language. OO languages are object-at-a-time. It's an imperative programming model that doesn't have an embedded query engine (which is what you would need to get declarative data manipulation). ER modelling is about modelling data, object modelling is about modelling the static dynamic combination of data and behavior. They are synergistic, not competitors.  
+
+''If you don't mind, let's skip the great words and see if we can work through to the practical reality. After that, we'll discuss the theory and we'll see how the road to hell is paved with good intentions. Try to see if the following conjecture is ok with you for the time being: the structural projection of a good OO design '''has to be''' a good ER design which '''has to be''' a good relational design. OO people knew that for over a decade, but some have forgotten.''
+
+[[Refactoring notes, if no objection I'll move this out to another page.]]
+
+----
+
+EJB recognizes the need to *select* sets of data and bind them as objects, so it uses EJB QL as a functional solution to do this irrespective of the underlying solution, with the assumption that SQL will be popular, hence a SQL-like query language.
+
+''That's what the whole thing is about: entities and relationships, and it's an absolute pity that Sun's EJB committee doesn't at least acknowledge more than 2 decades of research and implementations in E-R modeling, and doesn't follow it, choosing instead to reinvent the same wheels over and over again. Predictably, some of them are reinvented squared. If at EJB 4.0 or who knows when, all the wheels will be round again, that's hardly a thing they should be praised for.''
+
+Certainly, you have a point here. I would suggest that we're all in this together, to find new and better ways to program. That Sun's spec authors didn't know any better is a pity, but data representation wasn't the focus of EJB. We've discussed before on the serverside that arguably entity beans shouldn't have been in a distributed component spec to begin with. But they were, as a way to represent "shared" objects vs the "private" session objects, and with that they opened up the data can of worms they weren't prepared to deal with. As you know, I really hate EJB 1.1 entity beans. I just think that EJB 2.0 is a '''usable approach''' to accessing data, which is why I'm defending it. It's not the cure-all, or the best approach, but it is practical, and can be used to solve most mainstream data access problems. -- StuCharlton
+
+I'm going to come up with an implementation to your example soon (need to install JBuilder 6). One in ADO.NET at some point too, to contrast it. -- StuCharlton
+
+''Isn't it telling that you need to install JBuilder 6? I can show you the SQL using just the text area in the browser. :)''
+
+Sure, so could I, in fact I wrote the SQL for this problem in 2 minutes after you first posed the problem. I then proceeded to model it with EJB's in JBuilder in about 10 minutes. My delay really is in updating to WebLogic 7 (I'm on the road and modem connections don't fare well in downloading a 100+ meg application server. :)
+
+I don't think it's telling that I needed JBuilder, mainly because you're giving me an '''isolated requirement'''. If all you need to do is list a bunch of fields, don't use EJB, just use SQL. Most systems need to do a lot more than that, and that adds up to be a *lot* of SQL and mapping to that SQL. O/R mapping gives you the full update capabilities, caching, and sophisticated data retrieval configuration when traversing an object graph. If you're not going to use those features, you don't really need entity beans or an O/R framework! 
+
+I'm not an object purist that hates SQL or wants to black-box my RDBMS out of ignorance, I think both are crucial in a modern system, I just happen to think O/R frameworks like EJB 2 is the more productive approach (over raw JDBC) to a system requiring complex data interaction. -- StuCharlton
+
+----
+
+Where's the ternary relationship? Project has a binary relationship with Supplier. Supplier has a binary relationship with Part definitions (the list of Parts that the Supplier, well, supplies). When a Project wants a Part, it goes and asks the Supplier for one.
+
+A Project may also have a binary relationship with Part (the Parts used by a Project), but that's separate from the earlier relationship (though the Part instance might have a "supplied-by" binary relationship to Supplier, for historical purposes).
+
+Now, if you have multiple Suppliers for a Project, there may be a mapping where a Part has a preferred Supplier for that Project. In which case, I'd invent a Catalogue _entity_ which maps Part definitions to suppliers (a binary relationship), and stick it inside the Project (again, a binary relationship). Okay, I now have a "parts-to-supplier" mapping, but it's hardly artificial, nor would it distort the model. Indeed, it would become very useful, as the Catalogue could easily be reused between multiple Projects and evolve over time. Other extension points would be to have an ordered preference list of Suppliers (in case the preferred Supplier doesn't have the Part in stock).
+
+-- RobertWatkins
+
+The ternary relationship is because I said so :) Think of me as the person who tells you the BusinessRules, and the business rules may be that the relationship is ternary. A Project may procure its needed Parts from various Suppliers. And there are two binary relationships also: a Project '''needs''' a set of '''Parts''' while a Supplier '''can supply''' a set of parts, but only if the project manager so chooses by a qualifying procedure and signing a contract, only then a Supplier effectively is supplying Parts to a Project (a ternary relationship). So you have two binary relationships (Supplier-Part, Project-Part) and a ternary one (Supplier-Part-Project). Alternatively you can sometimes view n-ary relationships as higher order relationships, very similar to the CurryingSchonfinkelling, but that's another discussion since it will be a while until EJB will support higher order relations.  
+
+What you'd ''invent'' then for the Suppliers-Parts-Projects problem would be not a Catalogue but rather a Catalogue''''''Entry, which effectively is a spurious artificial entity: its only role being to hold two pointers linking Suppliers and Projects, with no behaviour at all. Even from an OO design point of view, you '''don't want''' to model Catalogue''''''Entry as a class, because it would be redundant. You'd have quite an explosion of such classes, '''empty of behaviour'''.
+
+''Explosion? No. My argument (once I show you the code) is that having a Catalogue''''''Entry EJB is no different from having a Catalogue''''''Entry associative table that holds your ternary relationship. From an OO design point of view, one may question whether there is no behavior on this EJB, but I would suggest that there certainly '''is room for behavior''', semantic validation, or perhaps any attributes associated with this particular ternary relationship.''
+
+To add to your enjoyment in case of entities (as opposed to regular POJO - PlainOldJavaObject), you'd have to worry about archives and descriptors and lots of other cool stuff. A good OO design would not use instances of  Catalogue''''''Entry, ProjectToPartE''''''ntry and so on and so forth, but instead would simply manipulate all this information through only one Binary''''''Relationship class and its instances or even a generic n-ary Relationship class. -- CostinCozianu
+
+''Any binary relationship is transparent in EJB QL or EJB 2, you can just have a collection on both sides of the relationship. N-ary with N > 2 requires an intermediate entity. Would it be nice to have a generic n-ary relationship class? Sure! Does it really matter that much? I argue no. I'm just trying to get access to my data in an object oriented format to save me time. -- StuCharlton''
+
+Excuse me for being blunt, but object-oriented data access is nonsense.
+
+''That's probably the most bizarre statement I've read all year. Is JDBC nonsense, then? It's object-oriented, too, but it's generic - it returns an object that implements ResultSet. I want something more specific, and strongly typed. This is regardless of the query language I use, it could be raw SQL, but give me results as my own objects. And track changes on those objects, too. -- StuCharlton''
+----
+Costin, if you insist on keeping a flawed decision rather than coming up with a better design to solve the problem, isn't it you that has the problem, not EJB?
+
+''There's no flawed decision, it probably is your misunderstanding. Do you have a problem with the fact that ternary and higher degree relationships commonly exist, do you want to imply that one should '''always''' decompose them in several binary relationships as EJB mandates (thus forcing you into supposedly "good" designs), or do you imply that you should change the business rules in order to make room for "good" OO designs? Instead of assertions you might want to state your objections.''
+
+''The design I sketched using a generic relationship class (which of course is not possible in EJB/EQL model) is objectively better than EJB designs because it will have far fewer lines of code, maximize reuse (you only need one Relationship class for all relations), and will not impose constraints on the representation of the real world.''
+
+''Never mind which design you might think is better (if you're curious, just count the number of Java files and lines of code, together with the XML descriptors needed to model this trivial case - StuCharlton already said he needs JBuilder 6 for this). Let's assume that it's not the end of the world if you model these things a la EJB. And in your eyes this might be a wonderful design. But try to come up with whatever design you like and solve the problem below (list the suppliers potentially able to supply all the parts to a project), and please share with us your experience.''
+
+----
+
+That's the given and it is not too unrealistic an example. Ternary relationships and higher order relationships are present in all but the most trivial real life business processes. A similar very familiar example is a recruiter needs to fill out specific Qualifications to a software Project, by recruiting Persons. A Person has Qualifications, a Project needs a set of Qualifications, and because he can't play all the roles, a Person may not exercise all his Qualifications in a specific Project (for example the project manager doesn't do database design even if he's able to, because he doesn't have time). Thus we have a ternary relationship Person-Project-Qualification.
+
+But let's skip the fact that you end up with a not so good OO design. Please solve the following problem: for a certain type of project, the project manager needs to qualify (let's say for a second round of a bidding process) suppliers that can supply '''ALL''' the parts needed for a manufacturing project. Or the project manager needs to find special persons (let's say external consultant) and he wants to see the potential candidates who have '''ALL''' the qualifications needed for the current project (that's reasonable on the part of a project manager if he's to spend tons of money on expert consulting). The recruiting agency needs to find the possible candidates. If there's no candidate to supply all the necessary qualifications, the candidates should be queued in the descending order of the number of qualifications they can bring to the project.
+
+Do that in EQL as a "component provider", meaning you write portable business components, you're isolated from the '''low level database persistence''', the column names and tables will be decided at deploy time as in EJB standard fairy tales by an "Ejb deployer". So you cannot effectively write any SQL at all. Try to solve such a use-case in CMP-Entity/EQL and see how it all works out.
+
+''I'm not going to defend Sun's "developer roles" definition, such as "ejb deployer". They're useless. You can get at the low level database persistence provided you have a suitable implementation of EJB 2, such as WebLogic 7. -- StuCharlton''
+
+----
+Okay. Here's the set of interesting objects: Project, Part, Supplier. An external controlling object asks the Project for a list of Parts. It then obtains a collection of Suppliers. It then iterates over the Parts list and the Supplier list, asking each Supplier about each Part. The Supplier returns a boolean answer for each Part. If the answer is no, you stop asking that Supplier and move on to the next. Any Supplier that answers yes to each gets chucked into a result list.
+
+The interesting thing here is what is an Entity. Project is an Entity. Part is an Entity. Supplier is an Entity. The entries in the Catalogue are not entities. The Suppliers list of items that it can supply are not entities; they can't be queried separately, nor are they required to be stored locally (one option would be to map the Part code to a supplier-specific code and then fire off a WebService request). The list would probably be stored as a dependent value class. To modify this for the "ranking" variation, you would keep a running total of how many Parts each Supplier could supply, and return an ordered list of Result objects.
+
+Number of Java files: 4 (one for each entity, one for the controlling object). Add 6 more if you want to count the home and remote interfaces (I don't, as I generate them from the main source file). Lines of code: well, it depends on how much extra stuff you build (like being able to add new Suppliers, parts to suppliers, etc). The method in the controlling object takes about 20. You could certainly knock off a minimal implementation of this for less than 200 (most of which would be boilerplate). Descriptors: one EJB descriptor file, describing three entity beans. One container-dependent file, mapping the beans to the container.
+
+The point being here is that you wouldn't use EQL for those. EQL is used to implement finder methods (which are exposed outwards) and select methods (which are not externally exposed and used to enable lazy-loading). Why are you using a finder method on a Project to return Suppliers? Or a finder method on Supplier to return Parts? Or on Part to return Suppliers? Better yet, '''how''' are you doing that? :) EQL is not a full-blown data query language, and it's not intended to be.
+
+Furthermore, it's not that EQL implements binary relationships. What it implements is relationships from the point of view of the object being queried: "I'm related to that object there, and I'm related to this one here". Given the constraint that finders return instances of the EJB the finder is for, this is adequate. -- RobertWatkins
+
+''Ok. So you say the point is that you wouldn't use any EQL here. More precisely, the point is you don't use EQL because you '''can't''', not because you shouldn't nor because you wouldn't. It's common sense to use a query language for solving a query. When you choose to implement a hand-crafted algorithm to solve something that's already solved by database engines, this is a development disaster (well, it means going back to the COBOL of the 60's, which ain't nice). ''
+
+''But putting aside the totally unwarranted extra development effort, can you evaluate the potential for a runtime disaster in terms of what's happening at runtime inside the EJB container and between the EJB container and the database? Your solution is 99% unworkable for a production system, with the only reserve that you might have a very limited number of parts, suppliers and projects so you might get away with it.''
+
+EQL doesn't hand-craft any algorithm, it's just a query language mapping between your objects and a persistent store's query engine. It doesn't circumvent the database engine. And the whole point of this debate is that you '''can use EQL''' to do fairly sophisticated selections of objects. Not arbitrary data selection, that's for SQL. But to grab objects from a database in a relatively complicated declarative manner.
+
+I think you're missing Robert's point. When you're traversing the object relationships, you don't need EQL. The time you do need EQL is when you're trying to query a ternary or N-ary relationship. "For this project, find me suppliers that can supply the parts.". This isn't a simple collection traversal, it needs an extra piece of information to traverse the relationship. 
+
+''Whoa, whoa, whoa... I'm spotting a StrawmanArgument here, Costin. You won't let ''me'' create extra entities to cache data for performance reasons, but you'll quite happily go and introduce an extra table (your R_SupplierPartsProject table that you just added at the top). In that case, I can quite happily put in an entity to hold the relationships between the Suppliers, Parts, and Projects (most likely as an entity with a binary relationship to Project, and many-to-many relationships with Parts and Suppliers). And if there was a performance problem, that's what I would do (bear in mind here that in the real-world project where I did something similar, I didn't encounter any such performance problem, despite doing extensive performance evaluations on it).''
+
+''If you're not going to let me (or Stu) add an extra entity, then let's see your solution without the join table. -- rw''
+
+Robert, please do create all the entities you like for this example. But a '''sound''' object design, by my personal taste should have only three classes in the DomainModel: Part, Project and Supplier. All other things are not really ''entities'' objects, unless you choose to "objectify" it. In general, objectifying a relationship should not be done unless there's something extraordinary about that particular relationship, and most relationships are ordinary in real world.
+
+''Costin, for all of the griping that you seem to do regarding object design, it strikes me as odd that you should be the one judging a '''sound''' object design. ;) -- MarkAddleman'' [[ If you have a different opinion, you should come up with logical arguments :) ]]
+
+After you do all you want, please come up with a listing of the relevant code (including XML descriptors). And let's evaluate what really happens at run-time. 
+
+Do you know how many statements you need to implement this use case in VB/Delphi? Exactly one: the SQL statement (which you can test it at design-time), and you connect the data source component to the display component and you're done. It's a lot more efficient, easier to develop, easier to maintain. You can do that in Java also, if you put the proper frameworks and component orientation in place, instead of chasing after the EJb specification.
+
+----
+''Costin, can you please give the SQL query that will display the Suppliers that can supply the Parts for a given Project, in ranked order by how many Parts they can supply, along with the missing Parts. This is analogous to the recruiting example you supplied above. Oh, and next week I will want real-time availability data, so I can then order the Suppliers into an ordinary category and a "need it yesterday" emergency category. -- rw''
+
+For what you've asked, you need to do:
+
+  SELECT Supplier''''''Name, COUNT(*) as Parts''''''Count
+    FROM R_ProjectsParts AS R1 JOIN R_SuppliersParts AS R2 ON (R1.Part''''''Code=R2.Part''''''Code)
+    WHERE Project''''''Name= :projectname  -- or ? in JDBC notation
+    GROUP BY Supplier''''''Name
+    ORDER BY Parts''''''Count DESC
+   
+To get each supplier with the parts he can't provide, selecting only suppliers which can provide at least one part:
+
+  SELECT DISTINCT Rs.Supplier''''''Name, Rp2.Part''''''Code
+      FROM R_SuppliersParts AS Rs, R_ProjectsParts AS Rp1, R_ProjectsParts Rp2
+      WHERE Rs.Part''''''Code=Rp1.Part''''''Code 
+            AND Rp1.Project''''''Name= :projectname 
+            AND Rp2.Project''''''Name= :projectname
+            AND NOT EXISTS (SELECT * FROM R_SuppliersParts Rs2 
+                               WHERE Rs2.Supplier''''''Name= Rs.Supplier''''''Name
+                                 AND Rs2.Part''''''Code= Rp2.Part''''''Code)
+
+Because ''Suppliers, along with the missing parts they can't supply'' is not something that is a relation (1NF), you can't efficiently bring that in a single query and dump it on the screen, so minimal programming is required to be able to display the two pieces together in whatever display format is needed. You can also join the two queries together with the drawback of bringing some repetitive data in the resultset, and let a report component do the regrouping by Supplier''''''Name and display the list of missing parts as a detail row. So you can sacrifice a bit of efficiency for getting to 0 code.
+
+But what's your point, here? There are problems you need to do coding for, because SQL can't solve them, you don't need to convince anybody of that. 
+
+----
+
+''Well, any EJB defender care to come up with the full solution?''
+
+It turns out, after quite a bit of discussion with Costin offline, along with some side re-reading I've done on relational theory, I've come to agree with Costin about EJB-QL. We still may diverge on the need for O/R mapping. After toying with a model application for a bit (but not having enough time to provide the full solution). EJB QL as it is today can't handle this problem, mainly because it doesn't support the full set of relational algebra - division in this case. In query language terms, it lacks correlated sub-queries. Weblogic's extension query language allows nested and correlated sub-queries but is poorly specified (i.e. not at all), and is rather obtuse when you think about it, mixing object navigation with relational algebra. For moderately complex scenarios, the mental backflips required to use it are ridiculous.
+
+In order to perform the above queries while still binding the resultant data into an arbitrary object graph, one would require a more sophisticated O/R mapping tool like TopLink or WebObjects EOF that allows raw SQL statement results to map to objects. Though in the examples above there isn't much of a need for anything beyond a particular result set. It's when you get into some complex knowledge representation - that's where binding results to objects becomes important. -- StuCharlton
+----
+The solution is pretty straight forward using an O/R mapping tool.  See OrTernaryRelationshipExample. -- JohnUrberg
+-----
+Here is an anecdote in support of Costin's view. I have participated in some real-life story where TopLink datalayer proved to be a performance bottleneck, and when replaced by direct SQL over JDBC, the throughput on the same box increased by 2 (two) orders of magnitude. Clarity and simplicity of code also improved significantly.
+
+Typically, those were simple selects joining 3 or 4 tables, but the server was supposed to do it N hundred times per second. This was kind of a new service, and client did not realize that it will be so popular, so the shit hit the fan in production time. Boy was it interesting... See also LeakyAbstraction. -- Alexey Verkhovsky
+
+Here's an attempt to do this in Python w/SQLAlchemy: TernarySqlAlchemy
+Also consider the SqlMstChallenge before you declare ORMs useless.
+-----
+CategoryExample, CategoryOopDiscomfort

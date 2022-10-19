@@ -1,0 +1,92 @@
+DynamicScoping, in carefully measured amounts is one of those things you might, just might, never miss if you didn't know it's possible. The way to get it in Smalltalk is quite strange until you've gotten used to it. Basically, you create a MethodObject to hold the scope (the instance variables) that will be shared between your various methods.
+
+I had the following method:
+
+createNovel: bindings 
+ | author url title emailAddress junk datePublished size rating characters classification keywords comments summary aMatcher result |
+
+        author := bindings at: #author.
+        url := bindings at: #url.
+        title := bindings at: #title.
+        emailAddress := bindings at: #emailAddress.
+        junk := bindings at: #junk.
+        datePublished := bindings at: #datePublished.
+        size := bindings at: #size.
+        rating := bindings at: #rating.
+        characters := bindings at: #characters.
+        classification := bindings at: #classification.
+        keywords := bindings at: #keywords.
+        comments := bindings at: #comments.
+        summary := bindings at: #summary.
+
+
+        aMatcher := ('([\w]+)(, &nbsp )([\w]*)' asRegex)
+                                search: author;
+                                yourself.
+        author := ((aMatcher subexpression: 4) , ' ' , (aMatcher subexpression: 2)) 
+                                trimBlanks.
+        datePublished asNumber >= 200000 
+                ifTrue: [aMatcher := '(\d\d\d\d)(\d\d)\.(\d\d?)' asRegex]
+                ifFalse: [aMatcher := '(\d\d)(\d\d)\.(\d\d?)' asRegex].
+        aMatcher search: datePublished.
+        datePublished := (aMatcher subexpression: 3) , '\' 
+                                , (aMatcher subexpression: 4) , '\' 
+                                , (datePublished asNumber >= 200000 ifTrue: [''] ifFalse: ['19']) 
+                                        , (aMatcher subexpression: 2).
+        datePublished := Date readFrom: datePublished readStream.
+        size := size asNumber.
+        rating := rating isEmpty ifTrue: ['unrated'] ifFalse: [rating].
+        characters := '[^ ]+' asRegex matchesIn: characters.
+        aMatcher := 'X-Over' asRegex.
+        (aMatcher search: classification) 
+                ifTrue: 
+                        [classification := aMatcher copy: classification replacingMatchesWith: ''.
+                        classification := classification tokensBasedOn: $,.
+                        classification addFirst: 'X-Over'].
+
+
+        result := (OrderedCollection new)
+                                add: author;
+                                add: url;
+                                add: title;
+                                add: emailAddress;
+                                add: datePublished;
+                                add: size;
+                                add: rating;
+                                add: characters;
+                                add: classification;
+                                add: keywords;
+                                add: comments;
+                                add: summary;
+                                add: bindings;
+                                yourself.
+        results add: result
+
+Obviously, it's massively ugly and a pain to even look at. And it was only going to get bigger since it was missing lots of functionality.
+
+Now, it's been refactored into the Novel''''''Entry class which inherits from Basic''''''Novel''''''Entry which inherits from Scraped''''''Entry. Once that was done, I extracted the binding extraction code at the beginning into its own method, and the createResult at the end into its own method. The nice thing is that createResult and buildBindings called super createResult and super buildBindings in a totally natural way, with no need for passing of the bindings. But that wasn't the end of it, because the multiple add: and at:put: were very ugly. So I wrote a general method to extract any number of bindings in Scraped''''''Entry:
+
+ bindings: aDictionary 
+        self class allInstVarNames keysAndValuesDo: 
+                        [:index :name | 
+                        self instVarAt: index
+                                put: (aDictionary at: name asSymbol ifAbsent: [nil])]
+        bindings := aDictionary.
+
+the other way to do it is
+
+ bindings: aDictionary
+
+      aDictionary keysAndValuesDo:
+                    [:name :value | self instVarAt:
+                                            (self class instVarIndexFor: name asString)
+                                         put: value].
+      bindings := aDictionary.
+
+The first has the disadvantage of clobbering any variables you've initialized in initialize. The second has the disadvantage of breaking when it receives a binding which it can't make use of. Both of these have fixes.
+
+and createCollection became
+
+ createCollection
+        ^(1 to: self class instSize) 
+                collect: [:index | self instVarAt: index]

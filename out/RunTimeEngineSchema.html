@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Run Time Engine Schema
+      </h1>
+      <p>
+        This is a rough draft of parts of a "run-time engine" done in a relational style for a simplified, roughly Java-like <strong>toy interpreter</strong>. I am not promoting Java, only studying run-time engines assuming features that most are familiar with. It may be used for discussions on types and the nature of run-time engines. (Note that this version does not preserve the original control structures such as loops and conditionals, assuming translation of them to GOTO-based hopping instead, and thus is not useful for exploring internal representations of higher-level control structures.)
+      </p>
+      <code>
+        table: module    // could also be a class<br/>
+        -----------------<br/>
+        modName  // p.k.<br/>
+        modDescript<br/>
+        filePath<br/>
+        modType   // for inheritance<br/>
+      </code>
+      <code>
+        table: moduleInstance    // mostly for OOP<br/>
+        ---------------<br/>
+        modInstID   // p.k. (autogen)<br/>
+        modInstName  // object name if an object<br/>
+        modRef<br/>
+      </code>
+      <code>
+        table: routines<br/>
+        --------------------<br/>
+        routineID  // p.k. (autogen)<br/>
+        modRef<br/>
+        routName    <br/>
+        isMain    // (can name alone be sufficient?)<br/>
+        routDescript<br/>
+        returnType<br/>
+        (constraint: modRef + routName must be unique)<br/>
+      </code>
+      <code>
+        table: parameters<br/>
+        ------------------<br/>
+        routineRef<br/>
+        paramName<br/>
+        paramType<br/>
+        direction  (in, out, both)<br/>
+      </code>
+      <code>
+        table: routineInstance<br/>
+        ----------------<br/>
+        routInstID<br/>
+        routineRef<br/>
+        modInstRef<br/>
+        instLevel  // level on the "stack"<br/>
+      </code>
+      <code>
+        table: varInstance  // actual variable values (in the stack)<br/>
+        -------------------<br/>
+        varName        // pk 1<br/>
+        routInstRef  // pk 2<br/>
+        varValue<br/>
+      </code>
+      <code>
+        table: variables  // declared variables<br/>
+        -----------------<br/>
+        varName   // pk 1<br/>
+        routineRef  // pk 2<br/>
+        varType<br/>
+      </code>
+      <code>
+        table: statement<br/>
+        -----------------<br/>
+        routineRef<br/>
+        stmtID   // auto-gen p.k.<br/>
+        lineNo   // source line reference (for debugging and tracing only)<br/>
+        assignVarName  // optional<br/>
+        rightPartText   // (excludes parameters)  <br/>
+        rightType  // F=function/method, V=variable, C=constant<br/>
+      </code>
+      <code>
+        table: callParams<br/>
+        --------------------<br/>
+        stmtRef<br/>
+        routineRef      // f.k. to parameters table<br/>
+        varName  // remember, all params must be vars or numbers at this stage<br/>
+      </code>
+      <p>
+        This assumes that every module has at least one instance. It can have multiple instances if a module is used as an object. Each module is  assumed to have one "main" routine (instance). This is where any  "module-level" variables go. Module-level variables are assumed visible  to other routines in given module. 
+      </p>
+      <p>
+        This simplified language assumes:
+      </p>
+      <ul>
+        <li>
+           no "scope" identifiers (private, public, etc.)
+        </li>
+        <li>
+           single inheritance
+        </li>
+        <li>
+           no parameter overloading 
+        </li>
+        <li>
+           no optional parameters
+        </li>
+        <li>
+           Must use method accessors if referencing variable outside of module
+        </li>
+      </ul>
+      <p>
+        All block operations are translated into goto's. A dummy goto function (such as "sys.goto") is created that references the target stmtID. Dummy compare operations are  used conditional branch goto's such as gotoLT, gotoEQ, and gotoGT , etc. (less than, equal, greater than). Dummy variables, such as "~T345" are created for nested items. "~" is not allowed in normal code text var names, but are valid internally. They are treated just like any other variable. There are also a set of system variables used for internal constants. Example pre-translated code segment:
+      </p>
+      <code>
+        if (m.a > m.b) {<br/>
+        x = m.foo + m.bar(m.a);<br/>
+        blah.glob(7);<br/>
+        y = 7;<br/>
+        }<br/>
+      </code>
+      <p>
+        The pseudo-code for the translation resembles:
+      </p>
+      <code>
+        ~T005 = m.a;<br/>
+        ~T006 = m.b;<br/>
+        ~T007 = sys.compare(~sysGT, ~T005, ~T006);<br/>
+        sys.gotoLTE(~T007, 13);   // [a gotoTrue and gotoFalse may be more generic]<br/>
+        ~T008 = m.foo;<br/>
+        ~T009 = m.a<br/>
+        ~T010 = m.bar(~T009);<br/>
+        x = sys.math.add(~T008, ~T010);<br/>
+        ....<br/>
+      </code>
+      <ol>
+        <li>
+          : // goto label
+        </li>
+      </ol>
+      <p>
+        All nested statements or function calls are converted into dummy variable references first. Basically the parser reduces everything to a statement with one of the following formats:
+      </p>
+      <code>
+        a = functionOrMethod(var1, var2, var3...)<br/>
+        a = variable<br/>
+        a = constant<br/>
+      </code>
+      <p>
+        The assignment part (left side) is optional. Numeric constants are also allowed as parameters. Once it is convertible to this format (perhaps conceptually), it is readily convertible into the above schema. (If you find any stumpers, please let me know).
+      </p>
+      <p>
+        Compound statements such as:
+      </p>
+      <code>
+        a = b + c + d + e;<br/>
+      </code>
+      <p>
+        are converted to dummy variables:
+      </p>
+      <code>
+        ~t1 = sys.math.add(b, c);  // pseudo-code<br/>
+        ~t2 = sys.math.add(~t1, d);<br/>
+        a = sys.math.add(~t2, e);<br/>
+      </code>
+      <p>
+        The order in which this is done is up to the parser. I am not defining how the parser works here. The only parsing done by the run-time engine is to interpret constants and values (usually by the built-in classes).
+      </p>
+      <p>
+        Note that recursion does not generate new dummy variable names because the dummy variables are only created once per definition, not once per call.
+      </p>
+      <p>
+        <strong>Types</strong>
+      </p>
+      <p>
+        All variables and routines must have a type or return type. <strong>All types are classes</strong>. Since this is a single inheritance system, all types can be traced back to the root, which will be one of the base built-in types (classes): int, float, string, etc. There is no way around this since every class either is defined by the program, is one of the root types, or is invalid. The built-in types are essentially reserved class names.
+      </p>
+      <p>
+        Types are checked before execution starts by searching up the inheritance tree for a match. The same is done for matching method calls. Example:
+      </p>
+      <code>
+        // Pascal-style declarations<br/>
+        class Point {<br/>
+        x: float; <br/>
+        y: float;<br/>
+        method setx(tempx: float) {x := tempx;)<br/>
+        method getx: int {return(x);}<br/>
+        ....<br/>
+        }<br/>
+        class Line {<br/>
+        point1: point;<br/>
+        point2: point;<br/>
+        color: colorClass;<br/>
+        method constructor(point1: point, point2: point) {...}<br/>
+        ....<br/>
+        }<br/>
+        class ThickLine: Line {   // subclass of "Line"<br/>
+        ....<br/>
+        }<br/>
+      </code>
+      <code>
+        ....<br/>
+        p1 = new Point(3.8, 4.4);<br/>
+        p2 = new Point(2.1, 7.2);<br/>
+        myLine = new Line(p1, p2);<br/>
+        myLine2 = new ThickLine(p2, p1)<br/>
+      </code>
+      <p>
+        When the constructor for "myLine" is checked, p1 is known to be type "Point". The modType (in table "module") for "ThickLine" would be "Line".
+      </p>
+      <p>
+        The run-time steps are generally as follows:
+      </p>
+      <ol>
+        <li>
+           Parser (if any) reads text code and fills up the above tables.
+        </li>
+      </ol>
+      <ol>
+        <li>
+           Execution engine checks structure for consistency and makes sure types are valid.
+        </li>
+      </ol>
+      <ol>
+        <li>
+           Information in tables is "executed". In other words, the very first "line" of the program is finally executed.
+        </li>
+      </ol>
+      <p>
+        NOTES
+      </p>
+      <ul>
+        <li>
+           Assume that the parser translates things such as "new" into a constructor reference. Assume that the method "constructor" is referenced when such happens.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Multiple inheritance could be implemented by allowing multiple classes rather than one to define each variable and method. It would probably require a many-to-many table.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           The "base" instances could be created as a first step just after type validation, or on an as-needed basis.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           I did not put parenthesis in front of some of the pseudo-code methods. The rules state that accessors must be used for outside variables, so if you see a dot, it has to be a method. However, a specific syntax (which we don't define here) probably should require parenthesis to avoid confusion.
+        </li>
+      </ul>
+      <p>
+        -- top
+      </p>
+      <hr/>
+      <p>
+        <em>And now since you created something vaguely of the power of C (you're missing arrays). I can tell you your system does not support polymorphism since you cannot write a sort routine that will sort any array of elements for which there is a compare function, now since all types are classes, you cannot have protocol as types, parameterized types, union types, function types. By the way the routine table may need to have a reference to the statement that is its entry point. So what was the point that you were trying to prove?</em>
+      </p>
+      <p>
+        This is not meant to be a "rich" language by any stretch. It is supposed to have just enough features to illustrate Java-like typing issues and to serve as a starting point for later enhancements. It has "types" in the usual sense, that is all that is important right now. Does your pet definition require all that stuff to be considered "typed"?
+      </p>
+      <ul>
+        <li>
+           Yes, it has a half baked type system with a half baked syntax, for a half-baked intermediate language. Your type system is pretty much defective by modern standard as it will generate unnecessary code duplication.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>This is about "types", not code factoring. You have yet to show where the alleged limitations of this setup affect the definition of "types". I don't have to win races against steam engines to show that gasoline engines can make cars move. Please, stick to the topic. Are you suggesting that a schematized engine could never satisfy John's definition (because it is not syntax)? I am not sure what you complaint is. Show the simplest possible language (syntax version) that satisfies your pet definition, and let's see if it cannot be declaratized.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           I don't have to prove anything, Top. You came up with this half baked relational schema, You haven't proven that it works and what are you going to do with such a crap, and you ask me to prove something? You must be kidding. But just to be nice to you, I can tell you that your made up language can in principle be adorned with syntax and static typing. Syntax has two aspects: both abstract (as in abstract syntax trees) and concrete. And concrete syntax can be encoded in text as is usually the case for programming languages, or in a half-baked relational schema like you try to do here. But the minute you try to add a <strong>type system</strong> to your system, which will judge (<strong>typing judgements</strong>) whether or not all expressions stored in table rows are <strong>well typed</strong>, then you'll discover that the type system refers to the abstract syntax (i.e. all the constraints that ensure the data stored in tables are valid expression) just as <a href="JohnReynolds.html">JohnReynolds</a> definition of types tells you. Until you do something remotely comprehensible with this thingie of yours that will defend some thesis you might have, asking other people to prove anything about your own created mess is just ridiculous.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>I don't store "expressions" in individual cells. Nor am I trying to make the tables themselves be "type compliant". There seems to be a misunderstanding. See below.</em>
+        </li>
+      </ul>
+      <p>
+        As far as the entry point, it just executes the lowest statement ID for the given routine. I suppose having a reference in the routine side would speed things up, but speed is not the issue here.
+      </p>
+      <hr/>
+      <p>
+        Here is my line of reasoning. Please indicate where it breaks down according to your point of view.
+      </p>
+      <ul>
+        <li>
+           Any program language can be converted into a structure, similar to above such that one can "run" the structure and get the same output. Thus, something like Java, a statically-typed language, could be converted to such a structure. Do you agree or disagree. If you agree, let's go to the next step.
+          <ul>
+            <li>
+               Yes, parsers convert the structure into an <a href="AbstractSyntaxTree.html">AbstractSyntaxTree</a>. You can then write an interpreter over that structure, or a compiler that translates that structure into a different (lower level) thing, like byte code or machine code. Just like you try to do here you chose a different concrete representation of Java's syntax (actually the Java--).
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Java has a type system according to John's definition. 
+        </li>
+      </ul>
+      <ul>
+        <li>
+           A <strong>semantically equivalent</strong> run-time schema, similar to above, can be created in place of Java code that is the same thing, but with "syntax" removed. Do you agree or disagree. If you agree, let's go to the next step.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           No, the syntax is not removed. It is very much present except that in a very clumsy way. What's the criteria for a "routine" rows to represent valid information? What's the criteria for a "module" to represent valid information and not just bogus data that will choke the interpreter? When you write down those constraints, you'll have recovered your syntax right there. You haven't defined what you pompously called semantically equivalent, and you make a big mistake. If semtantically equivalent means "when executedd/interpreted produces the same result" then you are ion the very wrong track, because by that same definition I can produce Intel X86 machine code, and I can assure that it doesn't have any type in it, so your inference just does not follow.
+        </li>
+        <li>
+           <em>Well you agree that even when Java code is turned into a structure of some sort (syntax tree or whatever), it CAN still have "types". But when turned into machine code, it no longer has types. What is the distinguishing factor between these? Given a thing I will call "PS" for (parsed structure), how does one know if a given PS has "types" in it or not? </em>'A good definition of "types" should make that pretty clear<em>'. What test can be applied, and how does the candidate definition carry this test inside of it?</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           It's called "<a href="TypeErasure.html">TypeErasure</a>", top. In a language which is fully statically typed (like <a href="HaskellLanguage.html">HaskellLanguage</a>), <em>no</em> type information need be stored in the runtime image. All type judgments are fully resolved; all expressions and terms in the program are proven by the compiler to be well-typed. In the case of Java, minimal type information (the Java equivalent to a C++ <a href="VeeTable.html">VeeTable</a>) is kept around to support <a href="DynamicDispatch.html">DynamicDispatch</a> and instance_of; all other operations, however, are proven correct by the compiler. (This is required in order to support runtime polymorphism; a key requirement for an OO system). Of course, there are other reasons to keep type information around - such as debugging. If you compile a C/C++ program with debugging turned on (-g in GCC), then the type information is <em>not</em> elided - it is kept around for a debugger to inspect. But it is not necessary for program execution. -- <a href="ScottJohnson.html">ScottJohnson</a>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>I did not erase anything. See the various columns called "somethingType"? Before the first "line" is executed, the class tree is checked to be sure all methods (operations) are valid. One could turn the structure into text code and visa versa. They are </em>'fully interchangeable<em>' (although alignment, white-space, and comments are not kept, but that is not an issue here. Well, I lose the block info also in this case, but that is not related to the issue either. I can change that if it is proven related. Well, the variables were dynamically typed also. But, I just changed that.) They are just a different view of the same thing! Can't you guys see that? What is the stumper here?</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Since you claim that it is the "same thing", then you have your syntax attached to that "same thing". By the way that syntax specifies in Java that a function is composed of a function header (which you have) and a function body. And that function body is a statement. And a statement is either a simple statement (assignment, method call, x++, etc) or a compound statement (one of for<>, while<>, do<>, try <> , sequence of statements, ... etc). You have to preserve those integrity rules if you want your claim to have "the same thing" to be true. And then you preserved the abstract syntax tree, just you encoded into rows in a relational database. Get it, now? And if you want to say you have types about "the same thing", you have to have a <strong>type system</strong>. That type system will decide that every node of that abstract syntax tree is well typed. You just proved how John Reynolds definition goes to the core of the issue.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>I agree that I am losing information about blocks and nestedness, but that is to keep it simple. Type info is not lost. The simplified version of the syntax (pattern: "var = method(params)") is still a staticly typed language, just an ugly, goto-filled one.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           We're not saying that YOU erased anything; we're saying that <em>compilers</em> remove type information out of executables. If you type in a C++ program then run it with gcc -O2 and disassemble the binary; you will find <em>no</em> reference to the types declared by the user in the generated binary. That's what "<a href="TypeErasure.html">TypeErasure</a>" means. If you use -g they will be present, in the ".dwarf" section of the file (a special section containing debugging symbols, "dwarf" is derived from ELF, the most common <a href="ObjectCode.html">ObjectCode</a> format on Unix systems) - but the running code won't make any reference to them. If you keep type information (and symbol names, etc.) around, then you can recover the original program text FTMP (excluding spacing and formatting issues). If you strip it out, though, you can't.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>I could have removed typing info, but I didn't. That is because my model dynamically searches the class tree to find the proper method. I could have designed it so that it simply determined that at "compile time" and put a direct reference to the proper method up front rather than leave it for execution time. In that case the execution would indeed be "blind" to type information since the proper method is tree-searched up-front and only direct references left in. However, it still all takes place in a data structure, and NOT on syntax. That is the key. Even C++ converts syntax into a structure first at compile time such that it is traversing a structure and not looking at syntax. Thus, why the syntax-centric definition?</em> 
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Top, if you claim to have "the same thing" just represented differently you also have the syntax. If you claim you don't have syntax (i.e. the rules that enforce the validity of functions, modules, etc), then you don't have the "same thing".
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>An expression parsed into a tree is not "syntax". It may have COME from syntax, but that does not inherently make it be "syntax". Such a tree can be typed directly into a structure (such as via a table browser), through a GUI, such as </em><a href="LabView.html">LabView</a>, etc. Perhaps this is back to the age-old <a href="DataAndCodeAreTheSameThing.html">DataAndCodeAreTheSameThing</a> battle. (I did not start that topic, BTW.)<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Quote from TOP: "The simplified version of the syntax (pattern: "var = method(params)")" That's your own admission that you do have syntax. This rule which is a <strong>syntactic rule</strong> is reflected in hiow you designed the structure of your tables. Then an expression parsed into a tree is called abstract <strong>syntax</strong> tree. I'm tired of you trolling me, therefore I declare this discussion closed.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Note the word "version". That is because syntax is simply </em>'one of many possible views of the same thing<strong>. See </strong><a href="SyntaxDefinition.html">SyntaxDefinition</a>. I am not "trolling". I honestly believe there is a "problem" with the usage of "syntax" in your definition. I swear to God, Allah, and Buddah. May they strike me down with hot lightning if I don't really feel there is a real problem with your definition.<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Then you are trolling out of incompetence. Which doesn't absolve you much.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>You are the incompetent one because you have to rely on </em><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> because your articulation and definition-writing skills suck. Unlike you, I won't claim something is clear-cut unless I can prove it.<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Nothing can be proven to a troll who changes English language in the middle of a conversation. Proofs are based on language. And since you're determine to subvert the language you subvert all the proofs imaginable. That's one insidious form of trolling.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>You just can't handle watching someone put your leaky definitions under tough scrutiny, Mr. </em><a href="CriticalSpirit.html">CriticalSpirit</a>. BTW, English is not precise. If you pretend like it is, you will screw yourself into the floor.<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Mr. <a href="TopMind.html">TopMind</a>, all definitions are built upon other words that have themselves definition. Unless you have a core of the language which has the same meaning for <strong>everyone</strong>, or at least every normal people, every conversation is a waste of time, and even <a href="CriticalSpirit.html">CriticalSpirit</a> goes out the door. Now we have <a href="TopOnTypes.html">TopOnTypes</a>, <a href="TopDefinitionForSyntax.html">TopDefinitionForSyntax</a> and you're welcome to develop any other TopOnWhatXxxReallyMeans at your own leisure, as long as you clearly label them by your brand name.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em></em>EnglishIsTooVagueForComputerScienceUsage. That is not my fault. <a href="LaynesLaw.html">LaynesLaw</a> has documented this reoccurring problem. If John's definition of "types" hinges on "plain English", then all the math in the world cannot make up for the <strong>weakest link in the chain</strong>. The volume of what you can do with a set of givens is of little use of the givens themselves are bad or wobbly. Call it "<a href="GiGo.html">GiGo</a> for math".<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <a href="JohnReynolds.html">JohnReynolds</a> is not John for you, not John for anybody who contributes on <a href="WardsWiki.html">WardsWiki</a>. If you want, you can call him "Professor <a href="JohnReynolds.html">JohnReynolds</a>". Indeed, not even professor <a href="JohnReynolds.html">JohnReynolds</a> can overcome the obstinance of somebody who prefers his ArgumentFromIgnorance to learning some basic things about <a href="ComputerScience.html">ComputerScience</a>. Indeed <a href="GarbageInGarbageOut.html">GarbageInGarbageOut</a> applies very well to your brain. If you want the input to be only the garbage you think you know about programming, and disconsider anything at all that was built by computer scientists, then the output will predictably be garbage, as it happened on this very page.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>If you have to refer to a book to argue your position instead of explaining and demonstrating it's principles to back your points, the problem is with you, not me. </em><a href="BookStop.html">BookStop</a>.<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Also, the test cannot be applied to a structure. Types just do not exist hanged into structures like candys in a Christmas tree. The types exist attached to syntactic expressions, that are part of a formal language endowed with a <strong>type system</strong>. A type system can be recognized by the fact that it performs <strong>type judgements</strong>, whereas they classify expressions in the syntax (even expression clumsily encoded in the above tables) into <strong>well typed</strong> and <strong>ill typed expression</strong>. The ill typed expression are illegal in the formal language, whereas the well typed get assigned with a type from the <strong>universe of types</strong> of that type system. The universe of types is different for different type systems. It starts from primitive types and builds to complex types according to type composition operators (record, function, union, class, array, etc). So simple that even a freshman in <a href="ComputingScience.html">ComputingScience</a> can grasp with no troubles. -- <a href="CostinCozianu.html">CostinCozianu</a>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           There is potentially a third judgement, "unknowable". Many type judgements are undecidable or computationally intractable at compile-time. In some languages, anything that the compiler cannot prove is sound is regarded as an error. Other languages may insert a runtime typecheck (with well-defined failure semantics, such as <a href="DoesNotUnderstand.html">DoesNotUnderstand</a>) when a unknown type judgement is encountered. Others may just trust the user - if the program is well-typed, all is well; otherwise the program exhibits <a href="UndefinedBehavior.html">UndefinedBehavior</a> and may crash (or worse). Some languages (like C++) allow the programmer to control what happens - static_cast means "prove it's correct or it's an error"; dynamic_cast means "insert a typecheck if you're not sure" (dynamic_cast will produce a compiler error if it's provably wrong, compile to nothing if it's obviously correct, and issue a runtime typecheck otherwise); and reinterpret_cast means "trust me". -- <a href="ScottJohnson.html">ScottJohnson</a>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Costin still seems to be considering just syntax. What if the source code is lost? Does type-ness necessarily disappear then? I realize that in some languages that information is mostly lost, but this sample p-code-like "language" appears to keep that information in its structures. In other words, one could recreate the source code with the typing information intact. (Although control structures are lost, replaced by Go-to's, that does not appear relevant to the typing issue at hand).</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Since they are semantically equivalent, the schema-tized version must also have "types" in John's sense because it is essentially the same thing as something that has types.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           John's definition depended on syntax. Yet when we removed the syntax, we semantically have the same thing.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           You haven't actually removed the syntax and you haven't obtained "the same thing". And it is absolutely a no-no for a guy like you to refer to somebody a class over your head as "John". It's a disservice to wiki. And you complaining about the politeness of others? I didn't know you could be also hypocritical.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           This seems to produce a contradiction or paradox. A and B are equivalent, yet A has "types" under John's definition but B does not. The remaining difference between is something trivial. 
+        </li>
+      </ul>
+      <ul>
+        <li>
+           I simply changed representation, not meaning. Why would a non-meaning change disqualify it unless the definition is too tied to trivial matters?
+        </li>
+      </ul>
+      <ul>
+        <li>
+           If you changed the representation and obtained "the same thing" that means you also preserved the syntax. Make up your mind.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Is being able to recreate the original syntax sufficient to demonstrate equivalency? As described above, type declarations are kept but control structures are not. If the control structures are the bottleneck, would fixing that change the game? The sample was constructed mostly to explore types, not control structures.
+        </li>
+        <li>
+           {Equivalency? No.  But it is sufficient to prove that the representation is not lossy.}
+        </li>
+        <li>
+           Well, it's lossy for control structures (if's, loops, case). This can be remedied if one wants to study those issues. I myself don't at this time.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Oh great. Another </em><a href="LaynesLaw.html">LaynesLaw</a> battle over "syntax". Your candidate definition relies on way too many vague or open-ended words, such as syntax, abstraction, legal phrases, etc. It is starting to make string theory look simple in comparison.<em></em>
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        Okay, let's put the battle over what "syntax" means to the side for now. We both agree that it is possible to have the code be represented as a structure of some kind, perhaps as an <a href="AbstractSyntaxTree.html">AbstractSyntaxTree</a> or something like above. We don't need the text to have programs. How does the Reynolds definition apply to such a thing? Obviously such things can have "types" in the sense that they mirror what is called "types" in languages such as Java. 
+      </p>
+      <p>
+        <em>You're working off a different definition of 'syntax' than mainstream </em><a href="TypeTheory.html">TypeTheory</a>sts. Syntax means "text" for you, while syntax has the somewhat broader definition of "representation" for them. An <a href="AbstractSyntaxTree.html">AbstractSyntaxTree</a> is still a representation of code. So are the database tables you have above. And <a href="TypeTheory.html">TypeTheory</a> is a discipline for determining whether such a representation is well-formed or not.<em></em>
+      </p>
+      <p>
+        <em>Your </em><a href="RunTime.html">RunTime</a> never rejects a statement as invalid. It may give an error when it tries to execute it, but it never says "This is not a valid program." That's why it doesn't have (static) types. -- <a href="JonathanTang.html">JonathanTang</a><em></em>
+      </p>
+      <p>
+        Actually his schema above encodes a very primitive syntax:
+      </p>
+      <code>
+        <statement> ::= <assignment> | <routine call><br/>
+        <assignment> ::= <variableName> <routine call><br/>
+        <routine call> ::= <routine ID> <call parameters><br/>
+        ...<br/>
+      </code>
+      <p>
+        Well, when he polishes his table it will even be right. Where routine ID can be either something stored as in the schema or primitive routines like "goto". So, I wouldn't see in principle why he couldn't add even a type system to that. <a href="AbstractSyntaxTree.html">AbstractSyntaxTree</a>s can be represented even in relational tables. So when he adds the type system that assigns types and performs typing judgements, that types system will operate off the above syntax. Just like Reynolds predicted. If he doesn't do any validation and just tries to execute statements at run-time until the program finishes or a error is detected (wrong number of parameters, variable not bound, wrong parameter to the system call) then he doesn't have a type system at all. He just has some trivial runtime checks. QED.
+      </p>
+      <p>
+        <em>As described above it would check all the "type" columns before actual "execution". It searches up the class tree structure until one of the built-in (root) types are found. If you can find holes in the "type system", please do. -- top</em>
+      </p>
+      <p>
+        Please note that in your system (as well as in other dynamic system) it is superfluous to check "types" for anything other than system primitive routines (goto, +, *, etc). If you want to call those checks a "type system", be my guest. I refer you to <a href="HumptyDumpty.html">HumptyDumpty</a>.
+      </p>
+      <p>
+        <em>No. User-defined classes are "types". And, the type-checking here is NOT dynamic, although could perhaps be made so with only a few tweaks. It is fairly clear you did not read the description very thoroughly.</em>
+      </p>
+      <hr/>
+      <p>
+        See also: <a href="AbstractSyntaxTree.html">AbstractSyntaxTree</a>, <a href="WhyTypeSyntax.html">WhyTypeSyntax</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryCompilers.html">CategoryCompilers</a>
+      </p>
+    </div>
+  </body>
+</html>

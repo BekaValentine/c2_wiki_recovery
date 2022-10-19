@@ -1,0 +1,110 @@
+See http://www.ccs.neu.edu/research/demeter/related-work/pragmatic-programmer/jan_03_enbug.pdf under the heading "Tell, don't ask".  Or see http://www.pragprog.com/articles/tell-dont-ask
+
+Very very short summary:  It is okay to use accessors to get the state of an object, as long as you don't use the result to make decisions outside the object.  Any decisions based entirely upon the state of one object should be made 'inside' the object itself.
+
+A clarification of the LawOfDemeter.
+
+This runs somewhat contradictory to the OneResponsibilityRule.  Every application of TellDontAsk adds to the object a responsibility to make a decision 'inside' the object. 
+
+----
+I think that it's actually a sibling to the LawOfDemeter. The LawOfDemeter is more about loose coupling (it can kind of foul up TightGroupsOfClasses). TellDontAsk is more about allocating responsibility. It's a good way to avoid the FeatureEnvySmell. -- PhilGoodwin
+
+----
+
+How do you keep your objects from growing huge?  If the object has to make '''every''' decision that involves its data, how do you keep from just throwing more and more methods on the object? -- EddieDeyo
+* ''One possibility: first class anonymous methods.  Pass a 'method' (a procedure accepting 'self') to the object and ask it to make the decision or perform an action based upon it.  I doubt many languages support it, but it does allow for more atomic access to an object's state and the decision.  I like this approach because it works very well across a distributed network, and better allows for meaningful atomic transactions.  However, it does limit you to 'public' properties.  If you want to make it really powerful, pass and return continuations.''
+
+Big classes are a smell that you might have plural classes masquerading as a single class.  Can you split them up? (See: OneResponsibilityRule).  Maybe you could give an example of something that you find hard to follow TellDontAsk without making the class grow too huge.
+* ''Even if you have a tiny class with just a couple instance-variables upon which you make decisions, if you make MANY DIFFERENT decisions, you'll end up with the situation described by EddieDeyo: adding more methods to make more decisions.  This is readily visible in such things as collections classes: now I need sums, now I need counts, now I need aggregate XYZ, now I need filters, now I need testA, now I need testB, now I need pattern-matching-A, now I need Append, now I need reverse, et cetra, et cetra, et cetra.  Even worse, I might be able to guarantee more optimal algorithmic complexities for some but not others, driving me to write new methods that are slightly different because I can make slightly better assumptions - a tendency that resists refactoring.''
+** ''Collections should be considered a lower-level abstraction, and as such shouldn't be "told" to do things.  A Domain specific collection *wrapper* on the other hand is a very appropriate place to apply this principal.'' -- DanielPitts 
+***{Anyway, being able to pass a closure into a collection's enumeration methods eliminates many of the things complained about. Filters, sums, aggregations, reverse etc. become the responsibility of the caller's closure and the class's concern remains "what's in here?" and little else. Even in something as crap as PHP we can get all this by implementing just "do"; "select", "collect" and the rest are just idioms of "do" -- TWW}
+*** ''Speaking of HigherOrderFunction''''''s, one great example of TellDontAsk is the Monad, which uses HOFs to allow code to act as if it's making decisions based on an internal state without actually revealing undue amounts of that internal state--e.g. telling an arbitrary Monad which happens to be numeric to add 5 to each of its components works whether it has no components (Nil/[], None/Nothing), one element (Some/Just), or many elements (:/::). Also, ScalaLanguage implements pretty much every kind of iteration on top of monads, including mapping and filtering, although ultimately it cheats by using foreach and mutable state. --NxTangl''
+-----
+
+The exceptions to this law are very simple, and in certain domains they are all over the place. The kind of processings that are naturally MultiMethods in languages supporting that, when implemented in common OO languages they have to discriminate on one parameter that will get the method attached to its class. And that method will definitely AskNotTell because there's no other way around. ''(except for DoubleDispatch)'' What is worse, the rest of the parameters usually go into a very ugly TypeCase, or a manual dispatching mechanism is implemented. My current project had type cases worth 2 or 3 screens each but I suspect there are many others out there.
+
+Any kind of processing that depends on the state of several objects is going to ask some objects for their state, and take decisions in methods outside that class, because there's simply no other way around (other than switching to a decent language).  For practical examples of how this happens, have a look at the implementation of JavaAwt or JavaSwing event dispatching mechanisms. Many other Java frameworks suffer from the same disease of the language, and I suspect no Java programmer ever did abide fully by this law. Probably Smalltalk suffers from the same thing, and  C++ programmers are in contempt of the court on this one, because we like our functions and operators -- no OO purism, thank you very much.
+
+What is worse about this law is when some purist object architects/designers that live and design by their books, try to enforce it when it clearly isn't the case. The resulting code just moves the problem elsewhere and goes around in several circles (a.k.a RavioliCode) ending up still breaking the law.
+
+So, in the end I think it's not a law but an OO design HeuristicRule like so many others ObjectOrientation suffer from. 
+
+''Laws are made to be broken, but only when really necessary.  The above comments would be more useful if they gave examples and avoided language disdain.  Yes, explicit run-time type identification is an ugly, smelly thing.  I think there's generally other ways to accomplish things, however.'' --GeorgeDinwiddie
+
+''Most OO Paradigms are similar - consider AvoidExceptionsWheneverPossible - the important part is "Whenever Possible".  A language cannot afford to ignore to solve only 90% of problems - it must solve 100%... but the developer should realize that he should restrict himself to using the first (in-abstraction) 90% of the solution and leave the other 10% for cases where it is necessary.''
+
+In the commentary above responding to EddieDeyo, and mentioning collection classes, the class is required to implement many different algorithms (sums, counts, filters). This violates the OneResponsibilityRule and indicates that the problem has been framed incorrectly. Look at the problem from another perspective is required to satisfy the OneResponsibilityRule. A superb example is the C++ standard library, which separates algorithms from the containers that the algorithms operate on. All container classes provide the same way of iterating over the contents. The algorithms can then iterate over any container. If an algorithm can be optimized for a specific type of container, then a specialization is provided. 
+
+If your language doesn't support templates use DependencyInjection. If you are using Java, the Spring framework provides a nice way of assembling your solution using the classes you've designed. If the profiler shows it is necessary, then you can specify optimized algorithms. We recently sped up our application by 24x by specifying an optimized data provider in our configuration - no code changes, just a new optimized class.
+
+----
+
+''Any kind of processing that depends on the state of several objects is going to ask some objects for their state, and take decisions in methods outside that class, because there's simply no other way around (other than switching to a decent language).''
+
+That isn't really the case. Consider for example:
+
+ def frobnicate(aFoo, aBar, aBaz):
+	return aFoo.getWibble() * aBar.getWobble() * aBaz.getWabble()
+
+If we want to avoid the accessors, we could do it like this (delegating in a chain, and grabbing results on the way back):
+
+ class Foo:
+	def frobnicate(self, aBar, aBaz):
+	return self.wibble * aBar.frobnicate(aBaz)
+
+ class Bar:
+	def frobnicate(self, aBaz):
+	return self.wobble * aBaz.frobnicate()
+
+ class Baz:
+	def frobnicate(self): return self.wabble # really an accessor in this case, but shh!
+
+ def frobnicate(aFoo, aBar, aBaz):
+	return aFoo.frobnicate(aBar, aBaz)
+
+Or like this (still making a chain of delegation, but passing the information forward this time):
+
+ class Foo:
+	def frobnicate(self, aBar, aBaz):
+	return aBar.frobnicate(self.wibble, aBaz)
+
+ class Bar:
+	def frobnicate(self, intermediateResult, aBaz):
+	return aBaz.frobnicate(intermediateResult * self.wobble)
+
+ class Baz:
+	def frobnicate(self, intermediateResult):
+	return intermediateResult * self.wabble
+
+ def frobnicate(aFoo, aBar, aBaz):
+	return aFoo.frobnicate(aBar, aBaz)
+
+-- KarlKnechtel
+
+----
+
+I would say, reading data from the object is fine, even performing decisions on that data is fine, but using that data to make decisions on how to affect the same object your retrieved it from is wrong.
+
+So:
+
+
+  price = item.Price
+  this.LineColor = price < 20 ? "Green" : "Red"
+
+is fine. and..
+
+  price = item.Price
+  if (price < 20) {
+	item.SetAsBargin()
+  }
+
+is wrong.
+
+-- SekhatTemporus
+
+----
+
+Contrast: DontAskDontTell
+
+----
+CategoryModellingLawsAndPrinciples

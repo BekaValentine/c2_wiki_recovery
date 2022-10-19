@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Same Fringe Problem
+      </h1>
+      <p>
+        Okay, here's the killer example of the utility of <a href="CoRoutine.html">CoRoutine</a>s. The problem setup is quoted from <a href="RichardGabriel.html">RichardGabriel</a>'s 1991 paper "The Design of Parallel Programming Languages" (<a href="http://www.dreamsongs.com/10ideas.html):">http://www.dreamsongs.com/10ideas.html):</a>
+      </p>
+      <p>
+        "In 1977, in the pages of the ACM SIGART Newsletter, a debate raged over whether samefringe is the simplest problem that requires multiprocessing or <a href="CoRoutine.html">CoRoutine</a>s to easily solve... The samefringe problem is this: two binary trees have the same fringe if they have exactly the same leaves reading from left to right."
+      </p>
+      <p>
+        And here's my solution, again in pseudo-C:
+      </p>
+      <code>
+        Tree coroutine tree_leaves(Tree tree) {<br/>
+        if (is_leaf(tree)) yield tree;<br/>
+        yield tree_leaves(tree->left);<br/>
+        yield tree_leaves(tree->right);<br/>
+        yield NULL;<br/>
+        }<br/>
+        int same_fringe(Tree tree1, Tree tree2) {<br/>
+        Tree tmp1, tmp2;<br/>
+        while ((tmp1=tree_leaves(tree1)) && (tmp2=tree_leaves(tree2))<br/>
+        if (tmp1 != tmp2) return 0;<br/>
+        return 1;<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>This code wouldn't work right; in particular, the "yield NULL" would cause the same_fringe function to exit its loop (and return 1) as soon as a right leaf is processed. Another function is needed to wrap the recursive function, yielding the sentinel after the tree walk is completely finished. Also, the same_fringe function would need to check that both coroutines returned the sentinel at the same time; as it is, the function would return true if the depth-first, left-to-right traversal of one tree was a subset of that of the other.</em>
+      </p>
+      <p>
+        Caveat: I have taken a liberty with this pseudo-C coroutining: I assume that the language allows the same <a href="CoRoutine.html">CoRoutine</a> to have multiple simultaneous activations that can be resumed by another function call to them, and that the language system arranges to distinguish between the activations automagically (e.g. differentiating via call sites). Some implementations of <a href="CoRoutine.html">CoRoutine</a>s may be less friendly.
+      </p>
+      <p>
+        Or in Lisp with hypothetical <a href="CoRoutine.html">CoRoutine</a>s, for those who consider C unreadable (I adapted this from <a href="JohnMcCarthy.html">JohnMcCarthy</a>'s non-coroutining solution):
+      </p>
+      <code>
+        (defcoroutine leaves (tree)<br/>
+        (cond ((atom tree) (yield (list tree)))<br/>
+        (t (progn (yield (leaves (car tree)))<br/>
+        (yield (leaves (cdr tree)))))))<br/>
+      </code>
+      <code>
+        (defun samefringe (tree1 tree2)<br/>
+        (equal (leaves tree1) (leaves tree2)))<br/>
+      </code>
+      <p>
+        Note that this is well-behaved as well as simple; for identical trees it is O(n), which of course is optimal, and for completely different trees, this has O(1) complexity; it discovers the first difference immediately without wasting further effort.
+      </p>
+      <p>
+        <em>It does take O(log n) space, assuming a reasonably balanced tree.  It's a non-tail-recursive algorithm; after all; so you will need to store </em>BackPointers equal to the height of the tree.<em></em>
+      </p>
+      <p>
+        In the language of your choice, try to find a simple solution that doesn't use <a href="CoRoutine.html">CoRoutine</a>s nor other form of concurrency; you'd be surprised how hard it is! Preferably one that doesn't waste a lot of space; one simple alternate solution first copies all of the leaves into a list, and then compares the two lists, but that wastes an extra pass and consumes O(n) space, too. Gabriel's paper discusses several potential solutions in Lisp.
+      </p>
+      <p>
+        <em>In the language of your choice, try to find a simple solution that doesn't use </em><a href="CoRoutine.html">CoRoutine</a>s nor other form of concurrency<em></em>
+      </p>
+      <p>
+        This problem seems to be easy in a lazily evaluated language, too. In <a href="HaskellLanguage.html">HaskellLanguage</a> you could do something like
+      </p>
+      <code>
+        sameFringe t1 t2 = flatten t1 == flatten t2<br/>
+      </code>
+      <p>
+        where the definition of flatten :: Tree a -> [a] is an easy recursion.
+      </p>
+      <code>
+        data Tree a = Node (Tree a) (Tree a) | Leaf a<br/>
+        flatten tree = flatten' tree [] where<br/>
+        flatten' (Node left right) = flatten' left . flatten' right<br/>
+        flatten' (Leaf val) = (val:)<br/>
+      </code>
+      <p>
+        <em>But note that implementing </em><a href="LazyEvaluation.html">LazyEvaluation</a> requires <a href="CoRoutine.html">CoRoutine</a>s or an equivalent, so this is another nice example of how powerful such things are.<em></em>
+      </p>
+      <p>
+        Not really. Here's an example in Scheme which doesn't use any <a href="CoRoutine.html">CoRoutine</a>s or similar tricks. It's based on explicit delaying of the evaluation of the tail of the result stream.
+      </p>
+      <code>
+        (define (lazy-flatten tree)<br/>
+        (define (helper tree tail-cont)<br/>
+        (if (pair? tree)<br/>
+        (helper (car tree) (lambda () (helper (cdr tree) tail-cont)))<br/>
+        (cons tree tail-cont)))<br/>
+        (helper tree (lambda () '())))<br/>
+      </code>
+      <code>
+        (define (stream-equal stream1 stream2)<br/>
+        (cond<br/>
+        ((and (null? stream1) (null? stream2)) #t)<br/>
+        ((and (pair? stream1) (pair? stream2))<br/>
+        (and (eqv? (car stream1) (car stream2))<br/>
+        (stream-equal ((cdr stream1)) ((cdr stream2)))))<br/>
+        (else #f)))<br/>
+      </code>
+      <code>
+        (define (samefringe tree1 tree2)<br/>
+        (stream-equal (lazy-flatten tree1) (lazy-flatten tree2)))<br/>
+      </code>
+      <code>
+        (display (samefringe '((1 . 2) . (3 . 4)) '(1 . (2 . (3 . 4)))))<br/>
+      </code>
+      <p>
+        <em>That's interesting, and has a certain elegance. But surely tracking state via closures in an explicit continuation does in fact constitute a "similar trick"? Continuations can, of course, implement any control structure. Doing things by hand rather than having the language do it for you doesn't seem to make this categorically different, even though it's interestingly different.</em>
+      </p>
+      <hr/>
+      <p>
+        Here's a version in <a href="SchemeLanguage.html">SchemeLanguage</a> that only flattens one of the trees:
+      </p>
+      <code>
+        (define (flatten tree)<br/>
+        (define (helper tree sofar)<br/>
+        (cond ((null? tree) sofar)<br/>
+        ((pair? tree) (helper (car tree) (helper (cdr tree) sofar)))<br/>
+        (else (cons tree sofar))))<br/>
+        (helper tree '()))<br/>
+      </code>
+      <code>
+        (define (hasfringe? tree fringe)<br/>
+        (define (match atom fringe)<br/>
+        (cond ((null? fringe) #f)<br/>
+        ((eq? fringe #f) #f)<br/>
+        ((eq? (car fringe) atom) (cdr fringe))<br/>
+        (else #f)))<br/>
+        (define (hf-rec tree fringe)<br/>
+        (cond ((null? tree) fringe)<br/>
+        ((pair? tree) (hf-rec (cdr tree) (hf-rec (car tree) fringe)))<br/>
+        (else (match tree fringe))))<br/>
+        (eq? (hf-rec tree fringe) '()))       <br/>
+      </code>
+      <code>
+        (define (samefringe? tree1 tree2)<br/>
+        (hasfringe? tree1 (flatten tree2)))<br/>
+      </code>
+      <p>
+        and one that uses explicit stacks:
+      </p>
+      <code>
+        (define (addtree tree stack)<br/>
+        (cond ((null? tree) stack)     <br/>
+        ((pair? tree) (addtree (car tree) (cons (cdr tree) stack)))<br/>
+        (else (cons tree stack))))<br/>
+      </code>
+      <code>
+        (define (next-state stack)<br/>
+        (define (ns-helper stack)<br/>
+        (cond ((null? stack) '())<br/>
+        ((null? (car stack)) (ns-helper (cdr stack)))<br/>
+        ((pair? (car stack)) (ns-helper (addtree (car stack) (cdr stack))))<br/>
+        (else stack)))<br/>
+        (cond ((null? stack) '())<br/>
+        (else (ns-helper (cdr stack)))))<br/>
+      </code>
+      <code>
+        (define (samefringe? tree1 tree2)<br/>
+        (define (sf-helper stack1 stack2)<br/>
+        (cond ((and (null? stack1) (null? stack2)) #t)<br/>
+        ((or  (null? stack1) (null? stack2)) #f)<br/>
+        ((not (eq? (car stack1) (car stack2))) #f)<br/>
+        (else (sf-helper (next-state stack1) (next-state stack2)))))<br/>
+        (sf-helper (addtree tree1 '()) (addtree tree2 '())))<br/>
+      </code>
+      <hr/>
+      <p>
+        <a href="JohnMcCarthy.html">JohnMcCarthy</a>'s flattening solution:
+      </p>
+      <code>
+        (defun leaves (tree)<br/>
+        (cond ((atom tree) (list tree))<br/>
+        (t (append (leaves (car tree))<br/>
+        (leaves (cdr tree))))))<br/>
+      </code>
+      <code>
+        (defun samefringe (tree1 tree2)<br/>
+        (equal (leaves tree1) (leaves tree2)))<br/>
+      </code>
+      <p>
+        Another of <a href="JohnMcCarthy.html">JohnMcCarthy</a>'s solutions.  Gopher is the "rotate right" that     
+        will be familiar to anyone who has ever studied AVL trees, although he 
+        is using it to <em>unbalance</em> the tree:
+      </p>
+      <code>
+        (defun samefringe (tree1 tree2)<br/>
+        (or (eq tree1 tree2)<br/>
+        (and (not (atom tree1)) (not (atom tree2))<br/>
+        (same (gopher tree1) (gopher tree2)))))<br/>
+      </code>
+      <code>
+        (defun same (x y)<br/>
+        (and (eq (car x) (car y))<br/>
+        (samefringe (cdr x) (cdr y))))<br/>
+      </code>
+      <code>
+        (defun gopher (tree)<br/>
+        (cond ((atom (car tree)) tree)<br/>
+        (t (gopher (cons (caar tree)<br/>
+        (cons (cdar tree)<br/>
+        (cdr tree)))))))<br/>
+      </code>
+      <hr/>
+      <p>
+        Here's a <a href="CommonLisp.html">CommonLisp</a> version with O(n) time complexity and O(1) space complexity. The penalty is that it destructively modifies the tree. If you didn't, it would have (at best) O(log n) space complexity, and be effectively equivalent to a version using true CoRoutines.
+      </p>
+      <code>
+        (defun make-leaf-walker (tree)<br/>
+        (let ((node tree)<br/>
+        (path))<br/>
+        (labels ((helper ()<br/>
+        (cond ((atom node)<br/>
+        (let ((temp node))<br/>
+        (setf node (car path)<br/>
+        path (cdr path))<br/>
+        temp))<br/>
+        ((consp node)<br/>
+        (let ((temp (car node)))<br/>
+        (setf (car node) (cdr node)<br/>
+        (cdr node) path<br/>
+        path node<br/>
+        node temp))<br/>
+        (helper)))))<br/>
+        #'helper)))<br/>
+      </code>
+      <code>
+        (defun same-fringe? (t1 t2)<br/>
+        (let ((w1 (make-leaf-walker t1))<br/>
+        (w2 (make-leaf-walker t2)))<br/>
+        (loop do (let ((i1 (funcall w1))<br/>
+        (i2 (funcall w2)))<br/>
+        (if (and (eq i1 nil) (eq i2 nil))<br/>
+        (return-from same-fringe? t))<br/>
+        (if (not (equal i1 i2))<br/>
+        (return-from same-fringe? nil))))<br/>
+        t))<br/>
+      </code>
+      <hr/>
+      <p>
+        Or in <a href="FlowBasedProgramming.html">FlowBasedProgramming</a>
+      </p>
+      <ul>
+        <li>
+          ---------*
+        </li>
+      </ul>
+      <code>
+        |         |<br/>
+        | FLATTEN |------*<br/>
+        |         |      |<br/>
+      </code>
+      <ul>
+        <li>
+          ---------*      |   IN  *---------*
+          <ul>
+            <li>
+              ------>|         | 
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <code>
+        [0] | COMPARE |<br/>
+      </code>
+      <ul>
+        <li>
+          ------>|         |
+          <ul>
+            <li>
+              ---------*      |   [1] *---------*
+            </li>
+          </ul>
+        </li>
+      </ul>
+      <code>
+        |         |      |<br/>
+        | FLATTEN |------*<br/>
+        |         |<br/>
+      </code>
+      <ul>
+        <li>
+          ---------*
+        </li>
+      </ul>
+      <p>
+        where each instance of FLATTEN walks a tree and sends out an <a href="InformationPacket.html">InformationPacket</a> for each leaf. The arcs represent <a href="BoundedBuffer.html">BoundedBuffer</a>s.  COMPARE reads pairs of leaves, one from each input port, compares them and terminates with some kind of error message if a pair doesn't match up; otherwise COMPARE continues until all input <a href="InformationPacket.html">InformationPacket</a> pairs have been received and processed.  
+      </p>
+      <hr/>
+      <p>
+        In <a href="LuaLanguage.html">LuaLanguage</a>, using <a href="CoRoutine.html">CoRoutine</a>s:
+      </p>
+      <code>
+        function tree_leaves(tree)<br/>
+        if tree.leaf then<br/>
+        coroutine.yield(tree.leaf)<br/>
+        else                          <br/>
+        tree_leaves(tree.left)<br/>
+        tree_leaves(tree.right)<br/>
+        end                                        <br/>
+        end<br/>
+      </code>
+      <code>
+        function same_fringe(tree1, tree2)                                  <br/>
+        local iter1 = coroutine.wrap(tree_leaves)<br/>
+        local iter2 = coroutine.wrap(tree_leaves)    <br/>
+        for node in iter1, tree1 do                        <br/>
+        if node ~= iter2(tree2) then                   <br/>
+        return false<br/>
+        end<br/>
+        end                                                     <br/>
+        return iter2() == nil<br/>
+        end<br/>
+      </code>
+      <p>
+        In <a href="LuaLanguage.html">LuaLanguage</a>, using <a href="LexicalClosure.html">LexicalClosure</a>s:
+      </p>
+      <code>
+        function tree_leaves_closure(tree)                                                                     <br/>
+        local stack = { {tree, 0} }<br/>
+        return function()                                  <br/>
+        while stack[1] do<br/>
+        local cur, state = unpack(stack[1])                                               <br/>
+        if cur.leaf then<br/>
+        table.remove(stack, 1)<br/>
+        return cur.leaf                                     <br/>
+        elseif state == 0 then<br/>
+        stack[1][2] = 1<br/>
+        table.insert(stack, 1, { cur.left, 0 })            <br/>
+        elseif state == 1 then                     <br/>
+        stack[1][2] = 2     <br/>
+        table.insert(stack, 1, { cur.right, 0 })                                                        <br/>
+        else<br/>
+        table.remove(stack, 1)<br/>
+        end<br/>
+        end<br/>
+        end    <br/>
+        end<br/>
+      </code>
+      <code>
+        function same_fringe(tree1, tree2)<br/>
+        local iter1 = tree_leaves_closure(tree1)<br/>
+        local iter2 = tree_leaves_closure(tree2)                                            <br/>
+        for node in iter1 do<br/>
+        if node ~= iter2() then<br/>
+        return false<br/>
+        end<br/>
+        end    <br/>
+        return iter2() == nil<br/>
+        end<br/>
+      </code>
+      <hr/>
+      <p>
+        <strong></strong><a href="SchemeLanguage.html">SchemeLanguage</a><strong>: (Using </strong><a href="SiCp.html">SiCp</a> style streams)
+      </p>
+      <code>
+        (define the-null-stream '())<br/>
+        (define (s-null? s) (eq? s the-null-stream))<br/>
+        (define (head s) (car s))<br/>
+        (define (tail s) (force (cdr s)))<br/>
+        (define-syntax s-cons<br/>
+        (syntax-rules ()<br/>
+        ((s-cons h t)<br/>
+        (cons h (delay t)))))<br/>
+      </code>
+      <code>
+        (define-syntax lazy-s-append<br/>
+        (syntax-rules ()<br/>
+        ((lazy-s-append s1 s2)<br/>
+        (lazy-s-append-f s1 (delay s2)))))<br/>
+        (define (lazy-s-append-f s p)<br/>
+        (cond ((s-null? s) (force p))<br/>
+        (else (s-cons (head s)<br/>
+        (lazy-s-append-f (tail s) p)))))<br/>
+      </code>
+      <code>
+        (define (flatten-to-stream l)<br/>
+        (cond ((null? l) the-null-stream)<br/>
+        ((pair? l) (lazy-s-append (flatten-to-stream (car l)) <br/>
+        (flatten-to-stream (cdr l))))<br/>
+        (else (s-cons l the-null-stream))))<br/>
+      </code>
+      <code>
+        (define (same-fringe? l1 l2)<br/>
+        (do ((s1 (flatten-to-stream l1) (tail s1))<br/>
+        (s2 (flatten-to-stream l2) (tail s2)))<br/>
+        ((or (s-null? s1) <br/>
+        (s-null? s2) <br/>
+        (not (eqv? (head s1) (head s2))))<br/>
+        (and (s-null? s1) (s-null? s2)))))<br/>
+      </code>
+      <hr/>
+      <p>
+        <strong></strong><a href="SchemeLanguage.html">SchemeLanguage</a><strong>: (using </strong><a href="CoRoutine.html">CoRoutine</a>s)
+      </p>
+      <code>
+        (define call/cc call-with-current-continuation)<br/>
+        (define-syntax let/cc<br/>
+        (syntax-rules ()<br/>
+        ((let/cc var e ...)<br/>
+        (call/cc (lambda (var) e ...)))))<br/>
+      </code>
+      <code>
+        (define (process f l)<br/>
+        (for-each (lambda (i)<br/>
+        (cond ((or (null? i) (pair? i)) (process f i))<br/>
+        (else (f i)))) <br/>
+        l))<br/>
+      </code>
+      <code>
+        (define (make-generator l)<br/>
+        (letrec ((rescont #f)<br/>
+        (retcont #f)<br/>
+        (resume (lambda () (let/cc ret <br/>
+        (set! retcont ret)<br/>
+        (cond ((eq? rescont #f)<br/>
+        (process return l)<br/>
+        (set! rescont 'finished)<br/>
+        (retcont (cons #f 'finished)))<br/>
+        ((eq? rescont 'finished)<br/>
+        (error "End of generator"))<br/>
+        (else<br/>
+        (rescont))))))<br/>
+        (return (lambda (x) (let/cc res<br/>
+        (set! rescont res)<br/>
+        (retcont (cons #t x))))))<br/>
+        resume))<br/>
+      </code>
+      <code>
+        (define (same-fringe? l1 l2)<br/>
+        (let ((gen1 (make-generator l1))<br/>
+        (gen2 (make-generator l2)))<br/>
+        (do ((v1 (gen1) (gen1))<br/>
+        (v2 (gen2) (gen2)))<br/>
+        ((or (not (car v1)) (not (car v2)) (not (eqv? (cdr v1) (cdr v2))))<br/>
+        (and (not (car v1)) (not (car v2)))))))<br/>
+      </code>
+      <hr/>
+      <p>
+        A <a href="JavaLanguage.html">JavaLanguage</a> version (untested -- i worry about the nextLeaf logic) that uses a <a href="ParameterObject.html">ParameterObject</a> as a holder for two 'lite' zippers (so called because as they only zip over a b-tree they don't need to contain as much information about the traversal path -- we're just "keeping our left hand on the wall" so to speak). The object holds the state of the computation and simultaneously is created by it, so there's an implicit trampolining that unrolls what would have been a series of recursive stack calls, and similarly nextLeaf is designed iteratively to use O(1) space on the stack. However, we use O(log n) space overall on a well-formed tree (O(n) space in the degenerate case) because the representation of "thread" which would have been represented on the real stack is instead represented on the two Stacks in the dataobject (if our b-tree were doubly linked, this would of course not be an issue). Time complexity should be O(n). I think that are_same can be viewed as a monadic transform on a pair of co-ordinates with their position vis-a-vis the rest of the tree as held in a state monad(see: <a href="MonadicProgramming.html">MonadicProgramming</a>), which leads me to think a <a href="HaskellLanguage.html">HaskellLanguage</a> version would be extremely elegant.
+      </p>
+      <p>
+        The only real ugliness in this code is kludging it to use magic null combinations as a return value, could be remedied at the cost of a few more fancy conditionals by expanding the cont structure. Still, it seems to be the one typical problem with this style of programming I've ended up falling into more and more. Additionally, this is essentially just some functions wrapped in a static class. We could get rid of the dataobject altogether and throw its information into instance variables of the class, which would be more efficient. This works without flattening, destruction, or closures or coroutines because the ZipperPattern can, as I understand it, be viewed as a limited form of continuation passing over an execution tree (or, as it's put elsewhere the zipper itself is "a delimited continuation reified as a data structure"). (Which, incidentally, implies that zippers can provide an implementation bridge between CataMorphisms and continuations).
+      </p>
+      <code>
+        class same_fringe {<br/>
+      </code>
+      <code>
+        class cont {<br/>
+        Tree to;<br/>
+        Tree from;<br/>
+        Stack<Tree> toPrev, fromPrev;<br/>
+      </code>
+      <code>
+        public cont(Tree to, Tree from, Stack<Tree> toPrev, Stack<Tree> fromPrev) {<br/>
+        this.to = to;<br/>
+        this.from = from;<br/>
+      </code>
+      <code>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        Tree nextLeaf(Tree t, Stack<Tree> tPrev) {<br/>
+        Tree ret = t;<br/>
+        if (t.isLeaf())<br/>
+        if (tPrev.size() == 0) return null;<br/>
+        else while(tPrev.contains(tPrev().peek.rightNode())<br/>
+        ret = tPrev.pop().rightNode();<br/>
+        while (!ret.isLeaf())<br/>
+        ret = tPrev.push(ret).leftNode();<br/>
+        return ret;<br/>
+        }<br/>
+      </code>
+      <code>
+        private cont are_same(cont c) {<br/>
+        if ((c.from = nextLeaf(c.from, c.fromPrev)) != (c.to = nextLeaf(c.to,<br/>
+        c.toPrev)))<br/>
+        return new cont(null, null, null, null);<br/>
+        return c;<br/>
+        }<br/>
+      </code>
+      <code>
+        public boolean oRilly(Tree a, Tree b) {<br/>
+        cont res = are_same(new cont(a, b, new Stack<Tree>(), new Stack<Tree>()));<br/>
+        while (res.to != null && res.from != null)<br/>
+        res = are_same(res);<br/>
+        if (res.fromPrev == null || res.fromPrev.size() != 0 || res.toPrev.size() != 0)<br/>
+        return false;<br/>
+        return true;<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <hr/>
+      <p>
+        In <a href="CeePlusPlus.html">CeePlusPlus</a> using stacks in place of the coroutine's state.  I started with something different and then tried to refactor it to the simplist solution.  When I look at it, I think I ended up using stacks to simulate coroutines.
+      </p>
+      <code>
+        Tree next_leaf(stack<Tree>& tStack)<br/>
+        {<br/>
+        if (tStack.empty())<br/>
+        return NULL;<br/>
+        Tree tree = tStack.top(); tStack.pop();<br/>
+        while (!is_leaf(tree))<br/>
+        {<br/>
+        tStack.push(tree->right);<br/>
+        tree = tree->left;<br/>
+        }<br/>
+        return tree;<br/>
+        }<br/>
+      </code>
+      <code>
+        int same_fringe(Tree tree1, Tree tree2)<br/>
+        {<br/>
+        stack<Tree> t1stack, t2stack;<br/>
+        t1stack.push(tree1);<br/>
+        t2stack.push(tree2);<br/>
+      </code>
+      <code>
+        while ((tree1=next_leaf(t1stack)) && (tree2=next_leaf(t2stack))<br/>
+        if (tree1 != tree2) return 0;<br/>
+      </code>
+      <code>
+        if (  (tree1!=NULL) || (tree2!=NULL)  ) return 0;<br/>
+        return 1;<br/>
+        }<br/>
+      </code>
+      <hr/>
+      <p>
+        <strong>OCamlLanguage</strong>
+      </p>
+      <p>
+        Using explicit lazy streams, after the Scheme examples
+      </p>
+      <code>
+        type 'a tree =<br/>
+        Leaf of 'a<br/>
+        | Node of 'a tree * 'a tree<br/>
+      </code>
+      <code>
+        type 'a stream =<br/>
+        Nil<br/>
+        | Cons of 'a * 'a stream Lazy.t<br/>
+      </code>
+      <code>
+        let lazy_flatten tree =<br/>
+        let rec helper tree tail_cont =<br/>
+        match tree with<br/>
+        Leaf x -><br/>
+        Cons (x, tail_cont)<br/>
+        | Node (l,r) -><br/>
+        helper l (lazy (helper r tail_cont))<br/>
+        in<br/>
+        helper tree (lazy Nil)<br/>
+      </code>
+      <code>
+        let rec stream_equal stream1 stream2 =<br/>
+        match stream1, stream2 with<br/>
+        Nil, Nil -> true<br/>
+        | Cons (x,xs), Cons (y,ys) -><br/>
+        x = y &&<br/>
+        stream_equal (Lazy.force xs) (Lazy.force ys)<br/>
+        | _ -> false<br/>
+      </code>
+      <code>
+        let same_fringe tree1 tree2 =<br/>
+        stream_equal (lazy_flatten tree1) (lazy_flatten tree2)<br/>
+      </code>
+      <code>
+        let _ =<br/>
+        same_fringe (Node (Node (Leaf 1,<br/>
+        Leaf 2),<br/>
+        Node (Leaf 3,<br/>
+        Leaf 4)))<br/>
+        (Node (Leaf 1,<br/>
+        Node (Leaf 2,<br/>
+        Node (Leaf 3,<br/>
+        Leaf 4))))<br/>
+      </code>
+      <p>
+        Flatten can also be written this way, as in other Scheme examples,
+      </p>
+      <code>
+        let rec lazy_append s p =<br/>
+        match s with<br/>
+        Nil -> Lazy.force p<br/>
+        | Cons (x,xs) -><br/>
+        Cons (x, lazy (lazy_append (Lazy.force xs) p))<br/>
+      </code>
+      <code>
+        let rec lazy_flatten = function<br/>
+        Leaf x -> Cons (x, lazy Nil)<br/>
+        | Node (l,r) -><br/>
+        lazy_append (lazy_flatten l)<br/>
+        (lazy (lazy_flatten r))<br/>
+      </code>
+      <p>
+        From the solution that only flattens one side:
+      </p>
+      <code>
+        let flatten tree =<br/>
+        let rec helper tree sofar =<br/>
+        match tree with<br/>
+        Leaf x -> x :: sofar<br/>
+        | Node (l,r) -><br/>
+        helper l (helper r sofar)<br/>
+        in<br/>
+        helper tree []<br/>
+      </code>
+      <code>
+        exception Mismatch<br/>
+      </code>
+      <code>
+        let has_fringe tree fringe =<br/>
+        let match' atom = function<br/>
+        x::xs when x = atom -> xs<br/>
+        | _ -> raise Mismatch<br/>
+        in<br/>
+        let rec hf_rec tree fringe =<br/>
+        match tree with<br/>
+        Leaf x -><br/>
+        match' x fringe<br/>
+        | Node (left,right) -><br/>
+        hf_rec right (hf_rec left fringe)<br/>
+        in<br/>
+        try<br/>
+        hf_rec tree fringe = []<br/>
+        with Mismatch -> false<br/>
+      </code>
+      <code>
+        let same_fringe tree1 tree2 =<br/>
+        has_fringe tree1 (flatten tree2)<br/>
+      </code>
+      <p>
+        From the stacks solution:
+      </p>
+      <code>
+        let rec addtree tree stack =<br/>
+        match tree with<br/>
+        Leaf x -> Leaf x :: stack<br/>
+        | Node (l,r) -><br/>
+        addtree l (r :: stack)<br/>
+      </code>
+      <code>
+        let next_state =<br/>
+        let rec ns_helper = function<br/>
+        | Node _ as x :: xs -><br/>
+        ns_helper (addtree x xs)<br/>
+        | stack -> stack<br/>
+        in<br/>
+        function<br/>
+        [] -> []<br/>
+        | _::xs -> ns_helper xs<br/>
+      </code>
+      <code>
+        let same_fringe tree1 tree2 =<br/>
+        let rec sf_helper stack1 stack2 =<br/>
+        match stack1, stack2 with<br/>
+        [], [] -> true<br/>
+        | [], _<br/>
+        | _, [] -> false<br/>
+        | x::xs, y::ys when x <> y -> false<br/>
+        | _ -> sf_helper (next_state stack1)<br/>
+        (next_state stack2)<br/>
+        in<br/>
+        sf_helper (addtree tree1 []) (addtree tree2 [])<br/>
+      </code>
+      <hr/>
+      <p>
+        <strong></strong><a href="HaskellLanguage.html">HaskellLanguage</a><strong></strong>
+      </p>
+      <code>
+        data Tree a = Leaf a | Node (Tree a) (Tree a)<br/>
+      </code>
+      <code>
+        leaves :: Tree a -> [a]<br/>
+        leaves (Node left right) = leaves left ++ leaves right<br/>
+        leaves (Leaf a) = [a]<br/>
+      </code>
+      <code>
+        sameFringe :: (Eq a) => Tree a -> Tree a -> Bool<br/>
+        sameFringe a b = leaves a == leaves b<br/>
+      </code>
+      <hr/>
+      <p>
+        <strong></strong><a href="SmlLanguage.html">SmlLanguage</a><strong></strong>
+      </p>
+      <code>
+        datatype 'a tree = Node of 'a tree * 'a tree<br/>
+        | Leaf of 'a<br/>
+        | Empty<br/>
+      </code>
+      <code>
+        (* pull : 'a tree -> ('a * 'a tree) option *)<br/>
+        fun pull Empty = NONE<br/>
+        | pull (Leaf x) = SOME (x, Empty)<br/>
+        | pull (Node (Empty, t)) = pull t<br/>
+        | pull (Node (Leaf x, r)) = SOME (x, r)<br/>
+        | pull (Node (Node (a,b), c)) = pull (Node (a, Node (b, c)))<br/>
+      </code>
+      <code>
+        (* same : ('a * 'b -> bool) -> 'a tree * 'b tree -> bool *)<br/>
+        fun same eq (l,r) =<br/>
+        (case (pull l, pull r)<br/>
+        of (SOME (x,l), SOME (y,r)) => eq (x,y) andalso same eq (l,r)<br/>
+        | (NONE, NONE) => true<br/>
+        | _ => false)<br/>
+      </code>
+      <hr/>
+      <p>
+        In <strong></strong><a href="IconLanguage.html">IconLanguage</a><strong>, using co-expressions</strong>
+      </p>
+      <p>
+        <a href="http://www.cs.arizona.edu/icon/ftp/doc/tr82_4.pdf">http://www.cs.arizona.edu/icon/ftp/doc/tr82_4.pdf</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryInManyProgrammingLanguages.html">CategoryInManyProgrammingLanguages</a>
+      </p>
+    </div>
+  </body>
+</html>

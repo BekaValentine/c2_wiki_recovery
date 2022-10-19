@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Top On Prepared Statements
+      </h1>
+      <p>
+        <em>I agree "naked" SQL can be a big problem. However, how are </em><a href="PreparedStatement.html">PreparedStatement</a>s better than checking, pre-processing, and quote-escaping "wrapper" routines such as:<em></em>
+      </p>
+      <code>
+        <em>sql="select * from foo where xcode=" . sqlString(myCode) . " and id=" . sqlNum(myId);</em><br/>
+      </code>
+      <p>
+        <a href="PreparedStatements.html">PreparedStatements</a> are better than checking, pre-processing, and quote-escaping "wrapper" routines because with <a href="PreparedStatements.html">PreparedStatements</a>, checking, pre-processing, and quote-escaping "wrapper" routines aren't needed.  So, we don't have to rely on them to be correct.  In fact, we don't have to use them at all.
+      </p>
+      <ul>
+        <li>
+           Complaints that this introduction is a misleading <a href="RedHerring.html">RedHerring</a>, or at least poorly written, can be found at <a href="PageAnchor.html">PageAnchor</a> lunch638 
+        </li>
+      </ul>
+      <p>
+        Let's look at a simple example in PHP using PostgreSQL.  Assume we want to select all customers from a customers table with a specified name, which has been obtained from the user and stored in a variable $userInput.
+      </p>
+      <p>
+        If we don't use prepared statements, the simplest case could be this:
+      </p>
+      <code>
+        <?php<br/>
+        // Connect to a database named "mydb"<br/>
+        $dbconn = pg_connect("dbname=mydb");<br/>
+      </code>
+      <code>
+        // Create a query for execution<br/>
+        $qry = "SELECT * FROM customers WHERE name = '" + $userInput + "'";<br/>
+      </code>
+      <code>
+        // Execute the query.<br/>
+        $result = pg_execute($dbconn, $qry);<br/>
+        ?><br/>
+      </code>
+      <p>
+        If $userInput is, say, "'; delete from customers; --", we're obviously going to be in trouble.  This simplistic example invites SQL injection.  Of course, if we're going to create dynamic queries from user input, we should <strong>sanitise the user input</strong> -- as you've done using wrapper routines in your question -- but this requires discipline and assurance that the sanitisation has been successful.  <strong>That adds complexity and risk: we have to trust your filters to be correct, and we have to ensure that they're used consistently and correctly.</strong>
+      </p>
+      <p>
+        Using prepared statements, the above would be:
+      </p>
+      <code>
+        <?php<br/>
+        // Connect to a database named "mydb"<br/>
+        $dbconn = pg_connect("dbname=mydb");<br/>
+      </code>
+      <code>
+        // Prepare a query for execution<br/>
+        $result = pg_prepare($dbconn, "myquery", 'SELECT * FROM customers WHERE name = $1');<br/>
+      </code>
+      <code>
+        // Execute the prepared query.<br/>
+        $result = pg_execute($dbconn, "myquery", array($userInput));<br/>
+        ?><br/>
+      </code>
+      <p>
+        The pg_prepare function sends the query string to the DBMS for compilation, and identifies the parametric query with the name "myquery".  It is now prepared, i.e., compiled, for execution.
+      </p>
+      <p>
+        The pg_execute function invokes "myquery", passing only the data for the parameter identified by '$1'.  It does <strong>not</strong> construct a new query string from "myquery" + $1 for parsing, planning and execution.  It merely passes the argument to 'myquery' -- which has already been parsed and planned (compiled) via pg_prepare -- in the same manner as passing a argument to a pre-existing stored procedure.  If "userInput" consists of "'; delete from customers; --", all it will do is harmlessly try to select a customer whose name is "'; delete from customers; --".  
+      </p>
+      <p>
+        <a href="PreparedStatements.html">PreparedStatements</a> aren't subject to classic SQL injection, and don't require filters.
+      </p>
+      <p>
+        <strong>Advantages and Disadvantages</strong>
+      </p>
+      <p>
+        Ad-Hoc inline SQL advantages:
+      </p>
+      <ul>
+        <li>
+           Code to assemble SQL is obvious
+        </li>
+        <li>
+           Code executes with a minimum number of passes to the SQL server
+        </li>
+        <li>
+           Code is compiled/optimized every time it executes (good if different values need to cause different plans)
+        </li>
+        <li>
+           SQL can be extracted to management tools and re-executed
+        </li>
+      </ul>
+      <p>
+        Ad-Hoc inline SQL disadvantages:
+      </p>
+      <ul>
+        <li>
+           Code is susceptible to SQL injection if not coded correctly AND the potential for error exists on every statement. (I can avoid it 100% of the time but not everybody on my team can.)
+        </li>
+        <li>
+           Code is compiled/optimized every time it executes (bad if different values should use the same plan OR the first value executed will cause a misshapen plan)
+        </li>
+        <li>
+           SLOW if running the same SQL in a loop with different arguments
+        </li>
+      </ul>
+      <p>
+        Ad-Hoc prepared statement advantages:
+      </p>
+      <ul>
+        <li>
+           Avoiding SQL injection is trivial
+        </li>
+        <li>
+           Code is compiled once/optimized once
+        </li>
+        <li>
+           Good loop performance (best for simple statements)
+        </li>
+      </ul>
+      <p>
+        Ad-Hoc prepared statement disadvantages:
+      </p>
+      <ul>
+        <li>
+           SQL cannot be extracted to management tools and re-executed
+        </li>
+        <li>
+           Code is compiled once/optimized once
+        </li>
+        <li>
+           Code is longer than necessary for single invocations
+        </li>
+      </ul>
+      <p>
+        Ad-Hoc stored procedure advantages:
+      </p>
+      <ul>
+        <li>
+           SQL can be extracted to management tools and re-executed
+        </li>
+        <li>
+           Code is compiled once/optimized once
+        </li>
+      </ul>
+      <p>
+        Ad-Hoc stored procedure disadvantages:
+      </p>
+      <ul>
+        <li>
+           Code is susceptible to SQL injection if not coded correctly AND the potential for error exists on every statement.
+        </li>
+        <li>
+           Code is compiled once/optimized once
+        </li>
+        <li>
+           Vendor lock-in (SPs are not standard)
+        </li>
+      </ul>
+      <p>
+        Prepared statement stored procedure advantages:
+      </p>
+      <ul>
+        <li>
+           Code is compiled once/optimized once
+        </li>
+        <li>
+           Avoiding SQL injection is trivial
+        </li>
+        <li>
+           Best loop performance
+        </li>
+      </ul>
+      <p>
+        Prepared statement stored procedure disadvantages:
+      </p>
+      <ul>
+        <li>
+           SQL cannot be extracted to management tools and re-executed
+        </li>
+        <li>
+           Vendor lock-in (SPs are not standard)
+        </li>
+        <li>
+           Code is compiled once/optimized once
+        </li>
+      </ul>
+      <hr/>
+      <p>
+        <a href="PageAnchor.html">PageAnchor</a> lunch638
+      </p>
+      <p>
+        <em>... "</em><a href="PreparedStatements.html">PreparedStatements</a> are better than checking, pre-processing, and quote-escaping "wrapper" routines because with <a href="PreparedStatements.html">PreparedStatements</a>, checking, pre-processing, and quote-escaping "wrapper" routines aren't needed.  So, we don't have to trust them to be correct.  In fact, we don't have to use them at all." ...<em></em>
+      </p>
+      <p>
+        <em>But you have to use something else instead. Yes, you don't have to use Tool X, but you instead have to use Tool Y. Your wording implies that there is no such trade-off and it's a "free lunch". You are writing like a marketer, not a documenter here, using language to subtly mislead. It's highly biased. -t</em>
+      </p>
+      <p>
+        Isn't the whole point of this page, starting from the first question, about Tool X (filtering wrappers) vs Tool Y (prepared statements)?  And aren't the trade-offs precisely what are delineated in the "Advantages and Disadvantages" section, above?
+      </p>
+      <p>
+        You asked, how are <a href="PreparedStatements.html">PreparedStatements</a> better than wrappers?  I answered it.  My answer isn't marketing, but simply answering the question.  If you feel more balance is warranted, then perhaps your original question should be changed to, "when constructing queries, what are the advantages and disadvantages of using filtering wrappers vs <a href="PreparedStatements.html">PreparedStatements</a>?" 
+      </p>
+      <p>
+        <em>Your summary explanation as it is, is misleading. Compare:</em>
+      </p>
+      <ul>
+        <li>
+           <em>Q: How are boats better than cars for transportation?</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>A: Boats don't use cars. You don't have to trust cars to use boats.</em>
+        </li>
+      </ul>
+      <p>
+        <em>Even if technically true, it does not belong in a summary. It's a </em><a href="UselessTruth.html">UselessTruth</a>.<em></em>
+      </p>
+      <p>
+        That isn't comparable to the original question and its answer.  A more accurate analogue of the original question would be:
+      </p>
+      <ul>
+        <li>
+           Q: How is putting your valuables in a safe better than hiding them under your pillow?
+        </li>
+      </ul>
+      <ul>
+        <li>
+           A: If you put them in a safe, you don't need to hide them under your pillow.
+        </li>
+      </ul>
+      <p>
+        <em>That's a bullshit analogy. You are engaging in biased sales-person-like spin.</em>
+      </p>
+      <p>
+        How so?  I think it accurately highlights the flaw in your defense of filters instead of <a href="PreparedStatements.html">PreparedStatements</a>.
+      </p>
+      <p>
+        <em>You think wrong.</em>
+      </p>
+      <p>
+        How so?
+      </p>
+      <p>
+        <em>Your head is biased, seeing what it wants to see and disregarding the rest.</em>
+      </p>
+      <p>
+        How so?  Please explain and/or provide evidence-based counterarguments, rather than merely repeating your allegation.
+      </p>
+      <hr/>
+      <p>
+        <em>Your example will </em>'not "fail"<em>' the first example given at the top if quote escaping is implemented properly. Prepared Statements add complexity of their own. You are oversimplifying the tradeoffs involved. They are often harder to read because the values are separated from the field names, creating more errors and potentially increasing maintenance cost. And the above injection string does NOT address the original question, as described later. -t</em>
+      </p>
+      <p>
+        The pros and cons of <a href="PreparedStatements.html">PreparedStatements</a> are listed above, thus allowing the reader to consider and prioritise the tradeoffs as he/she sees fit.  Note that the alleged "complexity" of <a href="PreparedStatements.html">PreparedStatements</a> is a development and maintenance issue.  The risk of SQL injection, as a result of an inadequate filter on a dynamic query, is a run-time issue.  One can presume that in most production applications, run-time execution of a SQL query occurs far more often -- and its failure (especially due to SQL injection) is far more costly and likely to have negative impact --  than its development and maintenance.  The implications, in terms of where particular attention should be devoted, should be self-evident.
+      </p>
+      <p>
+        <em>There are several problems with it, but first let's resolve the "wrapping" issue below.</em>
+      </p>
+      <hr/>
+      <p>
+        <em>It wouldn't fail the first example. This is false or misleading. The wrapping functions typically </em>'escape quotes<em>'. If you are comparing "naked" value insertion versus wrapped values versus Prepared Statements, you need to define your working terms or create numbered references. You appear to morph into each without a clear segue. The first question was never addressed because the rest of the material is for different code from the original question. Or at least the relationship is not clear. -t</em>
+      </p>
+      <p>
+        How do we know it "wouldn't fail the first example"?  Maybe your wrapping functions are flawed.  Should I rely upon you to write correct filters?  If I use <a href="PreparedStatements.html">PreparedStatements</a>, I don't have to.  Anyway, my PHP example is conceptually identical to the code snippet in your question, differing only in the specific SQL statement.  You asked, "[h]ow are <a href="PreparedStatement.html">PreparedStatement</a>s better than 'checking' routines?"  The PHP example and its associated text, plus "Advantages and Disadvantages" below, answer it.
+      </p>
+      <p>
+        <em>So you assume they are flawed up front?</em>
+      </p>
+      <p>
+        We don't know whether they are flawed or not.  We take a risk on the <em>possibility</em> that they <em>might</em> be flawed.  If we use <a href="PreparedStatements.html">PreparedStatements</a>, we don't have to take that risk.  It is certainly possible that Microsoft's implementation of <a href="PreparedStatements.html">PreparedStatements</a> is flawed, but a significantly higher percentage of users are employing Microsoft's <a href="PreparedStatements.html">PreparedStatements</a> than are using your filters, so in the absence of any evidence that Microsoft's <a href="PreparedStatements.html">PreparedStatements</a> are flawed, we've effectively had more testing of the former than the latter.  Furthermore, we know that <a href="PreparedStatements.html">PreparedStatements</a> work by replacing values in a query rather than re-writing the query -- trivially demonstrated by the PHP examples above -- so by using <a href="PreparedStatements.html">PreparedStatements</a> we needn't rely on filters to prevent SQL injection.  Therefore, there's more justification for relying on Microsoft's <a href="PreparedStatements.html">PreparedStatements</a> than for relying on your filters.
+      </p>
+      <p>
+        <em>Why should I agree with your assumption?</em>
+      </p>
+      <p>
+        Why shouldn't you?  It's a reasonable assumption for even you, as the author of the filters, to not be sure whether your filters are flawed or not.  Have you done some form of formal proof, followed by extensive empirical validation, to verify their correctness?  Even if you have, can you guarantee with absolute certainty that your filters can't be fooled when they're used to construct dynamic queries?  Wouldn't it be better to not have to use filters in the first place, as is the case when using <a href="PreparedStatements.html">PreparedStatements</a>?
+      </p>
+      <p>
+        <em>And why should I assume Microsoft, Oracle, etc. codes stuff correctly? (Hint: they don't.)</em>
+      </p>
+      <p>
+        Of course they don't, but what should I trust more:  Your filters, or Microsoft/Oracle/whoever's mechanism for avoiding the need for filters?  Of course, if there was a SQL injection vulnerability in some vendor's implementation of <a href="PreparedStatements.html">PreparedStatements</a>, we'd soon hear about it in the usual IT news channels, because <a href="PreparedStatements.html">PreparedStatements</a> are used <strong>a lot</strong>.  If your filters are flawed, we'll probably first hear about it when the contents of our customer credit card table appears in the "for sale" section of some hacker's Web site.
+      </p>
+      <p>
+        <em>And no, </em>'it's not "conceptually identical"<em>'. You are wrong on that account. I have no idea how you came to that conclusion.</em>
+      </p>
+      <p>
+        They look conceptually identical to me.  Both queries select rows from a table based on the content of some variable(s).  What is conceptually different about them?
+      </p>
+      <p>
+        <em>And your pro/con summaries are vague, lacking scientific results.</em>
+      </p>
+      <p>
+        They're a summary, based on understanding that anyone even minimally familiar with <a href="PreparedStatements.html">PreparedStatements</a> and <a href="StoredProcedure.html">StoredProcedure</a>s will inevitably have.
+      </p>
+      <p>
+        <em>Argument-by-clubbiness. You are a shitty writer, you know that? You try every trick in the book to mask </em><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> as something legitimate.<em></em>
+      </p>
+      <p>
+        <a href="IsYourRudenessNecessary.html">IsYourRudenessNecessary</a>?  There's no <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> here.  I'm not trotting out Stephen Hawking to claim that three out of four physicists prefer <a href="PreparedStatements.html">PreparedStatements</a> over dynamic queries.  <strong>That</strong> would be <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>.  In this page, I've given you a simple PHP example that <strong>you</strong> can use to demonstrate <strong>to yourself</strong> whether or not <a href="PreparedStatements.html">PreparedStatements</a> -- in your preferred DBMS -- allow query-rewriting and hence SQL injection.  If they don't, then you don't have to rely on filters to avoid SQL injection.  The only "authority", in that case, is you.
+      </p>
+      <p>
+        <em>Your example as given will NOT fail the wrapped version. Perhaps you don't understand what "string escaping" is?</em>
+      </p>
+      <p>
+        I know exactly what "string escaping" is, but I also know that SQL injection is not limited to failures in string escaping.  I don't know that you have implemented your filters properly; you may have made mistakes.  I do know that in general, parameterised queries and prepared statements eliminate the possibility of query re-writing -- because of how they work -- such that when I use parameterised queries and prepared statements, I don't have to trust your filters to work properly, because I don't have to use your filters.
+      </p>
+      <p>
+        You originally asked, "[h]ow are <a href="PreparedStatement.html">PreparedStatement</a>s better than 'checking' and pre-processing 'wrapper' routines?"  The answer is that <a href="PreparedStatement.html">PreparedStatement</a>s are better than 'checking' and pre-processing 'wrapper' routines because with <a href="PreparedStatements.html">PreparedStatements</a>, 'checking' and pre-processing 'wrapper' routines aren't needed, so we don't have to trust them to be correct.  In fact, we don't have to use them at all.  The time you spent writing them could have been spent on something else.
+      </p>
+      <p>
+        <em>And it's not my job to find and present your side of the story. Thus, it is </em><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> as given.<em></em>
+      </p>
+      <p>
+        What of my side of the story have I not presented?
+      </p>
+      <p>
+        <em> </em>'Empirical testing<strong> that clearly demonstrates they are "better". You perhaps may be right, but the reader is being asked to accept </strong><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>, with the seeming implication that big vendors are more trustworthy than small vendors or that database vendors are more trustworthy than wrapper API vendors. Ideally injection tests/scenarios and performance benchmark tests would be presented here for the reader. You only gave one scenario, it only fails code of your own creation (which is the "raw" SQL string-building approach, which is not what I proposed at the top). I realize such tests may be hard to come by, but at least make it clear to the reader that you are using <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>. That's not too much to ask. <strong>I have nothing against </strong><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a><strong> (barring better sources), </strong>but ask that its usage be made clear here.<em>'  -t</em>
+      </p>
+      <p>
+        See below, starting with "Yes, wrappers can do type checking."  The one scenario I gave is categorical; it doesn't require "empirical testing" because <a href="PreparedStatements.html">PreparedStatements</a> are <strong>intended</strong> to avoid the need for filters, in order to eliminate the possibility of classic SQL injection. Aside from their performance benefits within loops, <strong>that's what they're for.</strong>  Furthermore, I'm not aware of any reported cases of classical SQL injection via <a href="PreparedStatements.html">PreparedStatements</a>.  There are numerous ones resulting from dynamic queries.
+      </p>
+      <p>
+        <em>For one, that could be because PS's are relatively rare, and perhaps because vendors may not be so forthcoming, simply saying, "we found a bug and fixed it in version x+1" without saying what the bug was. It would be interesting to see statistics as far as the conditions during the successful attacks, such as non-wrapped SQL versus wrapped SQL versus stored procedures versus PS's, etc. But we don't have such hard data so that we are left with just anecdotes, which is right back to my original point. Just agree your evidence is anecdotal (</em><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>) and move on. And "categorical" could mean you are painting with too wide a brush.<em></em>
+      </p>
+      <p>
+        By the standard of "anecdotal" you're suggesting here, everything on the Internet is "anecdotal".  You also appear to be equating your "anecdotal" with <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>, which again puts the entirety of the Internet -- books too, I suppose, and peer-reviewed journals (obviously, the reviewers believed the "authority" of the author) -- in the same category.  
+      </p>
+      <ul>
+        <li>
+           <em>I'm not sure what you mean. The ideal is empirical tests or analysis of actual attacks and representative attack techniques/strings. In other words, somebody throws bunches of A's at B to see if B can withstand the hits. For example, "in our test, we tossed the following 50 form test strings at 10 apps, one version of each using Bob's Wrappers 2.5 and one using Oracle version 7.23 PS's. 13 of them of crashed or penetrated the wrappers and 5 of them crashed or penetrated the PS's." You are doing the equivalent of bragging (talking) about the engine instead of going out and </em><a href="RaceTheDamnedCar.html">RaceTheDamnedCar</a> (or find somebody else who already did and filmed it). If somebody lies about such tests, that's a different matter. Repeatability of testing is also part of science, but so far it's not an issue <em>here</em>. -t (I'm going to use "-t" to mark my paragraphs for now on. Quoting complicates off-line writing.)<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Such tests are obviously appropriate if we're verifying code or comparing filters.  However, <a href="PreparedStatements.html">PreparedStatements</a> are not a filtering mechanism.  They're a structural mechanism.  They remove parameters from the construction of the query text, and defer inclusion of parameter values until after the query has been parsed (and compiled, usually) so the possibility of classic SQL injection -- which involves a change to the query logic by changing its command text, not merely values in the query -- is eliminated.  Of course, <a href="PreparedStatements.html">PreparedStatements</a> don't preclude second order SQL injection, nor do they preclude buffer overflows, but those are very different security issues from classic SQL injection.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Calling them a "structural mechanism" and categorizing injection into "classic" versus "non-classic" does not get one off the empirical evidence hook. You appear to be dancing around the empirical evidence bush using irrelevant categorization word-play. If one "type" of injection is more likely than another, then present a solid and clear case for that.</em> -t
+        </li>
+      </ul>
+      <ul>
+        <li>
+           I presume you are familiar with the various types of SQL injection?  If not, see <a href="http://en.wikipedia.org/wiki/SQL_injection">http://en.wikipedia.org/wiki/SQL_injection</a>  I refer to "classic SQL injection" in order to be accurate; it is not an attempt to deceive.  I wished to make it particularly clear that <a href="PreparedStatements.html">PreparedStatements</a> categorically eliminate the possibility of classic SQL injection, which is by far the most common cause of SQL injection related security risks and violations.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <a href="PageAnchor.html">PageAnchor</a> common734
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>It's likely "common" because programmers often skip using </em>any<em> protection. Like I already pointed out, without better stats of frequency of attack types, frequency of successful attacks, AND frequency of protection techniques actually used, "common" tells us very little. You could be doing the equivalent of claiming that the pills are worse than condoms for pregnancy prevention because most pregnancies are from those not using condoms. -t</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           It doesn't matter whether it's common or not, actually.  I mention that classic SQL injection is common only to indicate it's relative importance, not to make a point about its commonality. 
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Relative to what? It's not telling us anything useful, or at least not being clear about frequency and probabilities, tossing in the word "common" without enough specific to make it useful. Avoid introducing half-baked ideas. </em>'Explain it fully or don't even bring up "common"<em>'. Wrapping may also prevent "common" attacks. -t</em>
+        </li>
+      </ul>
+      <p>
+        Vendor documentation like <a href="http://dev.mysql.com/doc/refman/5.6/en/sql-syntax-prepared-statements.html">http://dev.mysql.com/doc/refman/5.6/en/sql-syntax-prepared-statements.html</a> -- in particular, prepared statements provide "[p]rotection against SQL injection attacks. The parameter values can contain unescaped SQL quote and delimiter characters." -- is typical.  If you consider that weak evidence because it's <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>, well, so be it.  Feel free, then, to examine the PostgreSQL source code to see how it actually works.  
+      </p>
+      <ul>
+        <li>
+           <em>I'm not sure what your point is here. Please elaborate. The wrapper input can also "contain unescaped SQL quote and delimiter characters". It's not a difference maker between the two "sides" (or are there 3 sides? Your writing is confusing).</em> -t
+        </li>
+      </ul>
+      <ul>
+        <li>
+           The wrapper input can "contain unescaped SQL quote and delimiter characters" only because we are forced to rely on the wrappers to filter out SQL injection by correctly escaping quotes, recognising type mismatches, and the like.  The "difference maker" is that <a href="PreparedStatements.html">PreparedStatements</a> do not depend on wrappers or filters, either internally or externally.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Different techniques depend on different things. No news there. -t</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           The important factor is that wrappers/filters are inherently risky.  If a filter is faulty, SQL injection is possible.  <a href="PreparedStatements.html">PreparedStatements</a> are fundamentally different; they <strong>eliminate</strong> the risk by eliminating user input as a possible means by which queries can be re-written, and (hence) their logic changed.  With <a href="PreparedStatements.html">PreparedStatements</a>, it is not possible to re-write a query and change its logic.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>As mentioned elsewhere, non-re-writing does not by itself protect from all possible injections. -t</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           No, it doesn't protect against buffer overflows, for example, but filters generally don't either.  Buffer overflows are a different category of security violation.  Classic SQL injection depends (typically) on query re-writing.  <a href="PreparedStatements.html">PreparedStatements</a> protect against classic SQL injection because at the point of execution, they don't involve query re-writing.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>I said "injections" and said nothing about buffer overflows above. And filters are but one of many techniques for protection. Your defense is growing convoluted. I will agree that PS's protect well against "classic SQL injections". But you should make it clear that they </em>'don't necessarily protect against ALL types of injections<em>' (or other security breaches). -t</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Buffer overflows are a form of injection.  I did make clear that <a href="PreparedStatements.html">PreparedStatements</a> don't necessarily protect against all types of injections, when I was precise in my use of "classic SQL injection" instead of "SQL injection" -- a precise usage to which you apparently objected.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Re: "Feel free, then, to examine the..." - As a reminder, it's not my job to fetch and present evidence for your case. -t</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           My point was rhetorical:  If you're going to claim everything is <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>, then you're essentially saying the only "authority" you can rely on is yourself and therefore, presumably, your own examination of DBMS source code.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Sorry, you lost me. I never claimed everything was </em><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>, only your evidence SO FAR. -t<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           My evidence is based on vendor documentation and logical inference.  How is that <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>?
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Vendor docs are light on details, and your "logical inference" is so far leaky.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           How so?
+        </li>
+      </ul>
+      <p>
+        Alternatively, here's a quote from the PostgreSQL manual at <a href="http://www.postgresql.org/docs/9.2/static/sql-prepare.html:">http://www.postgresql.org/docs/9.2/static/sql-prepare.html:</a> "PREPARE creates a prepared statement. ... When the PREPARE statement is executed, the specified statement is <strong>parsed, analyzed, and rewritten.</strong> When an EXECUTE command is subsequently issued, the prepared statement is <strong>planned and executed.</strong> This division of labor avoids repetitive parse analysis work, while allowing the execution plan to depend on the specific parameter values supplied."  Note that there is <strong>no</strong> rewriting when the prepared statement is executed, which would preclude classic SQL injection, but I guess that's <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> and/or anecdotal?
+      </p>
+      <ul>
+        <li>
+           <em>Why is "rewritting" a major issue (outside of performance)? Perhaps we need more specific models to illustrate. -t</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Re-writing is the means by which executable dynamic SQL statements are constructed, and it's the means by which classic SQL injection occurs.  Given a dynamic query like "SELECT * FROM customers WHERE name = '$userInput'", constructing an executable query requires that it be re-written to replace "$userInput" with the value of $userInput.  If the value of $userInput is "'; delete from customers; --", the query logic will be changed.  This is the basis for classic SQL injection.  However, a prepared statement like "SELECT * FROM customers WHERE name = ?" will be compiled in one step, then passed a single argument and executed in a second step.  When it's executed, the parameter value is <strong>not</strong> used to rewrite "SELECT * FROM customers WHERE name = ?".  The value is merely passed into the '?' placeholder in the pre-compiled query, so a parameter value like "'; delete from customers; --" is harmlessly compared to the 'name' attribute for every row in the 'customers' table.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           See below on p-code injection.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [Since you're making such a stink about empirical evidence, what about some that shows the existence of this problem with p-code? Make sure that it's being used as the target language for a prepared statement.]
+        </li>
+      </ul>
+      <ul>
+        <li>
+           If the p-code or p-code-like language uses "$" as a delimiter, and the input value has a "$", then the input can be used to "escape to" command mode. And if a machine language uses 4b7c as a delimiter, and the "value" can end up containing 4b7c, then injection can be done.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [Any empirical evidence for that? Can you show us a real p-code used as a target language for prepared statements that are subject to such an attack?]
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Nope. But likewise, you have none that fail wrappers. So it's an <a href="AnecdoteImpasse.html">AnecdoteImpasse</a> yet again. Lovely.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [So you don't have any evidence that p-code is subject to injection attacks?]
+        </li>
+      </ul>
+      <ul>
+        <li>
+           See below.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           [See what below?]
+        </li>
+      </ul>
+      <p>
+        <em>Some anecdotal evidence suggests that vendors convert SQL into semi-serialized </em>'p-code<em>' or a p-code-like language internally such that commands and data are </em>still<em> mixed. The vendor theory is allegedly that internal p-code is still harder to hack than direct SQL because the hacker doesn't have direct experimental access or knowledge of the p-code. But that's still not strict separation: The p-code parser/interpreter allegedly encounters a mix of commands and data, as determined by delimiters or syntax rules. </em>
+      </p>
+      <p>
+        Sure, some implementations probably convert SQL into parse trees, some convert to executable machine code, some convert to byte code ("p-code"), and so on.  The crucial factor is that none of them rewrite the original SQL statement.  Rewriting is what makes dynamic queries risky.  Whilst passing values into some form of a planned (compiled) query may be subject to, say, buffer overflows, they're no more subject to such security risks than anything else.
+      </p>
+      <ul>
+        <li>
+           <em>P-code is subject to injection also. Re-writing is not the key issue. -t</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           No, p-code is not subject to classic SQL injection, because the original query string is not being re-written to include parameter values.  Re-writing <strong>is</strong> the key issue.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>You appear to be moving or redefining the goal-posts. Now you are claiming it prevents "classic" injection, but NOT necessarily ALL injection. As mentioned above, one should expect empirical evidence that Type X injection is better/worse than Type Y injection if you go that route. Baroque injection is bad, romantic period injection is good, jazz injection is bad, rock injection is good, unless it's Beatle injection, Hey Hey we're the Monkeys! Injection's coming your way, keep your queries at bay...</em>-t
+        </li>
+      </ul>
+      <ul>
+        <li>
+           I am not moving or redefining the goal-posts, only being as precise as possible.  I make no claims about <strong>all</strong> injection -- as that would potentially include kinds of injection we haven't discovered yet -- only about the most common form of injection, which is classic SQL injection.  That said, do not let my use of accurate terminology distract you from appreciating the point I made.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           See <a href="PageAnchor.html">PageAnchor</a> common734 -t
+        </li>
+      </ul>
+      <p>
+        <em>But either way, all we have is anecdotal evidence. You were </em>insistent<em> somewhere that one accept your anecdotal evidence, saying something along the lines of, "I don't trust the skill/professionalism of somebody like you who does not accept prepared statements as the </em><a href="OneTrueWay.html">OneTrueWay</a>." Nobody should ever be so insistent (and rude) based on merely <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>. That's an intellectual sin. If I reject strong <em>empirical</em> evidence, THEN you have a case against me.<em></em>
+      </p>
+      <p>
+        <em>But </em>'there is a bigger question here<em>': If you cannot test a tool's security empirically, who do you trust and why? Sure, many have a network of experienced and trusted colleagues, but how reliable is this and if another person's trusted colleagues have a different answer than yours, should one be so quick to reject it? Note that vendors are often full of it:</em>
+      </p>
+      <p>
+        <em></em><a href="http://www.enterprisemanagement360.com/blog/better-business-bureau-spanks-oracle-over-exaggerated-performance-claims/''">http://www.enterprisemanagement360.com/blog/better-business-bureau-spanks-oracle-over-exaggerated-performance-claims/''</a>
+      </p>
+      <p>
+        Exaggerated claims about performance are a different category of claim than asserting that (from above) "parameter values can contain unescaped SQL quote and delimiter characters" when that isn't the case.  The former is questionable marketing; the latter (if untrue) would border on fraudulent.
+      </p>
+      <p>
+        <em>As mentioned above, un-escaped input is not a difference maker. (Please don't duplicate counter-replies here.) I've never seen them promise pure separation of commands and data/values. Thus, so far there's nothing to lie about. -t</em>
+      </p>
+      <p>
+        It's not necessary for there to be "pure separation of commands and data/values" in some isolated memory sense.  What <a href="PreparedStatements.html">PreparedStatements</a> do is isolate construction, parsing and compilation of queries from their execution.  It is only at the point of execution -- after the query has already been constructed, parsed, and (usually) compiled -- that parameter values are inserted into the query plan.  They are not used to construct a new dynamic query, so it doesn't matter whether SQL injection attempts are due to un-escaped input, or type checking failures, or trying to "trick" what are presumed to be the existing filters.  At the point of executing a prepared statement, the parameter values can be anything.  They can't cause the query to fail due to errant quotes, nor can they cause classic SQL injection by re-writing the query, because the query will not be re-parsed or re-written.
+      </p>
+      <p>
+        <em>The devil is in the implementation details (which you haven't provided). If the SQL is re-written into p-code, for example, then such p-code is still subject to value injection because p-code, or even machine code, does not inherently separate commands from values. Parsing the SQL into something else does NOT outright prevent injection by itself because the NEW FORMAT of the query commands is also potentially subject to injection. -t</em>
+      </p>
+      <p>
+        <em>I will agree that if commands and values are kept separate throughout the entire process, then injection attacks are much harder to do, and PS's do provide that </em>'potential<em>'. But whether the implementations actually do such is only speculation at this point. And this separation has nothing to do with pre-parsing or compiling, so I don't know why you keep bringing that up.</em>
+      </p>
+      <p>
+        You appear to be using the term "p-code" to refer to something that hasn't been done in programming languages (or SQL DBMSs) since the early home-PC implementations of BASIC:  Some of them tokenised the user input and converted keywords to single bytes, in order to save memory and accelerate interpretation.  If a SQL DBMS did that -- converted SQL into some tokenised form, and then upon execution parsed the tokenised text -- then SQL injection would still be possible.  However, no popular SQL DBMS does this.  When SQL code is compiled (or "planned", in the usual SQL parlance), it is converted to an executable format and no further parsing or SQL re-writing takes place.  Therefore, it is <strong>not</strong> "potentially subject to injection", because once the SQL text has been converted to an executable format, no re-writing of the original query takes place, nor does any subsequent compilation take place that could convert user-supplied values into executable SQL.
+      </p>
+      <p>
+        <em>I included "p-code-</em>'like<strong>" in the original statement. And other parts of that paragraph assume you know the implementation details, but you don't. Machine language is also subject to injection, as already mentioned. "Re-writing" or </strong>not-rewriting does not prevent injection<em>'. So, stop mentioning it. </em>
+      </p>
+      <p>
+        [Can you give us an example of machine language being subject to injection without rewriting?]
+      </p>
+      <p>
+        Nope. But likewise, you have none that fail wrappers. So it's an <a href="AnecdoteImpasse.html">AnecdoteImpasse</a> yet again. (And we don't know if it's machine language or some kind of tokenized language for PS's. We only have guessing going on here.) -t
+      </p>
+      <p>
+        [My question was just about machine language being subject to injection. You made the claim that it was, so I wanted to see what evidence you could provide to support it. You've now said you can't back up that claim. Since your claim that injection has nothing to do with rewriting is dependent on the claim that machine language is subject to injection, it makes your claim that injection has nothing to do with rewriting also unsupported. Since there is an example on this page showing how not rewriting does prevent injection, there is support for the claim that not rewriting prevents injection. There's no impasse here.]
+      </p>
+      <p>
+        Please <a href="PageAnchor.html">PageAnchor</a> the evidence. I missed it. And if wrappers can do that same, then the example is not a difference maker.
+      </p>
+      <p>
+        [It's the PHP at the top of this page.]
+      </p>
+      <p>
+        Your test string doesn't "fail" wrappers, so it's not a difference maker. That should have been blatantly obvious.
+      </p>
+      <p>
+        [Tell you what, you produce your wrappers and then we can start showing how they fail. Until then, they fall in the <a href="SufficientlySmartCompiler.html">SufficientlySmartCompiler</a> category.]
+      </p>
+      <p>
+        Fair enough. I cannot provide public examples of such at this time. But for now, do you at least agree that basic quote escaping would prevent injection from the example given ("'; delete from customers; --")? Sample wrapper template code:
+      </p>
+      <code>
+        method sqlString(strVal) {<br/>
+        var result = strVal;<br/>
+        result = replace(result, "'", self.DB_QUOTE_ESCAPE, scope:=all);<br/>
+        // more processing goes here ...<br/>
+        return result;<br/>
+        }<br/>
+      </code>
+      <p>
+        <em>How can we trust such filters to be correct, or used correctly?  How do we know 'replace', for example, can't be tricked by some character sequence?  What happens if we forget to use sqlString and compose a SQL query without it?  What happens if you alter sqlString and mistakenly return strVal somewhere in the middle of "// more processing goes here ..."?</em>
+      </p>
+      <p>
+        <em>The problem is not the use of filters per se -- if you could guarantee filters to be 100% correct, and guarantee that they'll be used 100% of the time, they'd be fine.  Can you guarantee that?</em>
+      </p>
+      <p>
+        <em>In light of the serious risks that these questions imply, what do we gain by using such filters as opposed to using </em><a href="PreparedStatements.html">PreparedStatements</a>?<em></em>
+      </p>
+      <p>
+        See <a href="PreparedStatementsDiscussionTwo.html">PreparedStatementsDiscussionTwo</a> for downsides. As far as bugs in filters, PS implementations can also contain bugs. Which vendor/org/coder do we trust more and why? Like I keep pointing out, without empirical testing of actual/realistic attacks, it's all <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>; more specifically "trust guessing". I have no problem with weak evidence being given, as long is it's clear it's weak. But some here insist their claims are backed by strong readable evidence. -t
+      </p>
+      <p>
+        <em>Whilst it is true that </em><a href="PreparedStatements.html">PreparedStatements</a> can contain bugs, the chance of a <a href="PreparedStatement.html">PreparedStatement</a> -- in any popular DBMS implementation -- resulting in classic SQL injection is about the same as the chance that a typical C function in a typical C program will allow "C injection", and for the same reasons.<em></em>
+      </p>
+      <hr/>
+      <p>
+        Prepared statements use filters, so they have the same flaws as dynamically-generated queries. They don't isolate values from commands on the machine-level like some mistakenly imply. -t
+      </p>
+      <p>
+        <em>No, they don't use filters and they do isolate values from commands.  See, for example, </em><a href="http://technet.microsoft.com/en-us/library/ms175580">http://technet.microsoft.com/en-us/library/ms175580</a> and <a href="http://technet.microsoft.com/en-us/library/ms188001">http://technet.microsoft.com/en-us/library/ms188001</a> (note the "security note" in both), and <a href="http://www-01.ibm.com/support/knowledgecenter/SSEPEK_10.0.0/com.ibm.db2z10.doc.sqlref/src/tpc/db2z_sql_prepare.dita''">http://www-01.ibm.com/support/knowledgecenter/SSEPEK_10.0.0/com.ibm.db2z10.doc.sqlref/src/tpc/db2z_sql_prepare.dita''</a>
+      </p>
+      <p>
+        <em>In the second reference, "[b]ecause </em>'the Transact-SQL statement itself remains constant and only the parameter values change<strong>, the SQL Server query optimizer is </strong>likely to reuse the execution plan it generates for the first execution<em>'" clearly indicates a separation between parameter values and the SQL statement.  It doesn't rewrite the statement such that it risks SQL injection.  Parameter markers can only appear in locations in the SQL statement where values are expected, so a parameter argument can only ever be treated as a value.</em>
+      </p>
+      <p>
+        <em>In the third reference, tables 1 through 3 indicate restrictions on where parameter markers may appear in a SQL statement.  It's clear that they may not replace arbitrary portions of SQL code.  Therefore, they are true parameters and not string replacements, and as such cannot be used to redefine the SQL statement outside of parameter replacement.  Thus, "hard-partitioning" is preserved.  The parser only recognises parameter markers where values are expected, so a parameter argument can only be treated as a value, never a command.</em>
+      </p>
+      <p>
+        I don't see how this is "clear" evidence as claimed. You over-use "clear" or "clearly". I already explained the problems with some of these quotes, but some asshole keeps deleting stuff in this topic. Parsing characteristics are only <strong>indirect</strong> evidence for what is actually happening through the ENTIRE life-cycle. I'd like to see <strong>actual tests</strong>, not just JUST Microsoft's claims. I don't trust Microsoft. For example, few take Intel's word directly on their chip benchmarks; they prefer a 3rd party lab result, hopefully from multiple test vendors. Similar expectations should apply to Microsoft. Further, I don't see where Microsoft <em>directly claimed</em> separation. Your "conclusions" are only based indirect evidence. -t
+      </p>
+      <p>
+        <em>Top, why do you persist with this nonsense?  Try the PHP example at the top of the page.  Try it with different DBMSs.  If you find some where you can inject SQL, please post them here so we know which DBMSs to avoid.  Otherwise, this isn't a theoretical or abstract debate and that's why I keep deleting the rubbish.  </em><a href="PreparedStatements.html">PreparedStatements</a> are a simple and uncontroversial mechanism.  Trying to make them out to be controversial is ludicrous, and only ruins this page by turning it into unreadable <a href="ThreadMess.html">ThreadMess</a> when it could be a useful reference based on answering reasonable questions about <a href="PreparedStatements.html">PreparedStatements</a>.<em></em>
+      </p>
+      <p>
+        First, I couldn't produce a sufficient sample set. I'm not a hacker. Second, I know of no way to fail the wrapping version either. They'd both likely <strong>score 100% A+</strong>. But at least you are starting to think empirically, which is a good sign.  -t
+      </p>
+      <p>
+        <em>You don't need to "produce a sufficient sample set".  Just create a suitable database (you'll need one table) and run it.</em>
+      </p>
+      <ul>
+        <li>
+           If you escape quotes properly, it will not "inject" the wrapped version. Your example doesn't illustrate anything of use for the wrapped version.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Therein lies the problem: "</em>'if<em>' you escape quotes properly..." With prepared statements, you don't have to take the risk that they might not be escaped properly, or that numeric values are not properly validated, or that someone inadvertently missed using your filter on a value.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           So you claim.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>DBMS vendors claim it too.  See, for example, </em><a href="http://dev.mysql.com/doc/refman/5.6/en/sql-syntax-prepared-statements.html,">http://dev.mysql.com/doc/refman/5.6/en/sql-syntax-prepared-statements.html,</a> in which prepared statements provide "[p]rotection against SQL injection attacks. The parameter values can contain unescaped SQL quote and delimiter characters."<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Wrappers can do the same. That feature is not a difference maker.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>The difference is that </em><a href="PreparedStatements.html">PreparedStatements</a> provide protection against SQL injection attacks by ensuring that user-supplied values are <strong>never</strong> involved in the construction of a SQL query.  Wrappers still involve user-supplied values -- filtered, hopefully -- in the construction of a SQL query.  If a filtering wrapper misses a trick, SQL injection is possible.  If a <a href="PreparedStatement.html">PreparedStatement</a> fails -- say, due to an internal bug, or because of a <a href="TypeChecking.html">TypeChecking</a> failure -- at worst it doesn't execute.<em></em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           That's rather vague, and lacking empirical backing.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>How is that vague?</em>
+        </li>
+      </ul>
+      <p>
+        (Some suggest one gets a surprise visit the from the NSA if they post known injection strings. Not sure I want to test that theory.)
+      </p>
+      <p>
+        <em>Nonsense.</em>
+      </p>
+      <hr/>
+      <p>
+        Prepared statements tend to harm readability and maintainability of query code and thus do have an economic cost. Whether the (claimed) security benefits are "worth it" as weighed against this maintenance tax is a shop management/owner's call. Maybe there's a "right way" to use them to improve readability, but such is not documented that I know of. -t
+      </p>
+      <p>
+        <em>Can you demonstrate how prepared statements harm readability and maintainability by comparing a 20 column INSERT using prepared statements vs dynamic strings?</em>
+      </p>
+      <p>
+        Insert statements don't expose the difficulty. Something like <a href="QueryByExample.html">QueryByExample</a> may be a more fitting scenario.
+      </p>
+      <p>
+        <em>By </em><a href="QueryByExample.html">QueryByExample</a>, do you mean general ad-hoc queries?  That might not be an appropriate <a href="UseCase.html">UseCase</a> for <a href="PreparedStatement.html">PreparedStatement</a>s.  The typical application of prepared statements are predefined SELECT or update statements requiring one or more dynamically-generated or externally-input values.  An entire dynamically-generated WHERE clause, or a dynamic list of tables, or a dynamic list of columns, etc., usually can't be parameterised (though the specific rules vary from SQL product to SQL product.)<em></em>
+      </p>
+      <p>
+        <em>On the other hand, </em><a href="PreparedStatements.html">PreparedStatements</a> can be generated dynamically -- even in a <a href="QueryByExample.html">QueryByExample</a> system -- with the user-supplied values passed via parameters in order to increase security. A well-designed <a href="QueryByExample.html">QueryByExample</a> system shouldn't be obtaining non-parametrisable elements from the client as literal strings -- e.g., table and attribute names, operators, etc. -- so the need for validation should be minimal.  Does the use of <a href="PreparedStatements.html">PreparedStatements</a> in such a <a href="QueryByExample.html">QueryByExample</a> system harm readability and maintainability over using non-parametrised queries?  Maybe slightly, but the construction of the QBE system should be a one-off cost, aside from the usual maintenance, and a QBE system is already a complex beast.  I'm not sure the difference between dynamic queries and <a href="PreparedStatements.html">PreparedStatements</a> make much of a dint in the overall complexity of a <a href="QueryByExample.html">QueryByExample</a> system, especially as the filtering needed for dynamic queries is potentially complex.<em></em>
+      </p>
+      <p>
+        Roughly 2/3 of all application queries I write have some dynamic component. If they are static like that, then typically <strong>Stored Procedures</strong> are used in Internet shops I've worked at, not prepared statements. (Although I should point out that "dynamic reporting" tends to be my specialty such that my observations may be frequency-biased that way.) -t
+      </p>
+      <p>
+        <em>In some DBMSs, a prepared statement internally becomes a stored procedure.  Think of a prepared statement as being a convenient shorthand way of specifying a (possibly temporary) stored procedure.</em>
+      </p>
+      <p>
+        That's typically a shop decision, a typical developer can only give recommendations. Also, the issue of how to clean dynamic queries is still outstanding. 
+      </p>
+      <p>
+        <em>Clean dynamic queries -- whether from coding necessity, or due to a (peculiar, and unlikely) shop policy against prepared statements -- are a different topic deserving its own page. Clean dynamic queries aren't prepared statements.  And, of course, prepared statements can be generated dynamically.</em>
+      </p>
+      <p>
+        The shop decision process intersects <em>all</em> the solution topics. Look at it from the perspective if a typical shop with a lot of dynamic queries. There are basically 3 options: stored procedures (SP), prepared statements (PS), and "custom" value wrappers (VW), as shown in the intro. If most of the queries are dynamic, then VW are pretty much the only choice for those. A shop would rather not support and train for 3 different SQL protection techniques. Thus, they'd be looking to find a way to cut down. Limiting the choices to SP and VW covers most of them reasonably well. The boss may figure that if VW is good enough for dynamic queries, then it's good enough for static ones also. A hacker is not just going to try to exploit static queries. It's like a warehouse with 10 doors. If you put up 3 metal doors and leave 7 of them wooden, that's barely better than 10 wooden because a crook will likely check and try multiple doors. It's even worse than the warehouse scenario, because different door types means learning to maintain/train-for different door types, if we apply software issues to doors. Organizations badly want <a href="PlugCompatibleInterchangeableEngineers.html">PlugCompatibleInterchangeableEngineers</a>. Too many different shop ways to do mostly the same thing harms this goal. -t 
+      </p>
+      <p>
+        <em>The discussion here is not about codeshop human resources, "all the solution topics", </em><a href="PlugCompatibleInterchangeableEngineers.html">PlugCompatibleInterchangeableEngineers</a>, "a lot of dynamic queries", stored procedures, or custom value wrappers. It's about <a href="PreparedStatements.html">PreparedStatements</a>. Please don't try to turn what should be a simple and useful page into yet another interminable and expansive <a href="ThreadMess.html">ThreadMess</a> about everything.<em></em>
+      </p>
+      <p>
+        Projection and self-flattery. It is <em>not</em> "simple and useful" in its current form, partly because you are a horrid writer. <strong>WHEN to use what tool is a key issue</strong>. And if your personal goals are out of sync with your employer, it could cause friction and staffing problems. Why do you so readily dismiss business and economic concerns? Weighing tool choices is primarily about business and economic concerns. YOU may not care about human resources and labor costs, but the guy paying you likely does. (And <strong></strong><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> is the primary cause of the threadmess<strong>.) </strong>
+      </p>
+      <p>
+        <em>The "Advantages and Disadvantages" section handily addresses the "business and economic" concerns.</em>
+      </p>
+      <p>
+        Anyhow, are you comfortable spinning this part off into WhenToUsePreparedStatements? 
+      </p>
+      <p>
+        <em>Once appropriately cleaned of </em><a href="ThreadMess.html">ThreadMess</a>, sure.  For now, it's still <strong>Top</strong>On<a href="PreparedStatements.html">PreparedStatements</a> rather than a general reference.<em></em>
+      </p>
+      <p>
+        <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> is the primary cause of the threadmess.
+      </p>
+      <hr/>
+      <p>
+        Is this debate about using prepared statements when building truly dynamic SQL (that is a simple variable replacement won't cut it, which is equivalent on MS to the SQL cannot be embedded into a stored procedure without using string literals)? If not, we can basically cut off debate right now as the answer for variable replacement SQL is as demonstratively and testably clear as the difference between <a href="BubbleSort.html">BubbleSort</a> and <a href="ShellSort.html">ShellSort</a>. --<a href="JoshuaHudson.html">JoshuaHudson</a>
+      </p>
+      <p>
+        <em>Please provide such tests. I do not believe the picture is so clear cut as some claim.</em>
+      </p>
+      <p>
+        Understand that at my workplace, we *have* run the tests and found that the compile once/optimize once benefit for nontrivial SQL were so great that we could measure the difference using a stopwatch without even invoking a loop. I cannot release the test setup only because it is too tied to our proprietary database setup. I find it hard to believe that someone who favors table based programming as much as you do has never attempted the same. The <a href="WetWare.html">WetWare</a> argument involved here leads me to believe more than anything else, you're doing prepared statements wrong. Oh, and we did get to run the experiment about escaping SQL strings thanks to some guys who decided to maliciously comply with incorrectly written policies rather than violate them when necessary (assembling SQL strings in a stored procedure is still assembling SQL strings). I was the only engineer here who could remember to correctly escape strings every single time.
+      </p>
+      <p>
+        <em>I'm not questioning the machine performance issue. If it's an application that stretches performance, then by all means use whatever is the most machine-friendly. I'm only saying there may be a maintenance-time tradeoff. It's up to the app owner to select the trade-off profile they want. And I don't know what you mean in your experiment. What exactly was tested on what, and what exactly failed tests? It's not clear to me. A certain pesky and willful </em><a href="WikiZen.html">WikiZen</a> is confusing wrapper functions with "naked" SQL, making accurate communication on this topic difficult. I've work at approximately 10 different organizations as either a consultant or employee, that had external-facing websites, and PS's were not used in a single one. I do not believe they are "stupid", but rather weighed the costs and benefits. Like I said in a sister topic, most of the stuff I worked on were dynamic queries, which can't use PS's. Some shops already used Stored Procedures (SP's) for most static queries, and so put the high-volume queries in as SP's. If such shops supported PS's and SP's and wrapper functions for dynamic queries, then the shop is supporting <strong>three kinds of SQL control conventions</strong>. Shops don't like to support semi-redundant interfaces because they like <a href="PlugCompatibleInterchangeableEngineers.html">PlugCompatibleInterchangeableEngineers</a>, and thus look to cut down if practical. So, they put most of the static ones in SP's and used wrappers for the rest, making only two interfaces they had to support and hire around. That sounds reasonable to me as a business decision. Further, a hacker won't just stop with static queries, they'd test multiple queries typically such that the <strong>dynamic queries are still the safety bottleneck</strong>. Like I said elsewhere, it's like putting 3 metal doors on a warehouse but leaving the other 7 as wooden doors. A crook will likely try more than one door such that supporting metal doors is a waste (if they have a <strong>carrying</strong> cost, which SQL protection tools do in terms of training & support). Adding a third protocol, PS's, <strong>won't solve the ACTUAL problem</strong>. And decent hackers probably know that dynamic queries (output) is more likely to not have PS's (because most PS's don't support dynamic queries.) <strong>Crooks know to look for the wooden doors</strong>. Such decisions seem perfectly rational to me, but my detractor hand-waved this all away with vague dismissals. All mouth no and ears, which is frustrating.<em> -t</em>
+      </p>
+      <p>
+        {"Confusing wrapper functions with 'naked' SQL"???  Huh?  No one is confusing wrapper functions with 'naked' SQL, but no one should trust your wrapper functions to be infallibly correct, either...}
+      </p>
+      <p>
+        {"I've work at approximately 10 different organizations as either a consultant or employee, that had external-facing websites, and PS's were not used in a single one."  That is undoubtedly one of the reasons why SQL injection is an ongoing industry problem instead of a historical footnote.}
+      </p>
+      <p>
+        The experiment involved here involves finding out what % of engineers can consistently protect against SQL injection when not being watched. We may place an upper bound at 1 in 20 with a sample size of 20. Use of prepared statements for 99% of simple SQL reduces the audit surface to only truly dynamic SQL routines (that is, where the number of clauses or the content of the expressions change). --<a href="AnonymousDonor.html">AnonymousDonor</a>
+      </p>
+      <ul>
+        <li>
+           <em>What is an "audit surface"?</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           {The code that needs to be audited.}
+        </li>
+      </ul>
+      <p>
+        <em>See above regarding the metal door analogy (expanded). One MUST trust them in some cases. Note I don't trust Microsoft and Oracle either.</em>
+      </p>
+      <ul>
+        <li>
+           {However, the fewer potentially-fallible mechanisms that need to be trusted, the better, and I trust Microsoft's mechanisms for avoiding query-rewriting more than I trust your mechanisms for query validation.  That isn't because I think Microsoft developers are better than you; it's only because the way <a href="PreparedStatements.html">PreparedStatements</a> are typically implemented by the DBMS makes query-rewriting impossible.}
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>There is a cost to supporting 3 query protection mechanisms versus two or one. You are hand-waving that issue away without facing it directly. Please ponder the door analogy deeper rather than ignore stuff you don't like thinking about. And without independent lab tests, I'm not going to trust Microsoft etc. so much. </em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           {Wouldn't it be best to absorb the one-time cost of converting all the queries to prepared statements or stored procedures, and thus reduce the "query protection mechanisms" from 3 to 2 whilst removing the need for risky filtering and dynamic queries?}
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>As described below, they can't all use PS's.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           {Are you sure?}
+        </li>
+      </ul>
+      <p>
+        [Wow, just wow. Code ran through the PS junction does not have to be audited for SQL injection. The more dynamic SQL you have, the more code you have to audit. It is unbelievable you are arguing against reducing workload.]
+      </p>
+      <p>
+        <em>Sorry, there appears to be a communications breakdown somewhere. I'm not following.</em>
+      </p>
+      <p>
+        {<a href="PreparedStatements.html">PreparedStatements</a> do not have to be audited for the possibility of classical SQL injection.  Dynamically-constructed queries should always be audited for the possibility of SQL injection.  Therefore, it makes sense that if you reduce the number of dynamically-constructed queries in favour of <a href="PreparedStatements.html">PreparedStatements</a>, you reduce the amount of auditing needed.}
+      </p>
+      <p>
+        <em>I mean queries that </em>need<em> to be dynamic; for example, </em><a href="QueryByExample.html">QueryByExample</a>. Dynamic WHERE clauses in particular are very common in the work I've done.<em></em>
+      </p>
+      <p>
+        {<a href="PreparedStatements.html">PreparedStatements</a> can be generated dynamically, even in a <a href="QueryByExample.html">QueryByExample</a> system, with the user-supplied values passed via parameters in order to increase security.  A well-designed <a href="QueryByExample.html">QueryByExample</a> system shouldn't be obtaining non-parametrisable elements from the client as literal strings -- e.g., table and attribute names, operators, etc. -- so the need for validation should be minimal.}
+      </p>
+      <p>
+        <em>But operator types can be dynamic. A common operation pull-down list may have "equals, starts-with, contains, ends-with, not-contains", etc. Of course they should be validated, but it's not just values that come from such forms.</em>
+      </p>
+      <p>
+        {Dynamic selection of operators does not preclude using <a href="PreparedStatements.html">PreparedStatements</a>.  When you construct the prepared statement, you choose the operator(s) based on user input, but obviously not using the user-input itself -- that would risk SQL injection.  For each user-specified value, create a parameter.  Then, when you invoke the prepared statement, you pass the user-specified values as arguments.  It might look something like this simplified PHP(ish) example:}
+      </p>
+      <code>
+        <?php<br/>
+        // Connect to a database named "mydb"<br/>
+        $dbconn = pg_connect("dbname=mydb");<br/>
+      </code>
+      <code>
+        // Choose operator based on user selection in 'operator' picklist<br/>
+        switch ($_POST['operator']) {<br/>
+        case "1": $opsymbol = ">"; break;<br/>
+        case "2": $opsymbol = "<"; break;<br/>
+        case "3": $opsymbol = ">="; break;<br/>
+        case "4": $opsymbol = "<="; break;<br/>
+        default:  $opsymbol = "=";<br/>
+        }<br/>
+      </code>
+      <code>
+        // Prepare a query for execution<br/>
+        $result = pg_prepare($dbconn, "myquery", "SELECT * FROM products WHERE size " . $opsymbol . " $1");<br/>
+      </code>
+      <code>
+        // Execute the prepared query.<br/>
+        $result = pg_execute($dbconn, "myquery", array($_POST['userInputSize']));<br/>
+        ?><br/>
+      </code>
+      <hr/>
+      <p>
+        The above appears to have deviated from the original question, which was "[h]ow are <a href="PreparedStatements.html">PreparedStatements</a> better than 'checking' and pre-processing 'wrapper' routines?" 
+      </p>
+      <p>
+        The answer is that <a href="PreparedStatements.html">PreparedStatements</a> are better than 'checking' and pre-processing 'wrapper' routines because with <a href="PreparedStatements.html">PreparedStatements</a>, 'checking' and pre-processing 'wrapper' routines aren't needed.  So, we don't have to trust them to be correct.  In fact, we don't have to use them at all.
+      </p>
+      <p>
+        <em>You have to trust Microsoft etc. You may trust Bill Gates & Friends more then me, but that's still </em><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> either way.<em></em>
+      </p>
+      <p>
+        No, <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> is trusting Microsoft's implementation of <a href="PreparedStatements.html">PreparedStatements</a> because a Microsoft whitepaper claims three out of four top-earning database professionals recommend it.  It's not <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> if you've tried Microsoft's implementation of <a href="PreparedStatements.html">PreparedStatements</a> and determined for yourself that it doesn't do query rewriting.
+      </p>
+      <p>
+        <em>Nobody's given </em>direct<em> proof of that, only inferences based on assumptions.</em>
+      </p>
+      <p>
+        Running the above PHP examples are direct proof.  In particular, the second example -- with user input of  "'; delete from customers; --" -- specifically demonstrates whether the query is rewritten or not.
+      </p>
+      <p>
+        <em>Like I keep saying, that's only with the "raw" version. I never proposed nor defended the "raw" version. Your writing has repeatedly </em>'conflated<em>' the two (raw versus wrappers) and it's both confusing/misleading to readers, and ticking me off! -t</em>
+      </p>
+      <p>
+        <em>Here's a possible fix: label the wrapped one Example A, raw is Example B, and SP version Example C. Then rewrite your text, using the letters, to be clear about which version (letter) you are talking about. -t</em>
+      </p>
+      <p>
+        I never said you proposed or defended the "raw" (?) version, and the "raw" version is only to show the distinction between dynamic SQL and <a href="PreparedStatements.html">PreparedStatements</a>.  The proof that queries are not rewritten when using <a href="PreparedStatements.html">PreparedStatements</a> -- i.e., the second PHP example -- has nothing to do with the "raw" version beyond showing the difference in SQL (and PHP) syntax.  My emphasis is (and always has been) on the distinction between dynamic queries using filters vs <a href="PreparedStatements.html">PreparedStatements</a>, not "raw" dynamic queries vs <a href="PreparedStatements.html">PreparedStatements</a>.  I'm not sure why you think it's been otherwise.
+      </p>
+      <p>
+        <em>If that's what you intended to demonstrate, you missed the target by a wide margin. You deleted bad content and replaced it with </em>'worse<em>' content. Good job, Tex!</em>
+      </p>
+      <p>
+        I'm not sure what you mean.  Your original question was, "[h]ow are <a href="PreparedStatements.html">PreparedStatements</a> better than 'checking' and pre-processing 'wrapper' routines?"  In order to answer it, the first PHP example demonstrates the problem (SQL injection) that your filters are intended to fix.  The second PHP example demonstrates that <a href="PreparedStatements.html">PreparedStatements</a> fix the problem (SQL injection) without needing filters.  Thus <a href="PreparedStatements.html">PreparedStatements</a> are better because they don't need "'checking' and pre-processing 'wrapper' routines".  Is that not how you interpreted it?
+      </p>
+      <p>
+        <em>The injection example you gave does not "fail" the first example. It almost has nothing to do with the first example. You just think........weird! You seem to assume certain notions in your head are universally understood/implied such that you skip key details.</em>
+      </p>
+      <p>
+        The injection example only doesn't fail the first example if the filters are correct.  How do we know they're correct?  As I pointed out in my descriptions with the examples, "we should sanitise user inputs, but this requires discipline and assurance that the sanitisation has been successful.  That adds complexity and risk."  In fact, it's generally considered risky.  See, for example, <a href="http://en.wikipedia.org/wiki/SQL_injection#Escaping">http://en.wikipedia.org/wiki/SQL_injection#Escaping</a>  
+      </p>
+      <p>
+        With <a href="PreparedStatements.html">PreparedStatements</a>, we don't take a risk of filters failing, because we don't rely on filters.  
+      </p>
+      <p>
+        <em>But you did NOT illustrate that issue, but it's worded as if you had. And we don't know if PS's don't rely on filters. Plus, they may have other problems, perhaps buffer overflow injection risks. If they aren't written right, they may have such. Same thing either way. </em>'Just because we can't see the guts is not a reason to trust the guts.<strong> It's a </strong><a href="UselessTruth.html">UselessTruth</a> that if wrappers are written bad, they may fail. But <strong>similarly</strong>, if PS guts are written bad, they may fail also. <em></em>
+      </p>
+      <p>
+        I thought I did illustrate that issue.  <a href="PreparedStatement.html">PreparedStatement</a> "guts" would have to be written in a bizarrely flawed way to fail.  They don't rely on filters because SQL vendors typically internally implement <a href="PreparedStatement.html">PreparedStatement</a> parameters as true parameters to what is effectively (and, in some cases, really) a pre-compiled stored procedure.  They can be trivially tested as I've shown in my second PHP example.  If query re-writing took place, it would demonstrate that failure.  Filtering <strong>could</strong> conceivably be used to achieve the same end (say, as a quick-hack implementation of <a href="PreparedStatements.html">PreparedStatements</a> in some low end DBMS), but if it were exploitable we'd hear about it very, very quickly -- especially if the DBMS is open source.  If it's a commercial, closed-source DBMS, we can safely assume that the vendor is not going to take the cheap way out, given the significant business risks involved in producing a <a href="PreparedStatement.html">PreparedStatement</a> implementation that's subject to classic SQL injection.  Not that there's any reason to do so -- implementing <a href="PreparedStatements.html">PreparedStatements</a> properly in a DBMS is technically straightforward, as it can leverage all the facilities already used to provide stored procedures.
+      </p>
+      <ul>
+        <li>
+           <em>Re "They can be trivially tested as I've shown in my second PHP example" -- I am NOT talking about the second example. If you are switching contexts, your text should make that CLEAR.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           If we're talking about <a href="PreparedStatements.html">PreparedStatements</a> e.g., "if PS guts are written bad", then surely we're talking about the second example?
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Not sure what you mean.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           You claimed I am "switching contexts" by referring to the second PHP example, when it appears you'd already "switched contexts" to the second PHP example by referring to "PS guts".
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>No, that's the 3rd example.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           So?  It's still you who "switched contexts", not me.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>The problem is your lousy writing, not me.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           How so?
+        </li>
+      </ul>
+      <p>
+        <em>Your sample, "'; delete from customers; --" has NO clear relationship with the sample at the top of the page, as written.</em>
+      </p>
+      <p>
+        The relationship is that it's a string you need to filter out of dynamic queries, in order to prevent SQL injection.  It's also used to demonstrate that <a href="PreparedStatements.html">PreparedStatements</a> do not perform query rewriting.  If they don't perform query rewriting, classic SQL injection is impossible.
+      </p>
+      <p>
+        <em>No. For the ACTUAL example you gave, all you have to do is quote escaping to have it "pass", which should be done anyhow because if you don't, then entering "regular" quotes and hyphens in forms will crash the form.  And it demonstrates almost nothing about the implementation of SP's. I could mirror the same results using quote escaping inside clones of your SP api's.</em>
+      </p>
+      <p>
+        Using <a href="PreparedStatements.html">PreparedStatements</a>, entering regular quotes and hyphens won't crash anything.  (You mean the query associated with the form, don't you?)  Yes, you could always use "quote escaping" (which isn't sufficient, by the way -- it won't handle typechecking failures, like passing a SQL injection string where the query expects a number.  E.g., "3; delete from customers;" passed to "SELECT * FROM customers WHERE custno = $userinput") in some API clone, but the whole point is that "quote escaping" and other filtering is risky.  <a href="PreparedStatements.html">PreparedStatements</a>, however, are no more risky than any other DBMS-side code.
+      </p>
+      <p>
+        <em>Wrappers can do type checking also. And SP's may also rely on filtering. Their literature doesn't deny it.</em>
+      </p>
+      <p>
+        Yes, wrappers can do type checking.
+      </p>
+      <p>
+        As I wrote above, there might be <a href="PreparedStatements.html">PreparedStatements</a> (is that what you mean by "SP's"?) that rely on filtering -- perhaps in low-end DBMSs as a quick hack by the developers to add <a href="PreparedStatements.html">PreparedStatements</a> to a feature list.  However, it's unlikely.  Looking at typical <a href="PreparedStatement.html">PreparedStatement</a> implementations in (say) Microsoft's SQL Server, DB2, PostgreSQL and so on, it appears there are obvious hints that <a href="PreparedStatements.html">PreparedStatements</a> are done "properly", i.e., they insert values into a planned (compiled) query: 
+      </p>
+      <p>
+        First, parameters are restricted to positions within queries where only values can appear.  If <a href="PreparedStatements.html">PreparedStatements</a> were implemented via filters and query rewriting, there would be no need for such restrictions.  
+      </p>
+      <p>
+        Second, there is a clear performance difference between executing a prepared statement vs executing a dynamic query.  The former is almost invariably faster than the latter; roughly equivalent to the performance of executing an equivalent stored procedure.  Thus, it appears executing a prepared statement means executing a planned (compiled) query -- into which values are inserted into value locations in the query plan -- rather than producing a filtered, re-written, parsed, and planned (compiled) query.  
+      </p>
+      <p>
+        Third, if stored procedures are supported, all the mechanisms are already in place to properly implement <a href="PreparedStatements.html">PreparedStatements</a>.  The same mechanism that allows arguments to be passed via parameters in a compiled stored procedure can be used to allow arguments to be passed via parameters in a prepared statement.  Why would DBMS vendors deliberately risk SQL injection by avoiding that pre-existing mechanism?
+      </p>
+      <p>
+        Of course, this is inference based on observations.  Whilst typical vendor documentation doesn't go into details about how <a href="PreparedStatements.html">PreparedStatements</a> are implemented, you can talk to people who have worked on DBMS implementation and easily discover that what I've described here is typical.
+      </p>
+      <p>
+        <em>Making that claim is fine, but just to be clear that is </em><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>. Paraphrased version: "I talked to DB implementers and they told me it works well (or does X)". That is clearly <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>. -t<em></em>
+      </p>
+      <p>
+        I'm not saying I've talked to people who have worked on DBMS implementation (though I have, but that's not the point) because <strong>I am</strong> someone who has worked on DBMS implementation and I know your nonsense about p-code and the like is nonsense.  I'm suggesting that <strong>you</strong> talk to DBMS implementers to find out <strong>for yourself</strong> how <a href="PreparedStatements.html">PreparedStatements</a> are implemented.
+      </p>
+      <p>
+        <em>The p-code thing was only an example. I never claimed that's how all or most DB's were actually implemented. Thus, your "nonsense" claim is off. And you admitted the designs may not prevent ALL possible injections (including machine code or tokenized injection). And it's not my job to research and document YOUR case or point-of-view on this topic. As it stands, your case is still </em><a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a>. Just admit that fact, and we can then move on. I realize you may be frustrated by the fact the reader shouldn't "just trust" your experience in the field at face value, but that's just the way evidence works. Don't take it personally. The bottom line fact is that so far <strong>nobody has presented direct empirical evidence of injection tolerance.</strong> The alternative kinds of evidence presented so far are <strong>quite weak</strong> in comparison to such empirical results. That's just the way it is. I'm just the messenger. -t<em></em>
+      </p>
+      <p>
+        The "p-code thing" is nonsense.  It's not how any popular DBMSs are implemented, and I don't know any unpopular ones that do it either.  It appears to be something you made up.  
+      </p>
+      <ul>
+        <li>
+           <em>Again again, I did NOT claim it was.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Then what's the point in mentioning it?
+        </li>
+      </ul>
+      <ul>
+        <li>
+           <em>Like I already pointed out, it was an illustrate example.</em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           What was it intended to illustrate, if it's not something that actually occurs?
+        </li>
+      </ul>
+      <p>
+        Do you know what <a href="ArgumentFromAuthority.html">ArgumentFromAuthority</a> actually is?
+      </p>
+      <p>
+        (<em>Is there a "generic" term for "semi-compiled" code that covers p-code, Java "bytecode" results, Dot-Net CRL results, etc? Tokenized code?</em> -t)
+      </p>
+      <p>
+        "Tokenized code" is something very different from p-code, Java bytecode, .NET CLR assemblies, and so on.  The latter are all object code.  The former is tokenized source code.
+      </p>
+      <p>
+        <em>Doesn't change the general point either way.</em>
+      </p>
+      <p>
+        Perhaps not, except that tokenized source code hasn't been used in a popular programming language since 1970-1980 era microcomputer BASIC interpreters, and your argument about "p-code" being subject to classic SQL injection only applies to tokenized source code.
+      </p>
+      <p>
+        <em>Until somebody brings in real evidence for how the common DB's convert SQL under the hood, speculation on what they actually do under the hood is merely speculation. And some byte-code is also subject to injection.</em>
+      </p>
+      <p>
+        [Go look at the <a href="MySql.html">MySql</a> source if you want to see what's done under the hood. You'll find that it fits the description we've given.]
+      </p>
+      <p>
+        Yes. See <a href="http://dev.mysql.com/doc/internals/en/prepared-stored.html">http://dev.mysql.com/doc/internals/en/prepared-stored.html</a>  E.g., "... prepared statements and stored routines need to <strong>reuse the same parsed tree to execute a query many times</strong>."  Top, can you illustrate or clarify what you mean by "some byte-code is also subject to injection"?
+      </p>
+      <p>
+        <em>Why do you paste the same evidence in two different topics rather than use </em>PageAnchors or the like?<em></em>
+      </p>
+      <p>
+        Because this page is a self-standing document, and I try to favour its future reader.  It makes reading awkward to have to click on another page and search for a <a href="PageAnchor.html">PageAnchor</a>.
+      </p>
+      <p>
+        <em>Couldn't one use the same argument for not using functions or subroutines?</em>
+      </p>
+      <p>
+        Huh?  No.  Why?  This isn't code that has to be maintained.  This is a document, solely for the benefit of human readers, and I'm not going to go back and "maintain" this content in the future.  Given that it's a <a href="ThreadMess.html">ThreadMess</a>, at best it will be refactored at some point in the future and it's easier to refactor one page than two.
+      </p>
+      <p>
+        <em>I disagree with that authoring approach. Regardless, my reply is at </em><a href="PageAnchor.html">PageAnchor</a> mysql-query-reuse at <a href="PreparedStatementsDiscussionTwo.html">PreparedStatementsDiscussionTwo</a>.<em></em>
+      </p>
+      <hr/>
+      <p>
+        <strong>Have Both?</strong>
+      </p>
+      <p>
+        That dynamic query-creating approach you show is a bit awkward. But with wrappers very similar to my original version, perhaps the ugliness can be wrapped away so that we can have our PS cake and eat it too.
+      </p>
+      <code>
+        // pseudo-code example 4761, based on original example. "&" is concat.<br/>
+        q = querylibrary.new();  // create a query object with default connection info<br/>
+        ...<br/>
+        sql01 = "select * from foo where xcode=" & q.sqlString(myXCode) & " and id=" & q.sqlNum(myId);<br/>
+        sql02 = " and zerk = " & q.sqlString(myZerk);<br/>
+        // result: <br/>
+        //   - sql01 = "select * from foo where xcode= $1 and id= $2"<br/>
+        //   - sql02 = " and zerk = $3"<br/>
+        q.run(sql01 & sql02);  // see below<br/>
+      </code>
+      <p>
+        The implementation of these query library functions would resemble the following, roughly based on the prior Php examples:
+      </p>
+      <code>
+        ...<br/>
+        method sqlString(fldValue) {<br/>
+        this.fieldArray.addElement(fldValue);  // store field value in array<br/>
+        this.typeArray.addElement("String");  // may NOT be needed for some PS kits<br/>
+        }  // method sqlNum is similar<br/>
+        method run(theSql) {<br/>
+        this.pg_prepare(this.connection, this.queryID, theSql);<br/>
+        this.pg_execute(this.connection, this.queryID, this.fieldArray, this.typeArray);<br/>
+        }<br/>
+      </code>
+      <p>
+        However, for more complex queries, I tend to break them into parts (sub-strings for sql portions) and then append them together in the end, often <strong>conditionally</strong> based on various computations along the way. But this may not be a problem if it's okay to skip numbers in the sequence. I haven't tested PS's in that regard. For example, the final string before value insertion may be "SELECT FROM foo WHERE X = $1 And Y = $3". The element "$2" may have been purposely skipped; its sql string segment ignored due to a conditional test.
+      </p>
+      <p>
+        If it flies, then it's not an either/or choice as originally assumed near the top. An application programmer would barely have to even care whether SP's were used under the hood (by the library) or not. SP's could even be switched on/off for testing etc. Wouldn't that be lovely? -t
+      </p>
+      <p>
+        <em>The "either/or choice" was between relying on filter functions to avoid SQL injection vs using prepared statements to avoid SQL injection.  Your example is not relying on filter functions to avoid SQL injection, and it is using </em><a href="PreparedStatements.html">PreparedStatements</a>.  That's good.<em></em>
+      </p>
+      <p>
+        <em>Nothing here, or on </em><a href="TopOnPreparedStatements.html">TopOnPreparedStatements</a>, was intended to suggest that it's wrong to use wrapper functions to help construct SQL <a href="PreparedStatements.html">PreparedStatements</a>.  Wrapper functions (or whatever) are a fine way to construct <a href="PreparedStatements.html">PreparedStatements</a>.  I'm not sure what the benefit would be of switching <a href="PreparedStatements.html">PreparedStatements</a> (or stored procedures) on or off, though.<em></em>
+      </p>
+      <p>
+        Often intermediate API's have glitches. If you have a way to run SQL "directly" or through a different mechanism, then you may be able to detect or isolate such glitches. It may also speed up certain kinds of testing that require masses of trial-and-error since there may be overhead for some SP's.
+      </p>
+      <p>
+        <em>Can you give an example of the glitches that </em><a href="PreparedStatement.html">PreparedStatement</a> APIs often have?  Can you give an example of the "overhead for some SPs" (do you mean <strong>s</strong>tored <strong>p</strong>rocedures, or <strong>p</strong>repared <strong>s</strong>tatements?) that may affect testing?<em></em>
+      </p>
+      <p>
+        Specifics? No. I'd suggest searching bug blogs if you want specifics. Further, one sometimes wants to <em>rule such out</em> by using both execution techniques. Thus, even if the API's are perfect, we may still need to verify that fact (for specific cases). 
+      </p>
+      <p>
+        <em>You appear to be saying testing is important, which is always true.</em>
+      </p>
+      <p>
+        Because it's not always easy to break SQL execution down into sub-components for analysis, being able to rule out a middle-ware API bug is always helpful. Part of the problem is that SQL is a complex language, meaning that translation can often go wrong or act different than intended at the API level.
+      </p>
+      <hr/>
+      <p>
+        Note that I did not choose the name of this title, and protest the forceful inclusion of my handle in the title. --top 
+      </p>
+      <hr/>
+      <p>
+        See <a href="http://en.wikipedia.org/wiki/Prepared_statement">http://en.wikipedia.org/wiki/Prepared_statement</a> 
+      </p>
+      <p>
+        See also <a href="TopOnPreparedStatementsOriginal.html">TopOnPreparedStatementsOriginal</a>, <a href="SqlInjection.html">SqlInjection</a>, <a href="ExpressionApiComplaints.html">ExpressionApiComplaints</a>, <a href="DatabaseAbstractInterfaceDiscussion.html">DatabaseAbstractInterfaceDiscussion</a> (driver/parser discussion)
+      </p>
+      <hr/>
+      <p>
+        <a href="FebruaryFourteen.html">FebruaryFourteen</a>
+      </p>
+    </div>
+  </body>
+</html>

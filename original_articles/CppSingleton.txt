@@ -1,0 +1,307 @@
+There appear to be 1001 different ways to implement the SingletonPattern in CeePlusPlus. Here are a few of my least (see SingletonsAreEvil) favourite:
+
+----
+
+'''Using static methods/data:'''
+
+ class Wibble {
+	static int m_number;
+	static std::string m_text;
+ public:
+	static int getNumber();
+	static std::string getText();
+ }
+All of the data and methods are static, so that effectively any instance of the class is using the same data.
+
+''Make the constructor and destructor private to make this obvious?''
+
+Usually however, this type of singleton is used like this:
+
+ int n = Wibble::getNumber();
+ std::cout << Wibble::getText();
+''This isn't a singleton; it's a class being used to make a namespace that's closed to extensions.''
+
+This isn't the singleton pattern, it's singleton behavior:
+You can define a singleton as - a change through one reference will change all references.
+You can define the pattern as - all references reference the same instance.
+The second implies the first.
+
+You do not have to make the methods static tho... Then, by inheriting, you can inherit the behavior, change it or even make semi-singletons that have instance behavior as well as singleton behavior. 
+
+''This one is known as MonostatePattern.''
+
+----
+
+'''Using a static instance of itself:'''
+
+(As opposed to a static pointer to a single instance -- see below).
+
+ class Wibble {
+  static Wibble m_instance;
+ public:
+  Wibble *getInstance() { return &m_instance; }
+ };
+Alternatively, make ''instance'' public, and have a method:
+
+ Wibble *getWibble() { return &Wibble::instance; }
+----
+
+'''Using a static pointer to itself:'''
+
+ class Wibble {
+  static Wibble *instance;
+ public:
+  Wibble() { assert(instance == NULL); instance = this; }
+  ~Wibble() { instance = NULL; }
+
+  static Wibble *getInstance() { return instance; }
+ };
+----
+I needed to implement a singleton and have decided on this approach since memory for the singleton is only allocated if it is going to be used. The problem with this was that the destructor did not get called and I could not think of way of calling it apart from giving the singleton a destroy function that have to be called by the users of the singleton class. Is there a way of getting the destructor called?
+
+-- LourensCoetzer
+
+----
+
+'''Using a static local:'''
+
+ Wibble& theWibble()
+ {
+   static Wibble tw;
+   return tw;
+ }
+The static's constructor will only be called the first time through. Refer to the singleton as theWibble().
+
+--TimVoght (with a nod to Scott Meyers, Effective C++)
+
+This is my favourite one, and probably the best one. It limits the module static initialization order problem to only psychotic systems that ask for the singleton in the module static initialization code '''and''' the singleton depends on other module statics being initialized that may not have been already '''and''' which in turn are not declared as local statics. Phew. In other words, use this version and you're not as prone to be hunting phantom link order bugs. -- SunirShah
+
+That's a nice pattern, but it's not Singleton. You don't ensure only a single instance exists. For this to qualify as Singleton you could make class Wibble's constructor private (and make theWibble a static member function). If you find yourself doing this, maybe what you wanted was a global (without order-of-initialization problems), and not a Singleton.
+
+You can also make theWibble a FriendFunction. And lovers of angle brackets can make it a template specialization. Full example:
+ #include <iostream>
+ 
+ template<typename T> T& the();
+ 
+ class Wibble {
+ private:
+ 	Wibble() {
+ 	// do some initialization stuff
+ 	}
+ 	/// DO NOT CALL ME!
+ 	Wibble(const Wibble&) {}
+ 
+ 	friend Wibble& the<Wibble>();
+ 
+ public:
+ 	void doSomething() {
+ 		std::cout << "Hello Wibble!\n";
+ 	}
+ };
+ 
+ template<>
+ Wibble& the<Wibble>() {
+ 	static Wibble wibble;
+ 	return wibble;
+ }
+ 
+ int main() {
+ 	the<Wibble>().doSomething();
+ }
+Because of the template, you could write things like
+
+ template<typename W>
+ void wibbleOrWobble() {
+ 	// will wibble or wobble depending on whether W
+ 	// is Wibble or Wobble
+ 	the<W>().doSomething();
+ }
+Note: These examples shall not imply that I endorse singletons in any way... -- ArneVogel
+
+You also need to specialize for cv-qualified types, as a the<const Wibble>() will return another instance of Wiblle (since this is a different function, it has a different static). So you must do something along the lines of
+
+ template <>
+ const Wibble& the<const Wibble>() {
+ 	return the<Wibble>();
+ }
+ 
+ // we don't do the volatile stuff
+ template <> const volatile Wibble& the<const volatile Wibble>();
+
+ // again, we don't do the volatile stuff
+ template <> volatile Wibble& the<volatile Wibble>();
+
+Providing the declaration but not the definition of some specialization will allow you to forbid their use (that happens at link time but late is better than never) -- EmmanuelDeloget
+
+----
+
+''Any more implementation strategies? I'll come back and fill in some pros and cons of each a little later.''
+
+----
+
+One problem with singletons is the order of initialization. Globals in a C++ file are constructed in the order they appear in the file. But if you link together several files, the order of construction is effectively random. What if one class needs to use another during its own constructor?
+
+So make the instance get created on first use.
+
+  template <class S> class Singleton_Wrapper
+  {
+	S *m_pInstance;
+  public:
+	Singleton_Wrapper() : m_pInstance(NULL) {}
+	~Singleton_Wrapper() { delete m_pInstance; }
+
+	S *operator->()
+	{
+	  if (m_pInstance == NULL)
+		m_pInstance = new S;
+
+	  return m_pInstance;
+	}
+  };
+
+  Singleton_Wrapper<Wibble> g_singleWibble;
+  Singleton_Wrapper<Wobble> g_singleWobble;
+
+  int main()
+  {
+	cout << g_singleWibble->getText(); // Wibble gets allocated on first use
+  }
+
+It is not Singleton!!! It is templated wrapper for global variables. If I will write:
+
+Singleton_Wrapper<Wibble> g_singleWibble1;
+Singleton_Wrapper<Wibble> g_singleWibble2;
+
+I will have two Wibbles :(
+
+    // singleton.h
+    #ifndef __SINGLETON_H
+    #define __SINGLETON_H
+
+    template <class T>
+    class Singleton
+    {
+    public:
+      static T& Instance() {
+        static T _instance;
+        return _instance;
+      }
+    private:
+      Singleton();          // ctor hidden
+      ~Singleton();          // dtor hidden
+      Singleton(Singleton const&);    // copy ctor hidden
+      Singleton& operator=(Singleton const&);  // assign op hidden
+    };
+
+    #endif
+    // eof
+
+Drawbacks:
+
+	* Doesn't solve the problem of the order of destruction, which still happens in the imposed (random) order.
+	* Not thread safe. If you protect the m_pInstance pointer using your platform's primitives, then every access to the singleton results in a bottleneck on a multiprocessor machine (all threads have to wait their turn to get the instance pointer.)
+
+
+'''What to do instead, anyway:'''
+
+Define the interface to any singleton as a IWibble pure abstract protocol interface (whatever you want to call it) class. Then make any client class hold a pointer to one of those. Then derive Wibble from IWibble and make an instance to give to all the client classes as your program starts up. As it shuts down, destroy them in the right order (hey, just like a nice layered driver design!) And of course, you'll want a dummy implementation of IWibble called TestWibble, so you can independently unit test the client classes. Just plug in the dummy instead of the real thing.
+
+-- DanielEarwicker
+-------
+'''A better Singleton template'''
+
+This method lets you convert an ordinary class (call it "One") into a singleton just by changing its class definition to
+ class One : public Singleton<One>
+The trick is, instead of using a private constructor to keep One from being instantiated, declare a pure virtual function in the Singleton template (thus making One an abstract class). Then, also in the template, define a class, derived from One, that defines that virtual function, and have Get''''''Instance() return a reference to an instance of _that_ class. The result is that One cannot be instantiated, but references to One returned from Get''''''Instance() work.
+ template <class Type>
+ class Singleton {
+ public:
+     static Type &Get''''''Instance() {
+         static Instance instance;
+         return instance;
+ }
+ private:
+     virtual void Singleton''''''Cannot''''''Be''''''Instantiated() = 0;
+ 
+     class Instance : public Type {
+     private:
+         void Singleton''''''Cannot''''''Be''''''Instantiated() {}
+     };
+ };
+Obvious improvements could be made, like making Singleton noncopyable, and using lazy instantiation (with auto_ptr). But I didn't want to clutter the example code with those additions. This also doesn't address the multithreading issues, or the order of deletion.
+
+-- MichaelZahniser
+
+-------
+''moved here from SingletonsAreEvil''
+
+In C++, One way I've controlled destruction of the singleton for debugging or reference counting purposes is to friend the class(es) or function(s) that have permission to do so. While it's true you are opening up access to all the details you wanted to hide with it, it ''works''.
+
+If you wanted to control access to the singleton without giving users access to details, you could subclass the singleton with a class that adds a layer of friendship that controls access. Here's a singleton declaration with Instance() declared as private:
+ class CPrivateSingleton
+ {
+ public:
+	// Public methods...
+ private:
+	// Protected Instance and friended decorator that accesses it.
+	friend class CProtectedSingleton;
+	static CPrivateSingleton* Instance();
+	// Protected destruction and friended functions that access it.
+	friend void Process''''''Detach();
+	static void Destroy();
+ };
+And its protection, only allowing privileged classes access to a static Instance() method that delegates to CPrivateSingleton::Instance():
+
+ class CProtectedSingleton : public CPrivateSingleton
+ {
+ private:
+	// Protected Instance() that delegates to the singleton.
+	friend ClassA;
+	friend ClassB;
+	static CPrivateSingleton* Instance();
+ };
+This allows permitted classes to fetch the instance pointer to CPrivateSingleton. CPrivateSingleton allows public access to the singleton instance's methods. Anybody have a better idea? Maybe I need to go home. ;-)
+
+-- PhilipEskelin
+
+I am not sure that this is a great solution. For a start, why does the CProtectedSingleton class need to derive from CPrivateSingleton in this example? I think I am missing something here. Also, this mechanism makes it hard to use the singleton from two different subsystems at the same time. Where does the CProtectedSingleton live? What if I have a new subsystem that has a class that needs access to the singleton? I can't very well go and put a friend declaration into the CProtectedSingleton class since it lives in a completely different subsystem that I may not even have access to. -- JamesCrawford
+----
+''moved from SingletonPattern''
+
+The evil I have found is where we have a number of one-instance only objects whose job it is to provide special services (logging, etc). In C++, everything is working just fine, auto_ptr<> made sure they were cleaned up, etc. Normal issues to make it work with concurrency, normal solutions. 
+
+The issues start with OrderOfExit errors. C++ destructs static/global objects from different source files in random order. That means you have to have a unified means of controlling destruction and you'll have to build it. We end up going to reference-counting. Sigh.
+
+What are some examples of situations where you need OrderOfExit?
+
+If others have nice patterns for controlled destruction, this would be a good place to enter them.
+
+----
+''What are some examples of situations where you need OrderOfExit?''
+
+Anywhere where there application dependencies on startup. Say your database uses your communication system which uses your network which uses a bunch of other stuff. You have to destroy these in order if their destruction follows the dependency tree. Applications have tons of these dependencies.
+
+If that's the problem, and that those classes have dependencies problem, then why not have a singleton class D''''''atabaseNetworkComponent that manages the creation order and destruction order inside its constructor and destructor? Such as:
+
+class D''''''atabaseNetworkComponent
+{
+  public:
+    // delete singletons in desired order
+    virtual ~D''''''atabaseNetworkComponent();
+    // methods to access underlying singletons and provides opportunity to ensure creation order if needed
+    Database & database();
+    Communication & communication();
+    Network & network();
+
+    static D''''''atabaseNetworkComponent & instance();
+  protected:
+    // creation order can also be enforced here so that the above accessing methods will just simply return what's needed
+    D''''''atabaseNetworkComponent();
+};
+
+----
+'''Useful source of information'''
+
+AndreiAlexandrescu's book ModernCeePlusPlusDesign (and corresponding library Loki) contains a chapter on implementing the SingletonPattern and covers issues like controlling the order of destruction of singletons and double checked locking. The examples show how PolicyBasedClassDesign can be used to implement a choice for the programmer.
+----
+CategoryCpp

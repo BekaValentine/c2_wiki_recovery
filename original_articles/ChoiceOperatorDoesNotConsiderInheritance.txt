@@ -1,0 +1,148 @@
+''Looks fixed in JDK 1.5.''
+
+''The explanation as to why this is not a design flaw has been moved to right after the explanation of the problem. This explanation is so good that it justifies eliminating this point from ChoiceOperatorDoesNotConsiderInheritance altogether.''
+
+Why? There seems to be no reason why the "lowest common ancestor" approach described below can't or shouldn't work.
+
+''[Voting on JavaDesignFlaws page.]''
+
+In Java the type of a ternary choice expression (aka question-mark-colon) is that of its second and third arguments.  That means that the second and third arguments must have the same type, which seems reasonable at first glance.  E.g. this is reasonable:
+
+  int x, y;
+  int result = (y == 0) ? 0 : x / y;
+And this is obviously erroneous and is therefore caught by the compiler:
+
+  String x;
+  int y;
+  int result = (y == 0) ? 0 : x / y;
+However, the choice operator does not take the inheritance relationship of its arguments into account.  So for example, this is flagged as a compilation error although it seems perfectly natural to the programmer:
+  
+  boolean create_double = ...;
+  Number n = create_double ? new Double(10.0) : new Integer(10.0);
+Instead you have to work around it with an if statement or ugly casting like this:
+  
+  boolean create_double = ...;
+  Number n = create_double ? (Number)(new Double(10.0)) : (Number)(new Integer(10.0));
+----
+This is NOT a Java design flaw. At most it can be thought of as a nice syntactic sugar, but the heart of the matter is that JavaTypingWasSimple. As such the type of an expression should be resolved independently of the context. 
+
+What would be needed to support such a syntactic sugar? Let's consider:  
+
+  ... (booleanExp ? typeA_Exp : typeB_Exp) ... // where typeA_Exp can be thought of as having typeA and similar for B
+The expression in the parentheses needs to have a type. If typeA and typeB are the same, than the decision is simple, otherwise you considered typeA = classA, typeB = classB and there is a ''greatest common divisor'' classC such as classA <: ClassC and classB <: classC. 
+However, this looks nice and clean and you think that the expression should be typed as classC. 
+
+But what if classA and classB have in common (as a practical example) x.y.myClass, java.io.Serializable, and java.lang.Comparable (consider that myClass implements neither Serializable nor Comparable). What type could the compiler assign to this expression without looking at the greater context? It's clear that the type of this expression depends whether we have:
+
+ myClass ref1 = (expression); // or
+ Serializable x = (expression); // or
+ Comparable y = (expression);
+This example is just the tip of the iceberg of the kind of complications that would be allowed by such syntactic sugar. Who is willing to modify the Java language, the Java VM and the compiler, in order to allow this syntactic sugar? BeCarefulWhatYouWishFor.
+
+--CostinCozianu
+
+What if we said that the type of the expression is always the lowest common ancestor of the types on the arms, where we recognise that the ancestors of classes are classes, and the ancestors of interfaces are interfaces (or Object at the root)? This is simple, unambiguous, and fixes this problem in the majority of cases (or so i would guess from the fact that it works in all the cases discussed here). In the case that you have arms whose lowest common ancestor is Object, but where they both implement some interface you're interested in, you could insert casts to that interface type in the arm expressions, as in "bool ? (Foo)bar : (Foo)baz", or you could just put up with it. This isn't a perfect solution, but it's better than what's there at present. -- TomAnderson
+
+''How about the type of the expression is "x.y.myClass implements java.io.Serializable, java.lang.Comparable"? That is, you find the most-specific superclass that both objects extend (which may be Object), and then add the interfaces both objects implement to the result type? Then there is no problem, and the conditional works as expected.''
+
+''So in general if you make a mistake and write two expressions with incompatible types, you'll end up with a result of type Object, which will probably be too general of a super-class and will cause a compile-time error.''
+
+ myClass ref1 = (expression); // ref1 = (myClass) (expression)
+ Serializable x = (expression); // x = (Serializable) (expression)
+ Comparable y = (expression); // y = (Comparable) (expression)
+''None of these statements are a problem since the result of (expression) is a myClass object which implements Serializable and Comparable. --JohnKugelman''
+
+----
+As with many of the 'flaws' the original writer describes, this is one where a clarification of language issues would tend to shed let on the question.  First, Number is an abstract class, so you can't actually instantiate an object of that type.  Therefore, the result must be an actual concrete type, to which you may have a reference as a supertype, but which the VM by definition always knows what the actual type is.  So in this case, is ''n'' really a Double or an Integer?  Potentially you could argue that it should be of the "longest, floatiest" type, much like the promotion/coercing for primitives.  In the example ''n'' would actually refer to a Double.  But does that save us?  Suppose I want to add 10 to ''n''?  Does 10 get coerced to double then?  OK, so I have 10.0 + 10.0, which, as any programmer knows, doesn't equal 20.0, so if I then call n.intValue(), goodness, what *do* I get?  --StevenNewton
+
+As the original writer, I am confused by the objection you have raised.
+
+The example above was a trivial example to illustrate the language mechanism that I consider a flaw.  Calling methods of the abstract type does not cause a problem because the calls are polymorphically dispatched.  Of course creating a Double or an Integer just to call its intValue() method is pointless, but calling toString would result in different behaviour, or you might want to create an object to be the argument of a reflective call to a method that takes a double or int parameter.
+
+Here's a concrete example that illustrates ''why'' this is a flaw rather than just the language mechanisms behind the flaw:
+
+  abstract class Comms''''''Link {
+ public abstract void send( byte[] buffer ) 
+   throws IOException;
+ public abstract void receive( byte[] buffer, int offset, int length ) 
+   throws IOException;
+  }
+  
+  class Serial''''''Link implements Comms''''''Link ...
+  class Tcp''''''Link implements Comms''''''Link ...
+
+  Comms''''''Link createLink( boolean use_serial ) {
+ return use_serial ? new Serial''''''Link() : new Tcp''''''Link();
+  }
+I think that the ternary expression should have the type of the shared base-class of its arguments.  Sun agreed when the flaw was submitted to the JavaBugDatabase.  
+
+Sure, this a trivial flaw.  On the other hand, removing trivial flaws from the language will make Java programming easier and more pleasant, which will result in better programs and happier programmers.
+
+----
+
+Ah, how about a slight bit of hard-core OO as an alternative.  If you can pass in a boolean value to createLink, then presumably the caller has the information about what kind of link to create.  Now in a subtle way it's possible to argue that the class implementing createLink() should know which sort to create, but skipping that for now, how about:
+
+  Comms''''''Link createSerialLink() {
+ return new Serial''''''Link();
+  }
+
+  Comms''''''Link createTcpLink() {
+ return new Tcp''''''Link();
+  }
+This has the advantage that if later (YAGNI) you need third, fourth, etc. kind of link, you can just add a method:
+
+  Comms''''''Link createSubspaceLink() {
+ return new Subspace''''''Link();
+  }
+rather than having to modify createLink() to somehow accept an n-valued parameter, and then all the code that ''calls'' createLink() needing modification because the signature has changed.
+
+I object to this as a "flaw" because I believe that languages have a "grain", and cutting with the grain is much easier than going against it.  Also, it is an OO design heuristics that when you are switching on a value in a method, there's a strong CodeSmell that you really need multiple methods, or overloaded methods.  ''[That's utter nonsense.  Any conditional is a "switch on a value".  The bad smell comes from switching on *type*.]''
+However, there are languages that don't support method overloading, which is part of those languages grain. --StevenNewton
+
+I agree with the reasoning behind your redesign and with what you say about grain, but think that the current behaviour of the ternary operator goes against the grain of Java.  Java encourages you to write programs in terms of polymorphic objects related by inheritance, but the ternary operator does not work in that way.  It's a bit of C heritage that fell through the gaps, so to speak, as the language evolved and it would be nice if it was brought into line with the rest of the language.
+
+''It would be nice if the ternary operator was removed from the language. It's just syntactic sugar, after all.'' [The first sentence in no way follows from the second.]
+
+You can eliminate the ternary operator easily and obviously; to take the above example:
+
+  Comms''''''Link createLink( boolean useSerial ) {
+ if (useSerial)
+   return new Serial''''''Link();
+ else
+   return new Tcp''''''Link();
+  }
+This might be why, in five years of Java programming, I've used the ternary operator twice.  I agree with the above statement that it goes against Java's grain; if you don't like how it works in Java, don't use it.
+
+Contrast with some other language feature -- methods, for example: how would you rewrite code to eliminate methods?  It seems like it would make a real mess of things: passing around references to the erstwhile host object, figuring out which function to call, etc.  --GeorgePaci [Be careful to preserve signatures when you edit.]
+
+''I agree with the above statement that ternary operators are just syntactic sugar. As such, I don't think they should be used as a basis for finding semantic flaws in the language. The "stringize" feature of C/C++ macros just puts double quotes around it, creating a string literal. Why not a std::string or CString? It's just a convenience, not an actual language design decision.'' -- JacobCohen
+
+''I do, however, think that the language lacks the ability to define class conversion operators like C++ (unless this is something I've failed to pick up whilst learning Java). I am not sure, however, if you can explicitly define a conversion method to a superclass. Anyone know about this one?'' -- JacobCohen
+
+----
+
+I think this ''is'' a flaw.
+
+The only vaguely sane solution, except "write the code the way I want you to, dammit", is to say that the type of the expression is an anonymous subtype of the types of the arguments. So the class could be called, in full, "class extends x.y.myClass implements java.io.Serializable, java.lang.Comparable". To make it more obvious ''why'' that's happening, the compiler could call it "ClassA or ClassB" in diagnostic messages.
+I don't think that's particularly difficult to understand.
+
+--
+
+Actually, the type you want is the common ''supertype'' or ''join'' (see MeetsAndJoins) of the types of the arguments, not the common ''subtype''.  Where such a type could in my opinion usefully be synthetic is when that type is a meet of interfaces and optionally a single base class.  Such a type is not even representable as a single Java class or interface type.  Such a type is a assignable to every member type, and is only assignable from a type which every member type is assignable from.
+
+  Double theDouble = new Double("20.0");
+  String theString = "twenty";
+  O''''''bjectOutput objectOutput = S''''''omewhereElse.getDestination();
+
+  // arg must be a Double or String and not null.
+  void frobnicate(Serializable+Comparable arg)
+  {
+    Serializable+Comparable myValue = (arg instanceof Double ? theDouble : theString);
+    if(myValue.compareTo(arg) < 0) {
+      objectOutput.writeObject(arg);
+    } else {
+      objectOutput.writeObject(myValue);
+    }
+  }
+
+The absence of spaces around the type + operator is a mere stylistic convention to reduce the likelihood of mistaking any part of the type expression for the variable name. -- JeffreyHantin

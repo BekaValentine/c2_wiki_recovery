@@ -1,0 +1,78 @@
+Runtime macros is an oxymoron.  But there're a few alternatives that do some or all of what macros currently do and yet still exist at RunTime, and this is for discussion of some of those alternatives.
+
+Discussion moved from RealObject, and slightly, partially refactored.  We can do this incrementally and fix the DocumentMode sections with each little ThreadMode addition.
+
+-----
+'''An old alternative: FEXPRs and NLAMBDA'''
+
+FEXPRs and NLAMBDAs were features of early dialects of Lisp.  A FEXPR is a function that doesn't evaluate any of its arguments; instead, the program code is packed up and delivered to the function, and it's up to the function itself to evaluate it.  NLAMBDAs allow you selective control over which arguments are evaluated, based on the function definition. 
+
+Functional languages have implicit FEXPRs when they do "f(0) = 1" as a function definition; the left hand side is effectively quoted.  RebolLanguage essentially gives you NLAMBDAs, by letting you control which arguments of the function are evaluated.
+
+The problem with this approach is that it makes compilation essentially impossible.  Consider this code:
+  (define (map fn collection)
+	(cons (fn (car collection)) (map fn (cdr collection))))
+If fn evaluates its argument, map needs to call (car collection) and pass that along.  If not, map needs to package up the program fragment (car collection) into a thunk and pass that along.  But ''it can't know which until run time'', because fn could be any arbitrary function, even from outside the compilation unit.
+
+DynamicCompilation (a la Self) might help here, but it seems like the problem is too hard even for that.  This check on the actual value of the function needs to be performed at every call site, so you defeat many of the possibilities for inlining.  Perhaps dynamic profiling can help out here, but it's still ''a lot'' of runtime checks.
+
+The critical FEXPR references: Lisp in Small Pieces said (p302) it was killed by the Kent Pittman 1980 paper "Special Forms in Lisp", http://www.nhplace.com/kent/Papers/Special-Forms.html. Graham's "On Lisp" says "Language designers regard special forms as something like constitutional amendments. It is necessary to have a certain number, but the fewer the better." (p391) 
+
+ArrLanguage provides something akin to FEXPR''''''s via its CallByNeed semantics. When a function's body begins evaluating, its scope contains, instead of values, some "promises" which are tuples each containing an unevaluated s-expression and a pointer to scope to evaluate it in; a promise silently converts itself into a value when evaluated. One can decline to evaluate a function argument (by simply not using it) and access the contained s-expression by other means.
+
+Recently, FEXPRs have had some more interest. John Shutt showed that FEXPR could be used to implement lambda and some other forms, reducing the number of special forms needed for a Scheme, and that in a language with LexicalScope, which earlier FEXPR-providing languages lacked, they were considerably more well-behaved, and could be reasoned about with a variation on the lambda calculus. In his KernelLanguage (of which there is currently no complete implementation) the distinct namespaces of the calling environment and the lexical environment of the FEXPR are clearly separated and explicitly addressable at runtime, which more or less eliminates the need for complicated HygienicMacro mechanisms. Tom Lord (unsuccessfully) pushed for FEXPRs in R6RS Scheme.
+
+Contributors: JonathanTang, DougMerritt, PeterMeilstrup
+
+-----
+'''The SmallTalk way: Pass in a block'''
+
+I think most Self/SmallTalk folks are content with the lesser solution of lightweight lambda syntax, which keeps evaluation explicit, but makes it easy to pass in a block instead of a result.  But this can't handle many of the uses for macros, like binding variables into the current scope or any sort of destructuring.  And adding those features require that you not evaluate the arguments to the macro, which runs into the problems above.  -- JonathanTang
+
+''Quick answer to side issue (we can move this to another page, if you want): I don't want to redefine "macro", I just don't want to have to use them very often, because I don't like dealing with things that don't exist at runtime. -- as''
+
+
+----
+Remaining ThreadMode stuff:
+
+Macros, you have a point with.	I don't like how macros don't exist at runtime and can't be passed around as first-class objects.  But you could think of them as a "script" that your workers (functions) follow in order to perform some task.  -- JonathanTang
+
+I'm still wondering how people would redefine "macro" such that it wasn't literally (and I do mean "literally" literally, not as a synonym for "nearly") a contradiction in terms for them to be alive at runtime like functions, but that's a side issue. -- DougMerritt
+* ...much, much later: I (a) learned that it is not a contradiction in terms, macros have been implemented here and there that are alive at runtime like functions and can be ''apply''-ed like functions, and (b) I actually implemented a full (non-toy) dialect of Lisp that implemented such. So way back when this discussion was going on, I was having a failure of the imagination. It '''is''' a little weird to do macros this way, though; it's not part of their true essence that this be possible. -- DougMerritt
+
+
+But the alternative to FEXPRs, which modern forms of Lisp adopted, was to have exactly one true special form, QUOTE, and use macros to introduce it everywhere that FEXPRs used to be used. I don't see how you can really do Lisp without '''something''' along these lines. Otherwise you can't e.g. implement your own IF/COND/etc.
+
+I just re-read what you wrote, and I'm confused. Both FEXPR and macros have their problems, but it's crippling to do away with both 100% -- well, unless you think the Smalltalk approach is good enough. What was your personal preference you were driving at??
+-- DougMerritt
+
+My personal preference is to keep macros, but behind every macro, have a function that takes a closure.  The macro just adds a QUOTE form around every argument that needs to be quoted.  
+You can't do this for everything - a DestructuringMacro, in particular, needs a lot of computation in the macro itself - but it covers the common cases and still gives you executable funcions at runtime.
+
+So, for example, 'if' would be defined as a macro that shadows a function of the same name.  The macro would ''only'' add quotes around the arguments, and then call the function to do the work.  The function itself takes 2 (3?) closures for its consequent, alternative, and predicate.  This is a common pattern in the Lisp world, though I'd like to provide some defining macros that define both the function and the macro at once.  -- JonathanTang
+
+Isn't this closer to a matter of good practice -- what generally to do with macros except in unusual circumstances -- rather than of language design? (It does seem like reasonable practice.)
+
+"Alohomora" sounded kind of, but not completely, Hawaiian, so I thought perhaps it was Maori, but I see I was just forgetting that it's Hermione's door-opening spell. Good name; euphonious, nice meaning. Too bad it's 5 syllables, that's a downside if it'll be widely used (and therefore discussed in conversations) rather than private use. -- dm
+
+It's a TailRecursive acronym for "A Language of Handlers, Objects, Macros, or Relations: Alohomora."  And yes, it's from HarryPotter.  The etymology comes from the Hawaiian for 'farewell' ('Aloho') and the Latin for obstacle ('mora').  Or so I read on some website.  "Farewell obstacles", a fitting name for a Lisp-like programming language.
+
+I named the syntaxes too.  LUNA (Lisplike Uniform Notation for Alohomora), and SIRIUS (Simple, infix-requiring, indentation-using syntax).  And the code library (equivalent to CPAN) will be Accio (Alohomora Code Collection of Independent Objects).  
+
+And yes, I think my solution for "macro design" ended up being "macros are fine as is, it's just how you use them that needs help."  Then again, you could argue that my viewpoint on Lisp is "the language is fine as-is, it's just the libraries and culture that need help."  -- JonathanTang
+
+----
+
+What is a macro?  It's for the most part a function that converts abstract syntax tree(s) to a different collection of abstract syntax trees (possibly empty); or that converts text to text.  Those certainly can exist at runtime... provided you have abstract syntax trees or text strings to process in this manner.  -- AnonymousDonor
+
+It's a little more complicated than that, because the concept of "macro" also includes dispatching on syntax elements so that it knows what conversion function to call.  The difficulty of infix macros isn't really operating on the AST: Dylan and Goo have both solved that problem.  It's supporting a sufficient number of syntax forms to cover the useful purposes of macros.
+
+In CommonLisp, the rule is simple.  If the first symbol of a form is defined as a macro, the macroexpander is called with the unevaluated arguments of the form, and then the return value is recursively macroexpanded.  Since everything's an EssExpression, you don't need any more than this.  Any macro you create will have the same syntax as normal Lisp forms.
+
+Dylan has syntax, so it's somewhat more tricky than this.  Dylan offers three types of macros: define macros, statements, and function-call-macros.  Define macros ''must'' begin with "define" - that's the trigger that invokes the macro expander.  Statement macros begin with the macro word, then end with "end <macro-word>".  The ending trigger is necessary because otherwise Dylan doesn't know when to stop feeding code to the macro; Dylan is not fully parenthesized like CommonLisp.  Function call macros are just like function calls. except the args aren't evaluated.
+
+I think that CommonLisp macros ''do'' exist at runtime in the sense you describe above.  The macroexpand function is always available to the programmer, and will expand any macros left within the source.  But how will there be any macros left in the source?  They should've all been parsed and expanded at macro-expand time, before the code gets to the compiler.  Aside from dynamic code generation (which some programs do use: I think ViaWeb parsed and compiled Lisp forms on the fly), there shouldn't ''be'' any macro forms left at runtime.  That's why runtime macros is an oxymoron.  -- JonathanTang 
+
+----
+
+I think that ''First Class Macros have Types'' http://www.linearity.org/bawden/mtt/ is relevant here -- C.J.

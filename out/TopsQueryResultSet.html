@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Tops Query Result Set
+      </h1>
+      <p>
+        <em>In a discussion on </em><a href="RelationalOoImpedanceMismatchIsCausedByClasses.html">RelationalOoImpedanceMismatchIsCausedByClasses</a>, <a href="DaveVoorhis.html">DaveVoorhis</a> advocated an OO approach to developing client-side mechanisms to handle database ResultSets, including optional support for local persistence. Top responded with OO scepticism, including:<em></em>
+      </p>
+      <p>
+        <em>"As far as "types of persistence", I don't think a tree taxonomy is appropriate. I don't want my code to worry much about whether it goes to disk or RAM during processing. dBASE dialects would use RAM if available, for example. Perhaps have some efficiency "hint" settings, but one does not need types for that. Composition or its equiv would be more appropriate IMO. Example:"</em>
+      </p>
+      <code>
+        resultSet = query(theSql, diskable=true, compressable=false);<br/>
+      </code>
+      <p>
+        <em>Or</em>
+      </p>
+      <code>
+        rs = new QueryResultSet(theSql).beToDisk().execute();<br/>
+      </code>
+      <p>
+        <em>We can assume that compressable is already false, features should be enabled when necessary</em>
+      </p>
+      <hr/>
+      <p>
+        The interface is not unpleasing. Where it gets interesting is how query(...) or execute(...) are implemented. Let's compare a non-OO approach with an OO approach. But first, just to make it a bit more challenging, let's add some functionality. Let's say we might additionally wish to encrypt, or not, the <a href="ResultSet.html">ResultSet</a>. E.g.:
+      </p>
+      <code>
+        resultSet = query(theSql, diskable=true, compressable=false, encrypted=true)<br/>
+      </code>
+      <p>
+        For the sake of illustration, I'm going to leave out most of the real-world details and pseudocode it.
+      </p>
+      <p>
+        First, let's look at the operations involved. I've deliberately used a procedural syntax, so as not to cloud the issue.
+      </p>
+      <p>
+        <strong>We'll assume we have some pre-existing mechanism for obtaining a resultset from our external SQL database, which is used like this:</strong>
+      </p>
+      <code>
+        sqlResultSet = executeSQL(globalDBConnection, theSQL)<br/>
+      </code>
+      <p>
+        Assume sqlResultSet is a collection of rows that we can use like this:
+      </p>
+      <code>
+        for each row in sqlResultSet<br/>
+        print row.ClientID, row.Name, row.Description, row.Address, row.SomeColumnValue<br/>
+      </code>
+      <p>
+        I will assume, for the sake of argument, that sqlResultSet is transient (perhaps bound to the most recent query execution) and therefore cannot be retained in memory or written to storage.
+      </p>
+      <ul>
+        <li>
+           I don't know why we have to assume this. The ideal would be to buffer it to disk if it got too large to fit in RAM, without the API user having to worry about that. Keep in mind that my table-oriented views were shaped mostly via <a href="ExBase.html">ExBase</a>, which generally used RAM cache if a table fit in RAM (at least in later versions). (dBASE introduced virtual tables in later versions, which automatically cleaned themselves from disk.) You could index the result set if need be, cross-reference (join) it, etc. But the short of it is that one did not have to worry about a disk-RAM dichotomy for the most part. I got so used to this feature that you really miss it when it goes away, and often have to fiddle with associative arrays, disk buffers, bulking up the server-side SQL, etc. It feels like traveling back 2 decades. <a href="YearningForUnfashionableTech.html">YearningForUnfashionableTech</a>.
+        </li>
+        <li>
+           I've assumed it purely for the sake of illustration. This page is more about comparing OO and procedural approaches than it is about a practical implementation of a <a href="ResultSet.html">ResultSet</a>. To be honest, it is a slightly-altered version of OO-vs-Procedural material I already use with my students, though I could easily alter it to meet the above requirements. My example hides the RAM-disk dichotomy, requiring only that the user specify one or the other (either implicitly or explicitly) in the creation of the <a href="ResultSet.html">ResultSet</a>. -- DV
+        </li>
+        <li>
+           <em>Out of curiosity, how hard would it be to make it automatic, or at least have an "auto" option? If the table grows bigger than some threashold, then buffer it to disk.</em> -- top
+        </li>
+        <li>
+           Easy. Toward the goal of self-optimising containers in general, I once built a "universal container" whose internal representation is based on an initial hint, and which dynamically changes based on statistical analysis of its usage pattern. I haven't yet found a use for it, though, and it needs more work. In my OO ResultSet example below, the <em>storage</em> member can reference any subclass of Storage (i.e., Disk or Ram, it doesn't matter), so at run-time we can change from Ram to Disk, without any other code changes, by doing something like this at the appropriate point:
+        </li>
+      </ul>
+      <code>
+        ...<br/>
+        if (storage.isInRam() && storage.count() > RAM_STORAGE_LIMIT) {<br/>
+        newStorage = new Disk(getTemporaryFileName())<br/>
+        while (storage.hasNext())<br/>
+        newStorage.write(storage.next())<br/>
+        storage = newStorage<br/>
+        }<br/>
+        ... -- DV<br/>
+      </code>
+      <ul>
+        <li>
+           Note that the tools I used, used a combination at the same time based on size and RAM availability <strong>automatically</strong>; essentially caching. It's not something the app developer should normally have to worry about. An either-or view when designing is limiting. That is why <strong>polymorphic philosophy can give you blinders</strong> at times. It may automatically bring a portion of a table into memory and if the next request is within that portion it knows it does not have to go to disk. Maybe general-purpose cashing has reduced the usefulness of table-specific implementations, though. Complicating things is adding indexes. I've used a tool once that lacked indexes (Forest & Trees), and it was a royal pain. A join that would normally be 20 seconds with indexing took 4 hours. Local joins are a fairly common need in my experience, partly because data from diverse databases cannot normally/easily be joined at the server level. For example, if you send a list of customers off to a marketing company, they may cull the list and give it back and then you have to join it back to the original to get reports about the new list. The DBA may not be happy about creating server-side tables for something that may be a short-lived or constantly-changing project. -- top
+        </li>
+      </ul>
+      <p>
+        <strong>Let's assume we can write rows to disk:</strong>
+      </p>
+      <code>
+        f = openFile("myfile.dat")<br/>
+        for each row in sqlResultSet<br/>
+        write(f, row)<br/>
+        close(f)<br/>
+      </code>
+      <p>
+        <strong>We can read rows from disk:</strong>
+      </p>
+      <code>
+        f = openFile("myfile.dat")<br/>
+        while (not endOfFile(f)) {<br/>
+        row = read(f)<br/>
+        print row.ClientID, row.Name, row.Description, row.Address, row.SomeColumnValue<br/>
+        }   <br/>
+        close(f)<br/>
+      </code>
+      <p>
+        <strong>We can write rows to an in-memory collection:</strong>
+      </p>
+      <code>
+        c = createCollection()<br/>
+        for each row in sqlResultSet<br/>
+        insert(c, row)<br/>
+      </code>
+      <p>
+        <strong>We can read rows from an in-memory collection:</strong>
+      </p>
+      <code>
+        for each row in c<br/>
+        print row.ClientID, row.Name, row.Description, row.Address, row.SomeColumnValue   <br/>
+      </code>
+      <p>
+        <strong>We can compress data:</strong>
+      </p>
+      <code>
+        compressor = openLZWCompressor()<br/>
+        rowCompressed = compress(compressor, row)<br/>
+      </code>
+      <p>
+        <strong>We can uncompress data:</strong>
+      </p>
+      <code>
+        compressor = openLZWCompressor()<br/>
+        row = uncompress(compressor, rowCompressed)<br/>
+        print row.ClientID, row.Name, row.Description, row.Address, row.SomeColumnValue   <br/>
+      </code>
+      <p>
+        <strong>We can encrypt data:</strong>
+      </p>
+      <code>
+        crypto = openSimpleCrypto("password")<br/>
+        rowEncrypted = encrypt(crypto, row)<br/>
+      </code>
+      <p>
+        <strong>We can decrypt data:</strong>
+      </p>
+      <code>
+        row = decrypt(crypto, rowEncrypted)<br/>
+      </code>
+      <p>
+        Now we have everything we need to implement our client-side <a href="ResultSet.html">ResultSet</a> storage gizmo.
+      </p>
+      <p>
+        We'll assume two procedures -- one called query() that accesses the database, creates, and stores our ResultSet; the second called getRows() to retrieve the rows housed in our ResultSet. Here's a rude, crude, procedural implementation:
+      </p>
+      <code>
+        query(theSql, diskable, compressable, encrypted) {<br/>
+        ResultSet = struct {<br/>
+        diskable<br/>
+        compressable<br/>
+        encrypted<br/>
+        fileName<br/>
+        c<br/>
+        }<br/>
+        ResultSet.diskable = diskable<br/>
+        ResultSet.compressable = compressable<br/>
+        ResultSet.encrypted = encrypted<br/>
+        sqlResultSet = executeSQL(globalDBConnection, theSQL)<br/>
+        if (diskable) {<br/>
+        ResultSet.fileName = "myfile.dat"<br/>
+        f = openFile(ResultSet.fileName)<br/>
+        } else<br/>
+        ResultSet.c = createCollection()<br/>
+        if (compressable)<br/>
+        compressor = openLZWCompressor()<br/>
+        if (encrypted)<br/>
+        crypto = openSimpleCrypto("password")<br/>
+        for each row in sqlResultSet {<br/>
+        data = row<br/>
+        if (compressable)<br/>
+        data = compress(compressor, data)<br/>
+        if (encrypted)<br/>
+        data = encrypt(crypto, data)<br/>
+        if (diskable)<br/>
+        write(f, data)<br/>
+        else<br/>
+        insert(ResultSet.c, data)<br/>
+        }<br/>
+        if (diskable)<br/>
+        close(f)<br/>
+        return ResultSet<br/>
+        }<br/>
+      </code>
+      <code>
+        getRows(resultSet) {<br/>
+        sqlResultSet = createCollection()<br/>
+        if (resultSet.compressable)<br/>
+        compressor = openLZWCompressor()<br/>
+        if (resultSet.encrypted)<br/>
+        crypto = openSimpleCrypto("password")<br/>
+        if (resultSet.diskable) {<br/>
+        f = openFile(resultSet.fileName)<br/>
+        while (not endOfFile(f)) {<br/>
+        datum = read(f)<br/>
+        if (resultSet.encrypted)<br/>
+        datum = decrypt(crypto, datum)<br/>
+        if (resultSet.compressable)<br/>
+        datum = decompress(compressor, datum)<br/>
+        insert(sqlResultSet, datum)<br/>
+        }<br/>
+        close(f)<br/>
+        } else {<br/>
+        for each datum in resultSet.c {<br/>
+        if (resultSet.encrypted)<br/>
+        datum = decrypt(crypto, datum)<br/>
+        if (resultSet.compressable)<br/>
+        datum = decompress(compressor, datum)<br/>
+        insert(sqlResultSet, datum)      <br/>
+        }<br/>
+        }<br/>
+        return sqlResultSet<br/>
+        }<br/>
+      </code>
+      <p>
+        There we have it, procedural style. You'd use it like this, under the assumption that a missing un-named parameter (<em>encrypted</em>, in this case) generates a 'false' argument to that parameter:
+      </p>
+      <code>
+        resultSet = query(theSql, diskable=true, compressable=false)<br/>
+        ...<br/>
+        rows = getRows(resultSet)<br/>
+      </code>
+      <p>
+        Obviously, it is highly sub-optimal (conditionals inside of loops, no control over the filename or the password, could use some serious refactoring, etc.), but it's a conceptual illustration rather than an example of best practice.
+      </p>
+      <p>
+        Now let's re-implement it in an OO style. We'll use the same pre-existing procedural mechanisms for encryption, storage, etc., but wrap them in some vaguely Java-influenced classes. This is more verbose than strictly necessary, but typical of popular OO-like languages.
+      </p>
+      <p>
+        Here's how we handle Storage, i.e., whether it is diskable or not:
+      </p>
+      <code>
+        class abstract Storage {<br/>
+        write(data)<br/>
+        open()<br/>
+        close()<br/>
+        hasNext()<br/>
+        next()<br/>
+        }<br/>
+      </code>
+      <code>
+        class Disk extends Storage {<br/>
+        Disk(fileName) {<br/>
+        fname = fileName<br/>
+        }<br/>
+        write(data) {<br/>
+        write(f, data)<br/>
+        }<br/>
+        open() {<br/>
+        f = openFile(fname)<br/>
+        }<br/>
+        close() {<br/>
+        close(f)<br/>
+        }<br/>
+        hasNext() {<br/>
+        return (not endOfFile(f))<br/>
+        }<br/>
+        next() {<br/>
+        return read(f)<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        class Ram extends Storage {<br/>
+        Storage() {<br/>
+        c = createCollection()<br/>
+        }<br/>
+        write(data) {<br/>
+        insert(c, data)<br/>
+        }<br/>
+        // I'm assuming reset(), hasNext() and next() are typical iteration functions for a Collection.<br/>
+        // The notion of only one iterator per Collection is obviously bogus, but I'm striving for simplicity.<br/>
+        open() {<br/>
+        reset(c)<br/>
+        }<br/>
+        close() {<br/>
+        }<br/>
+        hasNext() {<br/>
+        return hasNext(c)<br/>
+        }<br/>
+        next() {<br/>
+        return next(c)<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Here's how we handle compression:
+      </p>
+      <code>
+        class abstract Compressor {<br/>
+        compress(data)<br/>
+        decompress(data)<br/>
+        }<br/>
+      </code>
+      <code>
+        class CompressedLZW extends Compressor {<br/>
+        CompressedLZW() {<br/>
+        compressor = openLZWCompressor()<br/>
+        }<br/>
+        compress(data) {<br/>
+        return compress(compressor, data)<br/>
+        }<br/>
+        decompress(data) {<br/>
+        return decompress(compressor, data)<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        class Uncompressed extends Compressor {<br/>
+        compress(data) {<br/>
+        return data<br/>
+        }<br/>
+        decompress(data) {<br/>
+        return data<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Here's how we handle encryption:
+      </p>
+      <code>
+        class abstract Crypto {<br/>
+        encrypt(data)<br/>
+        decrypt(data)<br/>
+        }<br/>
+      </code>
+      <code>
+        class SimpleCrypto extends Crypto {<br/>
+        SimpleCrypto(password) {<br/>
+        crypto = openSimpleCrypto(password)<br/>
+        }<br/>
+        encrypt(data) {<br/>
+        return encrypt(crypto, data)<br/>
+        }<br/>
+        decrypt(data) {<br/>
+        return decrypt(crypto, data)<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <code>
+        class NoCrypto extends Crypto {<br/>
+        encrypt(data) {<br/>
+        return data<br/>
+        }<br/>
+        decrypt(data) {<br/>
+        return data<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Here's where it all comes together:
+      </p>
+      <code>
+        class ResultSet {<br/>
+        ResultSet(theSQL, diskable, compressable, encrypted) {<br/>
+        storage = diskable<br/>
+        compression = compressable<br/>
+        encryption = encrypted<br/>
+        sqlResultSet = executeSQL(globalDBConnection, theSQL)<br/>
+        storage.open()<br/>
+        for each row in sqlResultSet {<br/>
+        data = row<br/>
+        data = compression.compress(data)<br/>
+        data = encryption.encrypt(data)<br/>
+        storage.write(data)<br/>
+        }<br/>
+        storage.close()<br/>
+        }<br/>
+        // For common defaults, if our OO language doesn't support default values<br/>
+        // for parameters, we might provide alternate constructors like this:<br/>
+        ResultSet(theSQL) {<br/>
+        return this(theSQL, new Ram(), new Uncompressed(), new NoCrypto())<br/>
+        }<br/>
+        getRows() {<br/>
+        c = createCollection()<br/>
+        storage.open()<br/>
+        while (storage.hasNext()) {<br/>
+        data = storage.next()<br/>
+        data = encryption.decrypt(data)<br/>
+        data = compression.decompress(data)<br/>
+        insert(c, data)<br/>
+        }<br/>
+        storage.close()<br/>
+        return c<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        The astute reader will recognise that refactoring and creation of classes might be extended to the point that the ResultSet constructor and getRows() can be combined to <em>use the same code</em>, i.e., a mechanism representing a transformation from one abstract container to another, differing only in the object arguments used at invocation-time. This is, however, beyond the scope of this illustration. It is left as an exercise for the reader, as is finding and fixing the bugs. I've already seen several.
+      </p>
+      <p>
+        To implement our original example... 
+      </p>
+      <code>
+        resultSet = query(theSql, diskable=true, compressable=false, encrypted=true)<br/>
+      </code>
+      <p>
+        ...we would do it like this:
+      </p>
+      <code>
+        resultSet = new ResultSet(theSql, new Disk("myfile.dat"), new Uncompressed(), new SimpleCrypto("password"))<br/>
+        ...<br/>
+        for each row in resultSet.getRows()<br/>
+        print row.ClientID, row.Name, row.Description, row.Address, row.SomeColumnValue<br/>
+      </code>
+      <p>
+        If the defaults are acceptable, we can just use the appropriate constructor:
+      </p>
+      <code>
+        resultSet = query(theSQL)<br/>
+      </code>
+      <p>
+        Where this approach is really of benefit is when we add, say, a new type of compression. Let's say we want to be able to choose Huffman encoding as an alternative to LZW. We create a new class:
+      </p>
+      <code>
+        class CompressedHuffman extends Compressor {<br/>
+        CompressedHuffman() {<br/>
+        compressor = openHuffmanCompressor()<br/>
+        }<br/>
+        compress(data) {<br/>
+        return squeeze(data, compressor)<br/>
+        }<br/>
+        decompress(data) {<br/>
+        return expand(data, compressor)<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        Now we can test it independently, and simply use it without changing a line of ResultSet:  
+      </p>
+      <code>
+        resultSet = new ResultSet(theSql, new Disk("myfile.dat"), new CompressedHuffman(), new SimpleCrypto("password"))<br/>
+      </code>
+      <p>
+        Using the procedural approach, we would have to go back to query(...) and getRows() and implement more conditionals, or start refactoring these into additional procedures with internal conditionals. As the number of different storage mechanisms, encryption mechanisms, compression approaches and so on increase, the mechanisms internal to, or used by, query(...) and getRows() would become more complex. Using the OO approach, each of these can be developed and tested independently of the others, without an increase in complexity at any one point, and with a strong assurance that they will simply work in ResultSet. That's where the OO approach is of value.
+      </p>
+      <p>
+        Obviously, it is possible in procedural code to factor out areas of selectable functionality into procedures, so you wind up with things like this:
+      </p>
+      <code>
+        doCompress(data, method) {<br/>
+        case (method) {<br/>
+        LZW:<br/>
+        compressor = openLZWCompressor() <br/>
+        return compress(compressor, data)<br/>
+        HUFFMAN:<br/>
+        compressor = openHuffmanCompressor()<br/>
+        return squeeze(data, compressor)<br/>
+        UNCOMPRESSED:<br/>
+        return data<br/>
+        default:<br/>
+        fatal("OH MY GOD!!!")<br/>
+        }<br/>
+        }<br/>
+      </code>
+      <p>
+        However, such an approach is essentially implementing polymorphism by hand. It's awkward, often slow, forces the developer to change code in low-level modules, causes a single point of complexity, and especially falls down in cases where an inheritance hierarchy and polymorphism can automate the selection of the correct underlying functions.
+      </p>
+      <p>
+        -- <a href="DaveVoorhis.html">DaveVoorhis</a>
+      </p>
+      <hr/>
+      <p>
+        This raises issues generally already addressed in <a href="SwitchStatementsSmell.html">SwitchStatementsSmell</a>. OOP may indeed be better for implementating lower-level operations, as I have already agreed in statements about too many OO examples about "systems software" and "device drivers". However, you are <strong>focusing on the implementation rather than on the <em>user</em> of the API's</strong>. In some languages, OOP is more verbose than procedural to use such API's. Thus, you may be penalizing the user to make the implementor's job easier. If I am issuing 100's of queries in a program, I want the API's to be brief. If this makes the implementor have to deal with ugly case-statements, I don't give a bleep. That is <em>their</em> problem. Make the customer happy.
+      </p>
+      <p>
+        <em>See my examples of usage. I would argue that the OO example is no more difficult - from a user's point of view - than the procedural approach, and of course a factory could be used to generate ResultSet instances using the syntax you proposed, thus making life easy for both the user and the implementor.</em> -- <a href="DaveVoorhis.html">DaveVoorhis</a>
+      </p>
+      <p>
+        If one can hide the OOP under functions with named parameters, then Factory it is. Solved! -- top
+      </p>
+      <p>
+        <em>You certainly can. Not every language explicitly supports it, so you might have to endure blecherousness like the following static method in, say, Java:</em>
+      </p>
+      <code>
+        ResultSet r = ResultSet.<em>factory</em>(theSql, "diskable=true, compressable=false");<br/>
+      </code>
+      <p>
+        <em>This results in some conditional-laden ugliness, or mappings from named parameter values to code, in factory(). Also, new compression, encryption, etc., classes have to be explicitly wired into factory() or wherever the parm-value-to-code map resides, but this is the price of a developer-friendly API in a developer-unfriendly language.</em> -- DV 
+      </p>
+      <p>
+        Some would probably argue that Java is not the pinnicle of OOP, and thus being hard under Java does not necessarily mean it is harder with OO in general.
+      </p>
+      <p>
+        <em>I don't think anyone would claim that Java is the pinacle of OOP, and your point is self-evident.  My reference to Java was only intended as an illustration.  I'm not clear whether you're disagreeing with my point, agreeing with it, or just trying to get in the last word.  Clarification, please?</em> -- DV
+      </p>
+      <p>
+        I am not sure what your stance is. Is implementating a named-parameter procedural call with OOP more difficult in general compared to using OO calls user side, or just in Java? Which one of these is your claim? Or is it something different altogether? I invite you to reword what you are claiming in a careful way to avoid any further confusion on this.
+      </p>
+      <p>
+        <em>Implementing named-parameter procedure/method invocations is always more difficult in a language that doesn't syntactically support them than a language that does.  This has nothing to do with OOP or Java.  I merely used Java as an example of a language that does not provide syntactic named-parameter method invocations.  However, OO languages rarely support named-parameter invocations, and favour the </em><a href="ParameterObject.html">ParameterObject</a> pattern.  I.e., define the method with a single parameter that accepts an object.  The object's class defines attributes to represent the necessary parameters.  In the object's constructor, set the attributes to appropriate defaults.  Using the above Java example:<em></em>
+      </p>
+      <p>
+        <em>The following...</em>
+      </p>
+      <code>
+        ResultSet r = ResultSet.factory(theSql, "diskable=true, compressable=false");<br/>
+      </code>
+      <p>
+        <em>Now becomes...</em>
+      </p>
+      <code>
+        ResultSetParms parms = new ResultSetParms();<br/>
+        parms.diskable = true;<br/>
+        parms.compressable = false;<br/>
+        ResultSet r = ResultSet.factory(theSql, parms); <br/>
+      </code>
+      <p>
+        -- DV
+      </p>
+      <p>
+        Okay, it wasn't clear to me what "it" referred to when you said "doesn't support it". But if it's merely a comment on Java's lack of named parameters, then you have nothing against having an interface that uses such on the user's side, even if OOP is used underneath? Again, I don't do systems software and thus will not make claims about OO's appropriateness for such. I just don't see the befinits of OO in my domain as an app developer and would prefer named parameters for such an interface for the user's side. Modeling things as device drivers doesn't work well for biz modeling.
+      </p>
+      <p>
+        <em>I have nothing against named parameters; their presence or lack thereof has nothing to do with OO.  I'm not sure what "device drivers" has to do with this, unless you're claiming that polymorphism is only appropriate for implementing device drivers.  It's appropriate any time more than one concrete implementation can be accessed via a single abstraction such as an interface or base class.  I have developed applications (including significant components of business applications, in particular scheduling and payroll systems) that operate almost entirely on abstractions, but whose actual behaviour is defined by a varying collection of polymorphic concrete implementations of the abstractions.  It is a powerful and maintainable way to develop flexible applications.  Certainly, there are times when changes to requirements means functionality needs to be moved up or down the inheritence hierarchy or split into multiple methods, but this is almost always easier than redefining a festoonment of ugly switch statements and generally equivalent in ease or easier than redefining some data-driven mechanism such as a dispatch table.</em> -- DV
+      </p>
+      <p>
+        When I see case/if statements and tables crashing and burning compared to OO by studying production code or something close to it for biz apps, I may change my mind. Until then, the downsides of poly seem to outweigh the downsides of case/if and tables. The type of downsides they give in the OO textbooks don't fit what I actually see. The real world does not divide the way textbooks pretend it does. Their change patterns just plain don't match those that I actually see. Their chunks of polymorphism are larger than future change or variation granularities are likely to be, and they make changing from mutually-exclusive options to "both" more code rework. IF statements are far more condusive to fine granularity changes and change in mut.ex. between two or more options, as described on my webpages and referenced wiki topics. <strong>Poly requires rather narrow change patterns to come out ahead</strong> and IF's better fit the set-oriented "bag of features" approach to variation management that I find superior. Perhaps "C" is your problem. C is has an ugly procedural face. --top
+      </p>
+      <p>
+        Overall, I tend to first design the interface, and then <strong>work backward</strong> toward the implementation. This is how most design should be; otherwise implementation dictates the interface/results. Sometimes it makes sense to complicate the interface in order to simplify the implementation, sometimes not. But right now I am taking the perspective of the interface. A named-parameter interface is preferred from the API user's perspective. Whether the implementation uses polymorphism or gerbils isn't my (API user's) concern as long as it works. It has the added benefit of allowing one to change the implementation to something besides polymorphism if that is the way to go in the future. If you design the API up-front around the assumption that polymorphism will be used to dispatch the differences, then you've pretty much locked yourself into polymorphism (or at least create a confusing mess to escape from). --top
+      </p>
+      <hr/>
+      <p>
+        This goes into the direction of <a href="ProgrammingWithoutRamDiskDichotomy.html">ProgrammingWithoutRamDiskDichotomy</a>. I would prefer APIs that allow to specify the amount of persistence, security and reliability too. But I would rather not choose such implementation dependent aspects as "diskable" or "compressable", but rather an API like this:
+      </p>
+      <code>
+        rs.persistence = [ p | p >= Persistence.TYPICAL_HARDDISK.persistence ];<br/>
+        rs.reliability = [ s | s >= Persistence.RAM.reliability ];<br/>
+        rs.security = [ s | s >= SecurityAlgorithm.RSA(1024).security ];<br/>
+        rs.performance = [ ... ]<br/>
+      </code>
+      <p>
+        From these specifications the relevant properties can be derived; like whether compression will be reliable enough, a certain harddisc is durable enough, a drive fast enough or a net drive secure enough. -- <a href="GunnarZarncke.html">GunnarZarncke</a>
+      </p>
+      <p>
+        <em>Nice.  This seems to imply </em><a href="ConstraintProgramming.html">ConstraintProgramming</a><em> -- DV</em>
+      </p>
+      <p>
+        Not necessarily. As long as there are only a few "drivers" available (say: the RAM of your PC, the FS(s) on your harddrive) then you could simply iterate over them and choose one of those, that let the blocks provided above evaluate to true. -- .gz
+      </p>
+      <p>
+        <em>I've suggested a similar kind of threshold-based auto-decision above. I am curious though: if all the options become combinations of different features, wouldn't discrete drivers get a bit messy to code since a "type" taxonomy could turn into a </em><a href="CartesianProduct.html">CartesianProduct</a> of features? Simple polymorphism seems no longer sufficient such that one either has to move up the GOF pattern scale, or use case/if statements. "Few drivers" implies simple sub-typing. A RAM-only driver will not suffice if the threashold is reached and a disk-only driver may not handle RAM well. -- top<em></em>
+      </p>
+      <p>
+        As long as differing implementations (of whatever) can be accessed via common interfaces, it is possible to implement a type hierarchy without case/if statements or equivalent mechanisms, though interdependent functionality may involve references from one instance to another. You wind up with things like this:
+      </p>
+      <code>
+        ResultSet(theSQL, diskable, compressable, encrypted) {<br/>
+        storage = diskable<br/>
+        compression = compressable<br/>
+        encryption = encrypted<br/>
+        encryption.setCompressor(compression)<br/>
+        compression.setStorage(storage)<br/>
+        ...etc...<br/>
+      </code>
+      <p>
+        -- <a href="DaveVoorhis.html">DaveVoorhis</a>
+      </p>
+      <hr/>
+      <p>
+        <strong>greymorphism</strong>
+      </p>
+      <p>
+        Related to my "polymorphic blinders" comment above, perhaps an implementation-neutral interface would merely give hints or suggestions, not orders. For example, it could have a "cachness" percentage setting (perhaps this is <a href="BargainFutureProofing.html">BargainFutureProofing</a>). Zero would mean it always uses disk, and 100% would mean it always uses RAM, never disk. In between would be various caching levels, or perhaps size threashold controls. If one implements the interface with something that must choose between disk or ram up front (sort of like the one introduced above), then it could split the decision at the 50% level (<50 use disk, >50 use the ram version). Or perhaps wait longer under a high value before switching to disk as stuff grows. If somebody later replaced the engine with a cache-able engine, then all the polymorphism that is exposed to the user is obsolete. 
+      </p>
+      <p>
+        <em>Huh?  What polymorphism is exposed to the user?  How is this example different from the one I gave in the bulleted section above, that one that starts with "Easy. Toward the goal of self-optimising containers in general ..."?</em>
+      </p>
+      <p>
+        <em>I sense that you are making a quibble of deperation here, scrambling to find points to defend a categorical rejection of polymorphism.  Polymorphism is merely a tool.  When it is appropriate, it works, and when it's available it reduces overall developer effort compared to that required when polymorphism is not available, without having any impact on the user or fellow developer.</em>
+      </p>
+      <p>
+        You have not demonstrated that for an engine that uses both disk and ram in conjunction at the same time.
+      </p>
+      <p>
+        <em>I didn't know I was supposed to.  Would you like me to write code for the above example that caches disk access?  It's quite trivial.  Hmmm...  Maybe I should assign it as an exercise... :)</em> -- DV
+      </p>
+      <p>
+        Your claim, "Where this approach is really of benefit is when we add, say, a new type of compression" assumes that new requirements fit into a "new sub-type" point of view. I've shown an actual example of where it doesn't, at least with regard to caching. I have thus established that in at least some cases, it is not appropriate.
+      </p>
+      <p>
+        <em>Of course it's not appropriate in some cases!  Who said polymorphism is </em>always<em> appropriate?  That would be ridiculous.</em> -- DV
+      </p>
+      <p>
+        I will agree that polymorphism makes type-oriented additions easier, but I do disagree that all or most changes are type-oriented. Perhaps they are common in deep systems software, but I don't see it in my domain.
+      </p>
+      <ul>
+        <li>
+           After-reply addendum: One often cannot know up front whether future changes will favor a sub-type-based interface or not. This is why I'm suggesting we avoid polymorphism up-front: it is not change-friendly. We don't know whether a future engine may offer a mix of caching techniques. Polymorphism thus does not entirely hide the implementation because it <strong>makes assumptions about the packaging of implementations</strong>. --top
+        </li>
+      </ul>
+      <p>
+        <em>Interesting.  You develop business software, yes?  I have developed business software in C++ and it was replete with polymorphism.  However, as I mentioned below, I tend not to create a hierarchy of classes that mirrors real-world entities.  That is a naive and misguided way to use OO to build business applications, unless you're creating a business simulator rather than an information system.  I create business applications to be fact manipulators, and write code to present facts and facilitate entry of facts.  This involves creating polymorphic class hierarchies for producing reports, forms, various calculation engines, etc.</em> -- DV
+      </p>
+      <p>
+        You need to clarify the scope/assumptions of your claims here. If it is based on the probability/frequency of type-oriented changes, then please state your assumption and assumed rate. (And below we bring up the additional issue of knowing which part will change in a type-friendly way in the future and which will be more like the dual-media-caching scenario.)
+      </p>
+      <ul>
+        <li>
+           Huh? -- DV
+        </li>
+        <li>
+           <em>It seems the paragraph got moved from the original context. I'll have to figure out where it is supposed to be...</em>
+        </li>
+      </ul>
+      <p>
+        <em>That is so self-evident, and so proven on a daily basis in my code that I find it difficult to imagine anyone arguing otherwise.  To me,  categorically rejecting polymorphism (which your argument appears to be) is as ridiculous as a car mechanic who categorically rejects screwdrivers.</em> -- <a href="DaveVoorhis.html">DaveVoorhis</a>
+      </p>
+      <p>
+        Even the classic OO "shapes" example has this flaw. One can define an oval as a 100% "smoothed" rectangle, and a circle as a 100% smoothed square. And we can get all kinds of nice shapes in-between by using values like 37%. The classification of rectangles versus ellipses is thus limiting, and perhaps blinds the designer's view of possible other options. It can be viewed as a tunable attribute, not a sub-type of "shape". This idea is more powerful, flexible, and better reflect the real-world in my opinion.
+      </p>
+      <p>
+        <img src="http://www.geocities.com/tablizer/smooth.gif" />
+      </p>
+      <p>
+        The idea is to ask for what you want, not how to get it (a <a href="RelationalWeenie.html">RelationalWeenie</a> saying?). Polymorphism is a "how", not a what; and forcing either-or choices and scattering it all over the user's code when the future may be more complex seems a symptom of this.
+      </p>
+      <p>
+        --top
+      </p>
+      <p>
+        <em>First, I don't know what "polymorphic blinders" or "polymorphic philosophy" are supposed to mean.  Polymorphism isn't a philosophy, it's a tool.  A good engineer chooses the right tool for the job based on a </em>CostBenefitAnalysis.<em>  </em>
+      </p>
+      <p>
+        In my experience, they don't, especially since the benefits are largely psychological and personal preferences.
+      </p>
+      <ul>
+        <li>
+           <em>Is that based on your experience of having developed large-scale OO projects?</em> -- DV
+        </li>
+      </ul>
+      <ul>
+        <li>
+           It is a comment on development in general, not just OO. When one asks people why do they do what they do, it becomes clear they've either put very little thought behind it, or that their decision is a personal preference.
+        </li>
+      </ul>
+      <p>
+        <em>Sometimes, that results in choosing polymorphism, sometimes not.  When it is appropriate and available, it is the right tool for the job.  The </em><a href="ResultSet.html">ResultSet</a> example on this page was intended to show how the code differs when polymorphism is used vs. when it is not, <strong>assuming the user's requirements make it appropriate in the first place.</strong>  There is no philosophical issue here.  A developer who thinks polymorphism should be used for everything, or used excessively (which is what I assume you mean by "polymorphic blinders"), or shouldn't be used for anything, would simply be demonstrating poor engineering skills, a lack of user-centered focus, and (perhaps) a lack of rationality.<em></em>
+      </p>
+      <p>
+        <em>Second, your shapes example does not point out any flaw in the classic OO example.  The classic OO "shapes" example is simply intended to illustrate how inheritance and polymorphism work, assuming shapes that are (largely) geometically disjoint.</em>
+      </p>
+      <p>
+        "Assuming", always assuming.
+      </p>
+      <ul>
+        <li>
+           <em>What textbook example doesn't make assumptions?  In the absence of a user to define requirements, assumptions are necessary.  Furthermore, examples are intended to be conceptually illustrative, not functionally complete.  It is intended that the student will grasp the concept illustrated by the example, and use this new-found understanding to apply the concept to their own problem domains.</em> -- DV
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Well they rarely address the downsides of basic polymorphism. They pretend like they don't exist. A small disclaimer should be given in a decent book.
+        </li>
+      </ul>
+      <p>
+        <em>If they are not -- such where a continuous "curvature" parameter is required -- then it would be appropriate to use another mechanism.  If we all decided that the usual "shapes" example was too contrived and unrealistic, and that no real-world shape system would ever be built without a "curvature" parameter, then the OO texts would simply need to choose a different standard illustration.  Some do, of course, and use (for example) vehicles instead of shapes, as the "shapes" example inevitably spawns arguments about circles vs. ellipses.  In the "vehicles" scenario, I'd be hard pressed to think of any reason to supply a continuous parameter that represents the degree to which a vehicle is somewhere between a motorcycle and a jumbo jet.  Therefore, the entity categories are unambiguously disjoint and/or hierarchical, and so polymorphism clearly applies.</em>
+      </p>
+      <p>
+        <em>Fortunately, the majority of us recognise that "shapes" is a mere illustration, that continuous curvature is not always required, and that polymorphism is therefore appropriate.</em>
+      </p>
+      <p>
+        If you agree it is a contrived example, then it is *not* appropriate without a reality disclaimer.
+      </p>
+      <p>
+        <em>Come on, you're just quibbling here.  Surely you can appreciate that the intent of the classic "shapes" example is not to deliver a plug-'n'-play skeleton for a graphics program, but to illustrate inheritance and polymorphism in a way that the majority of students can understand.  Yes?</em> -- DV
+      </p>
+      <ul>
+        <li>
+           Sorry, but that is not a reason for skipping a breif disclaimer. It only takes a sentence or two.
+        </li>
+      </ul>
+      <p>
+        Continuous curviture is not any less contrived. In fact, it offers flexibility that Boolean divisions don't. And, I have seen half-car-half-motorcycles on the road. They are <strong>real</strong>.
+      </p>
+      <ul>
+        <li>
+           <em>Of course they are.  But that makes them no less disjoint from cars and planes.  There isn't a dial you can turn that will effectively define the linear progression from a motorcycle to a jumbo jet. </em>
+        </li>
+      </ul>
+      <ul>
+        <li>
+           That is an extreme example, but many combos are not. I've seen boat-car at a Mazda dealer back-room (hobby project of the owner). I've seen these:
+        </li>
+      </ul>
+      <ul>
+        <li>
+           boat-car in person
+        </li>
+        <li>
+           motocycle car in hobbyist magazine
+        </li>
+        <li>
+           Car/plane hybrid in I think Popular Science
+        </li>
+      </ul>
+      <p>
+        "Has wings", "has one front wheel", "has handle-bar" etc. would be more flexible. 
+        And I've seen commerce product catagories deviate from trees. "has-a" is simply better for most biz taxonomies/classification systems I encounter, and set theory is a better tool for the job of managing has-a (at least it better fits my head).
+      </p>
+      <p>
+        <em>Vehicle entities are discrete, not continuous, even if the kinds of entities are nearly infinite.  Which, fortunately, they are not -- at least as far as any car rental, insurance company, or government agency is concerned.  Hence, they can be effectively modelled as an inheritance hierarchy, polymorphism applies, and it works.  I know this because I developed a fleet maintenance system on precisely that basis.  I don't recall the customer ever requesting a continuous parameter that would allow him to vary the fleet cars until they became busses.</em> -- DV
+      </p>
+      <p>
+        True, they are uncommon hobbyist projects, but due to fads, that could change. I've seen actual examples of hierarchical store product classification systems create problems at a large west-coast university store. Sets would have been more flexible. I've see other similar mistakes in OO texts, such as savings versus checkings account, when hybrids exist in reality.
+      </p>
+      <ul>
+        <li>
+           <em>They aren't mistakes, they are illustrations and models.  If you read further in the same texts, you will often discover discussion of techniques for handling said hybrids.</em> -- DV
+        </li>
+        <li>
+           Only in more advanced OO books. And OOP handles has-a poorly. It handles polymorphism well (if polymorphism is right the solution) because polymorphism is built into OOP. However, has-a techniques are *not* built-in. You have to roll-your-own either with pointer-based composition (<a href="NavigationalDatabase.html">NavigationalDatabase</a>), or reinvent a <a href="SetTheory.html">SetTheory</a> engine from scratch. <a href="GreencoddsTenthRuleOfProgramming.html">GreencoddsTenthRuleOfProgramming</a>. --top
+        </li>
+      </ul>
+      <p>
+        I *do* think polymorphism book examples put blinders on people. Most desingers do not think deep and hard about what they design, they just react on instinct. The philosophying and scrutiny you find on this wiki is relatively rare out there. Poor design is actually job security, in practice. (<a href="EditHint.html">EditHint</a>: move this to <a href="OverUsedOopExamples.html">OverUsedOopExamples</a>)
+      </p>
+      <p>
+        <em>Indeed, the usual purpose of the example is to illustrate a polymorphic "paint()" or "draw()" method, rather than illustrate polymorphism in terms of some characteristic of the shapes.  Anyway, polymorphism would still be appropriate for handling "paint()", assuming that we have a variety of drawable entities such as icons, images, sprites, external documents, lines, etc., including your unified curvable shape class.  Surely you can't be advocating a position that polymorphism is </em>never<em> appropriate?</em>
+      </p>
+      <p>
+        The issue is that I don't know the scope of your claim. As far as when its appropriate, it is hard to tell because the real world often changes in <strong>non-anticipatable</strong> ways. Poly is a often a hard "is-a" and is harder to undo than softer set-based methods. If the future is hard to predict, then softer variation-management techniques are usually more appropriate. (And things like strategy pattern assume unrealistic chunkage. That is, variation-on-a-theme differences granularity-level patterning is often smaller than the strategy chunks.)
+      </p>
+      <p>
+        <em>Anyway, in real-world OO development, I rarely create class heirarchies that mirror real-world entities except when developing simulators.  In business applications, the database is for modelling the real world, or more accurately, modelling facts about it.  My class hierarchies and application of polymorphism tend to be used for software entities, like widgets, forms, windows, menus & menu items, database connections, reports, ad-hoc query generators, report components, scheduling engines, pricing engines, payroll calculators, and so on, where the need to model some continuous or non-heirarchical real-world fuzziness simply doesn't exist.</em> -- <a href="DaveVoorhis.html">DaveVoorhis</a>
+      </p>
+      <p>
+        But if they are small and isolated (special-purpose), then the difference between paradigms is not going to matter much. OOP may just be more setup overhead and verbosity than strait functions. Many OO'ers claim that its benefits only show up on large-scale stuff. But you seem to be admitting that you don't use it for large-scale stuff, but rather isolated little pockets. (BTW, I think GUI frameworks should be largely declarative, and area where OO does not shine.)
+      </p>
+      <p>
+        <em>Where did I "admit" I "don't use it for large-scale stuff, but rather isolated little pockets"?  The above is not "isolated little pockets"; it's how I develop applications.  Perhaps I wasn't clear:  When I develop business applications, I'm typically not creating domain classes (though these do sometimes exist as needed); I'm mainly creating tools to facilitate the presentation and entering of facts.  The database is used to manage the facts themselves.  That means the majority of my work consists of creating software entities -- i.e., forms, reports, etc. -- rather than domain classes like "client", "employee" etc.  This is quite different from what is advocated in most OO texts, but it is, IMHO, a more effective and flexible way of building usable and maintainable applications.  That is because data modelling and object modelling are </em>'not<em>' the same thing; the former is about defining long term representation of durable information, the latter is about defining presentation and recording.  But, that's a discussion for another day.</em>
+      </p>
+      <p>
+        <em>As for using declarative techniques for GUI definitions, that's fine, but the declarative language has to be developed using something, doesn't it?  For developing that framework and/or language, OO is well suited.  It's also well-suited to extending the GUI framework, which is considerably more difficult (if it can be done at all) using a declarative form-builder.</em> -- DV
+      </p>
+      <p>
+        Again, I won't challenge OO being better for systems software, such as GUI engines. As far as OO being better for extending a GUI engine, I guess I'd have to see specifics. The devil's in the details. I evaluate OO from a custom app developer's perspective, and don't see a lot of objective merit. (Related: <a href="OopBizDomainGap.html">OopBizDomainGap</a>, <a href="NonOopGuiMethodologies.html">NonOopGuiMethodologies</a>) --top
+      </p>
+      <p>
+        <em>Then I recommend you precede all further criticism of OO, functional programming, thin-tables, typeful programming, type safety, or whatever, with "When working on end-user oriented business applications, I believe ..."  That would avoid the vast majority of disagreements here, as it would be clear you're expressing an opinion from the point of view of developing in </em>'one<em>' specific domain, rather than attempting to make a general, cross-domain criticism that is intended (as it would typically appear) to apply to programming in general.</em> 
+      </p>
+      <p>
+        For the most part, I do. But I should point out that most of the claims made by OO proponents do not provide similar disclaimers. They imply OO and poly is good everywhere all the time. Let's agree we can all better apply promoting <a href="TheRightToolForTheJob.html">TheRightToolForTheJob</a>. Universal <a href="GoldenHammer.html">GoldenHammer</a> claims should aways be approached with skepticism. --top
+      </p>
+      <p>
+        <em>I've only seen you add such disclaimers when pressed against a wall, otherwise, your criticisms appear to be generic.  The proof of this is the fact that your claims frequently result in lengthy debates, only ending (or at least slowing down), when you indicate that you (for example) "won't challenge OO for being better for systems software, such as GUI engines."  I've not seen claims that OO and polymorphism are good </em>'all<strong> the time; generally such claims are of the form, "when you encounter problem <x>, OO and polymorphism can solve it using <y>."  This seems reasonable.  Remember that </strong><a href="WardsWiki.html">WardsWiki</a> was originally a pattern repository, in which patterns formalise precisely such scenarios.  If you have issues with the breathless advocacy of some OO texts and the like, take it up with their authors, not with us.<em></em>
+      </p>
+      <p>
+        Usually such debates are with people who are familiar with the scope of prior debates (or at least act like them). The fact that you admitted you've seen such disclimers multiple times <em>before</em> demonstrates that the "word is out". The pudding pooped out its proof. Thus, no conspiracy on my part. Your bias against me has a way of twisting all my actions in your mind into an evil conspiracy, such as "when pressed against the wall". Your bias has been caught red-handed again. Further, I am usually defending against a univerasally-implied OO claim. Thus I'm only obligated to show one domain example to show its not universal.--top
+      </p>
+      <p>
+        <em>I claim no "evil conspiracy" on your part, only that there's a pattern I've observed over time.  I suspect your personal revulsion at OO and the like gives you the impression that people are forcing it upon you, but they are not.  Enthusiasm for a given paradigm does not mean you have to use it, especially if you're successfully demonstrating the benefits of your alternative approach.  Are you?</em>
+      </p>
+      <p>
+        Somebody changed the text above to make it sound more diplomatic than it was. It used to say something like, "You only limit it to systems software when pressed against the wall". The wall comment was edited out since. As it originally stood, it sounded like an accusation of manipulation to me. Now I have *two* reasons to be paranoid. As far as OO, I do believe the industry is indeed indirectly forcing it upon us using hyped and overly global claims. --top
+      </p>
+      <p>
+        <em>I can assure you, no one changed the text.  I originally wrote, "I've only seen you add such disclaimers when pressed against a wall, otherwise, your criticisms appear to be generic," and it remains that way.  I don't believe your behaviour is intended to be manipulative, or that it </em>'is<strong> manipulative.  I merely state what I've observed -- you often start with a sweeping statement, a debate ensues, and it ends (mostly) when you make statements like "[I] won't challenge OO for being better for systems software, such as GUI engines."  The industry did not "force" OO upon you or anyone else, any more than breathless journalists, textbook authors, and management pundits normally do when expressing enthusiasm for something new -- as they have always done.  You can see it going on now with SOA and </strong><a href="WebServices.html">WebServices</a>.  Developers largely ignored the hype, as developers tend to do, but developers -- not journalists, textbook authors, or management pundits -- made OO popular because they <strong>liked</strong> it.  I, for example, <strong>liked</strong> it and still do.  However, I did not and do not regard it as the pinnacle of development paradigms.  With the current hype (now, thankfully, dying down somewhat) over SOA and <a href="WebServices.html">WebServices</a>, developers will choose what they like and drop the rest.  It will happen with the <a href="NextBigThing.html">NextBigThing</a>, too.  Use it or not as you see fit, but don't criticise it until you (a) understand it well, and (b) you have sound, justified, rational, evidence-based reasons to criticise it.  Otherwise, you will encounter yet more fruitless debates.<em></em>
+      </p>
+      <p>
+        Other's have made a similar observation about OO and business modeling. The term "impedance mismatch" was even coined for it without me even around. Biz modeling with DB's has a very different philosophy from OO, and <strong>they clash</strong>. One is about math-like predicates and set theory, and the other is about state machines that can reinvent their own operators without central rules. --top
+      </p>
+      <p>
+        <em>As I've argued elsewhere, the so-called "impedance mismatch" occurs when OO is naively misused to create business simulators instead of fact processors.  If your business application has database tables named Client, Employee, Invoice, Order, Product, and there are classes on the client-side named Client, Employee, Invoice, Order, and Product, and the two tables/classes are analogues of each other, then you've probably gone horribly wrong -- impedance mismatch will almost definitely result.  When the database is used to model information requirements, i.e., process facts, and the OO client is used to create computational artifacts that present and gather facts, then impedance mismatch is reduced or eliminated.  Thus, OO and the </em><a href="RelationalModel.html">RelationalModel</a> are complementary, not contradictory.<em> </em>
+      </p>
+      <p>
+        Perhaps our disagreement is not that large after all. Related topics: <a href="OopBizDomainGap.html">OopBizDomainGap</a>, <a href="ComputationalAbstractionTechniques.html">ComputationalAbstractionTechniques</a>
+      </p>
+      <p>
+        <em>Perhaps.  I was your correspondent on much of </em><a href="OopBizDomainGap.html">OopBizDomainGap</a> and <a href="ComputationalAbstractionTechniques.html">ComputationalAbstractionTechniques</a>.<em></em>
+      </p>
+      <hr/>
+      <p>
+        Another issue that "reality-tizes" your design is that all those may not be avialable as independant services. For example, if you choose a driver from company X, then its compression or caching options may be not avialable or have very different parameters than the drivers from company B. Thus, they may not be independent in the reality: vendors force a kind of bundling on you. You can't just polymorphically swap them and have the interface work the same without major rework.  (Some OO designers will say, "oh, well refactoring goes with the territory". But putting "rework" under a emphemism of "refactoring", they've think they got away with it. Not.)  --top
+      </p>
+      <p>
+        <em>Sorry, you've lost me here.  What's this "choose a driver from company X"?  Can you give me a concrete example?</em> -- DV
+      </p>
+      <p>
+        Put another way, unless there is heavy pressure to standardize the interface, the <strong>interfaces themselves will be different</strong> between vendors of non-trivial components/services. Thus plug-and-swap implimentation (polymorphism) won't work without a fair amount of code rework. 
+      </p>
+      <p>
+        <em>I agree.  While it may be possible to wrapperize the vendors' APIs and still benefit from a polymorphic interface, in some cases this may be more work than it's worth.  If so, it merely results in a fairly conventional procedural approach for handling the vendor APIs.  That does not, however, deprecate the value of using OO approaches in other parts of the application.  In this case, one bad apple does not spoil the barrel.</em>
+      </p>
+      <p>
+        I've been waiting 8 years for an inspectable good example :-)
+      </p>
+      <p>
+        <em>An inspectable good example of wrapperising a vendor's API?  Or something else?</em>
+      </p>
+      <p>
+        It was regarding "other parts of the application".
+      </p>
+      <hr/>
+      <p>
+        See also: <a href="QueryAndLoop.html">QueryAndLoop</a>, <a href="JavaIoClassesAreImpossibleToUnderstand.html">JavaIoClassesAreImpossibleToUnderstand</a>, <a href="ProgrammingWithoutRamDiskDichotomy.html">ProgrammingWithoutRamDiskDichotomy</a>, <a href="RemoteIterationIssue.html">RemoteIterationIssue</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryPolymorphism.html">CategoryPolymorphism</a>, <a href="CategoryExample.html">CategoryExample</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="AugustZeroSix.html">AugustZeroSix</a> and again <a href="SeptemberZeroEight.html">SeptemberZeroEight</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Send Receive Reply Eventually
+      </h1>
+      <p>
+        An <a href="InterProcessCommunication.html">InterProcessCommunication</a> variation of <a href="SendReceiveReply.html">SendReceiveReply</a> that returns a <strong>promise</strong> for a reply (related: <a href="FutureObjects.html">FutureObjects</a>, <a href="PromisePipelining.html">PromisePipelining</a>). This allows the caller to immediately continue operations and decide later whether or not to actually look at or wait upon the reply. This maps more closely to <a href="ActorsModel.html">ActorsModel</a>, is suitable for use in potentially distributed computations, and is used (with variations) in <a href="EeLanguage.html">EeLanguage</a>. 
+      </p>
+      <ul>
+        <li>
+           Process 1 does a "Send" to Process 2. The "send" immediately returns a <strong>promise</strong> for a later reply. Process 1 can continue concurrent operations.
+        </li>
+        <li>
+           Process 2 does a "Receive" and begins to handle the message from Process 1; while doing so, it may do other Sends (and possibly other receives with associated replies). In the meantime, Process 1 can continue concurrent operations.
+        </li>
+        <li>
+           Process 1 <strong>eventually</strong> decides it needs the reply from Process 2, and blocks on the promise. At this point Process 1 is <strong>reply-blocked</strong>.
+        </li>
+        <li>
+           After a while, Process 2 does a "Reply" to Process 1. Process 1 unblocks and can immediately process the message.
+        </li>
+      </ul>
+      <p>
+        It is also possible (and likely) that Process 1 won't decide to wait on the reply until after the reply, in which case there is no wait. It should be clear that <a href="SendReceiveReplyEventually.html">SendReceiveReplyEventually</a> offers considerably more concurrency than <a href="SendReceiveReply.html">SendReceiveReply</a>, and makes it easy for programmers to do work (such as calling several other services) in the time it takes for Process 2 to respond. It also admits to the IPC <a href="TailCallOptimization.html">TailCallOptimization</a> mentioned in <a href="SendReceiveReply.html">SendReceiveReply</a>. But this does prevent some optimizations enabled by <a href="SendReceiveReply.html">SendReceiveReply</a> (such as the ability to use ThreadControlBlocks as entries in the <a href="MessageQueue.html">MessageQueue</a>, ability to guarantee finite space requirements for <a href="MessagePassing.html">MessagePassing</a>).
+      </p>
+      <p>
+        When the reply is required, the programmer may either <strong>block</strong> on the promise or must offer some other mechanism to describe a computation that waits for the promise to be completed. Blocking on promises allows deadlock to occur in the same manner as <a href="SendReceiveReply.html">SendReceiveReply</a>. 
+      </p>
+      <p>
+        In case of communications error (e.g. dropped message, send to killed process) or deadlock, promises may be <em>broken</em>. A broken promise will throw an exception when later forced. If forced more than once, it will throw the same exception every time. 
+      </p>
+      <hr/>
+      <p>
+        Whereas <a href="SendReceiveReply.html">SendReceiveReply</a> claims to be motivated by <a href="ThreadsAreComputationalTasks.html">ThreadsAreComputationalTasks</a>, <a href="SendReceiveReplyEventually.html">SendReceiveReplyEventually</a> is more motivated by <a href="SplitOperatingSystemIntoServices.html">SplitOperatingSystemIntoServices</a>, treating each 'process' as a service that can be invoked to perform useful operations. Like <a href="SendReceiveReply.html">SendReceiveReply</a> and <a href="CommunicatingSequentialProcesses.html">CommunicatingSequentialProcesses</a>, but unlike pure <a href="ActorsModel.html">ActorsModel</a>, support for replies allows that these invocations include <strong>queries</strong> (requests for data or advice) that one may wait upon prior to continuing operation.
+      </p>
+      <hr/>
+      <p>
+        Note that <a href="SendReceiveReplyEventually.html">SendReceiveReplyEventually</a> does not imply <a href="PromisePipelining.html">PromisePipelining</a>. In particular, <a href="PromisePipelining.html">PromisePipelining</a> requires the ability to explicitly receive promises. Whether or not processes are allowed to receive promises from other processes is another design decision for the <a href="InterProcessCommunication.html">InterProcessCommunication</a>, but a great deal of caution is merited because <a href="PromisePipelining.html">PromisePipelining</a> can lead easily to cyclic dependencies in messages:
+      </p>
+      <code>
+        Process A:<br/>
+        p1 = B <- Mab<br/>
+        p2 = C <- p1<br/>
+        force p1<br/>
+        Process B:<br/>
+        reply C <- Mbc<br/>
+        Process C: <br/>
+        receives p1 first, stores it, <br/>
+        replies later to Mbc with 'p1'<br/>
+        End result: p1 = p1.<br/>
+      </code>
+      <p>
+        Even without <a href="PromisePipelining.html">PromisePipelining</a> (the ability to receive promises), one could put some useful semantics on <strong>sending</strong> promises. For example, the semantics could be to <em>asynchronously</em> force the promise if necessary to complete the send. And if promises are sent but not received <em>explicitly</em>, especially if there is no guarantee that one will wait on the promise if it turns out the value is unnecessary, then <a href="PromisePipelining.html">PromisePipelining</a> becomes viable as a safe optimization for <a href="FirstClass.html">FirstClass</a> process configurations.
+      </p>
+      <hr/>
+      <p>
+        Note also that <a href="SendReceiveReplyEventually.html">SendReceiveReplyEventually</a> also does not imply <a href="FutureObjects.html">FutureObjects</a>. That is, the ability to "send" a message <em>to</em> a promised object or actor, with the implicit effect being that the message will be delivered the moment said promise is resolved, should be considered a separate feature of the language. <a href="FutureObjects.html">FutureObjects</a> reduce program latency even further than do regular promises because the outgoing messages can be emitted even before the process that received the promise is aware that the promise has been resolved, the promised messages return their own promises, and one can then send messages to those as well. <a href="EeLanguage.html">EeLanguage</a> provides <a href="FutureObjects.html">FutureObjects</a> and calls this "Eventual Send".
+      </p>
+      <p>
+        While other programming paradigms might optimize latency even further (especially <a href="DataflowProgramming.html">DataflowProgramming</a>, rules-based, FunctionalReactiveProgrammming, and related analysis), it is difficult to beat EventuallySendReceiveReplyEventually for laziness and latency optimization while working in a procedural paradigm where most behaviors a program specifies are implicitly sequential.
+      </p>
+      <hr/>
+      <p>
+        Extracted from <a href="SendReceiveReply.html">SendReceiveReply</a>:
+      </p>
+      <p>
+        <strong></strong><a href="SendReceiveReply.html">SendReceiveReply</a> and Asynchronous Operations<strong></strong>
+      </p>
+      <p>
+        I was thinking about how to make <a href="SendReceiveReply.html">SendReceiveReply</a> converge with <a href="ActorsModel.html">ActorsModel</a>. Some thoughts:
+      </p>
+      <p>
+        <a href="SendReceiveReply.html">SendReceiveReply</a> converges with <a href="ActorsModel.html">ActorsModel</a> if every actor simply follows a pattern: 
+      </p>
+      <ol>
+        <li>
+           recv msg
+        </li>
+        <li>
+           reply with unit
+        </li>
+        <li>
+           do something with msg
+        </li>
+        <li>
+           loop 1
+        </li>
+      </ol>
+      <p>
+        However, step 3 cannot 'send' to other actors without blocking, which is a problem for many <a href="ActorsModel.html">ActorsModel</a> patterns. So, make a slight change to 'Send': Instead of becoming "send-blocked" when actor A sends message to actor B, actor A receives a <strong>promise</strong> for a reply. Actor A becomes "send-blocked" only upon calling for that promise, and even that only if a reply has not yet been received. Actor A may also be permitted to 'force' a promise in order to explicitly enter a send-block.
+      </p>
+      <p>
+        The following optimizations apply:
+      </p>
+      <ul>
+        <li>
+           If an actor always immediately replies with <strong>unit</strong>, this fact may simply be stated as part of the Actor's handle, type, or both. In this case, the return message can simply be optimized out of existence, which is useful in distributed systems. From a coding POV, one can also treat 'actors' that simply don't reply as being processes that always (and immediately) reply with <strong>unit</strong>. 
+        </li>
+        <li>
+           If a compiler can demonstrate that a promise is simply dropped/ignored/etc., then an automated optimization can very easily be applied where one simply delivers a 'nul' handle for the reply. In this case, too, the reply is dropped by the sender of the reply, which optimizes operations in a distributed network. Thus 'send <actor> <message>' without assignment of the return value will be the same as it was for plain <a href="ActorsModel.html">ActorsModel</a>.
+        </li>
+        <li>
+           Local optimizations that apply to <a href="ActorsModel.html">ActorsModel</a> continue to apply (i.e. a stateless actor that only forwards messages and never waits on replies may be processed as a synchronous procedure call).
+        </li>
+        <li>
+           Use of replies integrates nicely with <a href="TransactionalActorModel.html">TransactionalActorModel</a> if one drops the receive^n reply^n pattern for n > 1.
+        </li>
+        <li>
+           Actors may be allowed to specify any actor handle as the recipient for the reply, transforming it into a non-local continuation.
+        </li>
+      </ul>
+      <p>
+        The following optimizations are lost:
+      </p>
+      <ul>
+        <li>
+           Compared to <a href="SendReceiveReply.html">SendReceiveReply</a> without lazy replies, number of outgoing messages is no longer bounded by number of processes. Cannot simply queue up linked-lists of TCBs for purpose of message sends and waiting replies.
+        </li>
+        <li>
+           Compared to <a href="ActorsModel.html">ActorsModel</a>, may suffer deadlock and thus need to include extra processing to detect and handle it.
+        </li>
+      </ul>
+      <p>
+        If the main goal was to achieve the message resource limits optimization, this approach is harmful to that purpose; one would need to further implement something <em>atop</em> this model (like <a href="DataflowProgramming.html">DataflowProgramming</a>) to really achieve it. But if the goal is to simplify IPC or improve concurrency, this <a href="SendReceiveReply.html">SendReceiveReply</a>Lazily approach offers significant advantages over both the pure <a href="ActorsModel.html">ActorsModel</a> when it comes to coordination and the <a href="SendReceiveReply.html">SendReceiveReply</a> when it comes too cooperative interactions. The ability to 'query' an expert system, get the reply, and use that reply in making a decision... is <strong>hell</strong> to write in pure <a href="ActorsModel.html">ActorsModel</a>, but relatively straightforward with <a href="SendReceiveReply.html">SendReceiveReply</a>. And while this comes at cost of the ability to enter deadlocks while waiting on promises in any sort of call cycle (A sends to B, B sends to C, C sends to A, and all of them force the promise), the risk is greatly reduced  and several classes of interaction are possible that couldn't be done with regular <a href="SendReceiveReply.html">SendReceiveReply</a> due to the ability to lazily 'tie the knot' with cyclic references. For example: 
+      </p>
+      <code>
+        Regular <a href="SendReceiveReply.html">SendReceiveReply</a> would break:<br/>
+        A sends to B, waits on B<br/>
+        B sends to A, waits on A (note: not a 'reply' to A)<br/>
+        Deadlock!<br/>
+      </code>
+      <code>
+        <a href="SendReceiveReply.html">SendReceiveReply</a>Lazily, however:<br/>
+        A sends to B, drops a promise into a bucket, enters 'recv' state<br/>
+        B sends to A, asking for some extra information, waits on promise<br/>
+        A replies to B, enters recv state<br/>
+        B processes promise, replies to A, enters recv state<br/>
+        A now in recv state with fulfilled promise in bucket<br/>
+      </code>
+      <code>
+        and <a href="ActorsModel.html">ActorsModel</a> style using <a href="SendReceiveReply.html">SendReceiveReply</a>Lazily<br/>
+        A sends to B, ignores promise, goes on its merry way, enters recv state<br/>
+        B sends to A, asking for extra information, ignores promise, enters recv state<br/>
+        A replies with unit, sends answer to B, continues operations<br/>
+        B receives message, replies with unit, continues operations  <br/>
+      </code>
+      <p>
+        While one can still deadlock even with lazy replies in <a href="SendReceiveReply.html">SendReceiveReply</a> by forcing promises in a cycle, far fewer interactions will cause deadlock, and deadlock risk is greatly reduced and readily controlled by programmers of individual components. 
+      </p>
+      <p>
+        When deadlocks do occur, they can be heuristically guessed at by an environment (i.e. after noticing a send waiting on a process that is waiting on a reply for a while) then verified and handled.  Problem is figuring out what the heck to do with it. An advantage of plain <a href="SendReceiveReply.html">SendReceiveReply</a> is that one could simply toss an exception at the point where the process issued a 'send', but with the lazy <a href="SendReceiveReply.html">SendReceiveReply</a> such an exception might not occur until the 'promise' is located someplace like a collection value. One <em>could</em> translate it to a special 'error' value, but that's probably not the best universal choice.
+      </p>
+      <p>
+        In any case, while there are a few more details to iron out, this lazy form of <a href="SendReceiveReply.html">SendReceiveReply</a> seems like a mechanism I feel I could stand behind as "a synchronous <a href="InterProcessCommunication.html">InterProcessCommunication</a> mechanism that more <a href="OperatingSystem.html">OperatingSystem</a>s ought to be based on" for both local and distributed operating systems (I'm currently aiming to support a distributed system). I feel it resolves most of the complaints I described above. 
+      </p>
+      <hr/>
+      <p>
+        <strong>From </strong><a href="SendReceiveReply.html">SendReceiveReply</a>:<strong></strong>
+      </p>
+      <p>
+        <em>The idea that </em><a href="ThreadsAreComputationalTasks.html">ThreadsAreComputationalTasks</a> is of fundamental importance here: since the thread has <em>no other responsibilities</em> at the moment besides the one computational task it is carrying out, it is perfectly okay <em>and proper</em> for the thread to be blocked<em></em>
+      </p>
+      <p>
+        Disagree. Using <a href="ThreadsAreComputationalTasks.html">ThreadsAreComputationalTasks</a> as a reason or excuse to support <a href="SendReceiveReply.html">SendReceiveReply</a> mostly indicates a narrow view of what can constitute a computational task.
+      </p>
+      <p>
+        A Computational Task involves communication by nature. The fact that you've listed it in the context of <a href="SendReceiveReply.html">SendReceiveReply</a> is one indicator of this, but communication is such a fundamental component to computation that you can't avoid it even when solving a simple math problem in your head (where neurons communicate with one another) or a complex one on paper (where you read and write to paper). However, a computational task <strong>doesn't imply</strong> communication with <strong>just one</strong> other entity, be it the operating system, a cell represented within a memory service (like RAM), or a remote server of web-pages. A computation can require initiating communications with many different agents, and <a href="SendReceiveReply.html">SendReceiveReply</a> would make this extremely difficult. Similarly, a computational task doesn't necessarily require a reply as a consequence of every communication - the example you're probably most familiar with being the communication to store a value into a memory cell (e.g. store the value '3' into RAM) so that the computation can return to that value at a later time; however, it's just as legit for a computational task (esp. of the non-deterministic sort) to start a bunch of other computational tasks, and wait for replies about successes or failures.
+      </p>
+      <p>
+        <em>... synchronous </em><a href="InterProcessCommunication.html">InterProcessCommunication</a> mechanism <strong>that more </strong><a href="OperatingSystem.html">OperatingSystem</a>s ought to be based on<em></em>'
+      </p>
+      <p>
+        Disagree. <a href="OperatingSystem.html">OperatingSystem</a>s ought to be designed as a collection of services, not as a collection of computational tasks. Applications and Processes that run on an <a href="OperatingSystem.html">OperatingSystem</a> aren't really separate from the <a href="OperatingSystem.html">OperatingSystem</a>; they're just user-defined or user-initiated services. Services (and processes) don't need any threads at all unless they are actively computing, but when they are computing their computations and operations can easily require communication with a large number of other services.
+      </p>
+      <p>
+        Better for <a href="OperatingSystem.html">OperatingSystem</a> design is to block ONLY when a computation can't continue without receiving a message, or WaitForMessage. Sending never blocks. If one wishes something like <a href="SendReceiveReply.html">SendReceiveReply</a> as an -optimization- for the common case where one can't continue the computation prior to receiving the reply, then that is acceptable... but it shouldn't be what <a href="OperatingSystem.html">OperatingSystem</a>s are based on.
+      </p>
+      <hr/>
+      <p>
+        For me, <a href="SendReceiveReply.html">SendReceiveReply</a>(Lazily), leaves one sticky issue that I'm not particularly fond of: <em>"Process 2 may do other Receives in the meantime"</em>. One might call this Receive^N Reply^N capability, since one can receive more than once then reply more than once.
+      </p>
+      <ul>
+        <li>
+           On the plus side, Receive^N Reply^N capability readily allows a variety of mechanical synchronization patterns to be implemented using <a href="SendReceiveReply.html">SendReceiveReply</a>... in particular, one can implement semaphores, mutexes, bounded buffers, etc.
+        </li>
+        <li>
+           On the minus side, use of the Receive^N Reply^N pattern forces Process 2 to <em>explicitly</em> track which processes require a reply, complicates reasoning about the call graph, localizes all decisions on process progress (i.e. semaphores local rather than priority-preempted transactions, bounded queues rather than intelligent scheduler), pretty much eliminates ability to integrate process model with any variation of <a href="TransactionalActorModel.html">TransactionalActorModel</a>, harms ad-hoc composability of system services (mashups), runs contrary to driving notion of processes being "computational tasks" (because now some 'processes' become 'synchronization primitives'), and makes simple notions of correctness for individual processes (i.e. that each receive is matched with exactly one reply) <em>far</em> more difficult to verify (since the callee data can be stored in collections or variables while awaiting replies).
+        </li>
+      </ul>
+      <p>
+        Many workflow patterns are still readily possible without Receive^N Reply^N. For example, if an actor needs ten 'pieces' to continue its work, it can query ten different actors, fetch those parts, force the promises, then continue. Alternatively, it can simply enter the 'recv' state ten times, gathering the ten pieces before continuing (albeit this latter approach is not nearly so amenable to transaction). Actors may also subscribe to signaling messages by passing their handle to an observer that can later call them when relevant events have been observed. But, without Recv^N Reply^N, it becomes quite difficult to implement semaphores, mutexes, bounded buffers, etc. It may still be possible, but if it is it will some roundabout mechanism that involves internally queuing messages while <em>waiting</em> on a <em>specific</em> event that will ultimately be caused by some other transaction. 
+      </p>
+      <p>
+        Does anyone see something I'm not seeing regarding Recv^N Reply^N? Any patterns, other than mechanical synchronization, that greatly benefit from it? I'm trying to get the correct information before making a language-design decision with it.
+      </p>
+      <p>
+        It seems <a href="JoinCalculus.html">JoinCalculus</a> (a modification of <a href="PiCalculus.html">PiCalculus</a>) relies heavily upon the Recv^N Reply^N pattern. I'll discuss this calculus in another page.
+      </p>
+      <hr/>
+      <p>
+        The XCB library is built on this model. The <a href="XwindowProtocol.html">XwindowProtocol</a> has a stream of commands from the client and a stream of replies, events, and errors back from the server. Only some of the commands have replies, and asynchronous events and errors are mixed in the response stream, so a pure RPC model won't be very efficient.  The XCB library models this by separating commands and replies using a "cookie", which represents a promise. This gives the client the freedom to send a batch of commands obtaining a bunch of cookies, and then forcing the cookies later. This ends up reducing latency a great deal, most notably at X client startup.
+      </p>
+      <p>
+        The designers of XCB are fans of <a href="HaskellLanguage.html">HaskellLanguage</a> and its <a href="LazyEvaluation.html">LazyEvaluation</a>, and it shows.
+      </p>
+    </div>
+  </body>
+</html>

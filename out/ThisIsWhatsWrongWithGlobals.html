@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        This Is Whats Wrong With Globals
+      </h1>
+      <p>
+        Here is a summary of the "What is wrong with Globals?" thread on the yahoogroups refactoring list, distilled, summarised and aimed at particular small group of embedded C coders. - <a href="JohnCarter.html">JohnCarter</a>
+      </p>
+      <p>
+        <em>May I suggest you rename it to </em>ThisIsWhatsWrongWithCeeGlobals. There are already topics about globals in general.<em></em>
+      </p>
+      <p>
+        Can you list a few?  That would help with linking, combining, and reorganizing the pages.
+      </p>
+      <hr/>
+      <p>
+        There are three major problems here.
+      </p>
+      <p>
+        <strong>1) Thread safety - (Race conditions and deadlocks)</strong>
+      </p>
+      <p>
+        Use of global variables to communicate between threads introduce an exciting new dimension to bug creation, finding and removal.
+      </p>
+      <p>
+        Typically the application suffers from race conditions and/or dead locks,
+        which are...
+      </p>
+      <ul>
+        <li>
+           amazingly sporadic and usually only found by the customer,
+        </li>
+        <li>
+           and magically disappear when confronted by a debugger.
+        </li>
+      </ul>
+      <p>
+        Splattering the code with the "volatile" keyword and mutexes, whilst a vital and important activity, tends to merely turn race conditions into deadlocks.
+      </p>
+      <p>
+        The solution is to _not_ communicate between scheduling contexts with globals, but use messages instead.
+      </p>
+      <p>
+        Exceptions to this rule should be very limited, very well reviewed and very well documented.
+      </p>
+      <p>
+        This is a multi-threaded application with preemptive scheduler. If an ISR or DSR posts a message, the currently running thread is replaced with the highest priority currently runnable thread.
+      </p>
+      <p>
+        ie. If you are happily coding along thinking, this is a "Process message, Run to Completion" system. Shit is about to happen.
+      </p>
+      <p>
+        Big time.
+      </p>
+      <p>
+        Err. Umm. You guys that are and should be communicating via shared globals, eg. share memory pooled, database, io layer, system error handling, you are remembering the "volatile" keyword aren't you?
+      </p>
+      <p>
+        Mutexes are _not_ enough.
+      </p>
+      <p>
+        <strong>2) Name space clashes.</strong>
+      </p>
+      <p>
+        It is interesting to note that we have at least 97 static variables with the same name scattered around the code. The "static" keyword has prevented these instances from been overlayed onto the same memory.
+      </p>
+      <p>
+        One is left wondering how many of the other 766 global variables are accidental name matches that will cause the most amazingly difficult to find bugs.
+      </p>
+      <p>
+        This is why the coding standard requires you to use a module "prefix_" on all global variable names.
+      </p>
+      <p>
+        It is also important to use header files rather than the "extern" declaration in .c files. For example :- If you had say in file A.c
+      </p>
+      <code>
+        extern int16_t moduleb_global;<br/>
+      </code>
+      <p>
+        and in module B.c
+      </p>
+      <code>
+        extern uint16_t moduleb_global;<br/>
+      </code>
+      <p>
+        You would have received a warning from splint, which, since the splint manual warps your mind, you have switched off with 
+      </p>
+      <code>
+        /*@-exportheadervar@*/.<br/>
+      </code>
+      <p>
+        Having silenced splint, the compiler won't warn you and the linker would happily overlay an uint16_t over the exact same memory as an int16_t.
+      </p>
+      <p>
+        And you will simply never ever find out until the customer starts bellowing in your ear.
+      </p>
+      <p>
+        <strong>3) Understandability and Maintainability. (This really is the big one.)</strong>
+      </p>
+      <p>
+        Good Design is essentially how little you have to read to understand a section of code.
+      </p>
+      <p>
+        So to understand any code that touches a global, you first have to (in the torso) search _all_ 141774 non-comment non-blank lines in 620 .c files for references to these variables and understand them.
+      </p>
+      <p>
+        Consider this very simple code segment.
+      </p>
+      <code>
+        doStuffWith(a);<br/>
+        doStuffWith(b);<br/>
+      </code>
+      <p>
+        Can you swap those two lines of code?
+      </p>
+      <p>
+        You don't know.
+      </p>
+      <p>
+        Not until you have considered the effect of doing so on _every_ global _and_ static variable referenced by the function "doStuffWith"" _and_ _every_ function invoked by it recursively.
+      </p>
+      <p>
+        The presence of globals makes code, stiff, inflexible, fragile.
+      </p>
+      <p>
+        If a global variable changes, who or what changed it when and why? You don't know and you will have a very hard job finding out.
+      </p>
+      <p>
+        Globals makes code exceedingly hard to extend, enhance, debug or refactor.
+      </p>
+      <hr/>
+      <p>
+        <strong>So what to do instead of globals?</strong>
+      </p>
+      <p>
+        <strong>Action 1) Decrease the scope of them.</strong>
+      </p>
+      <ol>
+        <li>
+          a) Try turn _every_ global you use into a file scoped static. (Simply put a "static" in front of it, and take it out of the header file.)
+        </li>
+      </ol>
+      <p>
+        The compiler and linker will whinge if you can't do that.
+      </p>
+      <p>
+        When the compiler whinges about it, consider wrapping the global in a "getter". This documents to yourself and your successors _and_ enforces that the only external references to this object is "read only".
+      </p>
+      <p>
+        Very useful.
+      </p>
+      <p>
+        Appended is a list of candidate variables that probably should be static. (They only have one external reference)
+      </p>
+      <ol>
+        <li>
+          b) Try turn _every_ file scoped static you use into a function scoped static.
+        </li>
+      </ol>
+      <p>
+        If the compiler whinges, consider passing the variable as a parameter. Yes, I know you can save a byte or two and a clock cycle or two by using a static, but premature optimization is the root of all evil.
+      </p>
+      <ol>
+        <li>
+          c) Then try turn every function scoped static into an automatic variable.
+        </li>
+      </ol>
+      <p>
+        The bad news is you have to think a bit for this one. Check to see if it wasn't carrying state from one invocation to the next.
+      </p>
+      <p>
+        The good news is it decreases the memory footprint without increasing any cost.
+      </p>
+      <p>
+        <strong>Action 2) Restructure code to eliminate flag passing.</strong>
+      </p>
+      <p>
+        Look out for globals or parameters passing flags around, you usually can get rid of them by restructuring your code. Hint: They are typically a "bool_t"
+      </p>
+      <p>
+        <strong>Action 3) Make them "const".</strong>
+      </p>
+      <p>
+        Yes, I know this is a resource constrained embedded system. So sometimes globals are just too useful to pass up. Consider making them "const". This is good from several points of view.
+      </p>
+      <ul>
+        <li>
+           It documents something important about the system.
+        </li>
+        <li>
+           The compiler / linker enforces this design decision.
+        </li>
+        <li>
+           The compiler can perform several optimizations.
+        </li>
+        <li>
+           Immutable globals are simply less evil. Many of the dangers of   globals simply don't apply to them.
+        </li>
+      </ul>
+      <p>
+        <strong>Action 4) Using parameter passing instead.</strong>
+      </p>
+      <p>
+        Parameter passing clearly defines the dataflow within the application.
+      </p>
+      <p>
+        Premature optimization is the root of all coding evil.
+      </p>
+      <hr/>
+      <p>
+        see <a href="http://groups.yahoo.com/group/refactoring/message/5287">http://groups.yahoo.com/group/refactoring/message/5287</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryScope.html">CategoryScope</a>
+      </p>
+    </div>
+  </body>
+</html>

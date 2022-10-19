@@ -1,0 +1,111 @@
+C++ separates destructor semantics from memory-freeing semantics, and allows for garbage collection, though this is not much used. A well-known garbage collector for both C and C++ is HansBoehm's GC, available from:
+
+http://www.hpl.hp.com/personal/Hans_Boehm/gc
+
+'There is also Great''''''Circle from Geodesic Systems.' -- ThaddeusOlczyk
+
+The semantics of GC in C++ is discussed in section C.9 of The C++ Programming Language (3rd ed.):
+
+''In the presence of a garbage collector,''
+
+ delete p; 
+
+''invokes the destructor for the object pointed to by'' '''p''' ''(if any). However, reuse of the memory can be postponed until it is collected.''
+
+And,
+
+''When an object is about to be recycled by the garbage collector, two alternatives exist: (1) Call the destructor (if any) for the object, (2) Treat the object as raw memory (don't call its destructor).''
+
+''By default, a garbage collector should choose option (2) [...] It is possible to design a garbage collector to invoke the destructors for objects that have been specifically "registered" with the collector [...]''
+
+So in general it is not the case that a GC must invoke destructor methods, though it may invoke them or something like them if registered via some finalization scheme. Of course, this means that dynamic-lifetime ('''new'''-allocated) objects with resources other than memory should be released by the '''delete''' operator at an appropriate time, but that's true of such an object in any case (modulo what you call the release method). -- JimPerry
+
+It's not that hard. In order to make this work, all newed objects suddenly need to carry with them a pointer to their destructor in the heap block prefix segment (the overhead chunk usually required to allocate space on the heap). If you explicitly delete the object yourself, you burn the pointer to the destructor by setting it to 0. When the GC flies through, it just calls any non-null destructor. -- SunirShah
+
+----
+
+The GC issue is deeper than how programmers want to think, the issue is that the basic semantics of C++-style object destruction preclude efficient garbage collection. We discovered this at ComponentSoftware? and the Java team discovered it again with Java. It isn't the "thinking about memory management" that is the rub... most experienced Smalltalk VM developers think about memory management. The issue is that C++ destructor semantics require to explicitly declare a moment when an object is destroyed, and *then* perform one of its methods (namely its destructor).
+
+This has several terrible consequences: the GC must invoke methods on objects that are known to be dead (else the GC shouldn't be destroying it), the GC must find and touch every dead object instead of touching just the live ones (making the GC overhead proportional to the size of the object space instead of the number of live objects), and each object creator must know when the object becomes dead (introducing deadly overhead for the most common kind of smalltalk object: dynamic, short-lived objects). The problem is that incremental, efficient garbage collection *can't* be implemented in C++ while conforming to destructor semantics, no matter how experienced or dedicated the programmer. (copied from GeneratingCppFromSmalltalk) -- TomStambaugh
+
+----
+"The issue is that C++ destructor semantics require to explicitly declare a moment when an object is destroyed, and *then* perform one of its methods (namely its destructor)."
+
+No these are simultaneous. -- ThaddeusOlczyk
+
+----
+"This has several terrible consequences: the GC must invoke methods on objects that are known to be dead (else the GC shouldn't be destroying it),"
+
+It invokes the destructor of live, unreferenced objects. Not dead objects. The only dead objects would be those that were explicitly deleted. The GC should not see those. -- ThaddeusOlczyk
+
+In GC-speak, "live" means that an object might still participate in some future computation. An unreferenced object is by definition "dead". That is, provided you use the definition of "dead" that is common in GC circles. -- StephanHouben
+
+''An unreferenced object is by definition "dead".'' - No it's not. The second definition you've given contradicts the first one. An object that will have a function (its destructor) called on it is by definition live, since it might participate in some future computation (and if the destructor just issues a message like "Bye bye, I'm gone!"). This is what caused the many ObjectFinalizationHeadaches in JavaLanguage and what lead to the introduction of PhantomReference''''''s. See for example:
+
+http://blogs.msdn.com/cbrumme/archive/2004/02/20/77460.aspx
+
+-- ArneVogel
+
+I had thought so, but my copy of Jones&Lins is buried. Taken within that context, much of what Tom says just doesn't make sense. -- ThaddeusOlczyk
+
+This particular argument doesn't make sense in that context, but the next one does. If the definition of "dead" is "unreferenced but not destroyed" then it's fine for the garbage collector to call a method that does the destruction and then makes the memory available. Calling a method ''after'' the object is destroyed is, of course, a big no-no. -- PhilGoodwin
+
+----
+"the GC must find and touch every dead object instead of touching just the live ones (making the GC overhead proportional to the size of the object space instead of the number of live objects)"
+
+The GC should not even see dead objects. The only objects the GC should see are the objects that a GC would see in an language, the live and unreferenced but not yet dead ones. -- ThaddeusOlczyk
+
+Here Tom means "dead" as in "unreferenced" for sure. The problem is that, if you are going to use a copying collector (which I believe is the most efficient kind), then you don't want to have to visit all of the objects that are to be reclaimed in order to destroy them. This indicates to me that memory management and object destruction are two different concepts who's semantics cannot always be combined as the material quoted from ''The C++ Programming Language'' above seems to indicate. -- PhilGoodwin
+----
+
+''Heya Tom. I'll grant that MarkAndSweep isn't something you see in most C++ programs, but ReferenceCounting classes that automagically detect and feed dead objects to GC schedulers/threads are ubiquitous in larger C++ apps and quite unproblematic so far as I know. I'll grant that the lack of any builtin GC in C++ is silly, but it's not unmanageable. Sure better than having to explicitly chain finalize methods in java ...'' -- PeterMerel
+
+Actually C++ is one of the best places to learn about garbage collection since you can hang on a garbage collector and play with it. For example I've heard some people who've played with garbage collectors claim that they are better scheduled as a high priority thread. You can't experiment like this with a language with built-in GC. You're stuck with what the language vendor gave you.
+
+The most curious thing is that you can add C++ garbage collection. Either free or commercial (costly, but not expensive). So if GC is so important, why isn't here more of a usage of GC in C++? -- ThaddeusOlczyk
+
+''The real hassle here is that new C++ programmers who might want to get ReferenceCounting to work with, say, threads and exceptions, have got to learn a hellubalot of the language before they can actually get any real work done.'' -- PeterMerel I don't think this is necessarily true. What I do is provide boost::shared_ptr<> (or similar) typedefs for all of the on-heap classes, make the constructors private, and provide factory methods that return the shared pointers. Then I tell the newbie programmers that they're not allowed to use new, delete, malloc, free, or any sort of cast. That solves 99% of all the problems, and isn't hard to learn for the newbie. If they find they can't do something, it's either because (a) they shouldn't be doing it, or (b) I've neglected to provide a facility for it. In the case of (a), they get a short lecture, and in the case of (b) I design a new facility.
+
+I'm sure that managers think that is a bad thing, but I'm not sure it is. In fact it may be a plus. -- ThaddeusOlczyk
+
+''A plus? Please explain (and delete this line afterwards).''
+
+''It seems like there's some missing context to Tom's statement above. Is the discussion specifically about translating to Smalltalk to C++ or about coding C++ in Smalltalk style? Or is it more generally about just the possibility of using garbage collection in C++? The distinction is important, because C++ programmers typically deal with the expense associated with lots of temporary objects by the simple expedient of allocating them on the stack. This is certainly not as flexible as allocating objects on the heap, but (at least in my experience) it works well enough, and in C++ you always have the choice about whether to allocate on the stack or from the heap.'' -- CurtisBartley
+
+This is what many C++ detractors don't understand - there is hardly ever a need for "true" garbage collection in C++. Automatic allocation (on the stack or in composite objects) easily solves 70% of all memory allocation issues easily and efficiently. Temporaries help a lot in this regard. Containers solve another 20%. Auto-pointers and Boost scoped pointers another 5%, and Boost shared pointers and the odd weak pointer almost always solve the remaining 5%. The few times that a marking collector is actually needed, it can be supplied, because libraries do exist. There is no need to solve the "garbage collection problem" in C++, because there usually isn't a problem. See ResourceAcquisitionIsInitialization. -- ArneVogel
+
+----
+In Smalltalk (and Java) we have finalization, which seems to raise many of the issues that Tom raises over destruction. For example, GC must find and touch all dead objects to run their finalizers. In practice, a good GC will separate those objects which have non-trivial finalizers and treat them specially. Ordinary objects are not affected. You only pay for what you use. Admittedly, in normal C++ many objects have non-trivial destructors, but in C++ with GC you should not need destructors nearly as often. After all, few objects need finalizers in Smalltalk and Java.
+
+The main difference is that a finalizer does not destroy its object. In Java or Smalltalk a finalizer can make its object "live" again, and not much harm is done because it still keeps its integrity, where-as to touch a C++ object after its destructor is run would give undefined behaviour. (Intuitively, its vtbl would be knackered.) However, revitalising an object in its destructor is a mistake in C++ whether or not GC is used. And anyway, the C++PL at the top of this page is saying that GC does not need to run destructors at all. The semantics of C++ GC just aren't what Tom says they are.
+
+Although explicitly calling delete ''should'' run the destructor, I think such calls should be forbidden in GC'd code because it would have the disadvantage of destroying the object without the advantage of reclaiming memory. It would always be better to call a normal method instead - perhaps one called "close" or some such.
+
+Destructors should be invoked as normal for stack objects. ResourceAcquisitionIsInitialization is a still a useful idiom. -- DaveHarris
+----
+
+''When an object is about to be recycled by the garbage collector, two alternatives exist: (1) Call the destructor (if any) for the object, (2) Treat the object as raw memory (don't call its destructor).''
+
+The option (1) would make sense to me, but can someone help me with (2), which is the default? What is the use of a garbage collector if I have to call delete anyhow? It is ok for me if I have to register objects which might need to be collected, but if I delete the objects anyhow, they can be collected at this moment.
+
+''You call delete to call the destructor. a) You don't have to delete non-object types e.g. "delete new int" is unnecessary; b) you don't have to make a slooooow call to the heapstore management. The heap is by far one of the slowest things on a typical computer, and if you aren't garbage collecting, a very dynamic application will make multiple calls to the slow heapstore manager during a typical destruction. In theory, though rarely in practice, a garbage collector can run faster than manual memory management. Write a perfect collector, earn your savings.''
+----
+
+What, IMHO, is missing in the above discussion is the crucial difference between a (C++-style) destructor, which is supposed to deconstruct an object (and free its resources), and a (java-style) finalizer, for which I haven't found a valid purpose yet. Consider a file object, i.e. an object that holds a non-memory resource. With destructors, you can close the file in the destructor and this is fine, while in language with only finalizers, you have to write your own destructor for that purpose, as there is no guarantee that a finalizer will be called, ever (some people suggested coding the finalizer to work even when called multipel times, and just call the finelize method instead). A great number of resource leaks (filehandles, ui-windows, threads etc.) are due to people believing that a finalizer's purpose is to clean up this non-memory resources that the GC won't free for them. A finalizer, however, cannot be used for that purpose, but a C++-style destructor can.
+
+In short, finalizers are not useful for freeing non-memory-resources (it might never be called, and in many java applications, often is indeed never being called), and neither useful for memory-resources, as the GC takes care of it.
+
+The reason why one should call "delete p" for objects with destructors is this non-memory resource clean-up. The advantage on having to call "delete p" and still having a GC around is that a GC might be able to reclaim memory more efficiently then repeated calls to "free()", as "delete p" is _only_ a call to the destructor, while "free()" might be more costly. -- Schmorp
+
+----
+
+One general problem with GarbageCollection (in C++ or elsewhere) is that it only works with the resource being managed (heap memory) is abundant. GC gives terrible performance (or even causes programs to terminate due to lack of memory) when the high-water-mark of the resource usage starts even to get close to the available resource pool (form most garbage collectors, multipliers ranging from 2x to 7x! are recommended). We will call such resources ''scarce''.
+
+Destructors in C++ have two uses: One is to manage memory; a usage which can be "taken over" by a GC. The other is to dispose of resources which are out of the GC's control, such as file handles and other OS resources, window resources, etc. On many systems, these non-GC-supported resources are scarce. As mentioned above, Java finalizers are known to not work with scarce resources; which is why Java window objects have dispose() methods - to manually release these scarce resources.
+
+C++ destructors are suitable for scarce resources, when manually invoked. Java finalizers, as discussed above, are not, as the finalizer might never run.
+
+With that in mind, the advice given by BjarneStroustrup seems correct - destructors should run when explicitly told to do so (via delete, an explicit dtor call, etc). Management of scarce resources should remain manual only; one should not depend on the GC to release them.
+
+----
+CategoryCpp CategoryGarbageCollection

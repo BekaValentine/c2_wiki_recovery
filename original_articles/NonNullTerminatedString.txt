@@ -1,0 +1,139 @@
+''Two strings walk into a bar. The bartender says, "What'll it be?". The first string says, "I'll have a gin and tonic#MV*()>SDk+!^ &@P&]JEA&#65535;Segmentation Fault". The second string says, "You'll have to excuse my friend, he's not null-terminated."''
+
+----
+
+A rather common source of nasty bugs in CeeLanguage (and to a lesser text, CeePlusPlus; though this only affects CharStar''''''s and not the C++ standard library string class, which has its own StringClassProblem''''''s).
+
+A string in C is simply an array of characters, with the final character set to the NUL character (ascii/unicode point 0). This null-terminator is ''required''; a string is ill-formed if it isn't there. The string literal token in C/C++ ("string") guarantees this.
+ const char *str = "foo";
+is the same as
+ const char *str = {'f', 'o', 'o', 0};
+The length of a string as returned by strlen() and similar functions is ''one less'' than the amount of storage required. Note that the length is ''not'' stored anywhere explicitly; to determine the length of a string one simply advances a pointer until one finds a null; counting characters on the way. (In other words, strlen() requires O(n) time and not O(1) time to compute - a curiosity in a language priding itself on performance).  See StringWithoutLength (an AntiPattern).
+
+What happens if a string that ''isn't'' null-terminated gets passed to strlen()? UndefinedBehavior. strlen(), when given such a beast, will keep searching memory until it a) finds a null character; or b) hits an address that causes a memory protection fault of some sort (or worse). strlen(), at least, is read-only; so it won't corrupt data.
+
+Functions like strcpy(), on the other hand, will cause all sorts of death and destruction when passed NonNullTerminatedString''''''s.
+
+Functions like printf(), which do strange things based on the string passed in, are a common source of security exploits in CeeLanguage. See FormatStringAttack 
+
+To make matters worse... many targets of functions like strcpy are bounded (fixed-size) buffers; the designers of the C library correctly figured that use of unbounded copy functions like strcpy() is not a good idea; hence they provided a similar function strncpy(), which takes a third argument - the maximum length to copy. strncpy(dst,src,len) will copy bytes from src to dst, until either ''len'' bytes are copied, or a null in ''src'' is encountered, whichever comes first. If the null character in ''src'' is encountered, it is copied, and all is well. However, if ''len'' bytes are copied; strncpy exits, ''without copying a terminating null''. In other words, the destination string is '''not null terminated'''.
+
+Programmers aware of this pitfall have ways to code around it - either by calling strncpy() with one less than the buffer size, and explicitly making sure that the destination string is null-terminated. Many libraries for C provide "safer" versions of strncpy that guarantee that the destination string is null-terminated. However, this is a major source of bugs in C.
+
+''Unhappily, strncpy() returns only the '''address''' of the destination string. This is unfortunate and ironic: you already know where you copied the string (you passed it as a parameter), and what you '''don't''' know (and it doesn't tell you) is '''how many bytes''' were copied. A return value of the number of bytes copied would be more useful, and allow you to write code like this'':
+  bytescopied = strncpy(dest, src, maxbytes);
+  if (bytescopied < 0) { // indicates no bytes copied, parameter error
+    throw(fit);          // error handler stuff here
+  } else if (bytescopied == maxbytes) {
+    dest[maxbytes-1] = '\0';   // force null terminator
+  }
+''assuming that there is some compelling need to have a null-terminated destination string.''
+
+There always is - read above. Most library functions expect it and will crash without it.
+
+''always is ... except in some of my programs where I '''don't''' use any form of strcpy(), but memcpy() instead. Some of my ETL code (data warehouse stuff) uses structure assignment and memcpy() to move "strings" around, with specific code to remove control characters and nulls. Any code that requires a "string" in this context uses a string that I build, with guaranteed null-termination. I've been bitten by that snake before.''
+
+The question of whether '''strncpy''' did or did not copy the null byte is moot, the simple solution is always to put a null in the last place of the destination.
+  strncpy(dest, src, buffsize-1);
+  dest[buffsize-1] = 0;
+Do the analysis:
+* Strings must always be null-terminated
+* strncpy may result in a string that's not null-terminated
+* I must null-terminate the destination string
+* I don't know where it stopped
+* If it stopped early then it doesn't matter, it's already null-terminated
+* If it didn't stop early then it filled the buffer
+* If it filled the buffer then I should null-terminate in the last possible position.
+We '''always''' include this sort of analysis either in comments in the code or in a separate "cookbook" of reasons. This is equivalent to showing that the code avoids certain failure modes, something that's hard to do in UnitTest''''''s. Question: How could you recode this to make the reasons clear from the code and thereby make the comment redundant?
+
+''Define a safestrncpy() function that forces the null byte, and always use that.''
+
+And where/how do you document '''why''' it is safe?
+
+''Define a function copyStringWithoutOverflowingBufferAndEnsureNullTermination(). :P''
+
+That is still saying what it does, it is not saying why it can be done like this. It seems that every time I try to make this point no one understands what I'm saying. The analysis above shows why putting a zero in the last place of the destination buffer is always the right thing to do. Without the analysis you may see that it works without understanding why. I believe the why should be documented. Where can I put that if not in a comment? Your suggested naming of the function does not solve this problem, and I am interested in learning whether anyone has solved it.
+
+''Partially. DesignByContract.''
+
+DBC as I understand (and use) it still does not address the question of why. It gives preconditions that must be met by the caller and postconditions that are guaranteed by the routine. It still does not say *why* the code given is right.
+
+* You are correct about DBC, but at least it is very specific about '''what''' must be. I don't think any programming language has ever had a facility to say "why" anything must be done. In fact, in the general case that is '''impossible''', since it usually involves actual understanding of the problem domain, which is AI complete and thus beyond state of the art. Furthermore, we humans also do not always know '''why''' we do things; in many cases we only know '''how''' to do things.
+*...which makes me wonder if you're saying something other than what you really mean.
+
+[Put it in the comments.  Or the documentation.  The issue of documenting the "why" is orthgonal, really, to the issue of whether or not null-terminated strings are a good idea.]
+----
+
+Another solution is to use strncat() on an empty string. strncat() always null-terminates the string. Unfortunately, strncat() has another pitfall where you must remember to subtract 1 from the buffer size, or it will overflow:
+
+  char dest[buffsize] = "";
+  strncat(dest, src, buffsize-1);
+
+----
+
+http://en.wikipedia.org/wiki/Strlcpy
+
+strlcpy and strlcat are what you want. They both takes the buffer size and ensure null termination. Here are the prototypes from the OpenBSD project:
+
+ /*
+  * Copy src to string dst of size siz. At most siz-1 characters
+  * will be copied. Always NUL terminates (unless siz == 0).
+  * Returns strlen(src); if retval >= siz, truncation occurred.
+  */
+ size_t
+ strlcpy(char *dst, const char *src, size_t siz)
+
+ /*
+  * Appends src to string dst of size siz (unlike strncat, siz is the
+  * full size of dst, not space left). At most siz-1 characters
+  * will be copied. Always NUL terminates (unless siz <= strlen(dst)).
+  * Returns strlen(src) + MIN(siz, strlen(initial dst)).
+  * If retval >= siz, truncation occurred.
+  */
+ size_t
+ strlcat(char *dst, const char *src, size_t siz)
+-- MikeWeller 
+----
+Let's try this: ''much better, thanks.''
+
+People who have been using C/C++ professionally for any length of time are quite used to the vagaries of NUL/NULL. In fact, they even know the difference! [See note, below.] This page only makes sense in the context of a warning to those whose careers have not yet included a number of years of C/C++ program development. Otherwise all the discussion of the Nasty Things That Can Happen When Strings Aren't NUL Terminated is kinda like preaching to the choir, ain't it? If there are professionals who feel that C/C++ string manipulation is simply too dangerous and fraught with pitfalls then by all means ''switch to a different language''. Please don't try to convince the rest of us that strings are time bombs waiting to explode at the drop of a NUL.
+
+Note: NUL is the ASCII character whose code is 0; NULL is a pointer whose value is 0. The character is one byte; the pointer is whatever size it is cast to be.
+----
+''I'm the author of this page, and I've been using C and NUL-terminated strings for quite a while, too (not 20 years, though...) The purpose of the page is not to call for abandonment of C; instead to educate the user on why this is an important concern for C programmers, and how to avoid this particular pitfall - the consequences of which can be nasty.''
+
+''Obviously, one solution to the problem is to program in something else - for some applications, that may be a good idea (and for reasons besides this page). For other applications, C (or C++) is a better choice than Java, Smalltalk, or Lisp - in which case, the issues described herein will need to be confronted.''
+
+''Suggestions that Java/Smalltalk/Lisp are for "lesser" programmers are not at all helpful.''
+
+Ahh, but the suggestion was to avoid a language that would be a source of grief - not any indication that "lesser" developers would choose to use it. Only OldFart''''''s with bookoo experience would appreciate the "shortfalls" of systems languages like C/C++ or assembly and accept those risks as naturally as breathing. 
+
+''It isn't even that simple. It wouldn't be hard to find a Lisp programmer who has been coding Lisp longer that C has existed --- and still thinks null terminated strings are an efficiency hack that should hardly every be used. I don't think anyone with half a clue would argue that C does not fit a particular domain (systems programming, on certain systems) very well. It is when you want to call it a "general purpose" language that the arguments start!''
+
+* They shouldn't. C has been very widely and successfully used for every conceivable kind of application domain, not just for systems programming. There's never '''been''' a more general purpose language, in '''that''' sense. The arguments should start '''only''' when someone claims that it is also one of the '''best''' general purpose languages. It has these flaws, you see, that make arguing about its strengths and weaknesses interesting. But one can't deny history.
+
+''I'm not sure where it was suggested that one "avoid" C, other than noting that for some applications a higher-level language might be a better choice. I certainly am not suggesting that CeeLanguageConsideredHarmful; let me be clear about that right now. However, C ''is'' a systems language - there are some tasks it excels at, some tasks that it is a poor choice for. HorsesForCourses, etc.''
+
+''There shouldn't be anything controversial about that.''
+
+Okay, then why the whining about non-NUL terminated strings? Why complain about the behavior of strcpy() and such things when you already know what awaits you should you be so dumb as to not properly terminate your strings? As was stated before, experienced people know all this stuff and don't even give it a second thought. Only the purveyors of so-called "high level" languages think this is a problem. C/C++ types take it in stride.
+
+[Be that as it may, and there certainly has been entire volumes preached about this, the C standard string functions are STILL a huge source of bugs and SecurityExploits, being found on an almost daily basis. I think this makes it pretty self-evident that while it's a well known problem, and has been for years (decades!) there's still a large body of C programmers who are happy to ignore it]-- by 139.76.128.71
+
+''Think of a swamp that has quicksand.  Several possibilities exist with regard to how one should provide safety advice to visitiors to that swamp.''
+
+* ''Tell visitors that they should never ever visit the swamp; because they might encounter quicksand.  Go visit the local city park instead; you won't get hurt there.''
+
+* ''Say nothing.  If someone wants to visit the swamp, they ought to be experts and know where the quicksand is; if they fall in that's their fault.  Tough luck for them''
+
+* ''Put up warning signs in the swamp, alterting visitors where the quicksand is.''
+
+''This page tries to take the third approach.  We're not saying, "don't use C"; I consider that an unrealistic position.  OTOH, the notion that this advice is unnecessary because expert C programmers know it already is foolish.  I'm not worried about the expert C programmer.  I'm worried about the novice C programmer who may not fully appreciate the subtleties involved--string overflows are a notorious source of difficult-to-find bugs in C code; I've spent quite a few hours at my job tracking down and fixing the string-handling errors introduced by junior programmers.''
+
+[You seem to be rather defensive about the existence of this page. Why?]
+
+Well, I can see the need for a page like this ''if'' it is contained in a "Pitfall" set of some kind. Perhaps some kind Wikizen will collect these newbie alert pages and categorize them somehow? And then make each page as being for the purpose of newbie warning, perhaps the way the FasterJava pages are marked as being part of that set? Please, something other than just Category Pitfalls, since that may apply to many issues not newbie-related.
+
+Newbie here.  Just found this page.  Found this page by searching for the exact words I was concerned about: Non-Null Terminated String.  I've never found a discussion about coding standards without it degrading into a "best language debate."  I pretty much skip over all that.  I just wanted to say this page was extremely helpful in my case.  I am copying a portion of one string into and empty string.  n < src length.  Fortunately I knew enough to be concerned about the nul termination.  And VERY fortunate that I found this site.  First and only site that discusses this subject.  Well done.  Thank you.
+----
+CategoryCee, CategoryPitfall

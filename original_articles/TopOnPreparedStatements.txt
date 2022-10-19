@@ -1,0 +1,606 @@
+''I agree "naked" SQL can be a big problem. However, how are PreparedStatement''''''s better than checking, pre-processing, and quote-escaping "wrapper" routines such as:''
+
+ ''sql="select * from foo where xcode=" . sqlString(myCode) . " and id=" . sqlNum(myId);''
+PreparedStatements are better than checking, pre-processing, and quote-escaping "wrapper" routines because with PreparedStatements, checking, pre-processing, and quote-escaping "wrapper" routines aren't needed.  So, we don't have to rely on them to be correct.  In fact, we don't have to use them at all.
+
+* Complaints that this introduction is a misleading RedHerring, or at least poorly written, can be found at PageAnchor lunch638 
+
+Let's look at a simple example in PHP using PostgreSQL.  Assume we want to select all customers from a customers table with a specified name, which has been obtained from the user and stored in a variable $userInput.
+
+If we don't use prepared statements, the simplest case could be this:
+ <?php
+ // Connect to a database named "mydb"
+ $dbconn = pg_connect("dbname=mydb");
+
+ // Create a query for execution
+ $qry = "SELECT * FROM customers WHERE name = '" + $userInput + "'";
+
+ // Execute the query.
+ $result = pg_execute($dbconn, $qry);
+ ?>
+If $userInput is, say, "'; delete from customers; --", we're obviously going to be in trouble.  This simplistic example invites SQL injection.  Of course, if we're going to create dynamic queries from user input, we should '''sanitise the user input''' -- as you've done using wrapper routines in your question -- but this requires discipline and assurance that the sanitisation has been successful.  '''That adds complexity and risk: we have to trust your filters to be correct, and we have to ensure that they're used consistently and correctly.'''
+
+Using prepared statements, the above would be:
+ <?php
+ // Connect to a database named "mydb"
+ $dbconn = pg_connect("dbname=mydb");
+
+ // Prepare a query for execution
+ $result = pg_prepare($dbconn, "myquery", 'SELECT * FROM customers WHERE name = $1');
+
+ // Execute the prepared query.
+ $result = pg_execute($dbconn, "myquery", array($userInput));
+ ?>
+The pg_prepare function sends the query string to the DBMS for compilation, and identifies the parametric query with the name "myquery".  It is now prepared, i.e., compiled, for execution.
+
+The pg_execute function invokes "myquery", passing only the data for the parameter identified by '$1'.  It does '''not''' construct a new query string from "myquery" + $1 for parsing, planning and execution.  It merely passes the argument to 'myquery' -- which has already been parsed and planned (compiled) via pg_prepare -- in the same manner as passing a argument to a pre-existing stored procedure.  If "userInput" consists of "'; delete from customers; --", all it will do is harmlessly try to select a customer whose name is "'; delete from customers; --".  
+
+PreparedStatements aren't subject to classic SQL injection, and don't require filters.
+
+'''Advantages and Disadvantages'''
+
+Ad-Hoc inline SQL advantages:
+* Code to assemble SQL is obvious
+* Code executes with a minimum number of passes to the SQL server
+* Code is compiled/optimized every time it executes (good if different values need to cause different plans)
+* SQL can be extracted to management tools and re-executed
+Ad-Hoc inline SQL disadvantages:
+* Code is susceptible to SQL injection if not coded correctly AND the potential for error exists on every statement. (I can avoid it 100% of the time but not everybody on my team can.)
+* Code is compiled/optimized every time it executes (bad if different values should use the same plan OR the first value executed will cause a misshapen plan)
+* SLOW if running the same SQL in a loop with different arguments
+
+Ad-Hoc prepared statement advantages:
+* Avoiding SQL injection is trivial
+* Code is compiled once/optimized once
+* Good loop performance (best for simple statements)
+Ad-Hoc prepared statement disadvantages:
+* SQL cannot be extracted to management tools and re-executed
+* Code is compiled once/optimized once
+* Code is longer than necessary for single invocations
+
+
+Ad-Hoc stored procedure advantages:
+* SQL can be extracted to management tools and re-executed
+* Code is compiled once/optimized once
+Ad-Hoc stored procedure disadvantages:
+* Code is susceptible to SQL injection if not coded correctly AND the potential for error exists on every statement.
+* Code is compiled once/optimized once
+* Vendor lock-in (SPs are not standard)
+
+Prepared statement stored procedure advantages:
+* Code is compiled once/optimized once
+* Avoiding SQL injection is trivial
+* Best loop performance
+Prepared statement stored procedure disadvantages:
+* SQL cannot be extracted to management tools and re-executed
+* Vendor lock-in (SPs are not standard)
+* Code is compiled once/optimized once
+
+----
+PageAnchor lunch638
+
+''... "PreparedStatements are better than checking, pre-processing, and quote-escaping "wrapper" routines because with PreparedStatements, checking, pre-processing, and quote-escaping "wrapper" routines aren't needed.  So, we don't have to trust them to be correct.  In fact, we don't have to use them at all." ...''
+
+''But you have to use something else instead. Yes, you don't have to use Tool X, but you instead have to use Tool Y. Your wording implies that there is no such trade-off and it's a "free lunch". You are writing like a marketer, not a documenter here, using language to subtly mislead. It's highly biased. -t''
+
+Isn't the whole point of this page, starting from the first question, about Tool X (filtering wrappers) vs Tool Y (prepared statements)?  And aren't the trade-offs precisely what are delineated in the "Advantages and Disadvantages" section, above?
+
+You asked, how are PreparedStatements better than wrappers?  I answered it.  My answer isn't marketing, but simply answering the question.  If you feel more balance is warranted, then perhaps your original question should be changed to, "when constructing queries, what are the advantages and disadvantages of using filtering wrappers vs PreparedStatements?" 
+
+''Your summary explanation as it is, is misleading. Compare:''
+
+* ''Q: How are boats better than cars for transportation?''
+
+* ''A: Boats don't use cars. You don't have to trust cars to use boats.''
+
+''Even if technically true, it does not belong in a summary. It's a UselessTruth.''
+
+That isn't comparable to the original question and its answer.  A more accurate analogue of the original question would be:
+
+* Q: How is putting your valuables in a safe better than hiding them under your pillow?
+
+* A: If you put them in a safe, you don't need to hide them under your pillow.
+
+''That's a bullshit analogy. You are engaging in biased sales-person-like spin.''
+
+How so?  I think it accurately highlights the flaw in your defense of filters instead of PreparedStatements.
+
+''You think wrong.''
+
+How so?
+
+''Your head is biased, seeing what it wants to see and disregarding the rest.''
+
+How so?  Please explain and/or provide evidence-based counterarguments, rather than merely repeating your allegation.
+
+----
+
+''Your example will '''not "fail"''' the first example given at the top if quote escaping is implemented properly. Prepared Statements add complexity of their own. You are oversimplifying the tradeoffs involved. They are often harder to read because the values are separated from the field names, creating more errors and potentially increasing maintenance cost. And the above injection string does NOT address the original question, as described later. -t''
+
+The pros and cons of PreparedStatements are listed above, thus allowing the reader to consider and prioritise the tradeoffs as he/she sees fit.  Note that the alleged "complexity" of PreparedStatements is a development and maintenance issue.  The risk of SQL injection, as a result of an inadequate filter on a dynamic query, is a run-time issue.  One can presume that in most production applications, run-time execution of a SQL query occurs far more often -- and its failure (especially due to SQL injection) is far more costly and likely to have negative impact --  than its development and maintenance.  The implications, in terms of where particular attention should be devoted, should be self-evident.
+
+''There are several problems with it, but first let's resolve the "wrapping" issue below.''
+
+----
+
+''It wouldn't fail the first example. This is false or misleading. The wrapping functions typically '''escape quotes'''. If you are comparing "naked" value insertion versus wrapped values versus Prepared Statements, you need to define your working terms or create numbered references. You appear to morph into each without a clear segue. The first question was never addressed because the rest of the material is for different code from the original question. Or at least the relationship is not clear. -t''
+
+How do we know it "wouldn't fail the first example"?  Maybe your wrapping functions are flawed.  Should I rely upon you to write correct filters?  If I use PreparedStatements, I don't have to.  Anyway, my PHP example is conceptually identical to the code snippet in your question, differing only in the specific SQL statement.  You asked, "[h]ow are PreparedStatement''''''s better than 'checking' routines?"  The PHP example and its associated text, plus "Advantages and Disadvantages" below, answer it.
+
+''So you assume they are flawed up front?''
+
+We don't know whether they are flawed or not.  We take a risk on the ''possibility'' that they ''might'' be flawed.  If we use PreparedStatements, we don't have to take that risk.  It is certainly possible that Microsoft's implementation of PreparedStatements is flawed, but a significantly higher percentage of users are employing Microsoft's PreparedStatements than are using your filters, so in the absence of any evidence that Microsoft's PreparedStatements are flawed, we've effectively had more testing of the former than the latter.  Furthermore, we know that PreparedStatements work by replacing values in a query rather than re-writing the query -- trivially demonstrated by the PHP examples above -- so by using PreparedStatements we needn't rely on filters to prevent SQL injection.  Therefore, there's more justification for relying on Microsoft's PreparedStatements than for relying on your filters.
+
+''Why should I agree with your assumption?''
+
+Why shouldn't you?  It's a reasonable assumption for even you, as the author of the filters, to not be sure whether your filters are flawed or not.  Have you done some form of formal proof, followed by extensive empirical validation, to verify their correctness?  Even if you have, can you guarantee with absolute certainty that your filters can't be fooled when they're used to construct dynamic queries?  Wouldn't it be better to not have to use filters in the first place, as is the case when using PreparedStatements?
+
+''And why should I assume Microsoft, Oracle, etc. codes stuff correctly? (Hint: they don't.)''
+
+Of course they don't, but what should I trust more:  Your filters, or Microsoft/Oracle/whoever's mechanism for avoiding the need for filters?  Of course, if there was a SQL injection vulnerability in some vendor's implementation of PreparedStatements, we'd soon hear about it in the usual IT news channels, because PreparedStatements are used '''a lot'''.  If your filters are flawed, we'll probably first hear about it when the contents of our customer credit card table appears in the "for sale" section of some hacker's Web site.
+
+''And no, '''it's not "conceptually identical"'''. You are wrong on that account. I have no idea how you came to that conclusion.''
+
+They look conceptually identical to me.  Both queries select rows from a table based on the content of some variable(s).  What is conceptually different about them?
+
+''And your pro/con summaries are vague, lacking scientific results.''
+
+They're a summary, based on understanding that anyone even minimally familiar with PreparedStatements and StoredProcedure''''''s will inevitably have.
+
+''Argument-by-clubbiness. You are a shitty writer, you know that? You try every trick in the book to mask ArgumentFromAuthority as something legitimate.''
+
+IsYourRudenessNecessary?  There's no ArgumentFromAuthority here.  I'm not trotting out Stephen Hawking to claim that three out of four physicists prefer PreparedStatements over dynamic queries.  '''That''' would be ArgumentFromAuthority.  In this page, I've given you a simple PHP example that '''you''' can use to demonstrate '''to yourself''' whether or not PreparedStatements -- in your preferred DBMS -- allow query-rewriting and hence SQL injection.  If they don't, then you don't have to rely on filters to avoid SQL injection.  The only "authority", in that case, is you.
+
+''Your example as given will NOT fail the wrapped version. Perhaps you don't understand what "string escaping" is?''
+
+I know exactly what "string escaping" is, but I also know that SQL injection is not limited to failures in string escaping.  I don't know that you have implemented your filters properly; you may have made mistakes.  I do know that in general, parameterised queries and prepared statements eliminate the possibility of query re-writing -- because of how they work -- such that when I use parameterised queries and prepared statements, I don't have to trust your filters to work properly, because I don't have to use your filters.
+
+You originally asked, "[h]ow are PreparedStatement''''''s better than 'checking' and pre-processing 'wrapper' routines?"  The answer is that PreparedStatement''''''s are better than 'checking' and pre-processing 'wrapper' routines because with PreparedStatements, 'checking' and pre-processing 'wrapper' routines aren't needed, so we don't have to trust them to be correct.  In fact, we don't have to use them at all.  The time you spent writing them could have been spent on something else.
+
+''And it's not my job to find and present your side of the story. Thus, it is ArgumentFromAuthority as given.''
+
+What of my side of the story have I not presented?
+
+'' '''Empirical testing''' that clearly demonstrates they are "better". You perhaps may be right, but the reader is being asked to accept ArgumentFromAuthority, with the seeming implication that big vendors are more trustworthy than small vendors or that database vendors are more trustworthy than wrapper API vendors. Ideally injection tests/scenarios and performance benchmark tests would be presented here for the reader. You only gave one scenario, it only fails code of your own creation (which is the "raw" SQL string-building approach, which is not what I proposed at the top). I realize such tests may be hard to come by, but at least make it clear to the reader that you are using ArgumentFromAuthority. That's not too much to ask. '''I have nothing against ArgumentFromAuthority''' (barring better sources), '''but ask that its usage be made clear here.'''  -t''
+
+See below, starting with "Yes, wrappers can do type checking."  The one scenario I gave is categorical; it doesn't require "empirical testing" because PreparedStatements are '''intended''' to avoid the need for filters, in order to eliminate the possibility of classic SQL injection. Aside from their performance benefits within loops, '''that's what they're for.'''  Furthermore, I'm not aware of any reported cases of classical SQL injection via PreparedStatements.  There are numerous ones resulting from dynamic queries.
+
+''For one, that could be because PS's are relatively rare, and perhaps because vendors may not be so forthcoming, simply saying, "we found a bug and fixed it in version x+1" without saying what the bug was. It would be interesting to see statistics as far as the conditions during the successful attacks, such as non-wrapped SQL versus wrapped SQL versus stored procedures versus PS's, etc. But we don't have such hard data so that we are left with just anecdotes, which is right back to my original point. Just agree your evidence is anecdotal (ArgumentFromAuthority) and move on. And "categorical" could mean you are painting with too wide a brush.''
+
+By the standard of "anecdotal" you're suggesting here, everything on the Internet is "anecdotal".  You also appear to be equating your "anecdotal" with ArgumentFromAuthority, which again puts the entirety of the Internet -- books too, I suppose, and peer-reviewed journals (obviously, the reviewers believed the "authority" of the author) -- in the same category.  
+
+* ''I'm not sure what you mean. The ideal is empirical tests or analysis of actual attacks and representative attack techniques/strings. In other words, somebody throws bunches of A's at B to see if B can withstand the hits. For example, "in our test, we tossed the following 50 form test strings at 10 apps, one version of each using Bob's Wrappers 2.5 and one using Oracle version 7.23 PS's. 13 of them of crashed or penetrated the wrappers and 5 of them crashed or penetrated the PS's." You are doing the equivalent of bragging (talking) about the engine instead of going out and RaceTheDamnedCar (or find somebody else who already did and filmed it). If somebody lies about such tests, that's a different matter. Repeatability of testing is also part of science, but so far it's not an issue ''here''. -t (I'm going to use "-t" to mark my paragraphs for now on. Quoting complicates off-line writing.)''
+
+* Such tests are obviously appropriate if we're verifying code or comparing filters.  However, PreparedStatements are not a filtering mechanism.  They're a structural mechanism.  They remove parameters from the construction of the query text, and defer inclusion of parameter values until after the query has been parsed (and compiled, usually) so the possibility of classic SQL injection -- which involves a change to the query logic by changing its command text, not merely values in the query -- is eliminated.  Of course, PreparedStatements don't preclude second order SQL injection, nor do they preclude buffer overflows, but those are very different security issues from classic SQL injection.
+
+* ''Calling them a "structural mechanism" and categorizing injection into "classic" versus "non-classic" does not get one off the empirical evidence hook. You appear to be dancing around the empirical evidence bush using irrelevant categorization word-play. If one "type" of injection is more likely than another, then present a solid and clear case for that.'' -t
+
+* I presume you are familiar with the various types of SQL injection?  If not, see http://en.wikipedia.org/wiki/SQL_injection  I refer to "classic SQL injection" in order to be accurate; it is not an attempt to deceive.  I wished to make it particularly clear that PreparedStatements categorically eliminate the possibility of classic SQL injection, which is by far the most common cause of SQL injection related security risks and violations.
+
+* PageAnchor common734
+
+* ''It's likely "common" because programmers often skip using ''any'' protection. Like I already pointed out, without better stats of frequency of attack types, frequency of successful attacks, AND frequency of protection techniques actually used, "common" tells us very little. You could be doing the equivalent of claiming that the pills are worse than condoms for pregnancy prevention because most pregnancies are from those not using condoms. -t''
+
+* It doesn't matter whether it's common or not, actually.  I mention that classic SQL injection is common only to indicate it's relative importance, not to make a point about its commonality. 
+
+* ''Relative to what? It's not telling us anything useful, or at least not being clear about frequency and probabilities, tossing in the word "common" without enough specific to make it useful. Avoid introducing half-baked ideas. '''Explain it fully or don't even bring up "common"'''. Wrapping may also prevent "common" attacks. -t''
+
+Vendor documentation like http://dev.mysql.com/doc/refman/5.6/en/sql-syntax-prepared-statements.html -- in particular, prepared statements provide "[p]rotection against SQL injection attacks. The parameter values can contain unescaped SQL quote and delimiter characters." -- is typical.  If you consider that weak evidence because it's ArgumentFromAuthority, well, so be it.  Feel free, then, to examine the PostgreSQL source code to see how it actually works.  
+
+* ''I'm not sure what your point is here. Please elaborate. The wrapper input can also "contain unescaped SQL quote and delimiter characters". It's not a difference maker between the two "sides" (or are there 3 sides? Your writing is confusing).'' -t
+
+* The wrapper input can "contain unescaped SQL quote and delimiter characters" only because we are forced to rely on the wrappers to filter out SQL injection by correctly escaping quotes, recognising type mismatches, and the like.  The "difference maker" is that PreparedStatements do not depend on wrappers or filters, either internally or externally.
+
+** ''Different techniques depend on different things. No news there. -t''
+
+** The important factor is that wrappers/filters are inherently risky.  If a filter is faulty, SQL injection is possible.  PreparedStatements are fundamentally different; they '''eliminate''' the risk by eliminating user input as a possible means by which queries can be re-written, and (hence) their logic changed.  With PreparedStatements, it is not possible to re-write a query and change its logic.
+
+** ''As mentioned elsewhere, non-re-writing does not by itself protect from all possible injections. -t''
+
+** No, it doesn't protect against buffer overflows, for example, but filters generally don't either.  Buffer overflows are a different category of security violation.  Classic SQL injection depends (typically) on query re-writing.  PreparedStatements protect against classic SQL injection because at the point of execution, they don't involve query re-writing.
+
+** ''I said "injections" and said nothing about buffer overflows above. And filters are but one of many techniques for protection. Your defense is growing convoluted. I will agree that PS's protect well against "classic SQL injections". But you should make it clear that they '''don't necessarily protect against ALL types of injections''' (or other security breaches). -t''
+
+** Buffer overflows are a form of injection.  I did make clear that PreparedStatements don't necessarily protect against all types of injections, when I was precise in my use of "classic SQL injection" instead of "SQL injection" -- a precise usage to which you apparently objected.
+
+* ''Re: "Feel free, then, to examine the..." - As a reminder, it's not my job to fetch and present evidence for your case. -t''
+
+* My point was rhetorical:  If you're going to claim everything is ArgumentFromAuthority, then you're essentially saying the only "authority" you can rely on is yourself and therefore, presumably, your own examination of DBMS source code.
+
+* ''Sorry, you lost me. I never claimed everything was ArgumentFromAuthority, only your evidence SO FAR. -t''
+
+* My evidence is based on vendor documentation and logical inference.  How is that ArgumentFromAuthority?
+
+* ''Vendor docs are light on details, and your "logical inference" is so far leaky.''
+
+* How so?
+
+Alternatively, here's a quote from the PostgreSQL manual at http://www.postgresql.org/docs/9.2/static/sql-prepare.html: "PREPARE creates a prepared statement. ... When the PREPARE statement is executed, the specified statement is '''parsed, analyzed, and rewritten.''' When an EXECUTE command is subsequently issued, the prepared statement is '''planned and executed.''' This division of labor avoids repetitive parse analysis work, while allowing the execution plan to depend on the specific parameter values supplied."  Note that there is '''no''' rewriting when the prepared statement is executed, which would preclude classic SQL injection, but I guess that's ArgumentFromAuthority and/or anecdotal?
+
+* ''Why is "rewritting" a major issue (outside of performance)? Perhaps we need more specific models to illustrate. -t''
+
+* Re-writing is the means by which executable dynamic SQL statements are constructed, and it's the means by which classic SQL injection occurs.  Given a dynamic query like "SELECT * FROM customers WHERE name = '$userInput'", constructing an executable query requires that it be re-written to replace "$userInput" with the value of $userInput.  If the value of $userInput is "'; delete from customers; --", the query logic will be changed.  This is the basis for classic SQL injection.  However, a prepared statement like "SELECT * FROM customers WHERE name = ?" will be compiled in one step, then passed a single argument and executed in a second step.  When it's executed, the parameter value is '''not''' used to rewrite "SELECT * FROM customers WHERE name = ?".  The value is merely passed into the '?' placeholder in the pre-compiled query, so a parameter value like "'; delete from customers; --" is harmlessly compared to the 'name' attribute for every row in the 'customers' table.
+
+* See below on p-code injection.
+
+* [Since you're making such a stink about empirical evidence, what about some that shows the existence of this problem with p-code? Make sure that it's being used as the target language for a prepared statement.]
+
+* If the p-code or p-code-like language uses "$" as a delimiter, and the input value has a "$", then the input can be used to "escape to" command mode. And if a machine language uses 4b7c as a delimiter, and the "value" can end up containing 4b7c, then injection can be done.
+
+* [Any empirical evidence for that? Can you show us a real p-code used as a target language for prepared statements that are subject to such an attack?]
+
+* Nope. But likewise, you have none that fail wrappers. So it's an AnecdoteImpasse yet again. Lovely.
+
+* [So you don't have any evidence that p-code is subject to injection attacks?]
+
+* See below.
+
+* [See what below?]
+
+''Some anecdotal evidence suggests that vendors convert SQL into semi-serialized '''p-code''' or a p-code-like language internally such that commands and data are ''still'' mixed. The vendor theory is allegedly that internal p-code is still harder to hack than direct SQL because the hacker doesn't have direct experimental access or knowledge of the p-code. But that's still not strict separation: The p-code parser/interpreter allegedly encounters a mix of commands and data, as determined by delimiters or syntax rules. ''
+
+Sure, some implementations probably convert SQL into parse trees, some convert to executable machine code, some convert to byte code ("p-code"), and so on.  The crucial factor is that none of them rewrite the original SQL statement.  Rewriting is what makes dynamic queries risky.  Whilst passing values into some form of a planned (compiled) query may be subject to, say, buffer overflows, they're no more subject to such security risks than anything else.
+
+* ''P-code is subject to injection also. Re-writing is not the key issue. -t''
+
+* No, p-code is not subject to classic SQL injection, because the original query string is not being re-written to include parameter values.  Re-writing '''is''' the key issue.
+
+* ''You appear to be moving or redefining the goal-posts. Now you are claiming it prevents "classic" injection, but NOT necessarily ALL injection. As mentioned above, one should expect empirical evidence that Type X injection is better/worse than Type Y injection if you go that route. Baroque injection is bad, romantic period injection is good, jazz injection is bad, rock injection is good, unless it's Beatle injection, Hey Hey we're the Monkeys! Injection's coming your way, keep your queries at bay...''-t
+
+* I am not moving or redefining the goal-posts, only being as precise as possible.  I make no claims about '''all''' injection -- as that would potentially include kinds of injection we haven't discovered yet -- only about the most common form of injection, which is classic SQL injection.  That said, do not let my use of accurate terminology distract you from appreciating the point I made.
+
+* See PageAnchor common734 -t
+
+''But either way, all we have is anecdotal evidence. You were ''insistent'' somewhere that one accept your anecdotal evidence, saying something along the lines of, "I don't trust the skill/professionalism of somebody like you who does not accept prepared statements as the OneTrueWay." Nobody should ever be so insistent (and rude) based on merely ArgumentFromAuthority. That's an intellectual sin. If I reject strong ''empirical'' evidence, THEN you have a case against me.''
+
+''But '''there is a bigger question here''': If you cannot test a tool's security empirically, who do you trust and why? Sure, many have a network of experienced and trusted colleagues, but how reliable is this and if another person's trusted colleagues have a different answer than yours, should one be so quick to reject it? Note that vendors are often full of it:''
+
+''http://www.enterprisemanagement360.com/blog/better-business-bureau-spanks-oracle-over-exaggerated-performance-claims/''
+
+Exaggerated claims about performance are a different category of claim than asserting that (from above) "parameter values can contain unescaped SQL quote and delimiter characters" when that isn't the case.  The former is questionable marketing; the latter (if untrue) would border on fraudulent.
+
+''As mentioned above, un-escaped input is not a difference maker. (Please don't duplicate counter-replies here.) I've never seen them promise pure separation of commands and data/values. Thus, so far there's nothing to lie about. -t''
+
+It's not necessary for there to be "pure separation of commands and data/values" in some isolated memory sense.  What PreparedStatements do is isolate construction, parsing and compilation of queries from their execution.  It is only at the point of execution -- after the query has already been constructed, parsed, and (usually) compiled -- that parameter values are inserted into the query plan.  They are not used to construct a new dynamic query, so it doesn't matter whether SQL injection attempts are due to un-escaped input, or type checking failures, or trying to "trick" what are presumed to be the existing filters.  At the point of executing a prepared statement, the parameter values can be anything.  They can't cause the query to fail due to errant quotes, nor can they cause classic SQL injection by re-writing the query, because the query will not be re-parsed or re-written.
+
+''The devil is in the implementation details (which you haven't provided). If the SQL is re-written into p-code, for example, then such p-code is still subject to value injection because p-code, or even machine code, does not inherently separate commands from values. Parsing the SQL into something else does NOT outright prevent injection by itself because the NEW FORMAT of the query commands is also potentially subject to injection. -t''
+
+''I will agree that if commands and values are kept separate throughout the entire process, then injection attacks are much harder to do, and PS's do provide that '''potential'''. But whether the implementations actually do such is only speculation at this point. And this separation has nothing to do with pre-parsing or compiling, so I don't know why you keep bringing that up.''
+
+You appear to be using the term "p-code" to refer to something that hasn't been done in programming languages (or SQL DBMSs) since the early home-PC implementations of BASIC:  Some of them tokenised the user input and converted keywords to single bytes, in order to save memory and accelerate interpretation.  If a SQL DBMS did that -- converted SQL into some tokenised form, and then upon execution parsed the tokenised text -- then SQL injection would still be possible.  However, no popular SQL DBMS does this.  When SQL code is compiled (or "planned", in the usual SQL parlance), it is converted to an executable format and no further parsing or SQL re-writing takes place.  Therefore, it is '''not''' "potentially subject to injection", because once the SQL text has been converted to an executable format, no re-writing of the original query takes place, nor does any subsequent compilation take place that could convert user-supplied values into executable SQL.
+
+''I included "p-code-'''like'''" in the original statement. And other parts of that paragraph assume you know the implementation details, but you don't. Machine language is also subject to injection, as already mentioned. "Re-writing" or '''not-rewriting does not prevent injection'''. So, stop mentioning it. ''
+
+[Can you give us an example of machine language being subject to injection without rewriting?]
+
+Nope. But likewise, you have none that fail wrappers. So it's an AnecdoteImpasse yet again. (And we don't know if it's machine language or some kind of tokenized language for PS's. We only have guessing going on here.) -t
+
+[My question was just about machine language being subject to injection. You made the claim that it was, so I wanted to see what evidence you could provide to support it. You've now said you can't back up that claim. Since your claim that injection has nothing to do with rewriting is dependent on the claim that machine language is subject to injection, it makes your claim that injection has nothing to do with rewriting also unsupported. Since there is an example on this page showing how not rewriting does prevent injection, there is support for the claim that not rewriting prevents injection. There's no impasse here.]
+
+Please PageAnchor the evidence. I missed it. And if wrappers can do that same, then the example is not a difference maker.
+
+[It's the PHP at the top of this page.]
+
+Your test string doesn't "fail" wrappers, so it's not a difference maker. That should have been blatantly obvious.
+
+[Tell you what, you produce your wrappers and then we can start showing how they fail. Until then, they fall in the SufficientlySmartCompiler category.]
+
+Fair enough. I cannot provide public examples of such at this time. But for now, do you at least agree that basic quote escaping would prevent injection from the example given ("'; delete from customers; --")? Sample wrapper template code:
+
+  method sqlString(strVal) {
+    var result = strVal;
+    result = replace(result, "'", self.DB_QUOTE_ESCAPE, scope:=all);
+    // more processing goes here ...
+    return result;
+  }
+''How can we trust such filters to be correct, or used correctly?  How do we know 'replace', for example, can't be tricked by some character sequence?  What happens if we forget to use sqlString and compose a SQL query without it?  What happens if you alter sqlString and mistakenly return strVal somewhere in the middle of "// more processing goes here ..."?''
+
+''The problem is not the use of filters per se -- if you could guarantee filters to be 100% correct, and guarantee that they'll be used 100% of the time, they'd be fine.  Can you guarantee that?''
+
+''In light of the serious risks that these questions imply, what do we gain by using such filters as opposed to using PreparedStatements?''
+
+See PreparedStatementsDiscussionTwo for downsides. As far as bugs in filters, PS implementations can also contain bugs. Which vendor/org/coder do we trust more and why? Like I keep pointing out, without empirical testing of actual/realistic attacks, it's all ArgumentFromAuthority; more specifically "trust guessing". I have no problem with weak evidence being given, as long is it's clear it's weak. But some here insist their claims are backed by strong readable evidence. -t
+  
+''Whilst it is true that PreparedStatements can contain bugs, the chance of a PreparedStatement -- in any popular DBMS implementation -- resulting in classic SQL injection is about the same as the chance that a typical C function in a typical C program will allow "C injection", and for the same reasons.''
+
+-----
+
+Prepared statements use filters, so they have the same flaws as dynamically-generated queries. They don't isolate values from commands on the machine-level like some mistakenly imply. -t
+
+''No, they don't use filters and they do isolate values from commands.  See, for example, http://technet.microsoft.com/en-us/library/ms175580 and http://technet.microsoft.com/en-us/library/ms188001 (note the "security note" in both), and http://www-01.ibm.com/support/knowledgecenter/SSEPEK_10.0.0/com.ibm.db2z10.doc.sqlref/src/tpc/db2z_sql_prepare.dita''
+
+''In the second reference, "[b]ecause '''the Transact-SQL statement itself remains constant and only the parameter values change''', the SQL Server query optimizer is '''likely to reuse the execution plan it generates for the first execution'''" clearly indicates a separation between parameter values and the SQL statement.  It doesn't rewrite the statement such that it risks SQL injection.  Parameter markers can only appear in locations in the SQL statement where values are expected, so a parameter argument can only ever be treated as a value.''
+
+''In the third reference, tables 1 through 3 indicate restrictions on where parameter markers may appear in a SQL statement.  It's clear that they may not replace arbitrary portions of SQL code.  Therefore, they are true parameters and not string replacements, and as such cannot be used to redefine the SQL statement outside of parameter replacement.  Thus, "hard-partitioning" is preserved.  The parser only recognises parameter markers where values are expected, so a parameter argument can only be treated as a value, never a command.''
+
+I don't see how this is "clear" evidence as claimed. You over-use "clear" or "clearly". I already explained the problems with some of these quotes, but some asshole keeps deleting stuff in this topic. Parsing characteristics are only '''indirect''' evidence for what is actually happening through the ENTIRE life-cycle. I'd like to see '''actual tests''', not just JUST Microsoft's claims. I don't trust Microsoft. For example, few take Intel's word directly on their chip benchmarks; they prefer a 3rd party lab result, hopefully from multiple test vendors. Similar expectations should apply to Microsoft. Further, I don't see where Microsoft ''directly claimed'' separation. Your "conclusions" are only based indirect evidence. -t
+
+''Top, why do you persist with this nonsense?  Try the PHP example at the top of the page.  Try it with different DBMSs.  If you find some where you can inject SQL, please post them here so we know which DBMSs to avoid.  Otherwise, this isn't a theoretical or abstract debate and that's why I keep deleting the rubbish.  PreparedStatements are a simple and uncontroversial mechanism.  Trying to make them out to be controversial is ludicrous, and only ruins this page by turning it into unreadable ThreadMess when it could be a useful reference based on answering reasonable questions about PreparedStatements.''
+
+First, I couldn't produce a sufficient sample set. I'm not a hacker. Second, I know of no way to fail the wrapping version either. They'd both likely '''score 100% A+'''. But at least you are starting to think empirically, which is a good sign.  -t
+
+''You don't need to "produce a sufficient sample set".  Just create a suitable database (you'll need one table) and run it.''
+
+* If you escape quotes properly, it will not "inject" the wrapped version. Your example doesn't illustrate anything of use for the wrapped version.
+
+* ''Therein lies the problem: "'''if''' you escape quotes properly..." With prepared statements, you don't have to take the risk that they might not be escaped properly, or that numeric values are not properly validated, or that someone inadvertently missed using your filter on a value.''
+
+* So you claim.
+
+* ''DBMS vendors claim it too.  See, for example, http://dev.mysql.com/doc/refman/5.6/en/sql-syntax-prepared-statements.html, in which prepared statements provide "[p]rotection against SQL injection attacks. The parameter values can contain unescaped SQL quote and delimiter characters."''
+
+* Wrappers can do the same. That feature is not a difference maker.
+
+* ''The difference is that PreparedStatements provide protection against SQL injection attacks by ensuring that user-supplied values are '''never''' involved in the construction of a SQL query.  Wrappers still involve user-supplied values -- filtered, hopefully -- in the construction of a SQL query.  If a filtering wrapper misses a trick, SQL injection is possible.  If a PreparedStatement fails -- say, due to an internal bug, or because of a TypeChecking failure -- at worst it doesn't execute.''
+
+* That's rather vague, and lacking empirical backing.
+
+* ''How is that vague?''
+
+(Some suggest one gets a surprise visit the from the NSA if they post known injection strings. Not sure I want to test that theory.)
+
+''Nonsense.''
+
+---------
+
+Prepared statements tend to harm readability and maintainability of query code and thus do have an economic cost. Whether the (claimed) security benefits are "worth it" as weighed against this maintenance tax is a shop management/owner's call. Maybe there's a "right way" to use them to improve readability, but such is not documented that I know of. -t
+
+''Can you demonstrate how prepared statements harm readability and maintainability by comparing a 20 column INSERT using prepared statements vs dynamic strings?''
+
+Insert statements don't expose the difficulty. Something like QueryByExample may be a more fitting scenario.
+
+''By QueryByExample, do you mean general ad-hoc queries?  That might not be an appropriate UseCase for PreparedStatement''''''s.  The typical application of prepared statements are predefined SELECT or update statements requiring one or more dynamically-generated or externally-input values.  An entire dynamically-generated WHERE clause, or a dynamic list of tables, or a dynamic list of columns, etc., usually can't be parameterised (though the specific rules vary from SQL product to SQL product.)''
+
+''On the other hand, PreparedStatements can be generated dynamically -- even in a QueryByExample system -- with the user-supplied values passed via parameters in order to increase security. A well-designed QueryByExample system shouldn't be obtaining non-parametrisable elements from the client as literal strings -- e.g., table and attribute names, operators, etc. -- so the need for validation should be minimal.  Does the use of PreparedStatements in such a QueryByExample system harm readability and maintainability over using non-parametrised queries?  Maybe slightly, but the construction of the QBE system should be a one-off cost, aside from the usual maintenance, and a QBE system is already a complex beast.  I'm not sure the difference between dynamic queries and PreparedStatements make much of a dint in the overall complexity of a QueryByExample system, especially as the filtering needed for dynamic queries is potentially complex.''
+
+Roughly 2/3 of all application queries I write have some dynamic component. If they are static like that, then typically '''Stored Procedures''' are used in Internet shops I've worked at, not prepared statements. (Although I should point out that "dynamic reporting" tends to be my specialty such that my observations may be frequency-biased that way.) -t
+
+''In some DBMSs, a prepared statement internally becomes a stored procedure.  Think of a prepared statement as being a convenient shorthand way of specifying a (possibly temporary) stored procedure.''
+
+That's typically a shop decision, a typical developer can only give recommendations. Also, the issue of how to clean dynamic queries is still outstanding. 
+
+''Clean dynamic queries -- whether from coding necessity, or due to a (peculiar, and unlikely) shop policy against prepared statements -- are a different topic deserving its own page. Clean dynamic queries aren't prepared statements.  And, of course, prepared statements can be generated dynamically.''
+
+The shop decision process intersects ''all'' the solution topics. Look at it from the perspective if a typical shop with a lot of dynamic queries. There are basically 3 options: stored procedures (SP), prepared statements (PS), and "custom" value wrappers (VW), as shown in the intro. If most of the queries are dynamic, then VW are pretty much the only choice for those. A shop would rather not support and train for 3 different SQL protection techniques. Thus, they'd be looking to find a way to cut down. Limiting the choices to SP and VW covers most of them reasonably well. The boss may figure that if VW is good enough for dynamic queries, then it's good enough for static ones also. A hacker is not just going to try to exploit static queries. It's like a warehouse with 10 doors. If you put up 3 metal doors and leave 7 of them wooden, that's barely better than 10 wooden because a crook will likely check and try multiple doors. It's even worse than the warehouse scenario, because different door types means learning to maintain/train-for different door types, if we apply software issues to doors. Organizations badly want PlugCompatibleInterchangeableEngineers. Too many different shop ways to do mostly the same thing harms this goal. -t 
+
+''The discussion here is not about codeshop human resources, "all the solution topics", PlugCompatibleInterchangeableEngineers, "a lot of dynamic queries", stored procedures, or custom value wrappers. It's about PreparedStatements. Please don't try to turn what should be a simple and useful page into yet another interminable and expansive ThreadMess about everything.''
+
+Projection and self-flattery. It is ''not'' "simple and useful" in its current form, partly because you are a horrid writer. '''WHEN to use what tool is a key issue'''. And if your personal goals are out of sync with your employer, it could cause friction and staffing problems. Why do you so readily dismiss business and economic concerns? Weighing tool choices is primarily about business and economic concerns. YOU may not care about human resources and labor costs, but the guy paying you likely does. (And '''ArgumentFromAuthority is the primary cause of the threadmess'''.) 
+
+''The "Advantages and Disadvantages" section handily addresses the "business and economic" concerns.''
+
+Anyhow, are you comfortable spinning this part off into WhenToUsePreparedStatements? 
+
+''Once appropriately cleaned of ThreadMess, sure.  For now, it's still '''Top'''On''''''PreparedStatements rather than a general reference.''
+
+ArgumentFromAuthority is the primary cause of the threadmess.
+
+----
+Is this debate about using prepared statements when building truly dynamic SQL (that is a simple variable replacement won't cut it, which is equivalent on MS to the SQL cannot be embedded into a stored procedure without using string literals)? If not, we can basically cut off debate right now as the answer for variable replacement SQL is as demonstratively and testably clear as the difference between BubbleSort and ShellSort. --JoshuaHudson
+
+''Please provide such tests. I do not believe the picture is so clear cut as some claim.''
+
+Understand that at my workplace, we *have* run the tests and found that the compile once/optimize once benefit for nontrivial SQL were so great that we could measure the difference using a stopwatch without even invoking a loop. I cannot release the test setup only because it is too tied to our proprietary database setup. I find it hard to believe that someone who favors table based programming as much as you do has never attempted the same. The WetWare argument involved here leads me to believe more than anything else, you're doing prepared statements wrong. Oh, and we did get to run the experiment about escaping SQL strings thanks to some guys who decided to maliciously comply with incorrectly written policies rather than violate them when necessary (assembling SQL strings in a stored procedure is still assembling SQL strings). I was the only engineer here who could remember to correctly escape strings every single time.
+
+''I'm not questioning the machine performance issue. If it's an application that stretches performance, then by all means use whatever is the most machine-friendly. I'm only saying there may be a maintenance-time tradeoff. It's up to the app owner to select the trade-off profile they want. And I don't know what you mean in your experiment. What exactly was tested on what, and what exactly failed tests? It's not clear to me. A certain pesky and willful WikiZen is confusing wrapper functions with "naked" SQL, making accurate communication on this topic difficult. I've work at approximately 10 different organizations as either a consultant or employee, that had external-facing websites, and PS's were not used in a single one. I do not believe they are "stupid", but rather weighed the costs and benefits. Like I said in a sister topic, most of the stuff I worked on were dynamic queries, which can't use PS's. Some shops already used Stored Procedures (SP's) for most static queries, and so put the high-volume queries in as SP's. If such shops supported PS's and SP's and wrapper functions for dynamic queries, then the shop is supporting '''three kinds of SQL control conventions'''. Shops don't like to support semi-redundant interfaces because they like PlugCompatibleInterchangeableEngineers, and thus look to cut down if practical. So, they put most of the static ones in SP's and used wrappers for the rest, making only two interfaces they had to support and hire around. That sounds reasonable to me as a business decision. Further, a hacker won't just stop with static queries, they'd test multiple queries typically such that the '''dynamic queries are still the safety bottleneck'''. Like I said elsewhere, it's like putting 3 metal doors on a warehouse but leaving the other 7 as wooden doors. A crook will likely try more than one door such that supporting metal doors is a waste (if they have a '''carrying''' cost, which SQL protection tools do in terms of training & support). Adding a third protocol, PS's, '''won't solve the ACTUAL problem'''. And decent hackers probably know that dynamic queries (output) is more likely to not have PS's (because most PS's don't support dynamic queries.) '''Crooks know to look for the wooden doors'''. Such decisions seem perfectly rational to me, but my detractor hand-waved this all away with vague dismissals. All mouth no and ears, which is frustrating.'' -t
+
+{"Confusing wrapper functions with 'naked' SQL"???  Huh?  No one is confusing wrapper functions with 'naked' SQL, but no one should trust your wrapper functions to be infallibly correct, either...}
+
+{"I've work at approximately 10 different organizations as either a consultant or employee, that had external-facing websites, and PS's were not used in a single one."  That is undoubtedly one of the reasons why SQL injection is an ongoing industry problem instead of a historical footnote.}
+
+The experiment involved here involves finding out what % of engineers can consistently protect against SQL injection when not being watched. We may place an upper bound at 1 in 20 with a sample size of 20. Use of prepared statements for 99% of simple SQL reduces the audit surface to only truly dynamic SQL routines (that is, where the number of clauses or the content of the expressions change). --AnonymousDonor
+
+* ''What is an "audit surface"?''
+
+* {The code that needs to be audited.}
+
+''See above regarding the metal door analogy (expanded). One MUST trust them in some cases. Note I don't trust Microsoft and Oracle either.''
+
+* {However, the fewer potentially-fallible mechanisms that need to be trusted, the better, and I trust Microsoft's mechanisms for avoiding query-rewriting more than I trust your mechanisms for query validation.  That isn't because I think Microsoft developers are better than you; it's only because the way PreparedStatements are typically implemented by the DBMS makes query-rewriting impossible.}
+
+* ''There is a cost to supporting 3 query protection mechanisms versus two or one. You are hand-waving that issue away without facing it directly. Please ponder the door analogy deeper rather than ignore stuff you don't like thinking about. And without independent lab tests, I'm not going to trust Microsoft etc. so much. ''
+
+* {Wouldn't it be best to absorb the one-time cost of converting all the queries to prepared statements or stored procedures, and thus reduce the "query protection mechanisms" from 3 to 2 whilst removing the need for risky filtering and dynamic queries?}
+
+* ''As described below, they can't all use PS's.''
+
+* {Are you sure?}
+
+[Wow, just wow. Code ran through the PS junction does not have to be audited for SQL injection. The more dynamic SQL you have, the more code you have to audit. It is unbelievable you are arguing against reducing workload.]
+
+''Sorry, there appears to be a communications breakdown somewhere. I'm not following.''
+
+{PreparedStatements do not have to be audited for the possibility of classical SQL injection.  Dynamically-constructed queries should always be audited for the possibility of SQL injection.  Therefore, it makes sense that if you reduce the number of dynamically-constructed queries in favour of PreparedStatements, you reduce the amount of auditing needed.}
+
+''I mean queries that ''need'' to be dynamic; for example, QueryByExample. Dynamic WHERE clauses in particular are very common in the work I've done.''
+
+{PreparedStatements can be generated dynamically, even in a QueryByExample system, with the user-supplied values passed via parameters in order to increase security.  A well-designed QueryByExample system shouldn't be obtaining non-parametrisable elements from the client as literal strings -- e.g., table and attribute names, operators, etc. -- so the need for validation should be minimal.}
+
+''But operator types can be dynamic. A common operation pull-down list may have "equals, starts-with, contains, ends-with, not-contains", etc. Of course they should be validated, but it's not just values that come from such forms.''
+
+{Dynamic selection of operators does not preclude using PreparedStatements.  When you construct the prepared statement, you choose the operator(s) based on user input, but obviously not using the user-input itself -- that would risk SQL injection.  For each user-specified value, create a parameter.  Then, when you invoke the prepared statement, you pass the user-specified values as arguments.  It might look something like this simplified PHP(ish) example:}
+
+ <?php
+ // Connect to a database named "mydb"
+ $dbconn = pg_connect("dbname=mydb");
+
+ // Choose operator based on user selection in 'operator' picklist
+ switch ($_POST['operator']) {
+   case "1": $opsymbol = ">"; break;
+   case "2": $opsymbol = "<"; break;
+   case "3": $opsymbol = ">="; break;
+   case "4": $opsymbol = "<="; break;
+   default:  $opsymbol = "=";
+ }
+
+ // Prepare a query for execution
+ $result = pg_prepare($dbconn, "myquery", "SELECT * FROM products WHERE size " . $opsymbol . " $1");
+
+ // Execute the prepared query.
+ $result = pg_execute($dbconn, "myquery", array($_POST['userInputSize']));
+ ?>
+
+----
+The above appears to have deviated from the original question, which was "[h]ow are PreparedStatements better than 'checking' and pre-processing 'wrapper' routines?" 
+
+The answer is that PreparedStatements are better than 'checking' and pre-processing 'wrapper' routines because with PreparedStatements, 'checking' and pre-processing 'wrapper' routines aren't needed.  So, we don't have to trust them to be correct.  In fact, we don't have to use them at all.
+
+''You have to trust Microsoft etc. You may trust Bill Gates & Friends more then me, but that's still ArgumentFromAuthority either way.''
+
+No, ArgumentFromAuthority is trusting Microsoft's implementation of PreparedStatements because a Microsoft whitepaper claims three out of four top-earning database professionals recommend it.  It's not ArgumentFromAuthority if you've tried Microsoft's implementation of PreparedStatements and determined for yourself that it doesn't do query rewriting.
+
+''Nobody's given ''direct'' proof of that, only inferences based on assumptions.''
+
+Running the above PHP examples are direct proof.  In particular, the second example -- with user input of  "'; delete from customers; --" -- specifically demonstrates whether the query is rewritten or not.
+
+''Like I keep saying, that's only with the "raw" version. I never proposed nor defended the "raw" version. Your writing has repeatedly '''conflated''' the two (raw versus wrappers) and it's both confusing/misleading to readers, and ticking me off! -t''
+
+''Here's a possible fix: label the wrapped one Example A, raw is Example B, and SP version Example C. Then rewrite your text, using the letters, to be clear about which version (letter) you are talking about. -t''
+
+I never said you proposed or defended the "raw" (?) version, and the "raw" version is only to show the distinction between dynamic SQL and PreparedStatements.  The proof that queries are not rewritten when using PreparedStatements -- i.e., the second PHP example -- has nothing to do with the "raw" version beyond showing the difference in SQL (and PHP) syntax.  My emphasis is (and always has been) on the distinction between dynamic queries using filters vs PreparedStatements, not "raw" dynamic queries vs PreparedStatements.  I'm not sure why you think it's been otherwise.
+
+''If that's what you intended to demonstrate, you missed the target by a wide margin. You deleted bad content and replaced it with '''worse''' content. Good job, Tex!''
+
+I'm not sure what you mean.  Your original question was, "[h]ow are PreparedStatements better than 'checking' and pre-processing 'wrapper' routines?"  In order to answer it, the first PHP example demonstrates the problem (SQL injection) that your filters are intended to fix.  The second PHP example demonstrates that PreparedStatements fix the problem (SQL injection) without needing filters.  Thus PreparedStatements are better because they don't need "'checking' and pre-processing 'wrapper' routines".  Is that not how you interpreted it?
+
+''The injection example you gave does not "fail" the first example. It almost has nothing to do with the first example. You just think........weird! You seem to assume certain notions in your head are universally understood/implied such that you skip key details.''
+
+The injection example only doesn't fail the first example if the filters are correct.  How do we know they're correct?  As I pointed out in my descriptions with the examples, "we should sanitise user inputs, but this requires discipline and assurance that the sanitisation has been successful.  That adds complexity and risk."  In fact, it's generally considered risky.  See, for example, http://en.wikipedia.org/wiki/SQL_injection#Escaping  
+
+With PreparedStatements, we don't take a risk of filters failing, because we don't rely on filters.  
+
+''But you did NOT illustrate that issue, but it's worded as if you had. And we don't know if PS's don't rely on filters. Plus, they may have other problems, perhaps buffer overflow injection risks. If they aren't written right, they may have such. Same thing either way. '''Just because we can't see the guts is not a reason to trust the guts.''' It's a UselessTruth that if wrappers are written bad, they may fail. But '''similarly''', if PS guts are written bad, they may fail also. ''
+
+I thought I did illustrate that issue.  PreparedStatement "guts" would have to be written in a bizarrely flawed way to fail.  They don't rely on filters because SQL vendors typically internally implement PreparedStatement parameters as true parameters to what is effectively (and, in some cases, really) a pre-compiled stored procedure.  They can be trivially tested as I've shown in my second PHP example.  If query re-writing took place, it would demonstrate that failure.  Filtering '''could''' conceivably be used to achieve the same end (say, as a quick-hack implementation of PreparedStatements in some low end DBMS), but if it were exploitable we'd hear about it very, very quickly -- especially if the DBMS is open source.  If it's a commercial, closed-source DBMS, we can safely assume that the vendor is not going to take the cheap way out, given the significant business risks involved in producing a PreparedStatement implementation that's subject to classic SQL injection.  Not that there's any reason to do so -- implementing PreparedStatements properly in a DBMS is technically straightforward, as it can leverage all the facilities already used to provide stored procedures.
+
+* ''Re "They can be trivially tested as I've shown in my second PHP example" -- I am NOT talking about the second example. If you are switching contexts, your text should make that CLEAR.''
+
+* If we're talking about PreparedStatements e.g., "if PS guts are written bad", then surely we're talking about the second example?
+
+* ''Not sure what you mean.''
+
+* You claimed I am "switching contexts" by referring to the second PHP example, when it appears you'd already "switched contexts" to the second PHP example by referring to "PS guts".
+
+* ''No, that's the 3rd example.''
+
+* So?  It's still you who "switched contexts", not me.
+
+* ''The problem is your lousy writing, not me.''
+
+* How so?
+
+''Your sample, "'; delete from customers; --" has NO clear relationship with the sample at the top of the page, as written.''
+
+The relationship is that it's a string you need to filter out of dynamic queries, in order to prevent SQL injection.  It's also used to demonstrate that PreparedStatements do not perform query rewriting.  If they don't perform query rewriting, classic SQL injection is impossible.
+
+''No. For the ACTUAL example you gave, all you have to do is quote escaping to have it "pass", which should be done anyhow because if you don't, then entering "regular" quotes and hyphens in forms will crash the form.  And it demonstrates almost nothing about the implementation of SP's. I could mirror the same results using quote escaping inside clones of your SP api's.''
+
+Using PreparedStatements, entering regular quotes and hyphens won't crash anything.  (You mean the query associated with the form, don't you?)  Yes, you could always use "quote escaping" (which isn't sufficient, by the way -- it won't handle typechecking failures, like passing a SQL injection string where the query expects a number.  E.g., "3; delete from customers;" passed to "SELECT * FROM customers WHERE custno = $userinput") in some API clone, but the whole point is that "quote escaping" and other filtering is risky.  PreparedStatements, however, are no more risky than any other DBMS-side code.
+
+''Wrappers can do type checking also. And SP's may also rely on filtering. Their literature doesn't deny it.''
+
+Yes, wrappers can do type checking.
+
+As I wrote above, there might be PreparedStatements (is that what you mean by "SP's"?) that rely on filtering -- perhaps in low-end DBMSs as a quick hack by the developers to add PreparedStatements to a feature list.  However, it's unlikely.  Looking at typical PreparedStatement implementations in (say) Microsoft's SQL Server, DB2, PostgreSQL and so on, it appears there are obvious hints that PreparedStatements are done "properly", i.e., they insert values into a planned (compiled) query: 
+
+First, parameters are restricted to positions within queries where only values can appear.  If PreparedStatements were implemented via filters and query rewriting, there would be no need for such restrictions.  
+
+Second, there is a clear performance difference between executing a prepared statement vs executing a dynamic query.  The former is almost invariably faster than the latter; roughly equivalent to the performance of executing an equivalent stored procedure.  Thus, it appears executing a prepared statement means executing a planned (compiled) query -- into which values are inserted into value locations in the query plan -- rather than producing a filtered, re-written, parsed, and planned (compiled) query.  
+
+Third, if stored procedures are supported, all the mechanisms are already in place to properly implement PreparedStatements.  The same mechanism that allows arguments to be passed via parameters in a compiled stored procedure can be used to allow arguments to be passed via parameters in a prepared statement.  Why would DBMS vendors deliberately risk SQL injection by avoiding that pre-existing mechanism?
+
+Of course, this is inference based on observations.  Whilst typical vendor documentation doesn't go into details about how PreparedStatements are implemented, you can talk to people who have worked on DBMS implementation and easily discover that what I've described here is typical.
+
+''Making that claim is fine, but just to be clear that is ArgumentFromAuthority. Paraphrased version: "I talked to DB implementers and they told me it works well (or does X)". That is clearly ArgumentFromAuthority. -t''
+
+I'm not saying I've talked to people who have worked on DBMS implementation (though I have, but that's not the point) because '''I am''' someone who has worked on DBMS implementation and I know your nonsense about p-code and the like is nonsense.  I'm suggesting that '''you''' talk to DBMS implementers to find out '''for yourself''' how PreparedStatements are implemented.
+
+''The p-code thing was only an example. I never claimed that's how all or most DB's were actually implemented. Thus, your "nonsense" claim is off. And you admitted the designs may not prevent ALL possible injections (including machine code or tokenized injection). And it's not my job to research and document YOUR case or point-of-view on this topic. As it stands, your case is still ArgumentFromAuthority. Just admit that fact, and we can then move on. I realize you may be frustrated by the fact the reader shouldn't "just trust" your experience in the field at face value, but that's just the way evidence works. Don't take it personally. The bottom line fact is that so far '''nobody has presented direct empirical evidence of injection tolerance.''' The alternative kinds of evidence presented so far are '''quite weak''' in comparison to such empirical results. That's just the way it is. I'm just the messenger. -t''
+
+The "p-code thing" is nonsense.  It's not how any popular DBMSs are implemented, and I don't know any unpopular ones that do it either.  It appears to be something you made up.  
+
+* ''Again again, I did NOT claim it was.''
+
+* Then what's the point in mentioning it?
+
+* ''Like I already pointed out, it was an illustrate example.''
+
+* What was it intended to illustrate, if it's not something that actually occurs?
+
+Do you know what ArgumentFromAuthority actually is?
+
+(''Is there a "generic" term for "semi-compiled" code that covers p-code, Java "bytecode" results, Dot-Net CRL results, etc? Tokenized code?'' -t)
+
+"Tokenized code" is something very different from p-code, Java bytecode, .NET CLR assemblies, and so on.  The latter are all object code.  The former is tokenized source code.
+
+''Doesn't change the general point either way.''
+ 
+Perhaps not, except that tokenized source code hasn't been used in a popular programming language since 1970-1980 era microcomputer BASIC interpreters, and your argument about "p-code" being subject to classic SQL injection only applies to tokenized source code.
+
+''Until somebody brings in real evidence for how the common DB's convert SQL under the hood, speculation on what they actually do under the hood is merely speculation. And some byte-code is also subject to injection.''
+
+[Go look at the MySql source if you want to see what's done under the hood. You'll find that it fits the description we've given.]
+
+Yes. See http://dev.mysql.com/doc/internals/en/prepared-stored.html  E.g., "... prepared statements and stored routines need to '''reuse the same parsed tree to execute a query many times'''."  Top, can you illustrate or clarify what you mean by "some byte-code is also subject to injection"?
+
+''Why do you paste the same evidence in two different topics rather than use PageAnchors or the like?''
+
+Because this page is a self-standing document, and I try to favour its future reader.  It makes reading awkward to have to click on another page and search for a PageAnchor.
+
+''Couldn't one use the same argument for not using functions or subroutines?''
+
+Huh?  No.  Why?  This isn't code that has to be maintained.  This is a document, solely for the benefit of human readers, and I'm not going to go back and "maintain" this content in the future.  Given that it's a ThreadMess, at best it will be refactored at some point in the future and it's easier to refactor one page than two.
+
+''I disagree with that authoring approach. Regardless, my reply is at PageAnchor mysql-query-reuse at PreparedStatementsDiscussionTwo.''
+
+-------
+'''Have Both?'''
+
+That dynamic query-creating approach you show is a bit awkward. But with wrappers very similar to my original version, perhaps the ugliness can be wrapped away so that we can have our PS cake and eat it too.
+
+ // pseudo-code example 4761, based on original example. "&" is concat.
+ q = querylibrary.new();  // create a query object with default connection info
+ ...
+ sql01 = "select * from foo where xcode=" & q.sqlString(myXCode) & " and id=" & q.sqlNum(myId);
+ sql02 = " and zerk = " & q.sqlString(myZerk);
+ // result: 
+ //   - sql01 = "select * from foo where xcode= $1 and id= $2"
+ //   - sql02 = " and zerk = $3"
+ q.run(sql01 & sql02);  // see below
+The implementation of these query library functions would resemble the following, roughly based on the prior Php examples:
+ ...
+ method sqlString(fldValue) {
+   this.fieldArray.addElement(fldValue);  // store field value in array
+   this.typeArray.addElement("String");  // may NOT be needed for some PS kits
+ }  // method sqlNum is similar
+ method run(theSql) {
+   this.pg_prepare(this.connection, this.queryID, theSql);
+   this.pg_execute(this.connection, this.queryID, this.fieldArray, this.typeArray);
+ }
+However, for more complex queries, I tend to break them into parts (sub-strings for sql portions) and then append them together in the end, often '''conditionally''' based on various computations along the way. But this may not be a problem if it's okay to skip numbers in the sequence. I haven't tested PS's in that regard. For example, the final string before value insertion may be "SELECT FROM foo WHERE X = $1 And Y = $3". The element "$2" may have been purposely skipped; its sql string segment ignored due to a conditional test.
+ 
+If it flies, then it's not an either/or choice as originally assumed near the top. An application programmer would barely have to even care whether SP's were used under the hood (by the library) or not. SP's could even be switched on/off for testing etc. Wouldn't that be lovely? -t
+
+''The "either/or choice" was between relying on filter functions to avoid SQL injection vs using prepared statements to avoid SQL injection.  Your example is not relying on filter functions to avoid SQL injection, and it is using PreparedStatements.  That's good.''
+
+''Nothing here, or on TopOnPreparedStatements, was intended to suggest that it's wrong to use wrapper functions to help construct SQL PreparedStatements.  Wrapper functions (or whatever) are a fine way to construct PreparedStatements.  I'm not sure what the benefit would be of switching PreparedStatements (or stored procedures) on or off, though.''
+
+Often intermediate API's have glitches. If you have a way to run SQL "directly" or through a different mechanism, then you may be able to detect or isolate such glitches. It may also speed up certain kinds of testing that require masses of trial-and-error since there may be overhead for some SP's.
+
+''Can you give an example of the glitches that PreparedStatement APIs often have?  Can you give an example of the "overhead for some SPs" (do you mean '''s'''tored '''p'''rocedures, or '''p'''repared '''s'''tatements?) that may affect testing?''
+
+Specifics? No. I'd suggest searching bug blogs if you want specifics. Further, one sometimes wants to ''rule such out'' by using both execution techniques. Thus, even if the API's are perfect, we may still need to verify that fact (for specific cases). 
+
+''You appear to be saying testing is important, which is always true.''
+
+Because it's not always easy to break SQL execution down into sub-components for analysis, being able to rule out a middle-ware API bug is always helpful. Part of the problem is that SQL is a complex language, meaning that translation can often go wrong or act different than intended at the API level.
+
+----
+Note that I did not choose the name of this title, and protest the forceful inclusion of my handle in the title. --top 
+
+----
+See http://en.wikipedia.org/wiki/Prepared_statement 
+
+See also TopOnPreparedStatementsOriginal, SqlInjection, ExpressionApiComplaints, DatabaseAbstractInterfaceDiscussion (driver/parser discussion)
+----
+FebruaryFourteen

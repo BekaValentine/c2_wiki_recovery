@@ -1,0 +1,81 @@
+A Makefile rule that typically scans all C/C++ source files in a directory, and generates rules that indicate that an object file depends on certain header files, and must be recompiled if they are recompiled.
+
+This is done in one of two ways (most versions of Make have no idea how to preprocess C/C++ code to generate the dependencies themselves):
+
+* Use of a compiler option--most C/C++ compilers have a way to preprocess a source code file and emit a list of required header files (in most cases, the standard headers--include <foo.h> rather than include "foo.h", are excluded from the list)
+* A tool called "makedepend", which was a companion to ImakeTool.  (This tool, or early versions of it, didn't work very well as it didn't handle conditionally-included files correctly).
+
+
+Traditional "make depend" rules modified the Makefile itself. This is painful for version control systems. 
+
+Peter Miller describes a better way to do make depend, via individual '''.h''' files, in his paper ''Recursive Make Considered Harmful'' http://www.tip.net.au/~millerp/rmch/recu-make-cons-harm.html.
+
+''Virtually all modern makes can include other makefiles; so "include make.depend" is a rather common idiom.  Self-modifying Makefiles are generally considered harmful''
+
+See MakeLinkDepend.
+
+----
+
+Hope I'm not stealing someone else's thunder, but here is how I do "make depend":
+
+''See notes on makedepend tool above''
+
+Note, that I  use $(OUTDIR) as the place to hold all generated binaries.
+
+Brief description:
+
+1. The "depends" file name is defined in the Makefile as $(DEPFILE).  This is easily changed to your liking.  I use the file name ".depends" as it is "hidden" and doesn't pollute my normal ls of my working directory.
+
+2. The last line of my Makefile always contains sinclude $(DEPFILE).  "sinclude" allows for the Makefile to work when $(DEPFILE) is missing.
+
+3. I never allow common "distribution" directories, like "/usr/include" to be allowed in the dependency list.  This is covered by the makedepend flag -Y.  This is of course a personal preference, but I find the listing of every (nearly) static header file as a dependency to be excessive.  It obfuscates the reading of my dependency list of files that are likely to change.
+
+4. When you delete the $(DEPFILE) gnumake will make $(DEPFILE) even though you don't supply it.  (This is because gnumake considers all makefiles as implicit targets and will update and re-read them if possible before updating any explicitly specified targets.  This is documented in section 3.7 of the manual. -- BenHutchings)
+
+----
+ # Makefile:
+
+ ###
+ # makedepends related settings
+ # -Y		Don't search standard library paths, this is excessive
+ # -f		output dependencies to this file
+ # -s		use this token string
+ ###
+
+ DEPFILE	= .depends
+ DEPTOKEN	= '\# MAKEDEPENDS'
+ DEPFLAGS	= -Y -f $(DEPFILE) -s $(DEPTOKEN) -p $(OUTDIR)/
+
+ SRCS	 = myfile1.c myfile2.c myfile3.c
+ OBJS	 = $(SRCS:.c=.o)
+ OBJS_O	= $(foreach obj, $(OBJS), $(OUTDIR)/$(obj) )
+
+ depend:
+	rm -f $(DEPFILE)
+	make $(DEPFILE)
+	
+ $(DEPFILE):
+	@echo $(DEPTOKEN) > $(DEPFILE)
+	makedepend $(DEPFLAGS) -- $(CFLAGS) -- $(SRC) >&/dev/null
+
+ # put this file in the last line of your Makefile
+ sinclude $(DEPFILE)
+
+ ### Nat Ersoz - I love make!
+
+----
+
+One of the nice things about Clearmake, the make tool which is bundled with ClearCase, is that it obsoletes MakeDepend.  Since Clearcase operates within the filesystem driver (and thus is part of the OS), clearmake is able to record the following information about make runs:
+
+* All invoked commands and their command line arguments
+* All files that are opened
+** Specifically, all header files opened when compiling a particular source file.
+
+It then generates its own dependency list, automatically.  (Of course, you can specify your own dependencies in the Makefile, which are then added to the list that Clearmake generates).
+
+When I first heard about this, I was skeptical--but it works.
+
+''I've often wondered if it would be possible to implement something similar using system-call tracing -- for example, modifying "make" to run its jobs using "strace"''
+
+----
+CategoryCpp

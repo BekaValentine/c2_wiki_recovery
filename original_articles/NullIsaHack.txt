@@ -1,0 +1,185 @@
+The observations below apply to JavaLanguage, CeePlusPlus, SmalltalkLanguage, PythonLanguage, PascalLanguage, CeeLanguage and all the other languages that allow null pointers. Simply put, extensive applications written in ObjectiveCaml or HaskellLanguage and other functional languages show more than enough evidence that programmers can manage without nulls. And they manage quite well.
+
+What happens in JavaLanguage CeeCeePlusPlus et. comp, is that there are 2 issues: there are pointers that can have a special value (t) and there are pointers that cannot. Those are technically (from the TypeTheory point of view) 2 different types, and the corresponding pointers are also very different and the usage patterns are different. Now the type systems being what they are for all the above mentioned languages,they fail to make the difference. So programmers cannot express this difference in language constructs and be verified by the compiler and have appropriate object code generated. The result is typically a mess and it leads to serious leaks in the modularity.
+
+Let's take the following example:
+
+ clientCode1() {
+   char* value1= "DUMMY VALUE";
+   f1(value1);
+   f2(value1);
+ }
+ 
+ clientCode2() {
+   char* value2= getenv("USER_OPTION"); /* possibly returns NULL */
+   f1(value2); 
+   f2(value2);
+ }
+ 
+ void f1(char *param) {
+   printf("%s\n",param);
+ }
+
+ void f2(char *param) {
+   if ( param == NULL ) { printf("I GOT A NULL\n"); }
+   else { printf("%s\n",param)
+ }
+So we have 4 pieces of code: clientCode1 and clientCode2 are the producers of pointer values, and f1 and f2 are consumers of those values. What we need to be able to do is the following:
+* the programmer of f1 should state that he accepts only proper pointers (not NULL), thus the call f2(value2) should be illegal in clientCode2, the legal code to invoke f1 from clientCode2 would be:
+
+ if (value2 != NULL) { f1 (value2) }
+ else {/* treat special case in here */ }
+
+* the programmer of f2 should be able to state that NULL is ok for its function thus its clients shouldn't be forced to check for NULL.
+
+* the programmer of clientCode1 should have the compiler recognize that its "value1" variable is provably not NULL, so that when calling an unsafe function (like f1) he shouldn't need a special syntax to test for NULL. 
+* the programmer of clientCode2 should not be allowed to make the call f1(value2).
+
+In the absence of the above we have the following very messy options:
+* '''all''' consumers of pointers should check every pointer they receive so that they are on the safe side. Clearly this is wasteful when a consumer of pointers is written specifically for proper pointers, and its calling contexts can already prove that they have proper pointers. Also this checking will lead to a significant CodeBloat.
+** This is silly. I seriously doubt that checking for Null pointers will add more than 5% to your code size (by whatever metric)(PrematureOptimizationIsTheRootOfAllEvil). Plus, any half-decent language will have assert() (or some equivalent), which will allow you to strip your checking code out of an optimized build.
+* '''all''' producers of potentially NULL pointers, like the clientCode2 that calls getenv(), should check for NULL before feeding those pointers forward to consumers. This is again wasteful and code bloating when a particular consumer (like f2() above) is already written to be able to handle NULL. 
+* treat everything on a case by case basis relying on documentation. For example, the programmer of f2 should consult the docs for getenv(), and should notice that it may return a NULL. Then he should check the documentation of f1 and notice that it won't swallow a NULL and test for it in its code. On the other hand, he should notice that f2() can handle NULL. Therefore he can safely call it without testing for NULL.
+
+The latter case is what is supposed to happen in practice. Since chains of calls are typically significantly long, pointers are omnipresent (especially in Java, Smalltalk), doing it 100% right is very tedious. Therefore you get NullPointerException, or even better memory access violation, SIGSEGV and other goodies.
+
+''Go take a look at GatedCommunityPattern before demanding that the API do all this mumbo jumbo, please. These issues have been done to death for nigh unto 20 years now in the C community; why do we need to rehash all this good stuff yet again?''
+
+They might have been beaten this problem to death but with no good results. The latest standards for C, C++, Java , C# all suffer from NullIsaHack problem. And most of the significant size Java projects still suffer from NPE. Even things like EclipseIde, IntellijIdea, and NetBeans will throw NPE at you in some of their less tested modules. 
+
+In the same time you have 2 extremely easy and elegant solutions that do away with the NullIsaHack problem:
+* adding the distinction between potentially NULL pointers and always valid pointers like in NiceLanguage.
+* doing away with NULL altogether. We don't need no stinking NULL. 
+Therefore GatedCommunityPattern is a workaround to what is fundamentally a LanguageSmell.
+
+''I simply do not get it. What is the hang-up over null. Why is null a problem at all? The only reason I can see is an historical one that no-longer applies: to whit, if pointers are (virtual-)addresses (as they were in C and some versions of C++), then there's a problem trying to access a nll pointer '''as an address'''. But in a modern language - and certainly any with a VM - WHO CARES!? Null is benign. No, no NullObject, NULL itself. Send null as message/method, get null back. Simple. Inspect null as a boolean, see "false", as an int one sees "zero" (kinda like wave-particle duality) null is the ultimate default value and takes on different appearances when viewed through the lens of a particular type. I guess it's clear also what I think of purely pedantic approaches to type safety (a la ML): they don't lead to elegance or clarity, but just to stringent unnatural restrictions.''
+
+I would say the exact opposite - NULL only makes sense in C++.  In C++, a pointer is not an object, it's a pointer to a block of memory that may point to that object, or a block of crud with undefined behaviour.  In that case, it makes sense to define special cases as being specific addresses of blocks of crud with undefined behaviour.  However, in a language with sophisticated references, it makes no sense to support the Null object - since the Null object represents a reference to something that is NOT of the type of the reference.  When I write "Circle mycircle = Null", that's not a circle, even though I just defined it as a circle.  That's NULL.  This behaviour makes sense in C++, but in Java/C# it's just stupid.
+
+The reason you need NULL is because it's the only mechanism to say "This '''might''' be a Circle"... the blind spot comes from the way you check it.  You don't ask "Is this object a circle" but "is it not null"?  If you were asking "is it a Circle" then it would be obvious.  What you've really got is equivalent to the C-style "Union" operator, except that you've enough metadata to determine which type of the union it contains.  Logically, why not allow full unions?  Why not allow circleOrTofuOrNull, instead of just the usual circleOrNull?  After all, doing any non-null operations on a null are errors.... so why not allow tofuOrCircle, where doing non-Tofu operations on a Tofu are errors?  Why is null the only "not-Circle" that's allowed to go in a Circle reference?  Hell, that's half the reason we have exceptions too - if we can't return the expected object, we have to return a different type... which violates the type of the receiving variable, so we have to do something wierd.  The tricks with stack-traces and popping off the stack are just gravy upon that fundamental need.
+
+----
+
+One solution to get rid of all NullPointerException: switch to a decent language like a FunctionalProgrammingLanguage. You'll soon wonder where all those null pointers disappeared - they do have plenty of "pointers" or, better said, you get to handle dynamically allocated and garbage collected structures and do it a lot without ever meeting a null pointer or looking for it.
+
+''Yeah, thanks for the hint. Now, getting back to reality...'' -- AnonymousCoward
+
+There are only 2 ways the 0/NULL/null/nil can pop its ugly head:
+1. uninitialized structures
+1. when they are used as special values, for example to mark the end of the LinkedList or the end of branch in a binary tree. And the code processes those special values as if they were no different than any other proper value.
+
+''Interesting point. However, the gist seems to be "null is bad" so the language should avoid null. (Please enlighten me on this if I got that wrong.) That's basically the opposite of the point of the question "Why have NPEs?" - to me, null is absolutely fine; it's the NPE that's not nice.''.
+
+* In ML, instead of null you can create a tag for the null node in the list. It is better, because not all nulls are the same. Depending on the data structure, there are different kinds of null. At first it doesn't look like much, but after a while you realize how easy it becomes to program using that. If you have ever used the NullObject pattern, it is pretty similar. -- GuillermoSchwarz
+
+Yes, languages should avoid null because we don't need no stinking null. Uninitialized structures are a bad idea to begin with, and special cases are special cases. The problem is that any language environment can't provide a default good way to respond to dereferencing a null other than NullPointerException or memory violation, core dump and such fine stuff. In a language without nulls you just don't get these goodies, because you don't get to dereference null objects.
+
+'''Saying "Uninitialized structures are a bad idea" seems to be like saying "an empty cup is a bad idea". Yet how, without a cup being empty, can it ever be used to hold anything. In the case of structures is amounts to saying: everything needs to have a default value. As was learned 30+ years ago with SQL: you can't reduce the real world to that - it doesn't support a robust enough model. So the same with programming. Otherwise you insist on default values everywhere. Rather if one just says "null is fine" then, voila, you have your default value everywhere: empty/unset/space/whatever call it what you will.'''
+
+You should choose your references better. SQL is maybe 15 years old, certainly not 30, and NULL is one of the greatest design mistakes and the source of the most common errors in SQL. A fresh reading of ChrisDate on the subject might do you some good.
+
+''Hmmmm. Interesting. I have never gone to great length to consider that possibility and it would take me a while to investigate it thoroughly. The first thing that comes to mind is the case where an uninitialized object/type does make sense. Local variables, for instance. Or user-supplied values. Of course one could opt for a pre-assigned nonsense or default value, but for those with no clear default one, it seems to me, is in effect renaming null. Like I said, I haven't delved into this (no extensive practical exp. with a language that never uses null - unlike the exp with ObjectiveCee and JavaLanguage which do use null but with very different side-effects: in the former null is benign, in the latter it causes what might be the most commonly thrown "exception") so I can't see it quite clearly. Following the idea/need for default values, however, one then either is often initializing new objects just to avoid null and might also be defining static default instances on a per-class basis.... if that is the approach then it seems to add a fair bit of complexity and not quite resolve the problem...? Thoughts (or better: personal experience of deployed apps that never use null)?''
+
+Again, NullObject pattern doesn't resolve all the semantic issues for which NULL is currently used so in those cases NullObject is not benign at all. It will lead to logic errors which are no more benign anyway than NPE; potentially it is worse because NPE at least is an "in your face" kind of error. For example of large programs built without NULL, I'd recommend you take a look at a lot of projects built using Haskell, ML (and Ocaml).
+
+''Having alternate, non-NPE, behavior is NOT the same as having a NullObject. It seems to be a question of preference: is the "in your face" approach preferred? I find it both less desirable and having negative consequences whereas default "do nothing" behavior is better. It's also an extension of thinking as objects. First we learn to think as the thing we're programming: "be" the widget. Then we can learn to "not-be" or be nobody, be space. Nothing there, so nothing is done. Another way to think about it is: is it "ok" to talk to a wall? My answer is "sure" just don't expect any (re-)action. Same thing with NULL - send it all the methods/messages you want. It basically means you don't worry about NPE (or rather the conditions of variables being NULL, since, what I propose is entirely doing away with NPE - just, simply, get rid of it and have the obvious "default" non-behavior for all null references) unless it makes sense from the specific logic of the program itself. In short: why should a language try to tell the programmer the semantic meaning of a variable's value? That makes no sense. But NPE in effect does that. It says: null + invocation MUST be an error. Yet, in truth, most often it is not. I prefer languages that don't get in the programmer's way. As for ML, at the risk of being controversial, if you treat a programmer as a moron (by putting them in a straight-jacket) guess what: you'll get moronic programmers. If you treat programmers as smart - expect that of them and provide flexible languages - that too will be a self-fulfilling approach.''
+
+NULL + invocation is a programming error more often than not in my experience. What is a NULL at the end of the list supposed to respond to nextNode() (yet another NULL? infinite loops anyone?) What is a NULL supposed to respond to a trivial function returning let's say an int 0 so exp(2, null) should be 1 as well as cosine(null)? You should know your mathematics better than that. If a programming error prevented the initialization of a variable a mathematical calculation should be able to return a '''flawed''' result that is perfectly reasonable for the unsuspecting user?
+
+Your OO mumbo-jumbo (StopUsingMetaphors please) can't brush off the real issue. While the language (either at runtime or compile-time) cannot decide the normal semantics of a NULL value, it can decide it is a programming error, doing nothing is even more a semantic decision made by the language designer on behalf of programmers and what is even worse, is that the decision is hidden away from programmers.
+
+As for ML attracting moronic programmers, I can assure you that the least of ML programmers are way smarter than 90% or more of the rest of programming population. A smart programmer will expect a well designed language to let him handle the real important stuff about a program, and there's no shortage of hard problems to solve when programming. The time of the real smart programmers is way too precious to be wasted chasing for trivialities that can be handled by the language (like who allocates, who deallocates, who initializes and where, who uses it and where, who catches an exception , etc, etc ...). 
+
+----
+
+For the first case, you just don't get them in proper languages, and you really don't need them anyway.
+
+For the second case you use SumType. For example:
+
+ type 'a tree = Empty | Node of 'a tree * 'a * 'a tree
+That is a tree is either a Empty (the special case, no stupid null in here) or a Node which is triple containing a properly typed tree - the left branch('a tree), an element of the proper type ('a), and the right branch. So that's it, you won't get to do anything with nulls.
+
+The quasi-impossibility in C/C++/Java family to easily create such sum types with special values, practically forces people to use null - and it is typically used both for input params and for returning results, and for designing structures and this is a hack force unto us by language design. It is tantamount to a huge hole in their type systems.
+
+Which is well known, hence the NullObject pattern. ''The NullObject pattern is also a hack as SumgLispWeenies rightfully noticed. NullObject is useful typically to implement null behavior, when it is possible but for example as a return value from a generic Hashmap.find(key), or for many other uses. The problem is that NullObject implements the same interface as regular objects, while the client may really need to treat it as special case in the client context, therefore NullObject polymorphism is really a hindrance for those clients.''
+
+----
+
+NiceLanguage differentiates between "nullable" and "non-nullable" types and statically checks for null-safety.
+
+ String s1 = null; // illegal! s1 cannot be null
+ String s2 = "hello"; // OK
+ ?String s2 = null; // OK
+ ?String s3 = gets(); // OK, s3 might be null now
+ int l = s3.length(); // Compile-time error! potential NPE
+ if (s3 != null ) { // compiler now knows s3 is not null
+ l = s3.length(); // ...so this is legal
+ }
+The language is Java-like with additional static checking and some functional-inspired features. The compiler generates Java bytecode.
+
+'''I can see the utility of insisting that some refs are not-NULL and to throw an exception on assignment. This is a way of saying s1 (et. al.) is a REQUIRED variable (must have a value). BUT it doesn't do anything for the NPE question: s2 & s3 can still throw NPE - so to me this basic issue is unresolved. NPE is silly.'''
+
+No. The Nice compiler will report an error if you try to dereference s2 or s3 without first checking that they are not null. After a successful compilation, there is a guarantee that no NullPointerException will occur at runtime.
+
+----
+Note: Special emphasis made of the '''Java context''' for this discussion to delimit it from other languages' use of NULL. Remember, C, C++, Pascal, and other languages use NULL to good advantage. Please don't lump their use of NULL in with Java and some of these other things.
+
+''In view of what's been discussed here how can one claim that C, C++, Pascal and other languages (sic!) use NULL to good advantage? At least Java throws NullPointerException which is '''far better''' than C/C++/Pascal (and other languages?) that crash the program. How can one claim that program crashing is better than NullPointerException? [Also keep in mind that catching a NullPointerException allows the program to continue execution, but catching a segmentation fault does not guaranteed the cause is really due to NULL dereferencing, nor can you be certain that no memory overwriting has occurred.]''
+
+''Not to mention that in C/C++/Pascal one can have undefined pointers (pointers who are not assigned a value before they are used, thus "pointing" to a random memory location), and dereferencing an undefined pointer can succeed (with non-negligible probability: think when a pointer variable lands in the stack space where another pointer variables was previously there) with terrible and uncontrollable results. C/C++/Pascal handling of pointers, including null pointers is '''far worse''' than Java.''
+
+Gee, wow! Imagine that! If somebody uses pointers before they contain a valid value or after the target space has been deallocated there is going to be a problem?!? Hey, I better get on the phone to K & R so they can include that in their next book! Oh, wait - it's already there, ain't it? And just by the way - most modern compilers offer some sort of runtime null pointer handling built in to the Cstart or other runtime procedure handling. That's nice, but not the point.
+
+''Hey, the fact that the language admits such usage is a hack. Maybe it was a decent enough of a hack during good old days of K&R but it is a lousy hack by modern standards.''
+
+As with any powerful tool, NULL can cause no end of grief if it is misused. My Desert Eagle is a very powerful pistol, but it's only dangerous if I allow it to point at my foot. I learned long ago how not to point it at my foot, so there's no need for a target discrimination override on the trigger. When one is using a powerful language like C (frequently described as a "super assembler") one has to keep track of one's use of resources. Otherwise you end up with all kinds of problems, not just this NULL thing. But hey, Java's NULL pointer exception thing is really great. Just don't include the rest of the programming language world in with Java when whining about that particular exception handling.
+
+''As with any powerful but obsoleted tool, NULL has no merit any longer. This was the case made on this page, and you made no counter-argument why NULL still has some merit. Your pistol analogy is nice, but how about this analogy: do you think it makes sense any longer to have cars without seat belts ? Well, a language design like C that allows one to use illegal pointer values is exactly like a car design without the seat belts. How's that for an ArgumentByAnalogy.''
+
+[The analogy would hold if the car ''forced'' you to wear the seatbelt, for example, by stopping the engine anytime the seatbelt was not used correctly. While we're beating analogies to death, consider the screwdriver: a useful tool that is also dangerous when used incorrectly. Used as a prybar, it has a funny way of making holes in hands. It can be used as a weapon. Is it reasonable to argue that a screwdriver is obsolete because it permits incorrect uses? Perhaps there is value in the tool's simplicity, even if it can be dangerous in the hands of a fool.] {''And since we come to deeply imbricate analogies, I think of using of matches to light the gas stove. Sure it was a fine tool (some people are still using it) and if you're careful enough you won't burn your fingers with it, but modern cooking machines avoid this hassle altogether and they light the fire themselves. Even better, if there's no more burning for whatever reason, they will turn the gas off. The bottom line is that NULL is a fine tool to use if you're constrained by CeeLanguage (or JavaLanguage for that mater), but if you were to design C again, you wouldn't need to use NULL, because it's obsoleted and unsafe. Modern type systems, compiler technology and language design can tell you when your pointers are not initialized.'' 
+
+Not a bad analogy, but analogy is only so useful. After a while it becomes obfuscating rather than clarifying. NULL still has merit in that it still performs the function it was originally intended to perform; a special case pointer value that is well known and can be used for all kinds of processing and comparison purposes.
+
+''I don't have statistics at hand but pointer mistakes are common. Ponder Java vs. C handling of bad pointers: a complex environment like VisualC++ can be crashed entirely by such a mistake, and you lose a lot of time and maybe a lot of work, while a complex environment like EclipseIde may show you a NullPointerException message triggered in some obscure module. Which one do you prefer as a user?''
+
+As a developer I learn to respect and properly use the tools I have. If I do things that are going to hurt me I should know better. "Doctor, it hurts when I do this." "Well, DontDoThat." Pretty simple, really. There is nothing wrong with NULL when it is used properly. I'm sure that statistics will say that so-and-so many errors are the result of pointer mistakes. Okay, if it hurts then '''don't do that.''' Use the tool that is appropriate to the task. If you don't know how to avoid pointer errors then use something that will CYA, such as Java. 
+
+''For a C weenie it's pretty strange if Visual C++ has never crashed on you (not even a "benign" internal compiler error?). Either you're not a C Weenie or you haven't programmed for Windows. How about gcc, gdb et. comp., then, have they never crashed? ''
+
+''Oh, man!! If I don't know how to avoid pointer errors? :) Are you free of pointer errors? If I think that worrying about pointer errors is a useless past-time, and chasing pointer errors introduced by different programmers because of poor communication is even more useless of an occupation ("I didn't know that function X can return NULL", or "I didn't realize that I shouldn't pass a pointer to a stack object", and on and on the stories go), then I can simply use a language where such errors simply do not happen. As a developer maybe you are too fond of the tools you have. You can have better tools: for a C weenie you might like OcamlLanguage, it's kind of close to the metal in a nice sort of way.''
+
+As long as we're slinging derisive labels around: I guess if you can't hack ''<ahem>'' the heat, stay out of the kitchen. Java weenies don't belong in an environment where they don't have their mama wiping their noses and don't have the runtime environment cleaning up resources after they drop them on the toy room floor. Don't play with Daddy's tools, Billy.
+
+I'm curious how this discussion interacts with dynamically typed languages. Lisp, and Ruby, for example both have a "nil" object which really doesn't seem to cause problems. I know in C++ (my job's primary language) that the language forces me to use NULL for potentially uninitialized values (no argument here, it can be annoying). But I've never really felt the problem with dynamically typed languages. In those cases, I expect null and branch on it (base case of tree insertion, etc...). Is Null bad in such a context? Why? -- DaveFayram
+
+----
+Aren't there other existing topics on this? See NullConsideredHarmful
+
+----
+NullIsaHack because you can have perfectly good "nullable" behaviour with Option or Maybe types.
+    -- haskell language
+    data Maybe a = Just a | Nothing
+    fromJust :: Maybe a -> a
+    fromJust (Just a) = a
+    fromJust Nothing  = undefined -- NOT a null value, this is throwing an exception.
+
+
+
+    -- An example which uses a list instead of a hashtable,
+    -- because I'm too lazy to write a hashtable.
+    -- Or a trie, for that matter.
+    data List  a = Cons a (List a) | Nil
+    get :: Int -> List a -> Maybe a
+    get index (Cons _ tail) = get (index-1) tail
+    get 0     (Cons head _) = Just head
+    get _     Nil           = Nothing
+
+    
+
+    list = Cons 0 (Cons 1 (Cons 2 Nil)))
+    val0 = get 0 list    --> Just 0
+    res0 = fromJust val0 --> 0
+    val1 = get 100 list  --> Nothing
+    res1 = fromJust val1 --> undefined; will crash if you try to output it.
+----
+CategoryProgrammingLanguage CategoryNull

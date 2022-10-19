@@ -1,0 +1,253 @@
+There's a complete implementation for DrScheme at http://sourceforge.net/projects/schematics/.
+The manual is at http://schematics.sourceforge.net/schemeunit/schemeunit.html
+
+Interesting, but very DrScheme-specific. I think something can be written
+which has similar functionality (except for the GUI) in fully
+standard R5RS Scheme. -- StephanHouben
+
+There is a new version that isn't as DrScheme specific.  The only two things are the structure definitions and the module system and any decent Scheme has equivalents for these.  -- NoelWelsh
+
+----
+
+Well, here's a start (umb-scheme).  At least its gotten me through chapter 2 of StructureAndInterpretationOfComputerPrograms :)  -- JohnClonts
+
+ ;
+ ;  Unit test framework for scheme
+ ;
+
+ (define (reportmsg msg)
+	(display msg)
+	(newline))
+
+ (define (reporterr msg)
+	(display "ERROR: ")
+	(display msg)
+	(newline))
+
+ (define (assert msg b)
+  ( if ( not b) (reporterr msg)))
+
+ (define (asserteq msg a b)
+  ( assert msg ( > 0.0001 (abs ( - a b)))))
+
+See also: CommonLispUnit, LispMeUnit
+
+----
+
+It's not in the Scheme standard, but many Schemes support something like
+  (error "My error message")
+This halts the program and often gives the programmer a choice to see a back trace or something like that.
+
+----
+
+If the Scheme in question doesn't support this, my usual workaround is
+  (define error apply)
+which causes the interpreter to throw a "Can't apply string: 'My error message'" complaint or similar, which is sub-optimal but usually Good Enough for testing
+
+----
+
+ ;; Here is a simple start with standard macros. 
+ ;; One could change it to return some useful value.
+ ;; -Ken Dickey
+
+ (define-syntax unless
+  (syntax-rules ()
+	((unless ?form ?clause ...) ;=>
+	(if (not ?form) (begin ?clause ...)))
+ ) )
+
+ (define-syntax when
+  (syntax-rules ()
+	((when ?form ?clause ...) ;=>
+	(if ?form (begin ?clause ...)))
+ ) )
+
+ ; set! #t to avoid breaking into the debugger
+ (define treat-errors-as-warnings #f)
+
+ ;; Light weight unit testing..
+ ;; TODO: wrap w general exception handler & restart
+ (define-syntax expect
+  (syntax-rules ()
+	((expect ?expected ?form) ;=>
+	(expect ?expected ?form equal?)
+	)
+	((expect ?expected ?form ?compare) ;=>
+	(let ( (expected ?expected)
+		(actual	?form) 
+	  )
+	(unless (?compare expected actual)
+  ((if treat-errors-as-warnings warn error)
+	(format #f 
+	"~% expected: ~a~% got: ~a~% from: ~g"
+	expected
+	actual
+	'?form))))
+	)
+ ) )
+
+ ;; SAMPLE USAGE:
+
+ ;;  Examples from STk Reference Manual
+
+ ;; slot inheritance
+
+ (define-class <A> () (a))
+ (define-class <B> () (b))
+ (define-class <C> () (c))
+ (define-class <D> (<A> <B>) (d a))
+ (define-class <E> (<A> <C>) (e c))
+ (define-class <F> (<D> <E>) (f))
+
+ (expect '(a)		(class-slots <A>) lset=)
+ (expect '(a e c)	(class-slots <E>) lset=)
+ (expect '(a b c d e f) (class-slots <F>) lset=)
+
+ ;; class precidence
+
+ (expect '(<F> <D> <E> <A> <B> <C> <object> <top>)
+	(map class-name (class-precedence-list <F>))
+	equal?)
+
+----
+
+Here's another, written using scsh, but probably adaptable to other Schemes as well. I attempted to retain the flavor of the StarUnit testers, though it may be a bit strange in Scheme. -- RobertChurch (with thanks to EmilioLopes for fixing a bug).
+
+ ;; A simple unit testing framework for scsh.
+
+ ,open handle ; we need `with-handler'
+
+ (define *tests* '())
+ (define *test-failures* '())
+
+ ;;
+ ;; 'assert' comes from Rolf-Thomas Hoppe's 'krims' package at 
+ ;; http://www.scsh.net/resources/sunterlib.html
+ ;;
+
+ (define-syntax assert
+	(syntax-rules ()
+	((assert ?x ?y0 ...)
+		(if (not ?x) (error "Assertion failed" '?x ?y0 ...))) ))
+ 
+ (define-syntax define-tests
+   (syntax-rules ()
+     ((define-tests ?suite-name ?bindings (?name1 ?body1 ...) ...)
+      (set-test-suite! '?suite-name
+                       (list (cons '?name1 (lambda() (let* ?bindings ?body1 ...))) ...)))))
+
+ (define (set-test-suite! name tests)
+	(if (assq name *tests*)
+	(set-cdr! (assq name *tests*) tests)
+	(set! *tests* (alist-cons name tests *tests*))))
+
+ (define (find-test-by-name suite-name test-name default-thunk)
+	(let* ((suite (assq suite-name *tests*))
+		(test (assq test-name (cdr suite))))
+	(if (not test)
+		default-thunk
+		(cdr test))))
+
+ (define (setup-thunk suite-name)
+  (find-test-by-name suite-name 'setup (lambda () #f)))
+
+ (define (teardown-thunk suite-name)
+	(find-test-by-name suite-name 'teardown (lambda () #f)))
+
+ (define (test-thunks suite-name)
+  ;; Returns the test routines, filtering out 'setup and 'teardown forms.
+  (let ((suite (assq suite-name *tests*)))
+	(remove (lambda (tst) (or (eq? 'setup (car tst))
+				(eq? 'teardown (car tst))))
+	  (cdr suite))))
+
+ (define (with-handle-test-error* suite-name test-name thunk)
+  (call-with-current-continuation
+	(lambda (k)
+	(with-handler
+		(lambda (condition next)
+		(set! *test-failures* 
+			(cons (list suite-name test-name condition) *test-failures*))
+		(k '()))
+		thunk))))
+
+ (define-syntax with-handle-test-error
+	(syntax-rules ()
+	((with-handle-test-error ?suite-name ?test-name ?body ...)
+		(with-handle-test-error* ?suite-name ?test-name (lambda () ?body ...)))))
+
+ (define (display-failures test-failures)
+	(for-each (lambda (failure)
+		  (display "FAILURE: ")
+		  (display failure)
+		  (newline)) test-failures))
+		  
+ (define (run-tests)
+	(set! *test-failures* '())
+	(for-each (lambda (suite)
+		  (run-test-suite (car suite)))
+		  *tests*)
+	(display-failures *test-failures*))
+
+ (define (run-test-suite suite-name)
+	(let ((suite (assq suite-name *tests*)))
+	(if (not suite)
+		(error "Suite " suite-name "not defined"))
+	(for-each (lambda (tst)
+			(with-handle-test-error suite-name (car tst)
+					 (run-test suite-name (car tst))))
+		
+		(test-thunks suite-name))))
+
+ (define (run-test suite-name test-name)
+	(dynamic-wind (setup-thunk suite-name)
+	(find-test-by-name suite-name test-name 'test-not-found) 
+	(teardown-thunk suite-name)))
+
+Here's a little example:
+
+ (define-tests arithmetic-tests 
+	((a 5) (b 6))
+	(setup (display "SETUP"))
+	(teardown (display "TEARDOWN"))
+	(test-addition
+	(assert (= (+ 2 3) 5))
+	(assert (= (+ 2 2) 5)))
+	(test-multiplication
+	(assert (= (* 2 4) 7))))
+
+The bindings are fresh in each test:
+
+ (define (writeln . args)
+   (for-each display args)
+   (newline))
+
+ (define-tests arithmatic-tests 
+   ((a 5) (b 6))
+   (test-addition
+    (assert (= (+ 2 3) (begin (writeln "a: " a  ", b: " b) a)))
+    (assert (= (+ 2 3) (begin (set! a 4) (set! b 7) 5)))
+    (assert (= (+ 2 2) (begin (writeln "a: " a  ", b: " b) a))))
+   (test-multiplication
+    (assert (= (* 2 4) (begin (writeln "a: " a  ", b: " b) (+ b 1))))))
+
+ ;; should return:
+ ;; a: 5, b: 6
+ ;; a: 4, b: 7
+ ;; a: 5, b: 6
+ ;; FAILURE: (arithmatic-tests test-multiplication (error Assertion failed (= (* 2 4) (begin (writeln a:  a , b:  b) (+ b 1)))))
+----
+ChickenScheme comes with a unit testing framework.
+
+SRFI 64 http://srfi.schemers.org/srfi-64/ proposes "A Scheme API for test suites".
+
+SRFI 78 http://srfi.schemers.org/srfi-78/srfi-78.html -- "Lightweight testing".
+
+Testeez is a simple test case mechanism for R5RS Scheme.
+It was written to support regression test suites embedded in the author's one-file-per-library Scheme libraries.
+http://www.neilvandyke.org/testeez/
+----
+See Also LispMeUnit
+
+----
+CategoryScheme

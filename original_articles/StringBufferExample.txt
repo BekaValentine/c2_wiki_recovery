@@ -1,0 +1,99 @@
+The page StringBuffer talks about explicit use of StringBuffer''''''s for concatenating Java Strings, as opposed to the + operator. There's a suggestion that ".. if you're optimizing for performance, I'm told that the ugly version is much faster. Haven't tested it myself though." Quite an AlarmBellPhrase!
+
+Infact of the examples on that page, the "neat" version is infact _much_ faster, since the compiler can turn the expression into a single string literal (and iirc is required to by the language spec). To get the proper comparison, we really want to use variables rather than constants. For example:
+
+   public static String ugly(String foo, String bar) {
+     StringBuffer buffer = new StringBuffer();
+     buffer.append (foo);
+     buffer.append (" ");
+     buffer.append (bar);
+     return buffer.toString();
+   }
+   public static String neat(String foo, String bar) {
+     return foo + " " + bar;
+   }
+
+Looks like a fair comparison. Let's look at the code that gets generated for this by javac, starting with the "neat" version:
+
+ .method public static neat(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+	 .limit locals 2
+	 .limit stack 3
+
+	 new              java/lang/StringBuffer
+	 dup
+	 aload_0
+	 invokestatic     java/lang/String.valueOf(Ljava/lang/Object;)Ljava/lang/String;
+	 invokenonvirtual java/lang/StringBuffer.<init>(Ljava/lang/String;)V
+	 ldc              " "
+	 invokevirtual    java/lang/StringBuffer.append(Ljava/lang/String;)Ljava/lang/StringBuffer;
+	 aload_1
+	 invokevirtual    java/lang/StringBuffer.append(Ljava/lang/String;)Ljava/lang/StringBuffer;
+	 invokevirtual    java/lang/StringBuffer.toString()Ljava/lang/String;
+	 areturn
+ .end method
+
+Pretty straight forward. Create a StringBuffer with the ''foo'' String as an argument to its constructor (with an unnecessary String.valueOf call on ''foo''), then append() ''bar'' and return the toString(). The only obvious problem is the valueOf(). Javap reveals that this method is 31 bytes long.
+
+Now the "ugly" one:
+
+ .method public static ugly(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+	 .limit locals 3
+	 .limit stack 2
+
+	 new              java/lang/StringBuffer
+	 dup
+	 invokenonvirtual java/lang/StringBuffer.<init>()V
+	 astore_2
+	 aload_2
+	 aload_0
+	 invokevirtual    java/lang/StringBuffer.append(Ljava/lang/String;)Ljava/lang/StringBuffer;
+	 pop
+	 aload_2
+	 ldc              " "
+	 invokevirtual    java/lang/StringBuffer.append(Ljava/lang/String;)Ljava/lang/StringBuffer;
+	 pop
+	 aload_2
+	 aload_1
+	 invokevirtual    java/lang/StringBuffer.append(Ljava/lang/String;)Ljava/lang/StringBuffer;
+	 pop
+	 aload_2
+	 invokevirtual    java/lang/StringBuffer.toString()Ljava/lang/String;
+	 areturn
+ .end method
+
+Longer code (41 bytes), the StringBuffer is created with a no-args constructor and then append()ed both strings adding an invocation, and there's more work being done mucking with local variables. But of course we don't mind this if it's going to be ''much'' faster.
+
+Before we benchmark, let's make it interesting by throwing in a "hand-hacked" version, which simply removes the valueOf call in the "neat" version. Here are the results on my copy of JDK 1.2.
+
+Time to make a million invocations of each took:
+
+ $ java string
+ neat        took 11668ms
+ ugly        took 11129ms
+ hand_hacked took 10900ms
+
+Rather a small difference in all cases! The biggest difference being 758ms over 1000000 invocations. Of course if we were actually printing the strings then the I/O would make this already small difference completely irrelevant.
+
+So, next time someone gives you a tip about an "ugly way that's much faster", be careful!
+
+''Indeed you do need to be careful. I had an application in which strings that were dynamically generated (dates and other bits and bobs) needed to be concatenated. My bench mark showed that the ugly way was an order of magnitude faster than the neat way. --ChanningWalton ''
+----
+You're not taking into account the effects of garbage collecting the intermediate (but never specifically named) Strings.  In your little benchmark the memory situation is a non-issue, but in a real application, say using Swing and many objects, gc becomes significant.  That's the thing about benchmarks -- they only show how long it takes to run the benchmark.
+
+-- StevenNewton
+
+Time taken for GC is proportional to the number of ''live'' objects, not dead ones.  The difference in speed between code that appends strings with the "+" operator and code that uses a StringBuffer is caused by data copying.  A StringBuffer copies data by doubling the size of the buffer each time it fills up, so the complexity of the concatenation is O(n log n).  The "+" operator creates a new string and copies both arguments into the new string's internal buffer, so the complexity is O(n^2).
+
+''These are good points, but they don't actually apply to this example: the disassembled code shows that each method uses exactly one new/temporary object (a StringBuffer). The important thing about this example is that the compiler generates very similar bytecodes for both cases, and the assumption that it will create a new String for each use of the + operator is wrong.''
+
+Put another way, with javac "s1 + s2 + ... + sN" runs in O(N) time and with O(1) temporary garbage, just like the StringBuffer version. At least if you take StringBuffer operations as O(1), which they aren't :-).
+
+As in Channing's example, if your program isn't simple enough for javac to optimise, you will end up running in O(N^2) time with + vs. O(N) with StringBuffer, for N string appends, which is a big difference.
+
+----
+
+There's one more thing: StringBuffer is synchronized... meaning that each call to append() is wrapped up in a mutex.
+One system I've visites just replaces all of their StringBuffer instances with StringBuilder ones (Same API, non-synchronized), and that alone made things "much faster". --AvivEyal
+
+----
+CategoryJava

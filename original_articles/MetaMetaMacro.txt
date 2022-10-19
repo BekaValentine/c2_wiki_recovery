@@ -1,0 +1,171 @@
+If you want to take advantage of MetaMacro''''''s in your CeeLanguage/CeePlusPlus code, you might find that the MetaMacro implementation involves a lot of repetitive typing, so you could then decide to autogenerate your MetaMacro header files, presumably the result would be expressed as MetaMetaMacro''''''s. The RubyLanguage code at the bottom of the page will create a C99-compatible header file called meta.h, which defines the following MetaMacro''''''s:
+
+  metaIDENT(X_)
+    expands to X_ (identity metamacro)
+  metaCOMMA(X_)
+    expands to X_,
+  metaSEMICOLON(X_)
+    expands to X_;
+  metaLPAREN(X_)
+    expands to (X_
+  metaRPAREN(X_)
+    expands to X_)
+  metaPARENS(X_)
+    expands to (X_)
+  metaJOIN(X_, ...)
+    joins the following X_ arguments together with ##
+  metaLOOPn(E_, M_, X_)
+    applies macro M_ to X_ E_ times.
+    the character 'n' should be replaced by an integer 0-7 (to allow loops in loops)
+  metaINC(X_)
+    expands to the result of X_ + 1 (X_ is integer 0-63)
+  metaDEC(X_)
+    expands to the result of X_ - 1 (X_ is integer 1-64)
+  metaADD(X_, Y_)
+    expands to the result of X_ + Y_ (X_ and Y_ are integers 0-63, result ranges 0-63)
+  metaSUB(X_, Y_)
+    expands to the result of X_ - Y_ (X_ and Y_ are integers 0-63, X_ > Y_, result ranges 0-63)
+  metaLISTn(E_, T_, S_)
+    expands to the result of applying T_ to the list of integers 0-E_, applying S_ to provide separation.
+    the character 'n' should be replaced by an integer 0-7 (to allow lists in lists)
+A brief example:
+  metaLIST0(10, metaPARENS, metaCOMMA)
+expands to:
+  (0), (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)
+A more complex, (and more conceivably useful) example:
+  #define TYPENAMES(X_) typename metaJOIN(2, P, X_)
+  #define PARAMS(X_) metaJOIN(2, P, X_) metaJOIN(2, p, X_)
+  #define ARGS(X_) metaJOIN(2, p, X_)
+
+  #define MY_TEMPLATE_THUNK(X_) \  
+  template<typename R, metaLIST0(X_, TYPENAMES, metaCOMMA)> \  
+  R thunk(metaLIST0(X_, PARAMS, metaCOMMA)) \    
+  { \  
+      return func(metaLIST0(X_, ARGS, metaCOMMA)); \  
+  }
+
+  metaLIST1(9, MY_TEMPLATE_THUNK, metaIDENT)
+produces:
+  template<typename R, typename P0>
+  R thunk(P0 p0)
+  {
+      return func(p0);
+  }
+
+  template<typename R, typename P0, typename P1>
+  R thunk(P0 p0, P1 p1)
+  {
+      return func(p0, p1);
+  }
+
+  //...
+
+  template<typename R, typename P0, typename P1, typename P2, typename P3, typename P4, typename P5, typename P6, typename P7, typename P8, typename P9>
+  R thunk(P0 p0, P1 p1, P2 p2, P3 p3, P4 p4, P5 p5, P6 p6, P7 p7, P8 p8, P9 p9)
+  {
+      return func(p0, p1, p2, p3, p4, p5, p6, p7, p8, p9);
+  }
+I knocked up the code in a couple of hours mainly for kicks. It'd be interesting to see if anyone has any suggestions for improvements. I think there's a technique used by the BoostLibraries to allow expansion of nested macros without needing an explicit 'n' term (such as in metaLIST, metaLOOP), but I wasn't able to unpick exactly how they did it...
+
+----
+  class MetaHeaderF''''''ile
+
+      def initialize filename
+          @header = 'META_h'
+          @pre = 'meta'
+          File.open filename, 'w' do
+              |@file|
+              write
+          end
+     end
+    
+      def with_header_guards &block
+          @file.puts <<-EOQ
+  #ifndef #{@header}
+  #define #{@header}
+  EOQ
+          block.call
+          @file.puts <<-EOQ
+  #endif//#{@header}
+  EOQ
+      end
+    
+      def write_join num
+          n = 1
+          args = "X0_, X1_"
+          macro = "X0_##X1_"
+          while n < num
+              n += 1
+              @file.puts "#define #{@pre}JOIN_i#{n}(#{args}) #{macro}"
+              args += ", X#{n}_"
+              macro += "##X#{n}_"
+          end
+          @file.puts "#define #{@pre}JOIN_i(X_, ...) #{@pre}JOIN_i##X_(__VA_ARGS__)"
+          @file.puts "#define #{@pre}JOIN(X_, ...) #{@pre}JOIN_i(X_, __VA_ARGS__)"
+      end
+    
+      def write_loop num, extent
+          num.times do |n|
+              extent.times do |e|
+                  if 0 == e
+                      macro = 'X_'
+                  elsif 1 == e
+                      macro = 'M_(X_)'
+                  else
+                      macro = "M_(#{@pre}LOOP_i#{n}_#{e-1}(M_, X_))"
+                  end
+                
+                  @file.puts "#define #{@pre}LOOP_i#{n}_#{e}(M_, X_) #{macro}"
+              end
+              @file.puts "#define #{@pre}LOOP#{n}(E_, M_, X_) #{@pre}JOIN(4, #{@pre}LOOP_i, #{n}, _, E_)(M_, X_)"
+          end
+      end
+    
+      def write_maths extent
+          extent.times do |e|
+              @file.puts "#define #{@pre}INC_i#{e} #{e+1}"
+              @file.puts "#define #{@pre}DEC_i#{e+1} #{e}"
+          end
+          @file.puts "#define #{@pre}INC(X_) #{@pre}JOIN(2, #{@pre}INC_i, X_)"
+          @file.puts "#define #{@pre}DEC(X_) #{@pre}JOIN(2, #{@pre}DEC_i, X_)"
+          @file.puts "#define #{@pre}ADD(X_, Y_) #{@pre}LOOP7(Y_, #{@pre}INC, X_)"
+          @file.puts "#define #{@pre}SUB(X_, Y_) #{@pre}LOOP7(Y_, #{@pre}DEC, X_)"
+      end
+    
+      def write_list num, extent
+          num.times do |n|
+              extent.times do |e|
+                  if 0 == e
+                      macro = 'T_(0)'
+                  else
+                      macro = "S_(#{@pre}LIST_i#{n}_#{e-1}(T_, S_)) T_(#{e})"
+                  end
+                
+                  @file.puts "#define #{@pre}LIST_i#{n}_#{e}(T_, S_) #{macro}"
+              end
+              @file.puts "#define #{@pre}LIST#{n}(E_, T_, S_) #{@pre}JOIN(4, #{@pre}LIST_i, #{n}, _, E_)(T_, S_)"
+          end
+      end
+    
+      def write
+          with_header_guards do
+              @file.puts "#define #{@pre}IDENT(X_) X_"
+              @file.puts "#define #{@pre}COMMA(X_) X_,"
+              @file.puts "#define #{@pre}SEMICOLON(X_) X_;"
+              @file.puts "#define #{@pre}LPAREN(X_) (X_"
+              @file.puts "#define #{@pre}RPAREN(X_) X_)"
+              @file.puts "#define #{@pre}PARENS(X_) (X_)"
+              write_join 16
+              write_loop 8, 32
+              write_maths 64
+              write_list 8, 32
+          end
+      end
+  end
+
+  MetaHeaderF''''''ile.new('meta.h')
+----
+A macro-free version of the same idea can be found in Alexandrescu's ModernCeePlusPlusDesign.
+
+Could you expand on this comment? One of the examples I gave (above the code) expands to a set of template functions, each with one parameter more than the previous. I'm not sure how its possible to automate such a thing without using the preprocessor (at least until variadic templates become part of the C++ standard). I guess I'll have to read the book...
+If you're making the point that TemplateMetaprogramming is better than PreprocessorMetaprogramming, then I'd broadly agree with you (although string processing is actually harder with template metaprogramming).

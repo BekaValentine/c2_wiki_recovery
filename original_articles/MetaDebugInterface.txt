@@ -1,0 +1,86 @@
+Most current (2005) programming languages conform to a debugging model, that is either tied to the ProgrammingLanguage (special debug information) or to the OperatingSystem (symbol table + assembly break-points).
+
+JavaLanguage 5.0 (or rather the VM ByteCode format) is beginning to be a notable exception, allowing for multiple levels of transformation.
+
+Herewith I propose a new model for Debugging, that allows to smoothly debug across multiple levels of transformation and interpretation by defining a MetaDebugInterface, that ''can'' be implemented by intermediate languages.
+
+I will sketch the (obvious) model in JavaLanguage just for exposition purposes:
+
+  interface Debuggable
+  {
+	List<Location> getLocations(Source);
+	Collection<Thread> getThreads();
+	BreakPoint createBreakPoint(Location);
+	Collection<Thread> getPendingThreads();
+  }
+
+  interface BreakPoint
+  {
+	Location getLocation();
+	void delete();
+  }
+
+  interface Thread
+  {
+	Location getCurrentLocation();
+	ActivationRecord getActivationRecord();
+
+	void interrupt();
+	void resume();
+  }
+
+  interface Location
+  {
+	Source getSource();
+	int getLineNumber();
+	int getStartingOffset();
+	int getEndingOffset();
+
+        // possible successor locations (step-in, step-out, step-over, step-true, wait-receive) for step breakpoints
+	Map<Target,Location> getSuccessors();
+  }
+
+  interface Source
+  {
+	String getName();
+	String getSourceText(int fromOffset, int toOffset);
+        List<Location> getLocationsAt(int fromOffset, int toOffset);
+  }
+
+''Of course some classes for inspecting program state (e.g. ActivationRecord, Variable) are needed too.''
+
+Implementation of these interfaces is fairly straightforward for most language implementations (for BasicLanguage: Every source line is a Location; there is only one thread, whose currentLocation is the currently interpreted line; if interpretation is done by a thread, it can be stopped e.g. with interrupt()).
+
+Concrete Debuggable classes might be registered at a debug factory and accessed by an actual debugger.
+
+To be really useful, it must be implemented on the lowest level of the target language (e.g. AssemblyLanguage or ByteCode). In Java this would mean an implmentation with JDI into its own VM.
+
+And now comes the cool part: It could be possible to provide a method returning a parent Debuggable as well as a mapping from Locations in one Debuggable to the ones in the Parent (and/or vice versa) thus allowing for smooth zooming in over the abstraction levels onto the lowest levels. 
+
+Assume you are debugging an interpreter for Basic written in Java. You discover a problem in the basic program, which might result from an error in the java interpreter. You could step up to the error line and then switch to the parent debugger and continue in the java source interpreting the given line. And if that isn't enough you could further switch to ByteCode or even assembly debugging.
+
+-- GunnarZarncke
+
+Very nice.
+
+I'd almost promote it from a 'bell-and-whistle' to a core requirement for the approach in RethinkingCompilerDesign.  When debugging an interpreter interpreting itself interpreting target code, I've had three debug windows to show what is going on as I 'single step' through the code.  I didn't have the debug interfaces cleanly exposed.
+
+Now the same actually goes for tokenising->MinimalParsing->graph-rewriting as we progress through there are 'errors' possible at different levels of the process.  Similarly for any pipeline process.  In a sense what we want to do is 'mark' an area of data at some level of abstraction and see how that marked data flows through the system at different levels of abstraction - or from the point of view of different processes.
+
+In the debugger we are controlling what functions we step into and which ones we step over, not through decisions we the programmer make on each click, but through rules.  Switching levels is chosing a different rule-set.  So also is switching what stage of a pipeline we are watching.
+
+-- JamesCrook.
+
+Yes, I didn't present it in the general form intentionally (to keep it simple). But its general usefulness for debugging over multiple abstractions of data or control flow is intended. -- .gz
+
+More practical example where this would be helpful:
+
+* Debugging the UI
+** JSPs. For a long time there where no specialized JSP (JavaServerPages) debuggers, meaning it was not possible to debug page rendering. JSPs where transformed into java classes which where then compiled. Debug information referred to the .java files and you really don't want to step thru generated code for JSPs. Nowadays the JSP are compiled directly to bytocode and the debug infos refer to the JSPs (or JSPs are no longer used at all). This means you have to blindly trust the bytecode generator. It would be better to still have the mapping to java and map source locations. This means you could still step thru the generated code in case you had to check the generated code. But you wouldn't need to. 
+** The UI framework Wicket has a model of the page to be rendered. For rendering it processes this tree with generic methods at the base classes, thus 'interpreting' the tree while rendering. It is quite difficult to get the debugger to the point where a specific piece is rendered, esp. in cases of repeated nodes (think display of 7th person record). I built a 'debugger' for it by attaching a callback to each node with a boolean in a method which tests the boolean but does nothing with it. The boolean can be set by the java debugger and the method gets a breakpoint with in the if-test. Now I can set the boolean and wait till the debugger will hit this node. Works but cumbersome.
+
+* Event Driven Processing
+** Message Queues often constitute a kind of process and you'd like to be able to intercept messages without setting a breakpoint on each processor receive method
+
+----
+CategoryDebugging CategoryBug

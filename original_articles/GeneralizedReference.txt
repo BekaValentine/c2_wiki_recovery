@@ -1,0 +1,110 @@
+In CommonLisp, a GeneralizedReference is a form that can act as a place and hence be used as the first argument to setf.  Compiler writers can think of this as an L-value, though a generalized reference is somewhat less general.  This concept
+can also be called a FirstClassSlot.
+
+The CommonLispHyperSpec provides more details (section 5.1), but here are some examples:
+  (setf a-symbol a-value)
+  (setf (car some-list) another-value)
+  (setf (gethash key hashtable) new-value)
+  (setf (aref array 0 10) new-value)
+  (setf (point-accessor 'x) moved-x-coordinate)
+
+This provides uniformity of access across all data structures, including user-defined ones.  For example, in Java you are required to provide getters and setters if a property must be updated:
+  public Foo getComplicatedComputedFoo() {}
+  public void setComplicatedComputedFoo(Foo newValue) {}
+
+  thisObject.setComplicatedComputerFoo(thatObject.getComplicatedComputedFoo());
+
+The Lisp approach lets you do everything with setf:
+  (defun complicated-computed-foo (obj) )
+  (defun (setf complicated-computed-foo) (obj value) )
+
+  (setf (complicated-computed-foo this-object) (complicated-computed-foo that-object))
+
+Note that the setf can perform arbitrary runtime computation; it is just as powerful as Java setters, but has the same syntax as ordinary variable assignment.
+
+Setf works by having '''setf''' recognize its first parameter and then conditionally doing the appropriate thing, so if the parameter is '''car''' then it does '''rplaca'''. As such it can work with user macros (which can be examined at '''setf'''s eval time) but not with user functions:
+
+   (defun foo (x) (car x))
+   (setf (foo a) 21)
+   *** - EVAL: the function (SETF FOO) is undefined
+   (setf (car a) 21)
+   --> 21
+
+Some other languages provide similar functionality, though most don't have the full power of setf.  Dylan and Ruby allow one to define functions named foo() and foo-setter(), and whenever foo() appears on the left-hand side of an assignment, foo-setter is called.  The example above in Dylan:
+  define method complicated-computed-foo (obj) end;
+  define method complicated-computer-foo-setter (obj, value) end;
+
+  this-object.complicated-computed-foo := that-object.complicated-computed-foo.
+
+And a similar example in Ruby:
+  class Blorf   # or some other class declaration
+      def complicated_computed_foo() ... end
+      def complicated_computed_foo=(value) ... end
+  end
+  obj1 = Blorf.new; obj2 = Blorf.new
+  obj.complicated_computed_foo = obj2.complicated_computed_foo
+
+In CeePlusPlus, the equivalent capability is ReturningReferences.  This gives true L-values (that can appear on either the left or right of an assignment), but at the expense of more complicated memory management.  ReturningReferences also doesn't allow you to execute arbitrary code on a set to check a value's validity.  
+
+The advantage of the CommonLisp approach is that any macro that expands into a generalized reference is itself a generalized reference.  This allows you to build layers of manipulators on top of each other without worrying whether the underlying data is a symbol, array reference, slot access or function call.  See OnLisp chapter 18 for examples of what you can do with this.
+
+Contributors: JonathanTang, DougMerritt, AnonymousDonor
+
+----
+''Moved here from ManifestTyping. Remember that "a GeneralizedReference is a form that can act as a place".''
+
+There is no difference between a value stored in a variable and an anonymous value computed by an expression such as a function call. There is no such thing as an lvalue, because a variable is not just a machine-language label denoting a storage location, it's a symbol denoting a binding. Variable assignment mutates that binding, not the object itself. If some object kinds are mutable, then that is done through appropriate accessors. In Lisp, there is the notion of a place which is like an lvalue, but more abstract.
+
+The SETF macro understands the syntax of various expressions that refer to a variable or part of a mutable object; it transforms that accessor syntax into a call to the right mutating code. So that for instance, to modify the ninth element of a list to hold the number 42, you can write (setf (ninth some-list) 42). This does not work by (ninth some-list) returning some modifiable lvalue object; the SETF operator, at compile time, parses the syntax (ninth some-list) and generates code to perform the storage. The intelligence is in SETF, not in the expression that designates the storage location. Whereas in Pascal, say, if we have X^^ := 3;  which means dereference X twice then assign, the logic of computing the storage location is in the dereferencing.
+
+[ This is a weakness of Lisp, not a strength, because I cannot put arbitrary things into SETF places. I '''should''' be able to do (defun mycar (a) (car a)) and then do (setf (mycar x) y). This shows that the entire SETF idea that the lisp community is so proud of is a house of cards. Using L-values would fix this (although it would of course be difficult to figure out how to do so in a way that captures the full power of SETF).
+
+''Making slots first class would do this in a way that "captures the full power of setf". That is what EeLanguage and TransframeLanguage did; see below.'' ]
+
+FirstClassSlot''''''s don't have the full generality of setf.  A common use for 'setter' functions is to perform validation on the value stored in the variable.  This is one of the main selling points of DataEncapsulation in ObjectOrientedProgramming.  A function that returns a slot does not have access to the variable that will eventually be stored in the slot, and so can't perform any validation.  This requires the ability to execute arbitrary code at assignment, and so ''can't'' be done with a dumb assignment operator.
+
+''Although the function that returns a slot doesn't have this access, the slot object does. A FirstClassSlot in EeLanguage, for example, has two methods of interest: getValue and setValue. The setValue method can do arbitrary validation. '''All''' assignments in E are syntactic sugar for a call to a setValue method (possibly on a built-in slot object, in which case they are optimized).''
+
+''... which is the same solution you give below, modulo the equivalence between closures and objects. Should have read that first :-)''
+
+I'm moving my discussion of this from ConeOfAnswers to below.  It's far from an ideal solution, but it's the only way I could think of to retain the full power of setf and simplify some of the complexity.  Interestingly, I later found out DavidMoon (who did the original design of setf) had a very similar idea on the ArcLanguage suggestions page.  -- JonathanTang
+
+''IOW setf can act polymorphically on different kinds of location. In languages like C and Pascal, there is only one kind of location, corresponding to an address. But this is not because C and Pascal are manifestly typed. ISTR a manifestly typed (or soft-typed?) research language called TransframeLanguage <http://www.visviva.com/transframe/intro.htm>, in which locations were first-class.''
+
+The assignment operator itself is dumb; it just has to check the types, check that the left expression is an lvalue, and generate the code to do the data transfer into the ready-made location.
+
+''This is not how assignment works in either EeLanguage or TransframeLanguage -- there are no such things as built-in lvalues, only slot expressions. There is syntactic sugar so that the LHS of an assignment can look like an lvalue would in a C-like language. In the case of EeLanguage, "a.foo := bar" expands to something like "a.getSlot("foo").setValue(bar)". (The details are under revision.)''
+
+So when we throw around terms like "variable holds a value", there is a lot more to it!
+
+-----
+
+(Discussion moved from ConeOfAnswers; the original question was "How do you support generalized references when every run-time data structure is a function?")
+
+Can I see it? :-) -- DougMerritt
+
+I knew someone was going to ask this. :)
+
+Basically, it's similar to the Dylan/Ruby model, where for each GeneralizedReference you provide an equivalent "set" function.  aref/aref-setter, hash-table-ref/hash-table-ref-setter, my-gui-widget-property/my-gui-widget-property-setter, etc. (using Lispish names; this isn't what they'll be called). The problem I was running into is that if ArraysAreFunctions, then creating a new array would need to bind both the array name and the array name -setter into the current environment.  I don't have any mechanism to provide implicit bindings (I thought about it, but it quickly becomes a mess), so every collection would need a "let (my-array, my-array-setter) = make-array 10 20" or something like that.
+
+The solution I came up with - which seems rather obvious when you think about it - was to bundle up the accessor and the mutator into a single object that could then be operated upon either by the function call mechanism or by set.  I'm already planning to support MultiMethods and singleton types (in the Dylan sense, not the GoF pattern), so the natural idiom is to make an array defined over one more value, the symbol 'setter.  Invoking my-array.setter [syntactic sugar for (my array 'setter)] returns the mutator.  Since it's a double HigherOrderFunction (make-array -> my-array -> my-array-setter -> mutates my-array), it automatically closes over whatever primitive store is behind the accessor.  The "set" macro or special form, then, merely has to expand into my-array.setter(index, new-value), which in sexps is ((my-array 'setter) index new-value).  And the nitty gritty can be hidden behind macros, so the programmer doesn't have to think in terms of triple-indirection.
+
+This also has the nifty benefit of getting constness for free.  If you don't define a mutator, the object can't be mutated.  Well, I'm not going to enforce protection - there's nothing preventing some other function from accessing whatever the primitive data store is.  But if you follow the language idioms and always implement collections as HigherOrderFunction''''''s (and there'll probably be macros or syntactic sugar to make this relatively painless), you'll get ConstCorrectness.
+
+I'm planning on using this idiom for a bunch of other collection aspects too.  For example, the individual collection functions can also take the symbols 'iterator, 'length, etc. and return appropriate HOFs for those too.  The main benefit of this is the uniformity of having everything be a function.  You can use partial-application, composition, currying, etc. even for assignment statements and iterators.
+
+-- JonathanTang (and this should probably be spun off to another page or my HomePage, as it's not really OnTopic here)
+
+----
+
+While C++ references aren't FirstClass objects, they do come close in that a reference can be an l-value.  (References in CeePlusPlus have lots of issues).  One of the reasons that references were added to the language is so that expressions like
+ a[i] = 5
+are legal, where a is an instance of some class with operator[] overloaded.  Without references, the function could only return an r-value.  In a sense, references in C++ are syntactic sugar for the C ErrnoHack... where "errno" is defined to be a macro that dereferences a pointer returned by a function, i.e.
+
+ int *__get_errno(void);
+ 
+ #define errno ((*)(__get_errno()))
+
+This hack is done so that errno can be a ThreadLocalVariable in multithreaded C implementations; even on systems that don't support native ThreadLocalStorage.  Having __get_errno() return a pointer, and having the errno macro dereference the pointer,  makes errno an lvalue.
+
+(In C++ one can also return a reference-object especially for this purpose that can convert to the final object if needed.  This is useful if referencing something like individual bits, as done by vector<bool> and for some forms of encryption and encodec/decodec operation.  However, it's better to avoid this where possible.)

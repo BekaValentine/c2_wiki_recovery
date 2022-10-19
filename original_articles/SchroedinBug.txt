@@ -1,0 +1,85 @@
+A defect that exists neither working nor not working until you look at it, and suddenly it collapses into a state, usually 'that could never have worked'.
+
+The specific case in mind is a UnitTest that was succeeding but the code it was testing should not have produced the results being tested for.
+
+The code was:
+
+  if (zipFile == null) {
+	throw new BuildException("zipfile attribute is required", location);
+  }
+The test was for the failure condition, zipFile is null and expecting the exception to be thrown, and the test was succeeding, meaning the exception was thrown. On closer inspection however, zipFile should not have ever been null! Based on the input to the test and the handling of the input, the value for zipFile should have been resolved to a directory name, even if the input was empty.
+
+Changing the code to:
+
+  if (zipFile == null || zipFile.getName().equals("")) {
+	throw new BuildException("zipfile attribute is required", location);
+  }
+caused the test to begin failing, because with empty input getName() would return a directory path, and the exception would never be thrown.
+
+Inside the BlackBox somewhere of course is the state that resolves the problem, but you have to open the box to know what it is.
+
+See also HeisenBug, MandelBug, BohrBug; SchroedingersKoan
+----
+
+I have one - an error message occurred in some embedded code I was working on at a previous job. We searched the code for it and found it in a switch() statement. Looking closer, we discovered that the code should not compile, due to syntax errors (someone did a CutAndPaste, but missed the closing braces). We tried to recompile that code and it did indeed fail, but there was no previous version with that error message. So we had code on the system that could not compile, but could run. -- PeteHardie
+
+''Eh? I'd suggest BitRot in the source, if 0x7d didn't have such a large HammingDistance from any whitespace...''
+
+''Or, if it was a CutAndPaste, wouldn't the explanation be that the running code was wherever the non-compiling code was pasted ''from''?
+
+Ah, yes... This kind of thing happened to me in VC++ : a test kept failing with a condition that the debugger told me was '''not''' happening, as I stepped through the source code. The executable was in an indeterminate state of correspondence to the source. Some header files had been modified, and most of the object files compiled from source were up to date with those headers. A single CPP file dependent on that header wasn't recompiled when it should have, and the old OBJ file was left lying around for the linker to pick up. The result was a "garden of eden" program - one that no valid C++ source could possibly have produced. It confused the hell out of the debugger. -- LaurentBossavit
+----
+I'm looking at this right now. A syntax error. Highlighted in angry red and everything. This could would never parse. But it not only parsed, but would compile and was running. But now it doesn't, won't, and isn't. Source control says that the error was checked in two years ago, and this is in a heavily-used part of the application.
+----
+About a month after starting at a company as the system administrator, a change was requested in the way our sendmail system worked. When I looked at the sendmail.cf files I saw that they were all wrong and there was no way it should be working at all. At that point, the entire system failed completely and I spent the next 3 days getting it to work the way it did before I looked at it.
+
+''A faulty configuration or even a faulty binary does not necessarily affect a running system and that can often cause confusion. After change, the (sub)system(s) depending on it should be instructed to reload the part or restart entirely.''
+----
+I have had this experience more times than I care to admit to. (I HaveThisPattern.) The client is ''certain'' that the thing works; they just want this feature added or this "minor bug" removed. Through much pain and torment I have learned to completely strip the development platform of previous libraries, object files, headers, and old sources. Start from a clean white sheet. When I can't get it to build from their supposedly golden version archive I then ask, "Is it okay for me to begin investigating why this won't compile?" If they say yes, then all bets are off on how long it will take to complete the task at hand because they don't know themselves exactly what state the source repository is in. If they say no then I can say, "Well, call me when you have something that compiles cleanly from the archive." Heh, heh.
+
+* You would be generally disappointed dealing with one particular codebase I dealt with for awhile. It was impossible to build the tree from a clean tree. You had to copy some working tree to build it. The build dependencies were perfect, but it somehow depended on itself to build. It wasn't exactly as garden-of-eaden of a problem as a compiler is but the circular dependency was still there and bizarre careful untangling would been necessitated to build from clean.
+
+I had a (very brief, thank you God) captive stint at a firm that made coin separating and counting machines. The hardware platforms were old Motorola MC6800 devices in a custom single board computer configuration. The 64K address space was split up into 48K of program memory and 16K of I/O space. Everything was written in 6800 assembly for a Microtek assembler (heh!). Since they had long ago run out of space for program memory they had to do some configuration management on what "components" (like they were that organized, right) were assembled into place and what parts got left out. I found out the hard way that my predecessor had built a bunch of custom ROMs by editing the source, assembling, burning a set of ROMs, and running out to the shipping dock to put the ROMs in the waiting machine. Then he went back to his workstation and edited '''the very source he had used to burn the ROMs''' for something else - all without saving a thing.
+
+If I ever meet up with this guy in this life I will hurry him on to his reward in the next.
+----
+Here is an example of what at first I called a 'miracle bug', but seems to be a SchroedinBug of some kind. This piece of code written in PHP (aimed to be ported in C later) initializes an array for the purpose of computing shortest paths
+from objects linked together in a graph structure:
+
+for(/* ... each object id $objid ... */)
+{
+  $result_all_objid=mysql_query(
+    "select toid /*,...*/ from links where fromid=$objid");
+
+  $mpath_weights[$objid][$row[0]]=array(); // !!! the bug is here !!!
+
+  while($row=mysql_fetch_row($result_all_objid))
+  {
+    /* ... computes initial $weight and $path */
+    $mpath_weights[$objid][$row[0]]['w']=$weight;
+    $mpath_weights[$objid][$row[0]]['path']=$path;
+  }
+}
+
+The line where the bug appears should be inside the the while loop, to initialize $mpath_weights[$objid][$row[0]] with an empty array. Although not necessary in PHP, I used it to be easier to port the code in C later.
+
+The code was runninng perfectly well, but when I started the C porting I noticed the buggy line. It was initializing $mpath_weights[$objid][$row[0]] to an empty array, but $row had no value thus interpreted as "NULL" the first time of the "for" loop, and "false" the later. Then $row[0] was in both cases interpreted as "NULL", and $mpath_weights[$objid][$row[0]] interpreted as $mpath_weights[$objid][0]. When the "for" loop ended, all objects had an extra field '0' initialized with an empty array.
+
+When processing the main computation algorithm, reading array['w'] was interpreted as "NULL", and casted to '(int)0'. Thus weights of these link were considered as 'Infinite' or 'Not reachable' by the algorithm, and were eliminated from the results.
+
+The code produced correct results, somehow eliminating the faulty values because considered as invalid. The only side effects was the little amount of memory and time needed to store and parse the faulty values, which was not considered critical in the PHP version of the algorithm run as a background nightly process.
+
+I called that bug a 'miracle bug': it was there, latent, could have produce 'MandelBug''''''s' if the source code was changed, but kept quite until I started to port the program in C, noticed it, and had to remove it because the C language would not be so kind with uninitialized values.
+
+----
+I had one of these - the user loaded a file, went to the loaded files screen, pressed "Create Report" and got the relevant report file out of the directory and emailed it to the supplier. He had a loaded file with multiple suppliers in, and it had only put details for one of them in the file. 
+
+Examining the report code it would *always* fail like that - it was not doing a write to file within the loop, only after the loop due to an incorrect flag - but he swore it had always worked before.
+
+We discovered eventually that normally he left these files to the end of the day, and did the "Create Report" the following morning. Overnight a batch job produced summary files (correctly) in the same directory and he had been using these unwittingly. This particular day he had loaded the file early and pressed the button on the same day. 
+
+But at least it drew attention to the bug in the screen code.
+----
+See Also: entry in JargonFile: http://www.catb.org/~esr/jargon/html/S/schroedinbug.html
+----
+CategoryBug

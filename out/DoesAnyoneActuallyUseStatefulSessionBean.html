@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Does Anyone Actually Use Stateful Session Bean
+      </h1>
+      <p>
+        Stateful session beans look plausible when you survey the J2EE literature and look at the shopping cart application example, but when it comes to doing the actual development, and especially if it's going to be a WEB application, aren't you going to front-end the system with a (for want of better term) <em>direct client component</em> anyway, which means that client state (ConversationalState) is pushed out away from your EJB model, and Stateful session beans lose their appeal. For instance, if I'm developing a front end in JSP (servlet), then ConversationalState is being provided for in the HTTP session abstraction. Given that, why bother with stateful beans?
+      </p>
+      <hr/>
+      <p>
+        I almost NEVER EVER use them. I've done it in only a couple of cases:
+      </p>
+      <ol>
+        <li>
+           When I needed the SessionSynchronization interface to tie in a datasource that wasn't XA compliant into my transactions
+        </li>
+        <li>
+           When I wanted to store more session data than the HTTPSession could comfortably store, but didn't care about failover.
+        </li>
+      </ol>
+      <p>
+        By the way, Tyler Jewell from BEA has an article on the web that says nearly the same thing.
+      </p>
+      <p>
+        -- Kyle
+      </p>
+      <hr/>
+      <p>
+        My answer, in as few words as possible: "No." -- <a href="MichaelChermside.html">MichaelChermside</a>
+      </p>
+      <hr/>
+      <p>
+        Could some one explain why it is bad to use SFSB. I am working on a project where we have three different layers,webserver, appserver and ruleserver. What we have is a three controller (a controller for each layer) and one state architecture. There is a web controller which has action classes (takes care of formating, client side validation and other webserver related stuff), the appserver controller which has a single worker class for each specific server side job to perform, and finally we have a rule controller in front of the ruleserver. There is only one single place in the system where the state is maintained and it is the usersession bean which is a SFSB. Any layer or any other subsystem who wants to update or request the current state of the user will interact with this sfsb. I used an entity bean which has currently logged in users (stores userid and usersession handle). 
+      </p>
+      <p>
+        I had to use a stateful session bean for various reasons, I don't want to attach the state to the webserver, reason being that our staging and product sites vary in their setup. (Staging site uses dynamic loadbalancing for webservers and Production site uses static loadbalancing). I can't just do a simple RMI, I wanted to have full failover which is already provided by my appserver.
+      </p>
+      <p>
+        -- <a href="SeshKumar.html">SeshKumar</a>
+      </p>
+      <hr/>
+      <p>
+        <em>Okay, I'll have a go. With the usual disclaimers that specific app's may have different requirements. This argument relates to the architectural issues surrounding distributed state. Generally, if logically coupled state is physically distributed, you have created a fragility. Entity beans also have a coupling problem, but that's for another day :).</em>
+      </p>
+      <p>
+        <em>A stateful session-bean is very tightly bound to the client using it, therefore you'll have as many session beans as you have clients. This stops the server from being able to limit resources to the number of active transactions. This prevents the most basic form of server efficiency.</em>
+      </p>
+      <p>
+        <em>A stateful session-bean usually cannot migrate from server to server. Therefore one cannot generally use multiple servers within a single client session. That means you drop all active sessions if any of the equipment between the client and the server fails.</em>
+      </p>
+      <p>
+        <em>The server-side has difficulty knowing if a client has gone away for any reason. A short timeout may throw away clients who are simply slow to respond for whatever reason. A long timeout tends to drag the server down with hung sessions.</em>
+      </p>
+      <p>
+        <em>That's enough for starters. -- </em><a href="RichardHenderson.html">RichardHenderson</a>.<em></em>
+      </p>
+      <hr/>
+      <p>
+        All the problems outlined above are more towards any distributed state management system, yes its true that when you distribute your state (using stateful session beans here) you have the problem of having this state being specific to a client (1), difficult to have failover to other server (2) and the third point about session time out.
+      </p>
+      <p>
+        So the question comes back, where do you put your conversation state, where the conversation state is not a simple shopping cart and when the conversation state is needed not just by one system but many remote systems in your architecture. Lets see all the options..
+      </p>
+      <ol>
+        <li>
+           If we push the state or current configuration back to database then you may have problems like,
+        </li>
+      </ol>
+      <code>
+        a) needs expensive database writes and reads for each change in the user state.<br/>
+        b) if the database is a simple relational database, extra work is needed to reconstruct the<br/>
+        user current state objects in the memory from this relational data.<br/>
+      </code>
+      <ol>
+        <li>
+           If we push the state to the webserver or jsp container then you may have problems like 
+        </li>
+      </ol>
+      <code>
+        a) the session state size is very limited.<br/>
+        b) you are tied to the same webserver so your loadbalancer should be sticky.<br/>
+        c) since servlets are not remote objects other system (like a ruleserver or appserver) can not<br/>
+        have access to current user state unless you send them to those systems on every call.<br/>
+        Eg:  RuleServer.executeRule(currentConfig,somerule).<br/>
+      </code>
+      <p>
+        -- <a href="SeshKumar.html">SeshKumar</a>
+      </p>
+      <p>
+        <em>I tend to put the state in a database if it's complex. How do you deal with the above issues? Particularly, how are you supporting failover? -- RIH</em>
+      </p>
+      <hr/>
+      <p>
+        I feel that the above two alternatives for state distribution are two ends of a solution, we picked a middle ground to store the state in the appserver keeping the state close to where it is manipulated most. I will try to address the issues pointed out above. We are using <a href="InpriseAppServer.html">InpriseAppServer</a> (which is now BorlandAppServer).
+      </p>
+      <ol>
+        <li>
+           <em>Server efficiency </em> - server efficiency decreases as the number of clients increase, since it has to passivate more session beans and reactivate them, but with proper amount of RAM and necessary settings of stateful bean passivation time you can achieve a good balance between number of concurrent users and performance per user. 
+        </li>
+      </ol>
+      <ol>
+        <li>
+           <em>State full session failover </em> - the appserver we are using uses an object oriented database (a small foot print inmemory data base) as session storage, we are doing a homogeneous clustering (all appservers are identical) to provide failover. We haven't achieved a complete seamless failover, but we can restore the state up to the last passivated state. see <a href="http://www.borland.com/devsupport/appserver/faq/Availability_Scalability_Performance.html">http://www.borland.com/devsupport/appserver/faq/Availability_Scalability_Performance.html</a>
+        </li>
+      </ol>
+      <ol>
+        <li>
+           <em>Session time out</em> - a currently logged in users database, has the user id, his session handle and last request time, A simple thread can query this database for users whoes sessions are timed out, and will call the appserver to remove those session beans.
+        </li>
+      </ol>
+      <p>
+        -- <a href="SeshKumar.html">SeshKumar</a>
+      </p>
+      <hr/>
+      <p>
+        Yes, and I regret that. 
+      </p>
+    </div>
+  </body>
+</html>

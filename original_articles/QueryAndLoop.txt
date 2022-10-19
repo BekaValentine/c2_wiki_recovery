@@ -1,0 +1,123 @@
+Multiple times I have heard people complain that it takes too much code to query a database (usually an 
+SQL-based RDMBS) and loop through the result sets. The default out-of-the-box API's often do indeed 
+require a lot of code for such, but much of it is repetitious and can be wrapped in various functions or classes. The connection name/object/handle, database name/object/handle, driver name/object/handle, etc. are often the same throughout the entire application. Thus, they should be able to be factored to one spot in the name of OnceAndOnlyOnce. Named parameters can be used to select special cases. In a good dynamically-typed or type-free language, query-and-loop setup code should be no bigger than the likes of:
+
+  qr = query("select * from Employees");
+  while (getNext(qr)) {
+    printLn("Name: %1 SSN: %2 Salary: %3", qr.name, qr.ssn, qr.salary );
+  }
+This demo language uses dots to represent a dictionary array and/or an object (JavaScript and ColdFusion style). If you need special settings for a subset of queries, then optional named parameters are nice:
+
+  qr = query("select * from Employees", driver="foo", settingK="bar");
+  while (getNext(qr)) {....}
+I am assuming that the internal settings of the "query" or "getNext" function have names like 
+"~~rowNumber" or something that is not likely to interfere with column name namespace. However, if this may be a problem, then a second variable could be used:
+
+  qr = query("select * from Employees");
+  while (row = getNext(qr)) {         // note "row" var
+    printLn("Name: %1 SSN: %2 Salary: %3", row.name, row.ssn, row.salary );
+  }
+In some languages that can define custom loops or closures, it may even be possible to do something like:
+
+  query("select * from Employees" | row) {
+    printLn("Name: %1 SSN: %2 Salary: %3", row.name, row.ssn, row.salary );
+  }
+----
+''In a good dynamically-typed or type-free language, query-and-loop setup code should be no bigger than the likes of [see above]''
+
+Given a sufficiently good statically-typed language, the code can actually be made ''smaller'' than the above examples - brevity does not require giving up static type-safety.
+
+In NemerleLanguage (which is a strong- and static-typed language), it could be done like this:
+ ExecuteReaderLoop("select * from Employees", dbconn) {
+     WriteLine("Name: {0} SSN: {1} Salary: {2}", name, ssn, salary)
+ }
+where ExecuteReaderLoop is a macro that performs compile-time syntax- and type-checking of the sql expression (by running a dummy query against the db at compile time), and automatically binds the results of the query to appropriately typed local variables within the body of the loop. ''[note: the above code is based on the macro demonstrated in http://nemerle.org/svn/nemerle/trunk/snippets/sql.n, with the only change required being a single-line syntax rule for the macro (the example at that url has the loop body given as an in-line expression within the parentheses of the macro call)]''
+
+Would the "single line" limit require a rework if we need more lines in the future? Needing more lines later on is fairly common, leading to a potentially common DiscontinuitySpike in this case.
+
+-------------------
+
+Using string-centric techniques (see DynamicStringsVsFunctional), I believe it is possible to get something like this in ToolCommandLanguage:
+
+  query{select * from foo where bar=7}{row} {
+      do_something_with_row...
+  }
+
+It is tough to beat such in code size without tossing SQL altogether (which is not the objective here). It might be true that strings might not be as fast as other techniques such as formal closures from a performance perspective, but often IO and inter-system links are the bottleneck, not code execution.
+
+I suppose a Lisp-ish approach could perhaps give one something like:
+
+ (query "select * from foo where bar=7" row 
+    (do_something_with_row))
+
+Which is slightly shorter because it has one less set of "surrounders" (parenths or brackets). The language might need it anyhow:
+
+ (query "select * from foo where bar=7" (row)
+    (do_something_with_row))
+
+Or perhaps:
+
+ (query "select * from foo where bar=7" 'row
+    (do_something_with_row))
+
+Or
+
+ (query "select * from foo where bar=7" 'row
+    '(do_something_with_row))
+
+Lisp experts? -- AnonymousDonor (top?)
+
+Well, if I absolute ''had'' to use SQL, I'd want to do:
+
+  (map do_something_with_row (query "select * from foo where bar = 7"))
+
+''The above examples supplied a row name to avoid naming conflicts with other possible existing variables. It may be possible to hard-wire "row" as the name, but I think that would create problems. ''
+
+But really, the ideal approach would be to ditch SQL entirely and use macros/combinator libraries to model the RelationalAlgebra with HigherOrderFunction''''''s:
+
+  (map do-something-with-row (query (filter (lambda (x) (= 7 x.bar)) foo)))
+
+''Are you suggesting writing your own query language, and database, from scratch, or merely wrapping SQL? I disagree with complete wrappage of SQL. There are too many twists and turns in SQL. More on this in ExpressionApiComplaints and HelpersInsteadOfWrappers. Maybe in the future when we get better relational languages, such might make more sense. --top''
+
+The advantage of this is that you can assign intermediate relations as functions, and re-use them when you need a similar query.  Surely you've run into this problem - I just finished a 700-line course-evaluation system for Amherst, and almost every single query had to be wrapped in a function that performed some massaging of the SQL, setting additional clauses and such, before returning the result set.  When you get to the million-line systems that most people at this Wiki do, you can expect each query to be used dozens of times, with little variations (additional WHERE clauses, or a different ORDER BY, or a GROUP BY).
+
+Say that somewhere else in the program, you need a query that's "select foo, bar, baz, quux from foo where bar = 7 order by quux".  If you stick to straight QueryAndLoop, you've gotta either do some string-munging of the SQL, or duplicate the SQL and violate OnceAndOnlyOnce.  Using a SchemeQl-like library, however, you could do
+
+  (define (my-query)
+     (filter (lambda (x) (= 7 x.bar)) foo))
+
+  (map do-1st-example-with-row (query (my-query)))
+  (map do-2nd-example-with-row (query (sort 'quux (project 'foo 'bar 'baz 'quux (my-query)))))
+
+When you're making dozens of different queries from hundreds of points within the program, those savings add up.  -- JonathanTang
+
+''I am not sure you are really reducing code size. You appear to be ReinventingTheDatabaseInApplication. If the database already does sorting, then let it. Besides, the math does not support your allegation. Your version seems to reduce the looping code by only 20% at best. If only 1-in-20 lines are loop-related, then the total savings hovers around 1 percent. Hardly a slam-dunk.''
+
+-----------
+
+As described in ChallengeSixVersusFpDiscussion, it may simplify thing to practice SeparateIoFromCalculation. This way performing the query is one step and processing the results another. Database connections etc. can already be closed during the processing of the result. (Some API's keep it open for cursor-based features, which probably should be avoid in general.) This may help keep both the loop simple and error-handling simple.
+
+''I'm currently running queries over a log database with 5 million rows.  Even when getting maybe 10,000 at a time, I'm not too keen on sticking my entire resultset in temporary storage then looping over it.  Iteration is a good thing in the real world...''
+
+I think "cursors" is what it is called, not "iteration". I agree that sometimes cursors are needed, but I find in the vast majority of cases one can use the  existing query language to greatly narrow down the results even if it does not do the entirety of filtering. The better the normalization, the more likely this is possible. In other words, bad schemas are the leading cause of the need to use cursors in my experience. For example, if information is not "parsed" into atoms, then one may need cursors because query languages are generally not designed for heavy parsing duty. But even with this often there are shortcuts, such as using LIKE to get a super-set of the desired target that is much smaller than the original set. We then loop over the result set to weed out the false positives. For example, we may want to count all files that have HTML tags (ProcessingMarkupLanguages). We can probably do something like this:
+
+  select * from log 
+  where upper(content) LIKE '%<p%' or upper(content) LIKE '%<table%'
+
+That is pretty sure to pick up most HTML. The hits can then be more closely inspected. (I suppose there is a small risk of HTML files that don't use those tags.)
+----
+''I think "cursors" is what it is called, not "iteration".''
+
+A cursor is a specific (usually SQL) construct designed to synchronise row iteration of a query result between the client and the DBMS, frequently with an option to update the table underlying the current row.  Cursors are often used to support interactive client-side user interfaces, and are sometimes used to implement server-side-only iterative processing.  However, generating a query on the client-side, executing it in the DBMS, returning its RecordSet to the client and iterating over its rows is not a cursor, and does not require a cursor.
+
+''But sometimes it is used in a generic sense to mean accessing one record at a time. Which of the two usages was first over the other is not really important here.''
+
+Curious.  I've not seen "cursors" used that way before.  I have seen "cursor" occasionally used as a verb -- generally by non-technical people -- probably in reference to the moving display cursor, e.g., "use the down-arrow to cursor through the records."  It's possibly as a short form of "use the down-arrow to move the display cursor through the records."  Is that what you meant?
+
+Wow.  I've pegged the needle on my own Pedant-O-Meter.  I'll shut up now.
+
+''Maybe we just need to brainstorm for a better term for the concept outside of RDBMS-specific reserved words.''
+
+What's wrong with using "iterator", "iterate", and "iteration" as appropriate?  These are the usual and accepted terms for the concept.
+----------
+See also: ResultSetSizeIssues, QueryByExample, IteratorVersusQuery    

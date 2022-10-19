@@ -1,0 +1,994 @@
+Part of MsWindowsResourceLint. Save as ''rcLint.cpp'', and create a project file for this:
+
+
+      //  this program parses RC files (as VC++ outputs them)
+      //  and reports on CUA style issues
+
+
+    #include "rcLint.h"
+    #include "test.h"
+    #include <fstream>
+
+        using std::stringstream;
+        using std::ofstream;
+        bool TestCase::all_tests_passed(true);
+        TestCase::TestCases_t TestCase::cases;
+
+    ////////////////////////////////////////////////////
+    ///   tests on the token source
+
+
+    TEST_(TestCase, pullNextToken)
+    {
+
+        Source aSource("a b\nc\n  d");
+
+        string 
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("a", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("b", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("c", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("d", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("" , token);  //  EOF!
+
+    }
+
+
+    TEST_(TestCase, pullNextToken_comma)
+    {
+
+        Source aSource("a , b\nc, \n  d");
+
+        string 
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("a", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("b", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("c", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("d", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("", token);  //  EOF!
+
+    }
+
+
+        struct
+    TestTokens:  TestCase
+    {
+
+        void
+    test_a_b_d(string input)
+        {
+        Source aSource(input);
+        string 
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("a", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("b", token);
+    //    token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("c", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("d", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("", token);  //  EOF!
+        }
+
+    };
+
+
+    TEST_(TestTokens, elideComments)
+    {   
+        test_a_b_d("a b\n //c\n  d");
+        test_a_b_d("a b\n//c \n  d");
+        test_a_b_d("a b\n // c \"neither\" \n  d");
+        test_a_b_d("a b\n // c \"neither\" \n  d//");
+        test_a_b_d("//\na b\n // c \"neither\" \n  d//");
+        test_a_b_d("//c\na b\n // c \"neither\" \n  d//");
+        test_a_b_d("// c\na b\n // c \"neither\" \n  d//");
+        test_a_b_d("//c \na b\n // c \"neither\" \n  d//");
+        test_a_b_d("// \na b\n // c \"neither\" \n  d//");
+        test_a_b_d(" // \na b\n // c \"neither\" \n  d//");
+    }
+
+
+    TEST_(TestTokens, elideStreamComments)
+    {   
+        test_a_b_d("a b\n /*c*/\n  d");
+        test_a_b_d("a b\n/*c*/ \n  d");
+        test_a_b_d("a b\n /* c \"neither\" */\n  d");
+        test_a_b_d("a b\n /* c \"neither\" \n */ d//");
+        test_a_b_d("//\na b\n /* c \"neither\" */ \n  d/**/");
+        test_a_b_d("//c\na b\n // c \"neither\" \n  d/* */");
+        test_a_b_d("/* c\n*/a b\n // c \"neither\" \n  d//");
+        test_a_b_d("//c \na b\n // c \"neither\" \n  d//");
+        test_a_b_d("// \na b\n // c \"neither\" \n  d//");
+        test_a_b_d(" // \na b\n // c \"neither\" \n  d//");
+    }
+
+
+    TEST_(TestTokens, elidePreprocessorStatements)
+    {
+        test_a_b_d("a b\n #c\n  d");
+        test_a_b_d("a b\n#c \n  d");
+        test_a_b_d("a b\n # c \"neither\" \n  d");
+        test_a_b_d("a b\n #\n  d");
+        test_a_b_d("a b\n#\n  d");
+        Source aSource("a b # \n  d");
+        string 
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("a", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("b", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("#", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("d", token);
+        token = aSource.pullNextToken();  CPPUNIT_ASSERT_EQUAL("", token);  //  EOF!
+    }
+
+
+    TEST_(TestCase, pullNextTokenString)
+    {
+
+        Source aSource("a b\n\"c\\n  d\"");
+
+        string token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("a", token);
+
+        token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("b", token);
+
+        token = aSource.pullNextToken();
+        string expect = "c\n  d";
+        CPPUNIT_ASSERT_EQUAL(expect, token);
+
+        token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("", token);  //  EOF!
+
+    }
+
+
+    TEST_(TestCase, pullNextTokenWithComma)
+    {
+
+        Source aSource("a b\n\"c  d\",e,f, g");
+
+        string token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("a", token);
+
+        token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("b", token);
+
+        token = aSource.pullNextToken();
+        string expect = "c  d";
+        CPPUNIT_ASSERT_EQUAL(expect, token);
+
+        token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("e", token);
+
+        token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("f", token);
+
+        token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("g", token);
+
+        token = aSource.pullNextToken();
+        CPPUNIT_ASSERT_EQUAL("", token);  //  EOF!
+
+    }
+
+    ////////////////////////////////////////////////////
+    ///   tests on the parser & object model
+
+
+    TEST_(TestCase, StringTable)
+    {
+
+        string rc = "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                        "BEGIN  //  this is a comment \n"
+                        "    IDS_OBVIOUS1  \"I like food\"\n"
+                        "    IDS_OBVIOUS2  \"Food is good\"\n"
+                        "    IDS_OBVIOUS3  \"\"\"Eat good food\"\"\"\n"  //  <-- escaped strings
+                        " // IDS_DONT_PARSE_ME  \"Don't parse me\"\n"  //  <-- escaped strings
+                        "END\n";
+
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc);
+
+        CPPUNIT_ASSERT_EQUAL("I like food", aResourceFile.getString("IDS_OBVIOUS1"));
+        CPPUNIT_ASSERT_EQUAL("Food is good", aResourceFile.getString("IDS_OBVIOUS2"));
+        string expect = "\"Eat good food\"";
+        CPPUNIT_ASSERT_EQUAL(expect, aResourceFile.getString("IDS_OBVIOUS3"));
+        CPPUNIT_ASSERT_EQUAL("", aResourceFile.getString("IDS_NOT_OBVIOUS"));
+
+    }
+
+
+    TEST_(TestCase, Dialog)
+    {
+
+        string rc = "IDD_ABOUTBOX DIALOG DISCARDABLE  0, 0, 217, 55\n"
+                        "STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU\n"
+                        "CAPTION \"About HostApp\"\n"
+                        "FONT 8, \"MS Sans Serif\"\n"
+                        "BEGIN\n"
+                        "    ICON            IDR_MAINFRAME,IDC_STATIC,11,17,20,20\n"
+                        "    LTEXT           \"Pyramus && Thisby\",IDC_STATIC,40,10,119,8,SS_NOPREFIX\n"
+                        "    LTEXT           \"Copyright (C) 2098\",IDC_STATIC,40,25,119,8\n"
+                        "    DEFPUSHBUTTON   \"Okay\",IDOK,178,7,32,14,WS_GROUP\n"
+                        "END\n";
+
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc);
+        Resource * pDlg = aResourceFile.get("IDD_ABOUTBOX");
+        CPPUNIT_ASSERT_EQUAL("IDD_ABOUTBOX",      pDlg->getID());
+        CPPUNIT_ASSERT_EQUAL(8,                   pDlg->get("0")->getSpecCount());
+        CPPUNIT_ASSERT_EQUAL("ICON",              pDlg->get("0")->getSpec(1));
+        CPPUNIT_ASSERT_EQUAL("Pyramus && Thisby", pDlg->get("1")->getSpec(2));
+        CPPUNIT_ASSERT_EQUAL("Pyramus && Thisby", pDlg->get("1")->getLabel());
+        CPPUNIT_ASSERT_EQUAL("IDC_STATIC",        pDlg->get("2")->getSpec(3));
+        CPPUNIT_ASSERT_EQUAL("178",               pDlg->get("3")->getSpec(4));
+        CPPUNIT_ASSERT_EQUAL(NULL,                pDlg->get("4"));
+
+    }
+
+
+    TEST_(TestCase, AccelTable)
+    {
+
+        string rc = "IDPLATYPUS ACCELERATORS LOADONCALL MOVEABLE DISCARDABLE \n"
+                        "BEGIN\n"
+                        "    VK_INSERT, IDM_EDITCOPY,   VIRTKEY, CONTROL\n"
+                        "    VK_INSERT, IDM_EDITPASTE,  VIRTKEY, SHIFT\n"
+                        "    VK_INSERT, IDM_EDITPASTE,  VIRTKEY, SHIFT | CONTROL\n"
+                        "    VK_INSERT, IDM_EDITPASTE,  VIRTKEY, SHIFT | CONTROL | ALT\n"
+                        "    VK_BACK,   IDM_EDITUNDO,   VIRTKEY, ALT\n"
+                        "    VK_F5,     IDM_EDITTIME,   VIRTKEY\n"
+                        "    \"A\",     IDM_SEARCHNEXT, VIRTKEY, CONTROL\n"
+                        "    \"B\",     IDM_SEARCHPREV, VIRTKEY\n"
+                        "END\n";
+
+    //  TODO  can the control items pipe? Can they be in any order?
+
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc);
+        Resource * anAccelTable = aResourceFile.get("IDPLATYPUS ACCELERATORS");
+        assert(anAccelTable);
+        CPPUNIT_ASSERT_EQUAL(5,               anAccelTable->get("0")->getSpecCount());
+        CPPUNIT_ASSERT_EQUAL("VK_INSERT",     anAccelTable->get("0")->getSpec(1));
+        CPPUNIT_ASSERT_EQUAL("IDM_EDITPASTE", anAccelTable->get("1")->getSpec(2));
+        CPPUNIT_ASSERT_EQUAL("VIRTKEY",       anAccelTable->get("2")->getSpec(3));
+        CPPUNIT_ASSERT_EQUAL(9,               anAccelTable->get("3")->getSpecCount());
+        CPPUNIT_ASSERT_EQUAL("SHIFT",         anAccelTable->get("3")->getSpec(4));
+        CPPUNIT_ASSERT_EQUAL("|",             anAccelTable->get("3")->getSpec(5));
+        CPPUNIT_ASSERT_EQUAL(5,               anAccelTable->get("4")->getSpecCount());
+        CPPUNIT_ASSERT_EQUAL("ALT",           anAccelTable->get("4")->getSpec(4));
+
+    }
+
+
+    TEST_(TestCase, Menu)
+    {
+
+        string rc = "IDPLATYPUS MENU LOADONCALL MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    POPUP \"&File\"\n"
+                        "    BEGIN\n"
+                        "        MENUITEM \"&New\",          IDM_FILENEW\n"
+                        "        MENUITEM \"&Open...\",      IDM_FILEOPEN, GRAYED\n"
+                        "  //      MENUITEM \"&Kozmik...\",      IDM_KOZMIK\n"
+                        "    END\n"
+                        "END\n";
+
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc);
+
+        Resource & aMenu = *aResourceFile.get("IDPLATYPUS");
+        CPPUNIT_ASSERT_EQUAL("IDPLATYPUS", aMenu.getID());
+
+        string popupID = "&File";
+        Resource * pPopup = aMenu.get(popupID);
+        CPPUNIT_ASSERT_EQUAL(popupID, pPopup->getID());
+    
+        CPPUNIT_ASSERT_EQUAL("&New",     pPopup->get("IDM_FILENEW" )->getLabel());
+        CPPUNIT_ASSERT_EQUAL("&Open...", pPopup->get("IDM_FILEOPEN")->getLabel());
+
+    }
+
+
+    TEST_(TestCase, SubMenu)
+    {
+
+        string rc = "IDPLATYPUS MENU LOADONCALL MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    POPUP \"&File\"\n"
+                        "    BEGIN\n"
+                        "        MENUITEM \"&New\",               IDM_FILENEW\n"
+                        "        MENUITEM \"&Open...\",           IDM_FILEOPEN\n"
+                        "        POPUP \"&Menu\"\n"
+                        "        BEGIN\n"
+                        "            MENUITEM \"&Frog\",          IDM_FROG\n"
+                        "            MENUITEM \"&Soup\",          IDM_SOUP\n"
+                        "        END\n"
+                        "    END\n"
+                        "END\n";
+
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc);
+
+        Resource & aMenu = *aResourceFile.get("IDPLATYPUS");
+        CPPUNIT_ASSERT_EQUAL("IDPLATYPUS", aMenu.getID());
+
+        string popupID = "&File";
+        Resource * pPopup = aMenu.get(popupID);
+        CPPUNIT_ASSERT_EQUAL(popupID, pPopup->getID());
+
+        CPPUNIT_ASSERT_EQUAL("&New",       pPopup->get("IDM_FILENEW" )->getLabel());
+        CPPUNIT_ASSERT_EQUAL("&Open...",   pPopup->get("IDM_FILEOPEN")->getLabel());
+
+        Resource & bPopup = *pPopup->get("&Menu");
+
+        CPPUNIT_ASSERT_EQUAL("&Frog",      bPopup.get("IDM_FROG")->getLabel());
+        CPPUNIT_ASSERT_EQUAL("&Soup",      bPopup.get("IDM_SOUP")->getLabel());
+        CPPUNIT_ASSERT_EQUAL("IDPLATYPUS", dynamic_cast<MenuItem*>(bPopup.get("IDM_FROG"))->getMenuID());    
+        CPPUNIT_ASSERT_EQUAL("IDPLATYPUS", dynamic_cast<MenuItem*>(bPopup.get("IDM_SOUP"))->getMenuID());
+    
+    }
+
+
+        struct
+    TestResourceFile:  public TestCase
+    {
+
+        ResourceFile m_aResourceFile;
+
+        void
+    setUp()
+        {
+        m_aResourceFile.parseFile("NIBELUNG_MENU MENU DISCARDABLE \n"
+                "BEGIN\n"
+                "    POPUP \"&Brunhilde\"\n"
+                "    BEGIN\n"
+                "        MENUITEM SEPARATOR\n"
+                "    END\n"
+                "END\n"
+                "\n"
+                "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                "BEGIN\n"
+                "    IDS_SNOW        \"Snow\"\n"
+                "    IDS_ANGEL       \"Angel\\n\"\n"
+                "    IDS_COMMITTEE   \"Committee\"\n"
+                "END\n");
+        }
+
+    };
+
+
+    TEST_(TestResourceFile, MenuWithOnlySeparator)
+    {
+        CPPUNIT_ASSERT_EQUAL("Snow"     , m_aResourceFile.getString("IDS_SNOW"     ));
+        CPPUNIT_ASSERT_EQUAL("Angel\n"  , m_aResourceFile.getString("IDS_ANGEL"    ));
+        CPPUNIT_ASSERT_EQUAL("Committee", m_aResourceFile.getString("IDS_COMMITTEE"));
+    }
+
+
+    TEST_(TestResourceFile, getLine)
+    {
+
+    //NIBELUNG_MENU MENU DISCARDABLE nBEGINn    POPUP "&Brunhilde"n    BEGINn        MENUITEM SEPARATORn    ENDnENDnnSTRINGTABLE PRELOAD MOVEABLE DISCARDABLEnBEGINn    IDS_SNOW        "Snow"n    IDS_ANGEL       "Angel\n"n    IDS_COMMITTEE   "Committee"nENDn
+
+        string expect = "    POPUP \"&Brunhilde\"\n";
+        CPPUNIT_ASSERT_EQUAL(expect,                         m_aResourceFile.getLine(43));
+        CPPUNIT_ASSERT_EQUAL("        MENUITEM SEPARATOR\n", m_aResourceFile.getLine(80));
+        CPPUNIT_ASSERT_EQUAL(3, m_aResourceFile.getLineNumber(43));
+        CPPUNIT_ASSERT_EQUAL(5, m_aResourceFile.getLineNumber(80));
+    }
+
+
+    ////////////////////////////////////////////////////
+    ///   tests for lint system
+
+    //  TODO  &&, & on end
+    //  TODO  "spike sample" fixture for the linter - proselytize
+
+
+        struct
+    TestLint:  TestCase
+    {
+        ResourceFile m_aResourceFile;
+
+        void
+    findOneError(string const & rc, string const & expect)
+        {
+        m_aResourceFile.parseFile(rc, "fileName.rc");
+        stringstream complaints;
+        m_aResourceFile.callLint(complaints);
+        CPPUNIT_ASSERT_EQUAL(expect, complaints.str());
+        }
+
+    };
+
+
+    TEST_(TestLint, PromptAtEndOfControlList)
+    {
+
+        string spike = "    LTEXT           \"&Address:\",IDC_STATIC,7,7,30,8\n";
+
+        string rc = "IDD_CALL DIALOG DISCARDABLE  0, 0, 242, 79\n"
+                    "BEGIN\n"
+                    + spike +
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(3): Prompt at end of control list\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, PromptBeforeControlWithoutTabstop)
+    {
+
+        string spike = "    LTEXT           \"&Address:\",IDC_STATIC,7,7,30,8\n";
+
+        string rc = "IDD_CALL DIALOG DISCARDABLE  0, 0, 242, 79\n"
+                    "BEGIN\n"
+                    + spike +
+                    "    EDITTEXT        IDE_ADDR,39,7,125,12,ES_AUTOHSCROLL\n"
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(3): Prompt before control without tabstop\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, PromptMissingHotkey)
+    {
+
+        string spike = "    LTEXT           \"Address:\",IDC_STATIC,7,7,30,8\n";
+
+        string rc = "IDD_CALL DIALOG DISCARDABLE  0, 0, 242, 79\n"
+                    "BEGIN\n"
+                    + spike +
+                    "    EDITTEXT        IDE_ADDR,39,7,125,12,ES_AUTOHSCROLL | WS_TABSTOP\n"
+                    "    LTEXT           \"&Call Type:\",IDC_STATIC,185,45,32,8\n"
+                    "    COMBOBOX        IDL_CALL_TYPE,183,58,52,47,CBS_DROPDOWN | WS_VSCROLL | \n"
+                    "                    WS_TABSTOP\n"
+                    "    DEFPUSHBUTTON   \"OK\",IDOK,182,7,50,14\n"
+                    "    PUSHBUTTON      \"Cancel\",IDCANCEL,182,24,50,14\n"
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(3): Button missing hotkey\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, DoubleAmpersandsAreNotHotkeys)
+    {
+
+        string spike = "    CONTROL         \"Application && Sharing\",IDC_NMCH_AS,\"Button\",\n";
+        string rc = "IDD_CONFERENCE DIALOG DISCARDABLE  0, 0, 237, 119\n"
+                    "BEGIN\n"
+                    "    CONTROL         \"&File Transfer\",IDC_NMCH_FT,\"Button\",BS_AUTOCHECKBOX | \n"
+                    "                    WS_TABSTOP,71,66,76,10\n"
+                    + spike +
+                    "                    BS_AUTOCHECKBOX | WS_TABSTOP,71,81,76,10\n"
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(5): Button missing hotkey\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, TrailingAmpersandsAreNotHotkeys)
+    {
+
+        string spike = "    CONTROL         \"Application Sharing &\",IDC_NMCH_AS,\"Button\",\n";
+        string rc = "IDD_CONFERENCE DIALOG DISCARDABLE  0, 0, 237, 119\n"
+                    "BEGIN\n"
+                    "    CONTROL         \"&File Transfer\",IDC_NMCH_FT,\"Button\",BS_AUTOCHECKBOX | \n"
+                    "                    WS_TABSTOP,71,66,76,10\n"
+                    + spike +
+                    "                    BS_AUTOCHECKBOX | WS_TABSTOP,71,81,76,10\n"
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(5): Button missing hotkey\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, ButtonMissingHotkey)
+    {
+
+        string spike = "    CONTROL         \"Application Sharing\",IDC_NMCH_AS,\"Button\",\n";
+        string rc = "IDD_CONFERENCE DIALOG DISCARDABLE  0, 0, 237, 119\n"
+                    "BEGIN\n"
+                    "    CONTROL         \"&File Transfer\",IDC_NMCH_FT,\"Button\",BS_AUTOCHECKBOX | \n"
+                    "                    WS_TABSTOP,71,66,76,10\n"
+                    + spike +
+                    "                    BS_AUTOCHECKBOX | WS_TABSTOP,71,81,76,10\n"
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(5): Button missing hotkey\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, PushbuttonMissingHotkey)
+    {
+    
+        string spike = "    PUSHBUTTON      \"Browse\",IDB_BROWSE,120,41,50,14\n";
+        string rc = "IDD_SENDFILE DIALOG DISCARDABLE  0, 0, 177, 69\n"
+                    "BEGIN\n"
+                    "    DEFPUSHBUTTON   \"OK\",IDOK,119,4,50,14\n"
+                    "    PUSHBUTTON      \"Cancel\",IDCANCEL,120,24,50,14\n"
+                    + spike +
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(5): Button missing hotkey\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, DefPushbuttonMissingHotkey)
+    {
+    
+        string spike = "    DEFPUSHBUTTON      \"Browse\",IDB_BROWSE,120,41,50,14\n";
+        string rc = "IDD_SENDFILE DIALOG DISCARDABLE  0, 0, 177, 69\n"
+                    "BEGIN\n"
+                    "    PUSHBUTTON   \"OK\",IDOK,119,4,50,14\n"
+                    "    PUSHBUTTON   \"Cancel\",IDCANCEL,120,24,50,14\n"
+                    + spike +
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(5): Button missing hotkey\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, DuplicatedControlHotkey)
+    {
+
+        string spike1 = "    GROUPBOX        \"&Multisample\",IDC_STATIC,5,101,200,28\n";
+        string spike2 = "    LTEXT           \"&Multisample Type:\",IDC_STATIC,22,113,62,10,\n";
+
+        string rc = "IDD_SELECTDEVICE DIALOG DISCARDABLE  0, 0, 267, 138\n"
+                    "STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU\n"
+                    "CAPTION \"Select Device\"\n"
+                    "FONT 8, \"MS Shell Dlg\"\n"
+                    "BEGIN\n"
+                    "    GROUPBOX        \"Rendering device\",IDC_STATIC,5,5,200,45\n"
+                    "    LTEXT           \"&Adapter:\",IDC_STATIC,22,17,65,10,SS_CENTERIMAGE\n"
+                    "    COMBOBOX        IDC_ADAPTER_COMBO,90,15,105,100,CBS_DROPDOWNLIST | \n"
+                    "                    WS_VSCROLL | WS_TABSTOP\n"
+                    "    LTEXT           \"&Device:\",IDC_STATIC,22,32,65,10,SS_CENTERIMAGE\n"
+                    "    COMBOBOX        IDC_DEVICE_COMBO,90,30,105,100,CBS_DROPDOWNLIST | \n"
+                    "                    WS_VSCROLL | WS_TABSTOP\n"
+                    "    GROUPBOX        \"Rendering mode\",IDC_STATIC,5,52,200,45\n"
+                    "    CONTROL         \"Use desktop &window\",IDC_WINDOW,\"Button\",\n"
+                    "                    BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,10,62,85,15\n"
+                    "    CONTROL         \"&Fullscreen mode:\",IDC_FULLSCREEN,\"Button\",\n"
+                    "                    BS_AUTORADIOBUTTON,10,77,75,15\n"
+                    "    COMBOBOX        IDC_FULLSCREENMODES_COMBO,90,77,105,204,CBS_DROPDOWNLIST | \n"
+                    "                    WS_VSCROLL | WS_GROUP | WS_TABSTOP\n"
+                    + spike1
+                    + spike2 +
+                    "                    SS_CENTERIMAGE\n"
+                    "    COMBOBOX        IDC_MULTISAMPLE_COMBO,90,111,105,100,CBS_DROPDOWNLIST | \n"
+                    "                    WS_VSCROLL | WS_TABSTOP\n"
+                    "    DEFPUSHBUTTON   \"OK\",IDOK,210,10,50,14\n"
+                    "    PUSHBUTTON      \"Cancel\",IDCANCEL,210,30,50,14\n"
+                    "END\n";
+
+        findOneError( rc, "fileName.rc(21): Duplicated Control hotkey\n"
+                              + spike2
+                              + spike1+
+                              "\n" );
+
+      //  TODO  force get(int) to return items in line order
+
+    }
+
+
+    TEST_(TestLint, DuplicatedMenuItemHotkey)
+    {
+
+        string spike1 = "        MENUITEM \"Kriem&hild\\tShift+K\",  ID_KRIEMHILD\n";
+        string spike2 = "        MENUITEM \"Gunt&her\\tCtrl+G\",     ID_GUNTHER\n";
+        string rc = "IDPLATYPUS MENU DISCARDABLE \n"
+                    "BEGIN\n"
+                    "    POPUP \"&Brunhilde\"\n"
+                    "    BEGIN\n"
+                    + spike1
+                    + spike2 +
+                    "    END\n"
+                    "END\n"
+                    "IDPLATYPUS ACCELERATORS LOADONCALL MOVEABLE DISCARDABLE \n"
+                    "BEGIN\n"
+                    "    \"K\", ID_KRIEMHILD,  VIRTKEY, SHIFT\n"
+                    "    \"G\", ID_GUNTHER,    VIRTKEY, CONTROL\n"
+                    "END\n"
+                    "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    ID_GUNTHER      \"Snow\"\n"
+                        "    ID_KRIEMHILD    \"Angel\\n\"\n"
+                        "    IDS_COMMITTEE   \"Committee\"\n"
+                        "END\n";
+
+        findOneError( rc, "fileName.rc(6): Duplicated MenuItem hotkey\n"
+                              + spike2
+                              + spike1 +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, MissingAccelerator)
+    {
+
+        string spike1 = "    POPUP \"Brunhilde\"\n";
+        string spike2 = "        MENUITEM \"Gunther\",       ID_GUNTHER\n";
+        string rc = "NIBELUNG_MENU MENU DISCARDABLE \n"
+                    "BEGIN\n"
+                    + spike1 + 
+                    "    BEGIN\n"
+                    "        MENUITEM \"&Kriemhild\",\n  ID_KRIEMHILD\n"
+                    + spike2 +
+                    "    END\n"
+                    "END\n"
+                    "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    ID_GUNTHER      \"Snow\"\n"
+                        "    ID_KRIEMHILD    \"Angel\\n\"\n"
+                        "    IDS_COMMITTEE   \"Committee\"\n"
+                        "END\n";
+
+        findOneError( rc, "fileName.rc(3): Missing & in Menu Label\n"
+                              + spike1 +
+                              "\n"
+                              "fileName.rc(7): Missing & in Menu Label\n"
+                              + spike2 +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, MenuItemMissesShortcut)
+    {
+
+        string spike1 = "        MENUITEM \"Gunth&er\",       ID_GUNTHER\n";
+        string spike2 = "    \"G\", ID_GUNTHER,   VIRTKEY, CONTROL\n";
+        string rc = "IDPLATYPUS MENU DISCARDABLE \n"
+                    "BEGIN\n"
+                    "    POPUP \"&Brunhilde\"\n"
+                    "    BEGIN\n"
+                    "        MENUITEM \"&Kriemhild\\tShift+K\",\n  ID_KRIEMHILD\n"
+                    + spike1 +
+                    "    END\n"
+                    "END\n"
+                    "IDPLATYPUS ACCELERATORS LOADONCALL MOVEABLE DISCARDABLE \n"
+                    "BEGIN\n"
+                    + spike2 +
+                    "    \"K\", ID_KRIEMHILD,  VIRTKEY, SHIFT\n"
+                    "END\n"
+                    "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    ID_GUNTHER      \"Snow\"\n"
+                        "    ID_KRIEMHILD    \"Angel\\n\"\n"
+                        "    IDS_COMMITTEE   \"Committee\"\n"
+                        "END\n";
+
+        findOneError( rc, "fileName.rc(7): Missing accelerator prompt in Menu Label\n"
+                              + spike1
+                              + spike2 +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, MenuItemShortcutWrong)
+    {
+
+        string spike1 = "        MENUITEM \"&Kriemhild\\tShift+H\",  ID_KRIEMHILD\n";
+        string spike2 = "    \"K\", ID_KRIEMHILD,  VIRTKEY, SHIFT\n";
+        string rc = "IDPLATYPUS MENU DISCARDABLE \n"
+                    "BEGIN\n"
+                    "    POPUP \"&Brunhilde\"\n"
+                    "    BEGIN\n"
+                    + spike1 +
+                    "        MENUITEM \"Gunth&er\\tCtrl+G\",       ID_GUNTHER\n"
+                    "    END\n"
+                    "END\n"
+                    "IDPLATYPUS ACCELERATORS LOADONCALL MOVEABLE DISCARDABLE \n"
+                    "BEGIN\n"
+                    + spike2 +
+                    "    \"G\", ID_GUNTHER,   VIRTKEY, CONTROL\n"
+                    "END\n"
+                    "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    ID_GUNTHER      \"Snow\"\n"
+                        "    ID_KRIEMHILD    \"Angel\\n\"\n"
+                        "    IDS_COMMITTEE   \"Committee\"\n"
+                        "END\n";
+
+      //  TODO  that line number should be 5?
+
+        findOneError( rc, "fileName.rc(5): Wrong accelerator prompt in Menu Label\n"
+                              + spike1
+                              + spike2 +
+                              "\n" );
+
+    }
+
+
+    TEST_(TestLint, MissingStringTableHelpForMenuItem)
+    {
+
+        string spike = "        MENUITEM \"&Kriemhild\\tShift+K\",  ID_KRIEMHILD\n";
+
+        string rc = "IDPLATYPUS MENU DISCARDABLE \n"
+                    "BEGIN\n"
+                    "    POPUP \"&Brunhilde\"\n"
+                    "    BEGIN\n"
+                    + spike +
+                    "        MENUITEM \"Gunth&er\\tCtrl+G\",       ID_GUNTHER\n"
+                    "    END\n"
+                    "END\n"
+                    "IDPLATYPUS ACCELERATORS LOADONCALL MOVEABLE DISCARDABLE \n"
+                    "BEGIN\n"
+                    "    \"K\", ID_KRIEMHILD,  VIRTKEY, SHIFT\n"
+                    "    \"G\", ID_GUNTHER,    VIRTKEY, CONTROL\n"
+                    "END\n"
+                    "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    ID_GUNTHER      \"Snow\"\n"
+                        "    IDS_ANGEL       \"Angel\\n\"\n"
+                        "    IDS_COMMITTEE   \"Committee\"\n"
+                        "END\n";
+
+        findOneError( rc, "fileName.rc(5): Missing StringTable help for MenuItem\n"
+                              + spike +
+                              "\n" );
+
+    }
+
+    ////////////////////////////////////////////////////
+    ///   tests for miscellany
+
+
+    TEST_(TestCase, printTree)
+    {
+
+        string rc = "NIBELUNG_MENU MENU\n"
+                    "BEGIN\n"
+                    "    POPUP \"Brunhilde\", GRAYED\n"
+                    "    BEGIN\n"
+                    "        MENUITEM \"&Kriemhild\",\n  ID_KRIEMHILD\n"
+                    "        MENUITEM \"Gunther\",       ID_GUNTHER\n"
+                    "    END\n"
+                    "END\n";
+
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc, "fileName.rc");
+        stringstream tree;
+
+        aResourceFile.printTree(tree, 1);
+    
+        string expect = " fileName.rc\n"
+                        "      NIBELUNG_MENU\n"
+                        "           Brunhilde\n"
+                        "                ID_GUNTHER\n"
+                        "                ID_KRIEMHILD\n";
+
+        CPPUNIT_ASSERT_EQUAL(expect, tree.str());
+
+    }
+
+
+    TEST_(TestCase, callLint)
+    {
+
+        string rc =
+            "IDR_MENU    MENU MOVEABLE DISCARDABLE\n"
+            "BEGIN\n"
+            "     POPUP \"&File\"\n"
+            "      BEGIN\n"
+            "\t"   "MENUITEM \"&Close\",    IDM_FILECLOSE\n"
+            "       MENUITEM SEPARATOR\n"
+            "      END\n"
+            "    END\n";
+
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc, "fileName.rc");
+    //    aResourceFile.printTree(cout);
+        stringstream out;
+        aResourceFile.callLint(out);
+
+    }
+
+
+    TEST_(TestCase, LeGrandWazoo)
+    {
+
+        string rc = "IDD_ABOUTBOX DIALOG DISCARDABLE  0, 0, 217, 55\n"
+                        "STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU\n"
+                        "CAPTION \"About HostApp\"\n"
+                        "FONT 8, \"MS Sans Serif\"\n"
+                        "BEGIN\n"
+                        "    ICON            IDR_MAINFRAME,IDC_STATIC,11,17,20,20\n"
+                        "    LTEXT           \"Pyramus && Thisby\",IDC_STATIC,40,10,119,8,SS_NOPREFIX\n"
+                        "    LTEXT           \"Copyright (C) 2098\",IDC_STATIC,40,25,119,8\n"
+                        "    DEFPUSHBUTTON   \"Okay\",IDOK,178,7,32,14,WS_GROUP\n"
+                        "END\n"
+                    "\n"
+                    "\n"
+                        "NIBELUNG_MENU MENU DISCARDABLE \n"
+                        "BEGIN\n"
+                        "    POPUP \"&Flying\"\n"
+                        "    BEGIN\n"
+                        "        MENUITEM \"&Valkyrie\",    ID_VALKYRIE, grayed\n"
+                        "        MENUITEM \"E&xit\",        ID_FILE_EXIT\n"
+                        "    END\n"
+                        "    POPUP \"&Rheingold\"\n"
+                        "    BEGIN\n"
+                        "        MENUITEM \"&Play\",        ID_RHEINGOLD_PLAY\n"
+                        "        MENUITEM \"Walhalla\",     ID_RHEINGOLD_WALHALLA\n"
+                        "        MENUITEM SEPARATOR\n"
+                        "        POPUP \"&Alberich\"\n"
+                        "        BEGIN\n"
+                        "            MENUITEM \"&Volsung\", ID_VOLSUNG\n"
+                        "            MENUITEM \"&Hunland\", ID_HUNLAND\n"
+                        "        END\n"
+                        "        POPUP \"Wotan\"\n"
+                        "        BEGIN\n"
+                        "            MENUITEM \"&Rhein\",   ID_RHEIN\n"
+                        "        END\n"
+                        "        MENUITEM \"&Title Menu\",  ID_RHEINGOLD_TITLEMENU\n"
+                        "    END\n"
+                        "    POPUP \"&Brunhilde\"\n"
+                        "    BEGIN\n"
+                        "        POPUP \"&Siegfried\"\n"
+                        "        BEGIN\n"
+                        "            MENUITEM \"&Kriemhild\",\n  ID_KRIEMHILD\n"
+                        "       //     MENUITEM \"&Miscreant\",  ID_MISCREANT\n"
+                        "            MENUITEM \"&Gunther\",      ID_GUNTHER\n"
+                        "\n"
+                        "        END\n"
+                        "        MENUITEM SEPARATOR\n"
+                        "    END\n"
+                        "    POPUP \"&Help\"\n"
+                        "    BEGIN\n"
+                        "        MENUITEM \"&About Nibelung\",  ID_ABOUT\n"
+                        "        MENUITEM \"Gotterdammerung\",  ID_GOTTERDAMMERUNG\n"
+                        "    END\n"
+                        "END\n"
+                    "\n"
+                    "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    IDS_SNOW        \"Snow\"\n"
+                        "    IDS_ANGEL       \"Angel\\n\"\n"
+                        "    IDS_COMMITTEE   \"Committee\"\n"
+                        "END\n"
+                    "\n"
+                    "IDPLATYPUS MENU LOADONCALL MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    POPUP \"&File\"\n"
+                        "    BEGIN\n"
+                        "        MENUITEM \"&New\",        IDM_FILENEW\n"
+                        "        MENUITEM \"&Open...\",    IDM_FILEOPEN\n"
+                        "        POPUP \"&Menu\"\n"
+                        "        BEGIN\n"
+                        "            MENUITEM \"&Frog\",   IDM_FROG\n"
+                        "            MENUITEM \"&Soup\",   IDM_SOUP\n"
+                        "        END\n"
+                        "    END\n"
+                        "END\n"
+                    "\n"
+                    "STRINGTABLE PRELOAD MOVEABLE DISCARDABLE\n"
+                        "BEGIN\n"
+                        "    IDS_OBVIOUS1     \"I like food\"\n"
+                        "    IDS_OBVIOUS2     \"Food is good\"\n"
+                        "    IDS_OBVIOUS3     \"\"\"Eat good food\"\"\"\n"  //  <-- escaped strings
+                        "END\n";
+
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc);
+
+        CPPUNIT_ASSERT_EQUAL("IDD_ABOUTBOX", aResourceFile.get("IDD_ABOUTBOX")->getID());
+
+        Resource & aMenu = *aResourceFile.get("IDPLATYPUS");
+        CPPUNIT_ASSERT_EQUAL("IDPLATYPUS", aMenu.getID());
+
+        string     popupID = "&File";
+        Resource * pPopup  = aMenu.get(popupID);
+        CPPUNIT_ASSERT_EQUAL(popupID, pPopup->getID());
+
+        CPPUNIT_ASSERT_EQUAL("&New",     pPopup->get("IDM_FILENEW" )->getLabel());
+        CPPUNIT_ASSERT_EQUAL("&Open...", pPopup->get("IDM_FILEOPEN")->getLabel());
+
+        Resource & bPopup = *pPopup->get("&Menu");
+
+        CPPUNIT_ASSERT_EQUAL("&Frog", bPopup.get("IDM_FROG")->getLabel());    
+        CPPUNIT_ASSERT_EQUAL("&Soup", bPopup.get("IDM_SOUP")->getLabel());
+
+        Resource & nibelungMenu = *aResourceFile.get("NIBELUNG_MENU");
+        CPPUNIT_ASSERT_EQUAL("NIBELUNG_MENU", nibelungMenu.getID());
+
+        pPopup = nibelungMenu.get("&Flying");
+        CPPUNIT_ASSERT_EQUAL("&Valkyrie", pPopup->get("ID_VALKYRIE" )->getLabel());
+        CPPUNIT_ASSERT_EQUAL("E&xit",     pPopup->get("ID_FILE_EXIT")->getLabel());
+
+        pPopup = nibelungMenu.get("&Rheingold");
+        CPPUNIT_ASSERT_EQUAL("&Play"   , pPopup->get("ID_RHEINGOLD_PLAY"    )->getLabel());
+        CPPUNIT_ASSERT_EQUAL("Walhalla", pPopup->get("ID_RHEINGOLD_WALHALLA")->getLabel());
+
+        Resource * zPopup = pPopup->get("&Alberich");
+        CPPUNIT_ASSERT_EQUAL("&Volsung", zPopup->get("ID_VOLSUNG")->getLabel());
+        CPPUNIT_ASSERT_EQUAL("&Hunland", zPopup->get("ID_HUNLAND")->getLabel());
+        zPopup = pPopup->get("Wotan");
+        CPPUNIT_ASSERT_EQUAL("&Rhein", zPopup->get("ID_RHEIN")->getLabel());
+        CPPUNIT_ASSERT_EQUAL("&Title Menu", pPopup->get("ID_RHEINGOLD_TITLEMENU")->getLabel());
+
+        pPopup = nibelungMenu.get("&Brunhilde");
+        zPopup = pPopup->get("&Siegfried");
+        CPPUNIT_ASSERT_EQUAL("&Kriemhild", zPopup->get("ID_KRIEMHILD")->getLabel());
+        CPPUNIT_ASSERT_EQUAL("&Gunther"  , zPopup->get("ID_GUNTHER"  )->getLabel());
+
+        pPopup = nibelungMenu.get("&Help");
+        CPPUNIT_ASSERT_EQUAL("&About Nibelung", pPopup->get("ID_ABOUT")->getLabel());
+        CPPUNIT_ASSERT_EQUAL("Gotterdammerung", pPopup->get("ID_GOTTERDAMMERUNG")->getLabel());
+
+        CPPUNIT_ASSERT_EQUAL("Snow"         , aResourceFile.getString("IDS_SNOW"     ));
+        CPPUNIT_ASSERT_EQUAL("Angel\n"      , aResourceFile.getString("IDS_ANGEL"    ));
+        CPPUNIT_ASSERT_EQUAL("Committee"    , aResourceFile.getString("IDS_COMMITTEE"));
+        CPPUNIT_ASSERT_EQUAL("I like food"  , aResourceFile.getString("IDS_OBVIOUS1"));
+        CPPUNIT_ASSERT_EQUAL("Food is good" , aResourceFile.getString("IDS_OBVIOUS2"));
+        string expect = "\"Eat good food\"";
+        CPPUNIT_ASSERT_EQUAL(expect, aResourceFile.getString("IDS_OBVIOUS3"));
+        expect = "";
+        CPPUNIT_ASSERT_EQUAL(expect, aResourceFile.getString("IDS_NOT_OBVIOUS"));
+
+    }
+
+
+        std::string
+    fileToString(string const & name)
+    {
+        std::ifstream in(name.c_str());
+        std::ostringstream oss;
+        oss << in.rdbuf();
+        return oss.str();
+    } 
+
+
+        void
+    rcLint(ostream & out, string fileName)
+    {
+        string rc = fileToString(fileName);
+        ResourceFile aResourceFile;
+        aResourceFile.parseFile(rc, fileName);
+    //    aResourceFile.printTree(cout);
+        aResourceFile.callLint(out);
+    }
+
+
+        int
+    main(int argc, char **argv)
+    {
+        if (argc == 2)
+            {
+            rcLint(cout, argv[1]);
+            return 0;
+            }
+        else
+            {
+            bool worked = TestCase::runTests();
+            cout << (worked?  "All tests passed":  "Test(s) failed") << endl;
+            return ! worked;
+            }
+    }
+
+
+----
+CategoryLint

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Memory Leak In Cpp
+      </h1>
+      <p>
+        One of the <a href="LanguageGotchas.html">LanguageGotchas</a>.
+      </p>
+      <p>
+        Here's a fun and slightly unexpected way of creating a memory leak in C++.
+      </p>
+      <p>
+        Suppose you want to exit a constructor without creating an instance. The only way I know of is to throw an exception, which is probably right because if you're not creating an instance in a constructor, you are doing something exceptional. So, here is a constructor/destructor pair.
+      </p>
+      <code>
+        class MyClass { };  // some definition<br/>
+        MyClass::MyClass(void) {<br/>
+        t = new Thing;<br/>
+        throw "It's the end of the world";<br/>
+        }<br/>
+        MyClass::~MyClass(void) {<br/>
+        if (t)<br/>
+        delete t;<br/>
+        }<br/>
+      </code>
+      <p>
+        This, however, has a memory leak because destructors are never called if the constructor throws an exception.
+      </p>
+      <p>
+        This seems to imply that if you do <strong>any</strong> resource allocation in your constructor at all then you <strong>must not</strong> allow any exceptions to be thrown.
+      </p>
+      <p>
+        It is true that base class destructors are called. That means that the following <em>doesn't</em> leak:
+      </p>
+      <code>
+        class MyClass : public BaseClass { };<br/>
+        // with 't' moved into BaseClass<br/>
+        // and marked protected not private<br/>
+        MyClass::MyClass(void) { ... as before }<br/>
+        BaseClass::~BaseClass(void) { ... as ~MyClass was }<br/>
+      </code>
+      <p>
+        So, if you are writing a class that naturally wants to allocate resources in its constructor, and something goes wrong (such as divide by zero), what is the cleanest way to handle it?
+      </p>
+      <hr/>
+      <p>
+        <em>Release all allocated resources before throwing the exception, or use Java.</em>
+      </p>
+      <hr/>
+      <p>
+        <strong>Why allocate memory in the Constructor?</strong>
+        This appears to be one of the class of things that is permitted in C++, but is unnecessary.  Instead of allocating the object in the Constructor, make it part of the class.  Let the memory management take care of itself instead of doing handstands to allocate it manually.
+      </p>
+      <code>
+        class MyClass <br/>
+        { <br/>
+        Thing t;<br/>
+        };<br/>
+        MyClass::MyClass(void) <br/>
+        {<br/>
+        throw "It's the end of the world";<br/>
+        }<br/>
+      </code>
+      <p>
+        <strong>Counter Examples</strong>
+      </p>
+      <ol>
+        <li>
+          ) the constructor takes a parameter saying how big something will be, so the memory has to be allocated when the constructor is called.
+        </li>
+      </ol>
+      <ol>
+        <li>
+          ) the class may hold an object of abstract base class type.
+        </li>
+      </ol>
+      <p>
+        For the first example, I would suggest one would be far better off not allocating fixed blocks of memory, or if there is defer the allocation to the method populating the memory.
+      </p>
+      <p>
+        In the second example, I would suggest that this example most likely requires the embedded object be exposed to the outside world, and thus should be constructed outside of the holding object.  I would also suspect that the holding class likely should be subtyped with a base class holding an abstract class, but having derived classes with explicit constructors for the data type desired.  At the very least, a class factory should be used.  Within the overall context of the program, these changes would probably add to clarity as well as handling memory issues.
+      </p>
+      <hr/>
+      <p>
+        Instead of declaring t as a simple pointer, make it a <a href="SmartPointer.html">SmartPointer</a>, e.g. a std::auto_ptr<>, or one of the <a href="BoostLibraries.html">BoostLibraries</a>' robust implementations. Even if you throw an exception in a constructor, data members that have already been constructed <em>will</em> be properly destroyed. -- <a href="DanMuller.html">DanMuller</a>
+      </p>
+      <p>
+        <em>Or, if the constructor does something which will throw, catch the exception within the constructor (re-throwing as necessary).</em>
+      </p>
+      <p>
+        Bad advice -- much too messy. Use smart pointers. Let the compiler do the hard work for you. Get used to using smart pointers consistently, and you'll hardly ever have to worry about memory leaks again. These kinds of issues are covered in great depth in Sutter's "Exceptional C++" and its sequel, "More Exceptional C++". Highly recommended. -- <a href="DanMuller.html">DanMuller</a>
+      </p>
+      <p>
+        <em>Except that </em><a href="SmartPointersAreNot.html">SmartPointersAreNot</a>.<em></em>
+      </p>
+      <p>
+        Not all resource allocation is based on pointers. -- anon
+      </p>
+      <p>
+        Of course not, but this page is about memory leaks. There are other techniques for dealing with other types of resources gracefully which, similar to most smart pointer classes, rely on automatic invocation of destructors. -- DanM
+      </p>
+      <hr/>
+      <p>
+        Anyhow, whatever you use for an instance variable should be initialized in the constructor initialization list:
+      </p>
+      <code>
+        class MyClass <br/>
+        { <br/>
+        <em>std::auto_ptr<Thing></em> tp;<br/>
+        };<br/>
+        MyClass::MyClass(void) <em>: tp(new Thing)</em> <br/>
+        {<br/>
+        throw "It's the end of the world";<br/>
+        }<br/>
+      </code>
+      <p>
+        When the constructor throws, tp is destroyed, and Thing's destructor is called.
+      </p>
+      <hr/>
+      <p>
+        Pretty obvious, but if you can't use shared_ptr and the like, and something in your constructor can throw an exception, handle it with a try/catch.
+      </p>
+      <code>
+        class MyClass {<br/>
+        private:<br/>
+        SomeObject* object;<br/>
+      </code>
+      <code>
+        public:<br/>
+        MyClass() {<br/>
+        object = allocateSomeObject();<br/>
+        try {<br/>
+        DoSomethingElse();<br/>
+        } catch (...) {<br/>
+        freeSomeObject(object);<br/>
+        throw;<br/>
+        }<br/>
+        }<br/>
+        };<br/>
+      </code>
+      <p>
+        Of course, you'll probably end up with a repeated call to freeSomeObject in your destructor, so you would extract it into another method. To be honest, I've never really engaged in this practice. As others have pointed out, it's best to use shared pointers and other <a href="ResourceAcquisitionIsInitialization.html">ResourceAcquisitionIsInitialization</a> style idioms to overcome problems with resource leaks and exceptions. -- <a href="MikeWeller.html">MikeWeller</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryCpp.html">CategoryCpp</a> <a href="CategoryPitfall.html">CategoryPitfall</a>
+      </p>
+    </div>
+  </body>
+</html>

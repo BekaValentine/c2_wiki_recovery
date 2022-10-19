@@ -1,0 +1,88 @@
+Commonly "v-table" or simply "vtable", short for "virtual table" (or maybe even "virtual dispatch table").
+
+Primarily refers to the (hidden) data structure found in most if not all CeePlusPlus implementations, used to implement DynamicDispatch and RunTimeTypeIdentification (C++'s DynamicCast and related features). Many other OO languages have a similar feature.
+
+At the simplest, a vtable is an array of pointers to functions. Any object with virtual methods contains an internal pointer to a vtable.  The vtable layout is implementation dependent, and may frequently contain type metadata (to support DynamicCast) and correction factors needed to support MultipleInheritance. Detailed descriptions of how multiple inheritance is (often) implemented in C++ can be found in either ProgrammingLanguagePragmatics or TheDesignAndEvolutionOfCpp.
+
+The design of vtables makes DynamicDispatch relatively fast in C++. A virtual function call is simply a linear lookup into the function pointer array, with corrections applied for MultipleInheritance. Unfortunately, this leads to the FragileBinaryInterfaceProblem. Ignoring the issue of MultipleInheritance, suppose you have a class D which has several virtual functions defined, like this:
+
+ class D : public B 
+ {
+    public: 
+        virtual ~D();
+        virtual void func0(void);
+        virtual int func1(int,double);
+        virtual bool func2 (const char *);
+ };
+And suppose B is defined thusly:
+
+ class B 
+ {
+     private:
+        int foo;
+        int bar;
+
+     public:
+        virtual ~B() = 0;
+        virtual void func0(void) = 0;
+        virtual void func0_5(void *);
+        virtual void func1(int,double);
+ };
+What will the vtables look like?  Probably something like this; 
+
+For B:
+
+ 0: implementation defined stuff
+ 1: pointer to B::~B (the destructor)
+ 2: pointer to "pure virtual function" code, for func0
+ 3: pointer to B::func0_5
+ 4: pointer to B::func1
+For D:
+
+ 0: implementation defined stuff
+ 1: Pointer to D::~D (the destructor)
+ 2: pointer to D::func0
+ 3: pointer to B::func0_5.  (It wasn't overridden in D)
+ 4: pointer to D::func1
+ 5: pointer to D::func2
+Note that all the virtual functions ''newly defined'' in class D appear in D's vtable ''after'' all virtual functions that were defined in B, regardless of whether or not D overrides them or not. This is true regardless of the definition order in D; though newly-defined virtual functions will appear in order.
+
+When client code (outside either class) wants to call a given function, say func1, the compiler "knows" that it's in slot 4. The following code, in pseudo-assembly, is emitted. Assume a pointer to the object (the "this" pointer) is found in r1. Due to how C++ lays out objects, the vtable pointer will likely be in the second machine word after the start of the object in both cases. Assume the numbers in the indirect addressing form num[rx] counts word offsets. Assume that the arguments to func1 are already in the appropriate place.
+
+ load r0, 2[r1]  ; get the vtable
+ load r0, 4[r0]  ; get 4th entry of vtable
+ jsr  r0
+What happens if we add a new function, func0_75, to B?  Make it a harmless "test" function, defined so:
+
+ virtual bool func0_75 (void) const;
+The two new vtables become:
+
+For B:
+
+ 0: implementation defined stuff
+ 1: pointer to B::~B (the destructor)
+ 2: pointer to "pure virtual function" code, for func0
+ 3: pointer to B::func0_5
+ 4: pointer to B::func0_75
+ 5: pointer to B::func1
+For D:
+
+ 0: implementation defined stuff
+ 1: Pointer to D::~D (the destructor)
+ 2: pointer to D::func0
+ 3: pointer to B::func0_5.  (It wasn't overridden in D)
+ 4: pointer to B::func0_75
+ 5: pointer to B::func1
+ 6: pointer to D::func2
+When this is done, the correct calling sequence for func1 becomes
+
+ load r0, 2[r1]  ; get the vtable
+ load r0, '''5'''[r0]  ; get '''5th''' entry of vtable
+ jsr  r0
+In other words, any code using ''either'' the base class ''or'' any of its derived classes '''must''' be recompiled; else the program will likely crash. This is especially a problem if the client code and the code for B are in a different UnitOfDeployment. A harmless semantic change (adding a query function) causes all hell to break loose. 
+
+MultipleInheritance complicates this scheme quite a bit; and I'm too tired to write the dirty details here. See one of the two books above if you're interested in how that works.
+----
+See http://www.codeguru.com/cpp/tic/tic0158.shtml
+----
+CategoryCpp

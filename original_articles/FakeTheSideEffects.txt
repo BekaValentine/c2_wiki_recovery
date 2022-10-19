@@ -1,0 +1,76 @@
+Fake the side effects is a technique for TacticalTesting. To my knowledge it was first described by PaulChisholm in TestEnvironments. Faking the side effects means building an environment for the test program which simulates (parts of) the real environment. In Paul's example, a co-worker wrote a module which could either be real or fake depending on a switch in a configuration file.
+
+The advantages of faking side effects are:
+* you get to test unusual parts of the code at low cost, i.e. without the expense of getting into the real test environment
+* you may not know exactly how the real test environment works, so the best you can do is validate your code against how you think it works
+
+Another method of faking side effects is ThrowYourOwnException.
+
+The disadvantages are:
+* you need to look for a configuration file, so make sure you handle all the cases where it can't be found
+* the module which does the faking is made twice as complex by the addition of the faking code
+* some things are really hard to fake. There are problems (quick example, factoring products of large primes) where you can't pretend to do it in all cases.
+
+----
+
+''* some things are really hard to fake. There are problems (quick example, factoring products of large primes) where you can't pretend to do it in all cases.''
+
+Why not let the test code drive the faking code? As an example, suppose I have a link to an external system, and the external system's behavior is complex... too complex to fake convincingly. I could build a brain-dead fake version of the external system which had a hook for the test unit to call. The test unit can, as part of the setup for a test, tell the faking code how to respond next. ("If you receive query type 1, respond with this message. If you receive query type 2, respond with this message.") Even time-domain behavior could be faked without too much effort ("After you receive this request, wait 10 seconds, then respond with this response.").
+
+I haven't actually gone to code with this idea (does it stink or doesn't it? Only the code knows for sure).
+
+-- WayneConrad
+
+I started playing with something similar - a multithreaded application where one thread ran the code under test, and the other thread waited on the other end of a socket/serial link/carrier pigeon.
+
+I had the CppUnit test fixtures set up the other end of the connection in the manner you describe. For example, I'd tell the other end to ignore the connection request, and then the test code on this end would expect a timeout result.
+
+I didn't get very far with it before my brain started to hurt. I might try again sometime.
+
+One of the problems that I encountered was coming up with a suitably flexible way to communicate the expected behaviour to the host thread - i.e. the other end of the socket. I experimented with the CommandPattern, but that didn't really work.
+
+Communication between the two ends consists of - as I see it - telling the other end what you want, and then waiting for it to be ready to do that before doing whatever you need to do on the CppUnit end. So I had a thread on the other end, which I would prime with a TestScenario object, which the CppUnit end would call WaitReady on, and then WaitResult.
+
+I think the problem I had was that I was trying to hold both the expected result and the actual result in the same object. CppUnit leans heavily towards looking at the local results. I wanted to be able to send some data along the channel and then check that it all got there in one piece. At the time, I couldn't see any tidy way to do this.
+
+The other major problem I had was communicating the entire "test environment", e.g. which serial handles would be used for each end of the connection.
+
+Maybe I was looking at the problem from the wrong angle, but I didn't get much further than two or three different scenarios.
+
+The other thing that I was worried about was using a large number of the classes under test at both ends of the connection. Is this a valid thing to do?
+
+Unfortunately, I'd only just started using CppUnit, so I'm not sure I grokked the whole thing at the time, and automated testing is something we don't tend to do here, so I dropped the whole thing.
+
+Now I've got more experience with the problem domain, and with CppUnit, I might try again.
+
+Perhaps we should raise some of the issues for discussion here? To see if a TestingGuru has any advice?
+
+-- RogerLipscombe
+
+Roger, I imagine something like this:
+
+	A<----->L<----(link)------>E
+Where A is classes handling "application logic", L is classes handling "interface to external system," and "E" is the external system. What I'm considering is faking both L and E to allow complete testing of A without dependence upon the Link and E:
+
+	A<----->Fake-L
+I'm not thinking of using FakeTheSideEffects to test the link or the L classes - that's a harder problem, and might not be one for which FakeTheSideEffects is a good fit.
+
+-- WayneConrad
+
+''I've now deployed what I described above, both for SNA communications with a mainframe and for database access, and it's working great. So now it's a pattern with an instance'' -- WayneConrad
+
+----
+''When your tests reach this level of complexity, don't they have a high probability of being defective? How do you know whether your code is really invalid? TestTheTest?''
+
+----
+One sign of a badly designed system is great difficulty in creating a test harness for a piece of code, so that the new code can only be tested in the context of the entire system. This also means that some test conditions can not be created due to the limitations of the external environment. (Yes, I've worked on some real messes.)
+----
+Isn't FakeTheSideEffects the same as using DependencyInjection with MockObject''''''s? -- NicolasMarchildon
+	* MockObject''''s can be used to FakeTheSideEffects, but you can also achieve the same effect by replacing libraries at link time, using the preprocessor to replace functions at compile time, and so on. The exact technique you need to use depends on the context - language, environment, etc.
+
+----
+I've been working (slowly) on a  sandbox for Python aimed at doing that (replacing the standard file and network libraries with ones which record and play back "conversations". That allows custom "conversations" to be scripted,  to create failures or unexpected behaviour, to prevent real errors messing up my tests, and (in the project which inspired this one) to make sure I didn't send irrevocable bad data to a system I couldn't readily duplicate in my test environment. The idea was that objects could be added individually to the recording system, so that they could be incorporated into unit tests, and (separately) that the interpreter be modified to log commands so that tests could be built out of manual test recordings.
+
+The project was originally meant as a test harness to become one of the parts of an IDE I was planning to build (inspired by a scheme project at MS Research and since replicated in python by an academic project), but I realised fairly quickly that wrapping all the C interfaces and (at a higher level) the I/O libraries was effectively producing a sandbox, which seemed like a more interesting (and useful) project in its own right. -- PhilipShaw
+----
+CategoryTesting

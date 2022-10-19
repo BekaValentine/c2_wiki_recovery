@@ -1,0 +1,104 @@
+In multiple organizations I've been called on to produce query systems that allow the smarter users to create flexible reporting queries without having to learn SQL or the like. I've discovered and encountered several techniques over the years. I don't (yet) have a favorite because the flavor of the app and users is usually different per need. However, I think I know enough now to catalog the common options and possible pro's and con's of each.
+
+(Note that these kinds of tools are anti-job-security because users can do most of their own queries that many shops otherwise use programmers for. But it can free you up to work on bigger, more interesting issues.)
+
+First, I'll narrow the scope of discussion here. I'm assuming the user is querying against a single table or view. Thus, any JOIN's will be handled behind the scenes or via other selection/menu options not discussed here. '''In short, this would be a system that generates a WHERE clause''' portion of a query (other than any key joins).
+
+Second, the goal is to be able to emulate any value-comparative Boolean expression using combinations of parentheses, AND, OR, or NOT (or technically NAND, which all 3 can reduce to). I'll call this "Boolean Complete" for now. By "value-comparative" I exclude column-to-column comparisons, such as "date_X less-than date_y". This is because these are not found in most QueryByExample interfaces (but can probably be added, but risks feature-itis desease).
+
+And I am assuming integration with a QueryByExample (QBE) interface of some kind, which is covered under stated topic. 
+
+QBE's are great for generating AND clauses, but for more complex Boolean expression combinations we need to add something more powerful.
+
+Here are some techniques, some of which can be used in conjunction:
+
+'''Logic Column'''
+
+This is a fairly simple addition to interfaces seen in QueryByExample. We merely add a logic column to the selector items:
+
+  Logic....Field..........Compare.........Value
+  ---------------------------------------------------
+  [And|V][Name________|V][Contains_|V][_____Bob_____]
+  [Or_|V][Rank________|V][Equals___|V][_____________]
+  [Not|V][Serial______|V][Equals___|V][_____________]
+  [And|V][Foo_________|V][Less Than|V][____5.30_____]
+  ...Etc...
+
+(Dots and underlines to prevent TabMunging. "|V" means a drop-down list. Blank values usually ignored in query, so you may want to include an "is blank" comparison type.)
+
+All the same logic value expressions would be grouped together. The resulting SQL would look something like:
+
+  SELECT ...
+  WHERE (and-item-1 AND and-item-2 AND and-item-3 ... )
+    AND (or-item-1 OR or-item-2 OR or-item-3 ... )
+    AND NOT (not-item-1 OR not-item-2 OR not-item-3 ... )
+
+Here, "items" are comparison expressions such as "x=3", derived from the QBE screen. Note how the "not's" also use OR's inside the parentheses.
+
+In practice I tend to plug the first item with "filler" expressions such as "1=1" or "1=0" in the SQL to avoid having to remove the first dangling operand in each group.
+
+The user needs the ability to select the same column multiple times for non-trivial queries. For this reason, I've shown a pull-down list of columns rather than a fixed list. This has the added advantage of not needing a complete list for every potential columns. Most queries are not going to need more than about 20 or so items (if the range/list hybrid QBE compare type is available).
+
+A variation of the above is to have 3 sections of rows; one for each logic type ("and", "or", "not"). 
+
+'''The Grouping Approach'''
+
+The above is still is not general enough. For example, it does not allow one to group the OR's into distinct units, which is a fairly common need and probably the '''biggest flaw''' of the above.
+
+A partial workaround is to provide multiple distinct OR groups (or general groups of any of the 3 logic types). These can be physical form sections, or pull-down types (OR-1, OR-2, OR-3, etc.) Three or four for "OR" is probably enough for most cases. However, groupings may confuse some new users. One approach may be to hide the existence of groups unless the user explicitly selects such an option.
+
+I've also seen a case where there were optional parenthesis columns on each side of the above rows. However, I deem such too confusing for new users, especially with regard to order of operations. If the user knows how to use parenthesis correctly, you might as well give him/her an SQL-like expression ability (although one could argue such is a security risk).
+
+A variation is to include "new group" among the 3 pull-down options. This acts as kind of a divider for groups. Although not as powerful as parentheses, it is a non-cluttered way to provide grouping for power users. It is similar to the numbered approach above, but uses position on the form instead of explicit digits.
+
+'''Set Operations'''
+
+A different approach is to use these basic set operations:
+
+* Combine (unique union)
+* Subtract (remove one set from another)
+* Common (intersection - those common to both)
+
+If there is a unique identifier for each row (product number, case number, customer number, etc.), then the user can be allowed to temporarily store result sets. '''Under the hood, it would store just ID numbers/keys instead of actual data''' rows to save space, but the user does not necessarily have to deal directly with ID's. If they view a set, the whole record is potentially shown using JOIN. 
+
+(The query interface could even incorporate such sets, but this may be too much to chew on for new users, so I'd lean toward a separate set operations screen.)
+
+The user can save a handful of these lists (sets to us techies), perhaps labeled by letters to keep it simple. The user can then perform the above operations one at a time with an interface similar to:
+
+   [B|v] [Combined With|v] [C|v] giving [D|v]
+
+Here we add set B to set C giving set D. ("|v" means a pull-down list.)
+
+This allows them to get anything that the 3 logical operators with parenthesis can. (Although I've never proved it on paper.)
+
+One added advantage of this approach is that a programmer can stuff a list with ID's that require more query power than the standard query utility can provide. For example, a programmer can perform the cross-column date comparison example mentioned earlier. The user can then build on this any way he/she fits without further assistance from the programmer.
+
+A second added avantage is that it provides a mechanism for the user to store results for a given amount of time.
+
+Combining this approach with the simple logic column approach (above) is a powerful combination. But, it may not work well in cases where unique ID's are not effective or not relavant.
+
+'''Syntax Tree'''
+
+A syntax tree allows the user to build complex Boolean expressions via a GUI tree widget, somewhat similar to the examples shown in BusinessRulesMetabase and AbstractSyntaxTree. It is kind of like a file/folder browser, but with pull-down-list and input widgets attached to each files/folder icon.
+
+However, this requires either purchasing a high-end tree widget or building one yourself. Not all languages/platforms have sufficiently powerful enough GUI kits for such and adding one to a web interface risks browser version/addon headaches.
+
+Note that one does not have to necessarily use "techie" operations for the Boolean operations. Microsoft Outlook's message rule system shows how one can use more English-like descriptions such as "one of the following conditions" and "all of the following conditions".  
+
+Last I remember, Outlook's tree wasn't fully a tree, and may resemble the "logic column" example with arbitrary numbers of groups. The grouping option above is essentially a 2-level tree. Thus, the options shown more or less progress from 3 hard-wired nodes (one for each logic operator), to arbitrary quantities of nodes at level 2, to an arbitrary tree.  (The set-based approach is kind of a different animal.)
+
+'''Sorting'''
+
+[sorting text in progress...]
+
+'''Column Inclusion'''
+
+[text in progress...]
+
+--top
+
+--------
+See Also: QueryByExample, WhereAndAnd
+--------
+CategoryUserInterface, CategoryBusinessDomain, CategoryDatabase
+

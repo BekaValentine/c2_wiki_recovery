@@ -1,0 +1,95 @@
+Issues in getting locked into a specific database vendor.
+
+------
+
+It sometimes suggested that one should not use a database because it ties you to a specific vendor's product, often because SQL is inconsistent from vendor to vendor (SqlFlaws).
+
+However, one has to look at the alternatives. If you go for ReinventingTheDatabaseInApplication, then you are locked into your application. Anything that wants to use that info has to know your application (SharingDataIsImportant). You might argue that this is better because you have control over the source. But, if that is what you want, then use an open-source database.  Both MySql and PostgreSql are ''far'' better than anything your overworked developers are likely to cook up, even if neither is as good as, say, Oracle.
+
+-------
+
+'''Need Simple Grammar'''
+
+I believe that if we could come up with a relational language built upon a simple grammar, then it would be much easier to create translations between different vendor products if one switches vendor. One approach proposed in RelationalLanguage is to define a relational language that has only 4 kinds of grammar units: operators, tables (real or virtual), scalars, and expressions. SQL's grammar is excessively complex. (This only addresses the query language itself, not "procedural" extensions such as IF statements, loops, etc.)
+
+----
+
+Many causes of vendor lock-in have nothing to do with the database API.  If you are running Oracle on Unix, switching to SqlServer will also require replacing the Unix servers with Windows.  You'll likely have to retrain or re-hire your DB admins.  And then there's the cost associated with migrating the data, and shutting down the enterprise to actually do the switch.
+
+''I have not seen it happen very often, and thus just switching a rather low probability, but others who have lived through such seem to have a different opinion. See DecisionMathAndYagni.''
+
+-------
+
+If you wrap all the SQL, the code will be about 30 percent larger regardless of whether you switch or not. However, the chances of swapping vendors is relatively small. I believe a rational use of DecisionMathAndYagni will show that heavy wrapping is too costly unless you switch vendors more frequently than about once every 10 years. I see languages being swapped at least as often as databases are. -- top
+
+''The chance of swapping vendors is 100% when you write code that is vendor neutral.  I'm working on a project right now that has to behave the same with SQLServer and Oracle. -- EricHodges''
+
+Well, I agree that is a case where YouAreGonnaNeedIt. However, I would note that the code base will probably be much larger and more complex as a result of targeting two vendors. It ain't a free lunch. 
+
+''It's about the same size, actually.  You just move the database access to a set of classes that can be selected as needed.  The added benefit is that when any supported vendor adds new features or obsoletes old features the changes are localized. -- EH''
+
+Your *total* code base is still larger because you have to make 2 sets of classes instead of just one. (I am not talking about EXE size.) I am not sure what you mean by "localized" here. Localized to what? Localization is relative, ideally guided by as-needed queries instead of hard-wired into code. I don't know why you guys like that.
+
+''No, we make one set of classes that handles generic SQL communication and then create sub-classes only for those parts of the interface that can't be handled in a generic way.  It's a little bit larger, but not "much larger" as you said.  By "localized" I mean represented in one Java package dedicated to this abstraction.  We like that because it's easy to know what part of our code needs to change when the external service changes.  How do you manage dependencies on external services?  Do you visually go through every line of code when anything it might depend on changes? -- EH''
+
+Can you provide some example class skeletons? Is it basic DeltaIsolation? Is that better than simple case/if statements?
+
+----------
+
+The HibernateQueryLanguage has an interesting approach: create an allegedly vendor-neutral query language, and then translate into vendor-specific SQL when actually talking to the RDBMS. I wonder if such could not be done with SQL itself: find a vendor-neutral SQL dialect that is translated to vendor-specific SQL. I am a bit skeptical of using it on more powerful queries, but am keeping an open mind.
+
+''One approach is to use just the most generic core of SQL, Ansi select/update/delete and views, and do all other processing in code. Avoid reliance on stored procs or functions. Mapping data types is a bit of a bear at times, as is referential and integrity constraints (though this comes into play if you are migrating data). Also avoid triggers as they are not as uniform either (often rely on vendor specific 'extensions'). You can come pretty close if you try.''
+
+''Doing this essentially turns a database into an extremely heavy serialization layer. The gains of vendor-specific SQL are large, so I use it where possible. App-specfic classes that can be specialized for individual databases are the easiest way in my experience, with the lightest hit if you don't actually use multiple vendors. Lowest Common Denominator SQL is the worst way you can do things, in my experience - the differences in vendors are just too great, and you lose out on too much functionality. If it's not possible to have easily pluggable classes for data access, I prefer to just pick a vendor and go with it - a rare instance where I agree with top!'' --ChrisMellon
+
+
+----------
+
+It is already done and it is called LDBC LibertyDatabaseConnectivity, it is a JDBC driver that uses a vendor-neutral SQL syntax. The driver rewrites every SQL sentence to the specific dialect of the real database you are using, and passes that sentence to the real driver.
+
+--------
+
+Moving to vendor neutral probably eliminates the main reason you selected the vendor in the first place - i.e. the vendor neutral layer won't support vendor specific features. eg. I can't design my application to take advantage of row-versioning (querying the value of a row at a point in time) unless the underlying database supports it.
+
+* That assumes a vendor was selected for a feature set.  Many vendor choices are consequences of business decisions that have very little to do with technology.
+
+In which case I may as well use the database that uses the lowest common set of features.
+
+* Hence the need for vendor lock, architects playing golf, etc.
+
+It is also impossible to stick an abstract layer in front of certain performance optimizations. I find that web and Java developers are particularly keen on these tools and frameworks, yet largely critical of visual code-generating drag-and-drop IDEs.
+
+* What do "visual code-generating drag-and-drop IDEs" have to do with anything else on this page?
+
+There is also the case of re-inventing the data integrity wheel (i.e. locking and transactions) - or even bringing data sets back and filtering and sorting them in Java.
+
+* Can you provide an example of "re-inventing the data integrity wheel"?
+
+---------
+
+'''Writing Vendor-Neutral SQL'''
+
+If you know up-front there is a good chance of having to switch vendors, one can use a kind of generic style of SQL for most of the coding and mark the spots that you know are likely to need rework upon switching. However, it requires a clean, well-thought-out schema. Tips include:
+
+* Make sure that standard inner joins will be sufficient most of the time. If you encounter a need for a different kind of join, then re-evaluate the schema.
+
+* Either validate capitalization consistency, or put case conversion functions on all compares. But, in-query conversion can be a performance drag because the interpreter may not know whether it can still use a given index if wrapped with an expression. Thus, the first option is often preferred.
+
+* Use text-based dates with the format "YYYY-MM-DD", but format them as needed for user display. This format allows them to sort and range properly. There may be a space tax for this approach over native dates. However, because native dates often have a time portion, the difference may be a wash. A transportable date+time format can be: "YYYY-MM-DD HH:MM:SS.xx" using military time and zero-padded. Again, a friendlier formatting can be done on the display-side.
+
+* Write code that makes no distinction between null or blank (all spaces) on text. Overall, try to reduce reliance on Nulls.
+
+* Avoid odd punctuation and spaces. Stick with letters, digits, and underscore, and start each with letters only.
+
+* Avoid reserved words in column and table names. If a words sounds like it may be a reserved word, then toss it or append a prefix to it. Example risky words include: type, system, status, flag, table, order, etc.
+
+* Consider generating any sarrogate keys via your own code (but make sure you get concurrency right).
+
+* Use "LEFT JOIN" or "LEFT OUTER JOIN" clause for left outer joins instead of equality modifiers such as "(+)" or "=*". (It used to be that Oracle didn't support "LEFT JOIN", but most have upgraded from the lacking versions by now.)
+
+* Use integer 1's and 0's for "Boolean" types, not native Boolean types (if available).
+
+-------
+See Also: PerniciousIngrownSql, SqlFlaws, FutureDiscounting, VendorLockIn, QueryWrapperLanguageOverSql
+------
+CategoryDatabase, CategoryInterface

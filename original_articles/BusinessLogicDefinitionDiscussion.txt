@@ -1,0 +1,218 @@
+Continued from BusinessLogicDefinition.
+-----------------------------------
+
+This example relates to a report that displays rows of customers that tints certain rows certain colors to indicate various things.
+
+  // Example BL-1
+  routine policyX
+    ...
+    func filterBigAndLate(cust)  
+      // large customers who have signif outstanding debt
+      return cust.avgYearlyRevenue > 1000 and cust.lateAmt > 100  // rule-62
+    end func
+    ...
+  end routine
+  ...
+  routine custStatusReviewReport   // draw the report
+    ...
+    pol = new policyX  // defined above
+    custSet = query("SELECT * FROM customers WHERE ...")
+    for each cust in custSet   // loop for each customer row
+       rowColor = colors.defaultColor
+       ...
+       if pol.filterBigAndLate(cust) then  // line foo-53
+         rowColor = colors.red
+       end if
+       ...
+       printRow(cust, color:=rowColor, ...)
+    end for
+    ...
+    printRow("Color Key:")
+    ....
+    printRow(indent + "Red = Large customers who have debt over 100")  // line foo-82
+    ...
+  end routine
+ 
+In this psuedo-code example, the "Big and Late" biz rule is defined in a separate module (policyX) from the reporting module (curStatusReviewReport). This follows some interpretations of the design rule of "separate business logic from presentation logic".
+ 
+''Is a "routine" a module or a callable procedure?  In the above, it seems to be both.  Routine policyX appears to be a module.  Routine custStatusReviewReport appears to be a callable procedure.''
+
+For the sake of this discussion, assume that rule-62 is currently ONLY used by the report shown.
+ 
+An '''alternative design''' would be to move the "rule-62" code to line "foo-53" (and make necessary context adjustments). We'll call this variation the "non-separation" design or "non-sep" for short.
+ 
+The first issue is whether rule-62 is "business logic" or "presentation logic" or both. I'll get back to the definition issue later.
+ 
+The second issue is the design question of whether we should split off rule-62 or keep it in the report module (non-sep). I say use the non-sep design if we don't see a likely need to separate them in the medium-term. The reason for this that one, separation creates more code, and second, it's often more maintenance steps. For example, 2 years down the road the manager who requested the report may say, "can you change the criteria to having revenue above 1200 instead of 1000?". 
+ 
+To make this change, the maintainer first has to find out where the reporting code is. In a well-run shop all reports may be in one central place making them fairly easy to find. However, more often an organization is a mish-mash of conventions and styles built up over the years and from changes in technology, changes in management, etc, and/or each department may have their own set and we don't know which department "owns" the report yet.
+ 
+So we find the button or hyperlink the manager uses to generate the report, and back-trace the code to routine custStatusReviewReport and find the area where color is determined. In the separated version, we have to take an '''extra "hop"''' to go find the relevant code in the policyX module. If we did non-sep, we wouldn't have to take the extra step to find the area to change.
+ 
+Now if there are frequent requests to keep changing these kinds of rules, it may simplify maintenance to separate them, but not by much. We still have find the right line to change. Having the rules "together" in the policyX module makes them somewhat easier to find because they are not burried and surrounded by report-related code. But it's only a slight improvement because it's still surrounded by other rules (the quantity depends on design other issues).
+ 
+But note line foo-82. It's the color key description for the rule. The description hard-wires the debt value. (the report requester dictated the color key descriptions.) If we separate the rules, then we have to make changes in two modules because the key note is still in the report module. We could put the key note text into the policyX module so that we only need to see and change them in one place. 
+ 
+However, the key note is very likely only used by that one report while rule-62 is potentially sharable with other reports and parts of the system. (Other sub-systems may need a description, but it may not be tied to a particular color or formatted differently instead of being in a color key list.) Thus, we cannot assume our rule set is generic. Portions may be shared, other portions may be sub-system specific.
+ 
+Further, the context and usage may be different. For example, a dedicated report of "big and late" customers may want the equivalent of rule-62 as an SQL filter instead of a row instance filter because it doesn't have different rules for different rows. For "computing" reasons, the same conceptual rule may be implemented differently for different sub-systems.
+ 
+Thus, our "fancy" sharable "rule unit" starts resemble something like this:
+ 
+  Begin Rule X
+    Begin Filter Implementations
+      Implementation 1 {.......} // row-map version
+      Implementation 2 {.......} // SQL WHERE-CLAUSE version		  
+      Etc...
+    End Filter Implementations
+    Begin Display-Issue Implementations (of rule X)
+      Implementation 1 {.......} // Color footnote version where it's red
+      Implementation 2 {.......} // Color footnote version where it's green
+      Implementation 3 {.......} // Color footnote version where it's purple
+      Implementation 4 {.......} // Page title version
+    End Display-Issue Implementations
+  End Rule X
+  // Note: "X" is not necessarily related to "policy X" in prior example.
+  // It's just a generic rule name place-holder.
+ 
+It looks like it may be a good way to abstract and manage our rules, both "computation related" and "presentation related" rules surrounding a general conceptual rule.
+ 
+However, first, it's no longer separating by presentation because we are grouping by conceptual rule primarily. (Although "separation" is relative and continuous.) "Presentation" is a secondary separation. It's impossible to group primarily by every aspect at the same time, at least not without 50-dimensional screens.
+ 
+Second, it risks something akin to FragileBaseClassProblem. If we have shared implementations, changing one may break more than the target report. It doesn't go over well when you are asked to change one report/screen but accidentally break 12 others in the process. Unit tests etc. can reduce some of this, but often unit tests cannot effectively check presentation issues because computers lack visual common sense (or human-style sense). Nor can they always detect inter-unit conceptual issues (unanticipated interaction side-effects).
+
+We have '''mistaken a shared concept for shared implementation'''. The "concept" may be fairly heavily shared, but the implementation of it per context/usage may have low sharing ratios as to make centralization not worth it. (In this case, we may want to consider computing a flag nightly and putting it into the Customer table to avoid re-computing it for different sub-systems. However, sub-system-specific presentation will still largely be 1-to-1 per usage/report/screen, such as the specific color or key/label descriptions, and separation will give nothing but the "extra hop" problem[1].)
+ 
+A good many "rules" interact with different entities and system aspects in different ways such that making them truly generic and providing a clean, hierarchical classification is almost impossible. One may end up '''re-creating a lot of context''' in the "rule manager" module(s) to have enough info to process the rules correctly and efficiently, essentially creating MirrorModel''''''s, which are anti-OnceAndOnlyOnce. I simplified our rules here to keep the examples lean, but reality doesn't care about our documentation labors.
+ 
+YagNi and K.I.S.S. are good general principles. Spend complexity wisely. 
+
+--top
+
+--------------------------
+
+'''Discussion'''
+
+[filterBigAndLate() is presentation logic, as all it does is determine the colour of a row (i.e., determine how data is displayed); as moving it into a separate module doesn't change whether it's presentation logic, separation and non-separation make no difference. Whatever determines cust.avgYearlyReview and cust.lateAmt (probably an SQL query) is business logic (determining what data will be displayed). The table/report/whatever displays the data cust.avgYearlyReview and cust.lateAmt, retrieved through business logic, and it decides how to do that using presentation logic like filterBigAndLate(). There's not actually any business logic in your provided example, only presentation logic. Thus, whether business and presentation logic should be separate or conflated is not addressed by your example. Feel free to separate filterBigAndLate() from the colour specifications, or to put them together; they're both presentation logic and we have no problem with grouping presentation logic together. -DavidMcLean]
+
+I've generally seen "business logic" means logic derived from rules given by domain experts about the domain. Whether it directly affects a report or not is generally an arbitrary distinction.  It's a decision made related to domain issues.  The font choice is not really related to domain issues. (Although, a case can be made for a marketing company that must present a certain image (look and feel) to psychologically manipulate potential customers. Helvetica makes me hungry :-)
+
+* ''"Business logic" should not be confused with "business rules".  Business rules are policy statements -- not code (or at least not usually) -- given by domain experts about the domain.  Business rules are translated into business logic -- code -- to describe transformations and movements of data within the system.  Business rules are translated into presentation logic -- also code -- to describe input/output of data to/from the system.'' 
+
+* I rewrote some of the above to avoid related ambiguity.
+
+Actually if you carefully think about it, '''EVERYTHING any software does in some way or another affects "output"''', and thus everything is "presentation logic". Input and '''output''' is how users interactive with a system and thus any calculation or computation that doesn't have an impact on output in some way is essentially useless and can be removed. Users don't care what the insides look like as long as the output is what they expected.
+
+''Actually, in a sense, it's the opposite.  The core of enterprise software is business logic, not presentation logic.  Business logic is that which correctly models and maintains business information, '''even if it is never observed'''.  Taxes should still be calculated, and schedules generated, and statuses updated, and accounts expired, and invoices created (by this, I mean invoice data as opposed to a printed document), and paycheques generated (again, I mean paycheque data as opposed to a printed document), and so on, whether or not any data is ever emitted and observed.  Presentation logic then gives us a "window" into the system so we can see what's going on and, obviously, interact appropriately with the world.''
+
+* I'm not sure what you mean by "observed". Anything that doesn't have ''some'' impact on "output" is probably useless and can be tossed. The level or immediacy of impact may very, but everything of use has an impact on output.
+
+''Presentation logic is notoriously changeable, both in the short term ("change the font on this", or "print this in blue" or "remove these columns and add those" or "put a checkbox here so we can show sales there") and in the relatively long term ("we're switching from Java to C#" or "we're switching from C# to HTML5").''
+
+''Compared to presentation logic, business logic tends to be relatively stable except in financial industries, where business logic changes almost constantly and presentation logic is relatively stable.  In most businesses, it mirrors business activity.  In many businesses, it is primarily implemented in RelationalDataBaseManagementSystem''''''s (often predominantly in StoredProcedures), in ApplicationServer''''''s, on MainFrame''''''s, or in the server-side of Web-based systems.  It is often characterised by updates to persistent storage, in order to mirror business activity in the physical world.  It has no notion of display or presentation, and often not even a notion of output (cf. SQL).''
+
+''Business logic is thus, by its nature, very different from presentation logic.''
+
+
+Even a staff scheduling optimization algorithm affects output in some way or another because somebody views the results to know when employees are to arrive for work. The impact may be indirect, but there is no known clear cut-off line between "directly affecting" output and "indirectly affecting" output. Effect-ness (impact) on output is continuous, not Boolean. -t
+
+[I made pretty much exactly the same point back on BusinessLogicDefinition a moment ago. Yes, every single piece of logic in a system affects output, and this is trivially true because any logic that doesn't affect the output does nothing useful. That's why we don't define presentation logic as "affects output". That would make it synonymous with "logic" and hence a useless definition. Instead, we define it, as seen on BusinessLogicDefinition, as "determines how data is displayed"; you can equivocate "determines" with "affects", but you can't equivocate "output" with "how data is displayed", because as noted ''what'' data is displayed is distinct from ''how'' that data is displayed. Whether a given piece of logic "directly" or "indirectly" affects output is irrelevant. -DavidMcLean]
+
+"What" and "how" are also vague. They are fine for most street conversations, but insufficiently clear for statements about how to divide code. And they are pretty much interchangeable, such as printing expired customers in blue instead of excluding them outright from a report. One could even argue those are presentation decisions. You guys have offered almost no new clarity on the topic. I provided a more fleshed out example to hopefully have something more concrete to dissect, but it's not working so far.
+
+[Yep, you're clearly finding them vague if you interpret "expired customers in blue versus excluding them entirely" as possibly presentation-versus-business. Both of those are presentational issues, because they're both about how the data are displayed, "not at all" being a form of display. Above I suggested that business logic determines what data will be displayed; this is true only insofar as it determines what data ''there is'', from which presentation logic might choose data to display. The original definition offered on BusinessLogicDefinition was a little better at describing this than I, it seems: It described business logic as that which transforms or calculates data. In your analogy of "expired customers in blue versus excluding them entirely", presentation logic would decide both of those things, and business logic would used ''to decide which customers are expired'', transforming data from the form "a customer with a subscription that ends on some date" to "a customer with a Boolean flag that says their subscription expired".]
+
+[Your more fleshed-out example---assuming you mean the content at the top of this page---would be of use for purposes of BusinessLogicDefinition if it contained any business logic. It's however solely presentation logic and thus cannot illuminate the distinction for us. -DavidMcLean]
+
+"Transforms or calculates data" is vague. Function filterBigAndLate "transforms and calculates data", and thus would seemingly be "business logic", just like your "decide which customers are expired". I don't see any conceptual diff between them, yet you classify them diff. Please clarify the important differences. Note that "data" is also vague. 
+
+''filterBigAndLate does not transform, and it "calculates" a boolean.  Does that boolean have any affect on business data?  Does it generate any new business data?  No.''
+
+* Define "generate" and "data" and I'll answer. It looks to me like it is "generating data". I thought it was "not about '''persistence'''". So now it is? Make up your minds, guys. 
+
+* ''What data is being generated?  It appears to be reporting data that already exists.''
+
+* The answer for Rule-62. That should be obvious. (Perhaps the function should be called "isBigAndLate" instead of "filter...", but that's just a naming choice.)
+
+
+
+
+''You're splitting hairs here, on a trivial example.  As has been pointed out, it's all presentation logic -- it's a report.  If you were generating an invoice or an employee schedule, that is unquestionably calculation without presentation.  Even in small projects (e.g., those with less than 100 tables and under a terabyte of business data), separating business logic from presentation logic has a very practical basis: It prevents abominations like having reports that prompt the user for input half way through generation, or reports that irreversibly change business data when they're generated.'' 
+
+It's not "trivial" because big design decisions (splitting by biz vs. present) depend on your classification. As far as your "prevents" scenario, desktop-based apps used to prompt all the time when they needed extra info. It's the fscked-up and limiting HtmlStack that squashed that ability. (It's generally best to buffer the output to a work-file/table first, but in the old days, space was a premium). And I'd like more details on "irreversibly change business data when they're generated". It doesn't come across as a common problem to me. But I hope we can settle definition issues first before we get back to the design value of splitting.
+
+''Do you feel it is acceptable for reports to require user input half way through being generated?''
+
+* Depending on the alternatives, yes it can be. Example: a target row is locked or in an undetermined state/status. The user may complain that they'd like the choice of waiting for it to potentially clear/settle rather than generate the report with "missing info". Sure, it's kind of ugly, but it's the trade-off the user requested.
+
+* ''That's an exception. What about under under normal circumstances?''
+
+* Further, it doesn't "accidentally happen" very often. It's not the kind of IT problem I worry about much at 3am when I can't sleep.
+
+* ''Who said anything about "accidentally happen"?''
+
+''Do you feel it is acceptable for a printed report to alter business data whilst being generated?''
+
+* No. But it's not something that "accidentally happens" very often, which was YOUR scenario. I would note that for resource purposes, sometimes its more efficient to process some batch job and generate a report at the same time. It's not something I normally recommended, but is an option if time and/or resources are tight. (If the report and the process use similar resources/data-sets, then essentially one is killing two birds with one stone.)
+
+* ''Who said anything about "accidentally happen"?''
+
+* Re: "It prevents abominations like having reports that prompt the user for input half way through generation, or reports that irreversibly change business data when they're generated." -- That implies separation prevents accidental occurrences. Or do you want to prevent ''intentional'' occurrences? For one, it can't outright prevent, only make it more difficult. Second, it's up to the designer whether they want to mix such. You can't expect code to force certain designs. Encourage? Again, my main goal is to facilitate maintenance, not try to steer design decisions. If the designer is a fool, you'll have far bigger problems than untimely prompts. Clarification sought.
+
+* ''Division of systems into business logic and presentation logic not only simplifies maintenance -- the business logic core tends to be stable, whilst the presentation logic may change frequently -- it encourages a mindset in which the designer/programmer to deliberately avoid abominations like reports that prompt the user for input half-way through, or reports that irretrievably alter business data.  E.g., "Never print the month-end summary at the start of the month, or we can't enter sales until next month!"''
+
+* Both sides are unstable. And the "problems" you mention are rare in practice. I try to prevent problems in proportion to their frequency times cost when balancing tradeoffs and complexity profiles.
+
+* ''The problems I mention are common in enterprise systems development as a whole.  They are uncommon in business reporting.''
+
+* You have an odd and vague classification system for biz apps that I cannot do much with here.
+
+* ''Really?  What do you consider to be "biz apps"?  Describe some of the ones you've worked on.  Perhaps we can arrive at an understanding.''
+
+* See CustomBusinessApplicationDefinition
+
+* ''As you can see from the debate on that page, it was unhelpful.  Describe some specific applications you've worked on.  That would be far more helpful than a general (attempt at a) definition.''
+
+* Let's take "tracking" systems, I see them often. These mirror/model the way physical or intellectual property "moves" around in the organization in terms of location, status, approvals, change logs, etc. Sometimes also called all or in part "work-flow".
+
+* ''Could you be a bit more specific?  Give a UseCase?''
+
+* It may be difficult to do such without explaining the domain (if I can even remember them enough). I'd have think about it for a while to be able to present something compact enough for this wiki.
+
+* ''What are you currently working on?''
+
+* There may be legal issues in discussing current projects. Not safe territory.
+
+* ''I'm sure you can avoid any legally-unsafe references.''
+
+* You are far more confident in my ability to avoid hot water than I am. Anyhow, see BusinessLogicDefinitionDiscussionTwo.
+
+'''Dual?'''
+
+Question: if filterBigAndLate() was ALSO used by a customer penalty fee assessment sub-system, would your classification of it change?
+
+''It's a code fragment, so determining whether it's presentation logic or business logic is on par with determining whether or not "while (x == 3)" is business logic or presentation logic.  The whole example is presentation logic.  For tiny systems like this, discussions about the distinction between business logic and presentation logic and what to separate descend into hair-splitting quibbles.  The distinctions become clear and the separations necessary on real enterprise systems, to the point that we architect them -- out of technical necessity, and in order to manage complexity -- with separations.  It's why we have ApplicationServer''''''s and DBMSs with StoredProcedures (business logic) distinct from Web servers and Web clients (presentation logic).'' 
+
+Those are just tools that have become semi-standardized because standardization helps developers have a consistent frame of reference and known tool sets. Whether they are the ideal division or not is another topic, and whether which server kind you put the logic on determines between "presentation" versus "business logic" is suspect. I can move almost any computation to one or the other (TuringTarpit aside). Some "computations" may be in SQL and others in app code because it's less code overall to do it in one or the other. The decision often is not because of what "kind" of computation it is. 
+
+Although remember, ItDepends. Sometimes it may be more confusing to the maintainer to put something in app code instead of SQL and thus we do it in SQL even though it's more code to do it in SQL. It's about weighing tradeoffs: we want to keep related things together but we also want to keep the code simple, and these two '''goals often conflict''' such that we have to make a best judgement weighing. No one "rule" should automatically override all other concerns. Only zealots do that.
+
+''About weighing tradeoffs?  Sounds more like it's about rationalising laziness and questionable practices.  I suspect your approach would not work for medium-sized projects with, say, ten or more developers per project and certainly not for large projects.  If you're content with small reporting projects being poorly modularised, I suppose that doesn't hurt much.''
+
+* What laziness? Please elaborate. Keeping code simple is not laziness; it's often a smart practice. Only add layers if they are likely to pay off in the future. If it does depend on project size, that's useful info, and you are admitting ItDepends on project size. Welcome to the ItDepends side!
+
+* ''As I've said often before, small projects are often throwaway and sufficiently under time pressure to dispense with any consideration of quality in a mad rush to get them done.  It doesn't mean it's good practice, but if it's a single-developer project that's unlikely to be maintained or seen by other developers, the impact of poor practices are minimal.  Do not confuse modular scaffolding with complexity!  Even small projects can become much simpler by being made more modular, even if that results in more lines of "code".''
+
+* I find that the direction of future change often goes against the grain of the extra scaffolding, creating more work than would be without it. Scaffolding tends to favor certain kinds of changes over others because the "rails" guide things along a certain predetermined pattern. Their real purpose appears to provide a common reference point for other developers familiar with the particular brand of scaffolding (possibly for JobSecurity reasons), NOT to reduce the actual code change effort.
+
+* ''This confirms that you write small data entry and reporting applications.  In larger systems, what you call an application would probably be a module or class.  I don't know what you mean by "[t]he 'rails' guide things along a certain predetermined pattern".  By "scaffolding", I mean structural code like class and module block definitions.  E.g., "class x { ... }".  Not sure how that could be done for JobSecurity reasons...''
+
+* Like I keep saying, there are lots of competing ways to partition code but we cannot group by everything at the same time without violating the laws of text physics. I am not against partitioning of code in general. Maybe my apps are indeed "too small" to take advantage of this vague thing you keep talking about. But that just underscores that ItDepends rather than "Always Do X". -t
+
+And because the statement is small, you can't tell me the proper classification? How big does it have to be? > 12.45 lines? This is whacked. It's clear what it is for. If not, ask. -t
+---------------------
+What if it's not "enterprise"?; should splitting still matter? Specific department projects are common. Where is the cut-off point?
+------------------------
+[1] It would still be nice to temporarily "bring together" all related labels for editing or inspection. However, we shouldn't have to physically separate the code to get conceptual related "views" to simplify maintenance. We could systematically mark related concerns to facilitate dynamic code grouping views. This also solves the splitting dimension trade-off problem: we don't have to '''sacrifice one grouping to get another'''. We don't have to de-group by report-ness to group by conceptual-rule-ness, for example. See SeparationAndGroupingAreArchaicConcepts for more on this: a given code segment could belong to '''multiple''' aspects and biz rules and presentation rules. Hard-wired hierarchies are limiting and have outlived their usefulness. Sets and relational to the rescue. But because existing tools are not ready for the future and stuck in file-land, I've used comment marker codes for similar purposes. -t
+----
+AprilThirteen

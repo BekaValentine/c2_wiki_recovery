@@ -1,0 +1,162 @@
+Some people deny any usefulness of dynamic typing.
+This little program below is my attempt to show that
+dynamic typing can be a big help to get working code
+as fast as possible. Nothing more. This is especially not
+an argument that dynamic typing is universally "better"
+than static typing.
+
+It's a minimal build tool, essentially how the Rake
+and Rant programs (both can be found on http://rubyforge.org)
+started out. It's written in Ruby, but I'm sure a straightforward
+translation to Python, Perl and Lisp is possible.
+
+It shows the following features/characteristics usually
+found in dynamic languages:
+
+* No type or interface declarations to make the compiler happy
+* List and hashtable literals
+* Heterogeneous lists (arrays in the example, to be precise)
+* Embedded DSLs
+* Dead easy dynamic code loading, no file compilation step needed
+* Late binding. The interpreter is happy to run the code even if some parts are not type correct.
+
+All of the points listed above have advantages and disadvantages,
+but they are all very handy for prototyping.
+
+    #!/usr/bin/env ruby
+
+    class Task
+        def self.valid_name?(name)
+            name.kind_of?(Symbol)
+        end
+        attr_reader :name
+        # Array of symbols and strings. A symbol names a regular task
+        # whereas a string names a file (for which a FileTask may exist).
+        attr_reader :prerequisites
+        def initialize(name, prerequisites, block)
+            @name = name
+            @prerequisites = prerequisites
+            @done = nil
+            @block = block
+        end
+        def done?
+            @done
+        end
+        def run
+            @block.call(self) if @block
+            @done = true
+        end
+        def uptodate?
+            done?
+        end
+    end
+
+    class FileTask < Task
+        def self.valid_name?(name)
+            name.kind_of?(String)
+        end
+        def uptodate?
+            done? or
+              File.exist?(name) &&
+                prerequisites.all? { |pre|
+                    File.mtime(name) >= File.mtime(pre)
+                }
+        end
+    end
+
+    class Build
+        attr_reader :tasks
+        def initialize
+            @tasks = {}
+        end
+        def load_build_file(filename)
+            instance_eval(File.read(filename), filename)
+        end
+        def make(taskname)
+            t = @tasks[taskname]
+            if t.nil?
+                if taskname.kind_of?(String)
+                    unless File.exist? taskname
+                        raise "Don't know how to make file #{taskname}."
+                    end
+                else
+                    raise "No such task: #{taskname}"
+                end
+            else
+                t.prerequisites.each { |pre| make pre }
+                t.run unless t.uptodate?
+            end
+        end
+        def task_(klass, args, &block)
+            case args
+            when Symbol, String:
+                name = args
+                prerequisites = []
+            when Hash:
+                name = args.keys.first
+                prerequisites = args.values.first
+                unless args.size == 1 && prerequisites.kind_of?(Array)
+                    raise "Invalid task argument syntax."
+                end
+            else raise "task syntax error"
+            end
+            raise "Invalid name #{name.inspect}." unless klass.valid_name? name
+            @tasks[name] = klass.new(name, prerequisites, block)
+        end
+        def task(*args, &block)
+            task_(Task, *args, &block)
+        end
+        def file(*args, &block)
+            task_(FileTask, *args, &block)
+        end
+        def sh(cmd)
+            puts cmd
+            system cmd or raise "command failure"
+        end
+    end
+
+    if $0 == __FILE__
+        build = Build.new
+        build.load_build_file "makefile.rb"
+        taskname = ARGV[0] || :default
+        taskname = taskname.to_sym if build.tasks[taskname.to_sym]
+        build.make(taskname)
+    end
+
+To try the code, save it in a file called make.rb and set the
+executable bit. An example build description (save it in a file
+called makefile.rb) is below:
+
+    require "fileutils"
+
+    task :default => ["hello"]
+
+    file "hello" => ["hello.c"] do |t|
+        sh "cc -o #{t.name} #{t.prerequisites.join(' ')}"
+    end
+
+    task :rebuild => [:clean, "hello"]
+
+    task :clean do
+        FileUtils::Verbose.rm_f "hello"
+    end
+
+A shell session might look like:
+
+    $ cat hello.c
+    #include <stdio.h>
+    int main() {
+        printf("Hello, world!\n");
+        return 0;
+    }
+    $ ./make.rb
+    cc -o hello hello.c
+    $ ./make.rb
+    $ touch hello.c
+    $ ./make.rb
+    cc -o hello hello.c
+    $ ./make.rb rebuild
+    rm -f hello
+    cc -o hello hello.c
+    $
+

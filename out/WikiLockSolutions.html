@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Wiki Lock Solutions
+      </h1>
+      <p>
+        <em>From </em><a href="CantOpenWikiDbForUpdate.html">CantOpenWikiDbForUpdate</a>...<em></em>
+      </p>
+      <hr/>
+      <p>
+        A data point:
+      </p>
+      <ol>
+        <li>
+          /30/2001 at 8:15 AM central time (in U.S.A.):
+        </li>
+      </ol>
+      <p>
+        I received the dreaded "Can't open /home/httpd/cgi-bin/wiki.db for update" error message 2-5 times on the last 4 pages I edited.  This is what <a href="RecentChanges.html">RecentChanges</a> looked like after my edits:
+      </p>
+      <ul>
+        <li>
+           <a href="RandomPages.html">RandomPages</a> . . . . . . 209.162.215.78
+        </li>
+        <li>
+           ChangesInAugust . . . . . . <a href="JeffGrigg.html">JeffGrigg</a>
+        </li>
+        <li>
+           <a href="RecentChanges.html">RecentChanges</a> . . . . . . <a href="JeffGrigg.html">JeffGrigg</a>
+        </li>
+        <li>
+           <a href="WhyDoesTheUniverseExist.html">WhyDoesTheUniverseExist</a> (new) . . . . . . 208.237.33.97
+        </li>
+        <li>
+           ChangesInSeptember . . . . . . <a href="JeffGrigg.html">JeffGrigg</a>
+        </li>
+        <li>
+           MyFirstPage (deleted) . . . . . . <a href="JeffGrigg.html">JeffGrigg</a>
+        </li>
+        <li>
+           <a href="CantOpenWikiDbForUpdate.html">CantOpenWikiDbForUpdate</a> . . . . . . <a href="JeffGrigg.html">JeffGrigg</a>
+        </li>
+        <li>
+           <a href="ConversationalChaff.html">ConversationalChaff</a> . . . . . . <a href="JeffGrigg.html">JeffGrigg</a>
+        </li>
+      </ul>
+      <p>
+        I can see how "<a href="WhyDoesTheUniverseExist.html">WhyDoesTheUniverseExist</a>" could have conflicted with ChangesInSeptember, but I don't see a good reason why I got the message on <a href="RecentChanges.html">RecentChanges</a> or MyFirstPage.
+      </p>
+      <p>
+        Therefore, I think there's something more going on than just extra work to update links.
+        <em>(But this isn't conclusive evidence -- only suggestive.)</em>
+        -- <a href="JeffGrigg.html">JeffGrigg</a>
+      </p>
+      <p>
+        The db binding used by this version of wiki locks the whole db, not an individual record. Reads block writes (most common) but writes can also block reads. Both frequencies have been slowly climbing. This problem has my attention since I edit through the same interface. -- <a href="WardCunningham.html">WardCunningham</a>
+      </p>
+      <p>
+        <em>I'm sure there are Perl-ites who can help. A simple solution is to split the database into three, copy the write-image to the temporary image, finally do a fast swap (file rename is pretty quick). The old read-image becomes the target of the next copy. Disk is cheap :).</em>
+      </p>
+      <p>
+        Probably far simpler to code would just be to loop over the write attempt, with a sub-second delay after each failure and an alarm() set to break you out if you can't get a write lock within a reasonable timeout. That'd be an automation the <a href="AltLeftEnterRepeat.html">AltLeftEnterRepeat</a> process, but it'd reduce server load, since looping over an attempt to get a file lock is far cheaper than spawning new CGI processes for each request. -- <a href="CharlesMiller.html">CharlesMiller</a>
+      </p>
+      <p>
+        Note: I haven't hacked Perl for quite a while, so this is based on reading a few manpages in my lunch-hour.
+      </p>
+      <code>
+        $LockFailed = 0;<br/>
+        $SIG{ALARM} = sub {<br/>
+        $LockFailed = 1;<br/>
+        }<br/>
+        alarm(5);<br/>
+        while true {<br/>
+        break if getWriteLockOnDb();<br/>
+        select(undef, undef, undef, 0.25); # sleep 250ms<br/>
+        }<br/>
+        alarm(0);<br/>
+        printErrorAndDie() if $LockFailed;<br/>
+        ... and now you have the lock ...<br/>
+      </code>
+      <hr/>
+      <p>
+        Solution: Use sql to lock individual records.
+      </p>
+      <hr/>
+      <p>
+        It seems to me the simples thing would be to implement a simple write queue.  Reject anything with diffs (i.e. two edits in the queue, the second comes back) just like now.  I don't see why this seems to be such a problem.  Probably I am just missing something.
+      </p>
+      <hr/>
+      <p>
+        What about having one file per <a href="WikiPage.html">WikiPage</a>?  Easy to do page-based locking, then.
+      </p>
+      <hr/>
+      <p>
+        I've noticed that once it begins, it seems to continue for a reasonably long time (minutes), longer than a simple db update takes on the wiki's that I've ported. Could we be seeing a timeout here? For example, is there a "lock-reaper" daemon running around looking for orphaned locks that we have to wait for? Just a thought...
+      </p>
+      <p>
+        People with high connection costs often try to "spider" wiki with software that will request five to ten pages a second. Of course they never succeed in getting all of wiki because it is far to large to retrieve this way. Still they continue to launch these programs against wiki every day. I've offered <a href="WikiMirrors.html">WikiMirrors</a> as a sensible alternative but haven't gotten any takers from eastern europe where these attacks most often originate. -- <a href="WardCunningham.html">WardCunningham</a>
+      </p>
+      <p>
+        How about blocking IPs? Not nice - but a possible solution.
+      </p>
+      <p>
+        Someone told me of a Linux firewall that will add a delay to repeated access requests, so the first 5 accesses in a minute might be instantaneous, the next 5 have a 10 second delay and so on - the delay being reset after no access from that IP address for a minute. I will try to find details.
+      </p>
+      <hr/>
+      <p>
+        How about using a better database?  These all seem like hacks to me.
+      </p>
+      <p>
+        <em>Discussion moved to </em><a href="MicrosoftVsOpenSourceDatabases.html">MicrosoftVsOpenSourceDatabases</a><em></em>
+      </p>
+      <hr/>
+      <p>
+        Why write-lock the entire database? Wouldn't it be faster and easier just to have a write-lock on the record? And what sort of database takes that long? -- <a href="WillSargent.html">WillSargent</a>
+      </p>
+      <hr/>
+      <p>
+        Create a simple lock server. The locks are centralized in one server that's up all the time. Have a lock per name. Every submit sends a UDP request to the lock server to get a lock for that topic. It is really very fast.
+        -- <a href="AnonymousDonor.html">AnonymousDonor</a>
+      </p>
+      <hr/>
+      <p>
+        Is the database still locked while the spell-checker is doing its work? If so, omit the spell checking step when a page is saved as a minor edit. -- <a href="CarstenKlapp.html">CarstenKlapp</a>
+      </p>
+      <p>
+        [<em>Or, if so, do the spell-check before or after when the lock is held.</em>]
+      </p>
+      <p>
+        Good idea!
+        Spell check never prevents a page from being saved; it's only feedback to the user after a page has been saved.
+        So, it would make a lot of sense to do the spell check AFTER closing the database.
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryWiki.html">CategoryWiki</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Lock Free Synchronization Discussion
+      </h1>
+      <p>
+        From <a href="LockFreeSynchronization.html">LockFreeSynchronization</a>:
+      </p>
+      <p>
+        Uh, this sort of synchronization isn't lock free; as the following operations have to be atomic:
+      </p>
+      <ul>
+        <li>
+           Initial copy of the object (multiple readers are OK); but this operation mustn't occur interleaved with any of the others.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           CompareAndExchange and DoubleCompareAndExchange.
+        </li>
+      </ul>
+      <p>
+        For any such operations on anything larger than a machine word, <em>some</em> sort of mutual exclusion mechanism will be needed: A sempahore/mutex/etc, or disabling of pre-emption, etc. For things that are machine-word sized; an atomic test-and-set instruction provided by the CPU may suffice. This locking is still there in this case, but it's buried.
+      </p>
+      <p>
+        While this is deadlock-free (no recursive locking); it certainly is <em>not</em> <a href="LiveLock.html">LiveLock</a> free - a low-priority task trying to modify an object may never make progress if every time it goes to "check in", it finds that someone else has beaten it and it has to restart its transaction every time. Blocking forever on a mutex is preferable to a spin-loop like that.
+      </p>
+      <p>
+        -- <a href="AnonymousDonor.html">AnonymousDonor</a>
+      </p>
+      <p>
+        Actually you are right, it must be atomic, which does not mean it must lock. There are many ways to achieve what you said without locking. For example in the case of the initial copy: Just copy without locking, if the object changes in the mean time, restart the copy. This once was called <a href="OptimisticLocking.html">OptimisticLocking</a> but it was not a good name, because it does not actually lock anything.
+      </p>
+      <p>
+        <em>How can you tell that the copy you made is internally consistent? </em><a href="OptimisticLocking.html">OptimisticLocking</a> refers to a database technique for maintaining data consistency, and it presupposes lower-level locking mechanisms to get consistent copies of data. It's a much higher-level concept that doesn't seem relevant. What would you do, just read a data structure several times in a row until you get the same thing twice? That doesn't guarantee anything.<em></em>
+      </p>
+      <p>
+        For the second case, the CAS and DCAS are done in hardware atomically on some architectures. There are simply no locks, either they are done or they are not. If you have just one CPU, this is trivially done by not taking away the CPU from a process or thread in the middle of a assembly language operation. If you have more than one CPU, there must be some synchronization at the hardware level to achieve exactly the same thing. -- <a href="GuillermoSchwarz.html">GuillermoSchwarz</a>
+      </p>
+      <p>
+        <em>The original commenter stipulated 'for anything larger than a machine word', by which I'm sure he meant anything that isn't treated atomically by the hardware. You still haven't answered his question with respect to larger data structures.</em>
+      </p>
+      <p>
+        Oops! You are right! Then forget about this ... ;-) 
+      </p>
+      <p>
+        Actually if the data you are going to change is too large you have two options:
+      </p>
+      <ol>
+        <li>
+           Lock and when the OS allows unique access to the data, change it, then release. This is <a href="LockBasedSynchronization.html">LockBasedSynchronization</a> plain and simple.
+        </li>
+      </ol>
+      <ol>
+        <li>
+           Be optimistic. Do no lock, just write down a <a href="ChangeNumber.html">ChangeNumber</a> taken from the data itself. So you read a <a href="ChangeNumber.html">ChangeNumber</a> atomically from the data, then happily copy the data, makes all changes and then use CAS or DCAS to point to this new data, of course making sure the <a href="ChangeNumber.html">ChangeNumber</a> is exactly one more in the copy than in the original. If it is not, redo the operation. That's why the CAS operation is called CompareAndSwap (or CompareAndExchange).
+        </li>
+      </ol>
+      <p>
+        -- <a href="GuillermoSchwarz.html">GuillermoSchwarz</a>
+      </p>
+      <p>
+        <em>The second option sounds appealing, but doesn't work as described. Perhaps you could copy the </em><a href="ChangeNumber.html">ChangeNumber</a>, copy the data, then copy the <a href="ChangeNumber.html">ChangeNumber</a> <em>again</em> and make sure that it hasn't changed - but it depends on how the data is written by concurrent writers. On write, CAS or DCAS (if I'm inferring correctly what they are) are no help because they wouldn't operate on a larger data structures, right? So how would you write to the data structure in a fashion that guarantees that a reader would only get a consistent copy?<em></em>
+      </p>
+      <p>
+        <em>Locking is a well-thought-out technique for dealing with these issues. Common implementations depend on low-level "lock-free" primitives, if you want to call them that, but they're only lock-free because the hardware does the locking for you. So far, this page doesn't seem to describe a viable alternative in enough detail to be convincing.</em>
+      </p>
+      <p>
+        <em>Optimistic locking still uses traditional locking techniques to lock-and-read consistent data, then lock-read-compare-write the data when done with it. As you pointed out, it's poorly named, because it's not really a locking technique at all. It's a way to use locks in a fashion that reduces lock contention, by keeping locks for very short periods of time. The downside is that write failures (due to changed data) add overhead, to an unacceptable degree if the data is accessed often by concurrent writers.</em>
+      </p>
+      <hr/>
+      <p>
+        <em>describe ... in enough detail</em>
+      </p>
+      <p>
+        I *think* I can fill in the gaps. Someone correct me if this is horribly misleading.
+      </p>
+      <p>
+        (2004-04-16: <a href="DavidCary.html">DavidCary</a>: Sorry, what I wrote earlier wouldn't work. I think I fixed it, but I'm still not sure this is now correct.)
+      </p>
+      <p>
+        (2004-04-19: <a href="DavidCary.html">DavidCary</a>: I've read just enough of Wait-Free Synchronization by Maurice Herlihy (1993) to realize this is *still* horribly misleading. There are wait-free algorithms that allow any number of readers and writers, without any of them risking starvation. However, it is impossible to implement them with plain <em>read</em> and <em>write</em> operations - you need a more powerful atomic instruction. An atomic <em>compare&swap</em> is adequate.)
+      </p>
+      <p>
+        Several concurrent threads (readers and writers) need access to the same block of data.
+      </p>
+      <p>
+        <a href="LockBasedSynchronization.html">LockBasedSynchronization</a>: Put a single central copy of that block of data in shared memory, and only allow one thread at a time access to it (... or perhaps several readers at once).
+      </p>
+      <p>
+        <a href="LockFreeSynchronization.html">LockFreeSynchronization</a>:
+      </p>
+      <p>
+        Put many copies of that block of data (2 copies for each writer), plus a single central global "current_data" pointer, in shared memory. Also, add a "<a href="ChangeNumber.html">ChangeNumber</a>" value to the beginning and end of each block.
+      </p>
+      <p>
+        Assume the hardware can read and write the <a href="ChangeNumber.html">ChangeNumber</a> atomically, and the "current_data" pointer atomically. Assume that current_data already points to consistent data. Assume the <a href="ChangeNumber.html">ChangeNumber</a> data type is so large that we don't need to worry about it repeating (rolling over).
+      </p>
+      <p>
+        Do no lock.
+      </p>
+      <p>
+        When a thread needs to *read* a block, it
+      </p>
+      <ul>
+        <li>
+           copies the "current_data" pointer to local (non-shared) memory
+        </li>
+        <li>
+           Uses the local pointer copy the first <a href="ChangeNumber.html">ChangeNumber</a>, then the current block of data, and then the last <a href="ChangeNumber.html">ChangeNumber</a>, to local memory.
+        </li>
+        <li>
+           If the 2 <a href="ChangeNumber.html">ChangeNumber</a>s are different, something went wrong - re-try from the beginning.
+        </li>
+        <li>
+           If they are the same, success - you have a consistent copy of that data block.
+        </li>
+      </ul>
+      <p>
+        Each writer "owns" its own 2 blocks of memory.
+      </p>
+      <p>
+        When a (writer) thread needs to *update* the data, it
+      </p>
+      <ul>
+        <li>
+           copy the "current_data" pointer to local_current_data.
+        </li>
+        <li>
+           if this thread owns the block that local_current_data points to, leave that block alone. Point next_data to the other block this thread owns. Otherwise point next_data at either of the 2 blocks.
+        </li>
+        <li>
+           Increment the <a href="ChangeNumber.html">ChangeNumber</a> at the end of the selected block (this does not need to be atomic).
+        </li>
+        <li>
+           Take as long as you like updating the block that "next_data" points to. (This does *not* block any readers or other writers)
+        </li>
+        <li>
+           After next_data points to an internally consistent block of data,
+        </li>
+        <li>
+           Copy the <a href="ChangeNumber.html">ChangeNumber</a> at the end of the selected block to the beginning of that block.
+        </li>
+        <li>
+           Let the rest of the world know about it: global current_data := next_data;
+        </li>
+      </ul>
+      <p>
+        No fancy CAS or TAS atomic operations needed.
+      </p>
+      <p>
+        Data is guaranteed internally consistent for all readers.
+      </p>
+      <p>
+        Flaw: if 2 writers try to update simultaneously, the 1st writer's changes are lost. For some applications, this is unacceptable.
+      </p>
+      <p>
+        There are ways to fix this flaw. Do they all require fancy atomic instructions like CAS or TAS?
+      </p>
+      <p>
+        <em>cmp8xchg16 is documented in the Itanium architecture software developers manual. It's a compare 8 bytes, swap 16 bytes. I wouldn't call it fancy.</em> -- <a href="GuillermoSchwarz.html">GuillermoSchwarz</a>
+      </p>
+      <p>
+        <a href="CategoryDiscussion.html">CategoryDiscussion</a>
+      </p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Messaging As Alternative To Multi Threading
+      </h1>
+      <p>
+        Telephony servers are generally built in one of two ways: using (multi-threaded) synchronous programming or using (single threaded) asynchronous programming. Asynchronous architectures fit this domain because:
+      </p>
+      <ol>
+        <li>
+           Telephony servers are multi-channel. A server often has to manage hundreds of phone lines. Creating a thread per channel can be expensive.
+        </li>
+        <li>
+           Telephony operations are long-running. Transferring a call can take twenty seconds; playing an audio file can take minutes. This makes the use of synchronous APIs difficult.
+        </li>
+        <li>
+           Telephony is event-rich, compute-poor. A large number of events occur but the work done per event is very small, making a thread per channel overkill.
+        </li>
+        <li>
+           Many telephony APIs are message-based.
+        </li>
+      </ol>
+      <p>
+        An architecture of message-passing state machines allows the entire server to run in a single thread. This
+        has performance benefits but more importantly reliability benefits - a single thread is completely deterministic.
+        Multi-threaded software can have deadlocks and race conditions that no amount of testing can detect since thread timing is so dependent on factors such as CPU size, memory size, current load, etc.
+      </p>
+      <p>
+        The message-passing architecture has four levels:
+      </p>
+      <dl>
+        <dt>Server</dt>
+        <dd>The top-level object, manages starting and stopping of lower levels. It, like all the layers, has an asynchronous message-based API. Its Start method, for instance, kicks off the process of bringing the server into a Running state. Later after the Start method has completed, an event message will be sent to the Server's clients indicating startup was successful or not.</dd>
+      </dl>
+      <dl>
+        <dt>Protocol</dt>
+        <dd>Manages a single message protocol, such as TAPI, ECTF, or SIP. Each Protocol object manages a communication session using its protocol with an external telephony provider. Messages for all channels flow through it; the Protocol object routes each received message to the appropriate Sequence object.</dd>
+      </dl>
+      <dl>
+        <dt>Sequence</dt>
+        <dd>Manages a sequence of messages that make up an action such as transferring a phone call. Each Sequence object has a state-machine to control its handling of messages. A cluster of sequence objects may manage a single channel. Short-lived ones for actions and longer-lived ones for tracking a phone call or the channel session.</dd>
+      </dl>
+      <dl>
+        <dt>Message</dt>
+        <dd>A request, reply, or event (an unsolicited message).</dd>
+      </dl>
+      <hr/>
+      <p>
+        I can't imagine single threading working in a large telephony system. A connection goes down, we need to reroute, but sorry we are blocked on a database call for 200msecs. Sure, you can swap out the currently running event, but that is a scheduling system just like the OS thread scheduling system.
+      </p>
+      <p>
+        <em>Then don't block on database calls. I wrote a telephony system that handled about 100 lines of voice prompts/DTMF responses and 300bps POS modems on each 486 MS-DOS PC. They sent requests to a system containing dozens of databases, they just didn't block. The database response events were handled just like a DTMF event. Thread context switching would have killed the project.</em>
+      </p>
+      <p>
+        Use thread pools instead of a thread per anything. This scales as necessary without being pathological. On vxworks we have hundreds of threads and works ok. Not saying there aren't problems, but we couldn't respond to mixed loads as well without them.
+      </p>
+      <hr/>
+      <p>
+        We did a hundred channels on a 486, and I've seen research systems doing ten thousand channels in a single thread. The efficiency is huge when all the thread switches are avoided. But these systems don't do database access. For that (or any code that takes a long time to run), you would need a thread pool of worker threads to run the slow code, sending back an event when done. This complicates the design. At some point, as the amount of 'slow' code in the system grows, it becomes easier to switch to a fully multi-threaded approach as you describe. Although threads seem to have become more efficient; we run hundreds on Win2000 without a large performance penalty.
+      </p>
+      <p>
+        It's the reliability of single-threaded message-based designs that I like. An avionics software designer told me they never use multi-threading just for that reason. A single thread is absolutely guaranteed to have zero race conditions and deadlocks. No multi-threaded software can provide that sort of guarantee.
+      </p>
+      <p>
+        The key is to use asynchronous I/O. This only helps if your application is IO bound. The Medusa server framework uses this. More info can be found at <a href="http://www.nightmare.com/medusa/programming.html.">http://www.nightmare.com/medusa/programming.html.</a> -- <a href="DaveTauzell.html">DaveTauzell</a>
+      </p>
+      <p>
+        There's no notion of priority in a pure async model. If an important calculation needs to be run, say a reroute, it will block on all other work in the queue. And if you do have priority then the thread scheduler is being reinvented again. If message passing is performed between threads then there is no chance for deadlock, etc. The problem is when code calls out to arbitrary code, which doesn't have to happen. -- <a href="AnonymousDonor.html">AnonymousDonor</a>
+      </p>
+      <ul>
+        <li>
+           And God said, "Let there be prioritized message queues, where each message has an associated priority!"  And there was, and he saw that it was good. --SamuelFalvo
+        </li>
+      </ul>
+      <p>
+        Good point. The ProactorPattern (<a href="http://www.cs.wustl.edu/~schmidt/PDF/proactor.pdf)">http://www.cs.wustl.edu/~schmidt/PDF/proactor.pdf)</a> takes this into account and allows 
+        for multiple threads. I think that for many problems threads actually work quite fine. Where they break down is in situations where you have tens of thousands or hundreds of thousands of concurrent connections like in telecom switching equipment (see below for <a href="ErlangLanguage.html">ErlangLanguage</a> discussion). -- <a href="DaveTauzell.html">DaveTauzell</a>
+      </p>
+      <p>
+        Lots of connections are only a problem with naive implementations. ScaleChangesEverything and you must think about it ahead of time. You don't need a thread-per or just-one-thread. Thread pools can be used. Within a known domain of code using mutual exclusion is doable so multiple threads can be accessing the same data structures in relative safety. The problem is when code across "module" boundaries starts making direct accesses because then you have no clue what will happen. I work on large switches so these issues are dear to my heart. Once you have scheduling I don't see how it matters if its vxworks/threads or erlang/events/green-threads. The issues of starvation, dead lock, live lock, high latency, queue overflow, resource exhaustion due to queueing up of work, retry stupidity, etc., are all there.
+      </p>
+      <p>
+        -- <a href="AnonymousDonor.html">AnonymousDonor</a>
+      </p>
+      <hr/>
+      <p>
+        <a href="ErlangLanguage.html">ErlangLanguage</a> is based around this paradigm. Not surprising, since it has its origins in telephony switching applications.
+      </p>
+      <p>
+        Erlang the language is based on very light-weight processes similar to threads, which typically block on I/O, for synchronization, and so on. The runtime system that implements this is a single-threaded C program based on non-blocking I/O, with its own job scheduler. The idea is to get the scalability benefits from asynchronous programming along with a convenient programming model where you can do a lot (hundreds or thousands) of separate synchronous operations. The programming model is much different than e.g. very-light-weight pthreads for C would be, but that's another topic.
+      </p>
+      <p>
+        <em>Win32 Fibers and the open-source package </em>StateThreads for UNIX <a href="http://state-threads.sourceforge.net/">http://state-threads.sourceforge.net/</a> do this type of ultra-light threading
+        -- <a href="IanRae.html">IanRae</a><em></em>
+      </p>
+      <p>
+        Are resources tracked per light-weight process? Can I get a stack trace? See what memory is allocated to it? See what it is blocking on? Have task specific storage? Change the priority? Specify stack space?
+        -- <a href="AnonymousDonor.html">AnonymousDonor</a>
+      </p>
+      <p>
+        I think you can do all of those things, though I don't know what you mean by task-specific storage. You can trace what an already running process is doing (current function, function calls, garbage collections, message send/receive, schedule in/out) by enabling some tracing primitives, like a more fine-grained 'strace -p'. Each process has its own heap which is dynamically grown (you can specify some parameters), and I <em>think</em> the stack is allocated on that - in any case, the stack size is dynamic/automatic. As a test, I spawned a process to just print its own process info and then terminate - it reports a 233-byte (or 233-word, not sure) heap.
+      </p>
+      <p>
+        Since processes don't have a preallocated fixed-size stack, you don't generally have to worry about running in small constant-bounded stack space or anything like that. It's ok to go to a million levels of non-tail-call recursion if that's what your algorithm wants, which is a nice luxury.
+      </p>
+      <p>
+        People who do really big systems like Ericsson's AXD switch no doubt have some fancy tricks that they've had to use here and there, but I haven't needed any m'self. -- <a href="LukeGorrie.html">LukeGorrie</a>
+      </p>
+      <p>
+        Refactored into <a href="StateMachinesAreBetter.html">StateMachinesAreBetter</a>
+      </p>
+      <hr/>
+      <p>
+        <em>The key here is non-blocking.</em>
+      </p>
+      <p>
+        The key is indeed non-blocking: The way to succeed in running many very light weight processes to in a single thread is to make them state machines. State machines run to completion: They are scheduled when an event (input, or a message from another state machine) is available; they do some processing, possibly change state, and then finish. Since they don't block, they can use the system stack, rather than requiring their own.
+      </p>
+      <p>
+        There are various optimizations, such as giving them execution priority (easy), or making them pre-emptive (eg, run them in response to hardware interrupts: harder).
+      </p>
+      <p>
+        For systems that need to deal with asynchronous events, solutions implemented using state machines are likely to be simpler than solutions implemented using threads which can block (BlockingConsideredHarmful). Blocking has the following problems:
+      </p>
+      <ul>
+        <li>
+           Threads which block require their own stack, which can be a drain on memory.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Blocking threads require a pre-emptive scheduler, whereas state machine designs can be implemented with or without. 
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Blocking threads address state behaviour in an ad-hoc way. The state handling behaviour is distributed throughout the thread (often at different levels in the function call stack).
+        </li>
+      </ul>
+      <ul>
+        <li>
+           While a thread is blocked waiting for something to happen, it is not responding to other possible input conditions. State machine based systems by definition, can accept any possible input, in any order.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Interfaces in systems with blocking threads are more complex. If a thread calls a function requesting a service which could block, then often a timeout is also provided. The operating system has not done a good job of abstracting and encapsulating its messaging and scheduling policies. As a result, the thread itself becomes more complex to handle the complexity inherent in the interface. Compare with a state machine model - the state machine reacts to inputs; it is not concerned about how, when or from where the inputs arrived.
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Because blocking threads have a more complex execution profile they are more prone to deadlock and priority inversion (deadlock is possible in state machine designs, but is often easier to spot).
+        </li>
+      </ul>
+      <ul>
+        <li>
+           Blocking threads encourage error conditions that may not otherwise occur, and then don't provide simple ways of handling those errors. (Such as timeout while waiting for a resource - what should the application do now ?) Handling unusual conditions in a state machine is easier: Define an error state whose goal is to get back to a valid operational state. -- IainMcInnes
+        </li>
+      </ul>
+      <p>
+        These state machines have a lot in common with non-preemptive threads that block in (and only in) a get_next_event(). The main difference I can think of is that real threads would have a "real" persistent stack between events, which these machines don't (although they can include a stack in their state if they want to.) Maybe the big difference between state machines verses (non-preemptive) threads is programming style?
+      </p>
+      <p>
+        That's right. Many people criticize state machines as 'unstructured'.
+      </p>
+      <hr/>
+      <p>
+        <em>The key here is non-blocking.</em>
+      </p>
+      <p>
+        It is a key issue. Priority, preemption, and latency are other key issues. Perhaps in your apps they don't matter, but they do in others. When it does matter a pure run to completion approach just won't do.
+      </p>
+      <p>
+        You're right; How to give them priorities? Have multiple event queues, one for each priority, or use pre-emption.
+      </p>
+      <p>
+        How to deal with pre-emption? If a task execution (i.e. state change) will run to completion, then it can pre-empt a running task if it has higher priority - just like an interrupt service routine. We've done systems like this with a single stack, and multiple execution priority levels. A state machine task can be kicked off by receiving a message from another task, or by an interrupt from a hardware device, or by a timer tick. The original one resumes when the interrupting one completes.
+      </p>
+      <p>
+        When it comes to task priorities and pre-emption, state machine based systems aren't that different from threaded ones. Only when it comes to blocking. If you use a traditional threaded operating system, but all threads are actually state machines (a common idiom in embedded systems), then you could implement exactly the same system, with the same run time characteristics using a single stack.
+      </p>
+      <hr/>
+      <p>
+        <em>Have multiple event queues, one for each priority, or use pre-emption.</em> 
+      </p>
+      <p>
+        Problem with multiple queues is that an application would have to always use the same queue or it would require mutexes anyway as low priority work could be swapped out for higher priority work in the middle.
+      </p>
+      <hr/>
+      <p>
+        Thanks for documenting the Erlang approach. It's interesting and would work I think except for <a href="RealTime.html">RealTime</a> systems where latency and compute times are critical. Unfortunately telephone systems often combine both real-time and multi-user elements. I was telling some of our developers about some linux changes that go latency down to 1.2 msecs. 
+        That was way too long I was told. Oh well...
+      </p>
+      <p>
+        Though you can't just change control in the middle of a loop if the outer code is assuming access to a data structure. For example, a record could be deleted that it assumed that had been added.
+      </p>
+      <hr/>
+      <p>
+        Strange. Nobody seemed to mention that messaging in the sense used here (process events) <em>is</em> MultiThreading - just on another level than the one done by OS usually. This is best seen in the Erlang example: If is looks like concurrent on the surface it <em>is</em> concurrent even though there is some interpreter below it. I mean after all there usually is only one (or few) processor doing the multithreading either. Just the simulation of concurrency is nearer to the hardware. ItsTheLayerStupid. We can simulate concurrency on any level - with different tradeoffs each. If you simulate concurrency in the application layer you may gain efficiency by better tuning to your domain - but have to duplicate the logic below to a large part because that is usually no omnicient enought to handle your special case fast/responsive/efficient enough (oh how I wish for really generic libraries that could implement pluggable concurrency with hardware speed).  -- .gz
+      </p>
+      <p>
+        I wouldn't generally identify 'MultiThreading' with just any arbitrary form of concurrency (threads imply a greater sharing of mutable memory resources without a layer of message indirection to add implicit protection), but it is true that the line between 'process' and 'thread' is quite blurry and incredibly arbitrary.  A better choice of phrase may have been: MessagingVsSharedMemory.
+      </p>
+      <hr/>
+      <p>
+        Anonymous Donor explained why avionics people prefer single threading over multithreading because of the elimination of the possibility of race conditions. He might as well have added the concern for "deadlock." He further stated, "No multi-threaded software can provide that sort of guarantee."
+      </p>
+      <p>
+        My own work in this area was exactly motivated by the desire to gain the benefits of concurrency without the possibility of deadlock and race conditions. The power of multithreading but with the safety of single threaded programming model. I thought my great invention <em>(misleading link removed)</em> would be bought by Microsoft, and someday the whole world would write CycleFree Software. But my attempts to make this technology understood and accepted have been a complete failure.
+      </p>
+      <p>
+        Don't know why!
+        -- Dick Mays
+      </p>
+      <p>
+        <em>Could it have something to do with the long-winded explanation of how great your cyclefree thing is not really telling us much? The site mentioned here apparently hasn't been updated for three years. That's not a good sign.</em>
+      </p>
+      <p>
+        The problem is that there's nothing in CycleFree that wasn't known theoretically in the 1970s, regardless of whether it has some favorable comparisons with e.g. Java. Yes, most concurrency systems and event handling and callback systems have truly stupid defects. No, CycleFree doesn't avoid all of them, either (in particular, it appears to be incapable of implementing multi-stage multi-resource transactions of the form required by e.g. most database systems). No, I don't see anything theoretically new in it. Yes, the patent office is clueless. "Those who cannot remember the past are condemned to repeat it. (George Santayana)" -- <a href="DougMerritt.html">DougMerritt</a>
+      </p>
+      <hr/>
+      <p>
+        Doug, you have a lot of company not seeing anything new in CycleFree programming. I submitted five papers to various conferences, with three reviews per paper.  Only one positive review, a dozen negative and a couple on the fence.  One negative review was two pages long.  My only positive review (obviously my favorite) consisted of a single sentence.  "Despite its deceptive simplicity, the approach is novel and the claims appear sound."  I think this reviewer is a smart guy. 
+      </p>
+      <p>
+        In an independent review of the technology an ACM fellow, David Parnas, also saw something new in it.  It takes a lot of work to launch something new and unfamiliar and I have not been successful doing this. My lack of academic success not withstanding, I still believe someday the world will be CYCLEFREE!
+      </p>
+      <p>
+        If you or anyone else wants a dialog, you can email me at dick UNDERSOCRE mays AT hotmail DAWT com.
+      </p>
+      <p>
+        Kind regards,
+      </p>
+      <p>
+        Dick
+      </p>
+      <hr/>
+      <p>
+        See: <a href="MessagePassingConcurrency.html">MessagePassingConcurrency</a>, <a href="ActorsModel.html">ActorsModel</a>, <a href="FlowBasedProgramming.html">FlowBasedProgramming</a>, <a href="TableOrientedSynchronization.html">TableOrientedSynchronization</a>
+      </p>
+      <p>
+        <a href="CategoryConcurrency.html">CategoryConcurrency</a>
+      </p>
+    </div>
+  </body>
+</html>

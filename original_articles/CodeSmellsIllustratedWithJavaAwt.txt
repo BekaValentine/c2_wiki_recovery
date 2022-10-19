@@ -1,0 +1,87 @@
+I think it is important to know CodeSmell''''''s (develop CodeSense?). So I'd like to see them illustrated with easily available code. I'll start with AWT --AamodSane
+
+Smell: '''Too many instance variables and get/set methods'''
+
+At first glance, all AWT base classes seem to suffer from this. Are they really necessary? Are Smalltalk Graphics classes littered likewise?  For example:  Component.setFont, Component.setBackground, Component.setForeground, etc.  (See the next related smell)
+
+* This is a hint of GreencoddsTenthRuleOfProgramming. It's an interface that is mostly declarative wearing behavioral wrappers.
+
+Smell: '''Methods and fields in base classes that are not applicable to all derived classes'''
+
+The Component class has fields and bean-property methods to hold the foreground, background and font of the component.  These are not applicable to components that, for example, fill their area with an image.
+
+''This is partly caused by Java's single-inheritance mechanism.  In Eiffel, for example, one could define abstract classes such as COLORED_COMPONENT, to define foreground and background colours, and TEXTUAL_COMPONENT, to define font properties, and then use multiple inheritance to mix the behaviour defined by those classes into concrete component classes.''
+
+There are other examples of this that result (legitimately?) from the use of the CompositePattern. MikeWeller.
+
+Smell: '''Undescriptive names''' (See: UsingGoodNamingToDetectBadCode)
+
+For example: 
+	* What do "Component" and "Container" mean? (see: http://java.sun.com/products/jdk/1.1/docs/api/java.awt.Container.html)  What kind of component?  A container of what?  Some feel that the context is enough (that is, it's "java.awt.Container", not just "Container").  However, look at the discussions that took place in the ComponentDesignPatterns pages or the use of the word to describe MTS objects and EnterpriseJavaBeans, to see the confusion it can cause.
+	*  "LayoutManager2" (see: http://java.sun.com/j2se/1.3/docs/api/java/awt/LayoutManager2.html).  It is a L''''''ayoutManager that can be given constraints on how each Component is layed out.  Why not name it something like "C''''''onstrainedLayoutManager"?
+
+Smell: '''Misleading names'''
+
+For example, "addNotify" (see: http://java.sun.com/products/jdk/1.1/docs/api/java.awt.Container.html#addNotify).  According to the official and numerous unofficial method naming conventions, this method would seem to be adding something called a "notify".  Instead, it is notifying the component that it has been added to a container.  (Actually, it's even more complicated than that ... the container has to have been assigned a peer, I think, and perhaps some other stuff.)  The verb in a method name should refer to what the method does.  --GlennVanderburg
+
+{But both "add" and "notify" are verbs.  Does this method mean notifyOfAdd?}
+
+Smell: '''Different names for methods that do the same thing.'''
+
+For example, windows and graphics contexts are discarded with the "dispose" method but images are discarded with the "flush"  method.
+
+Smell: '''Lots of tests for types instead of polymorphic methods'''
+
+The methods of Component and Container use logic based on the results of "instanceof" tests, rather than calls to polymorphic methods.
+
+''On the other hand, see TestTypesInsteadOfDispatch.''  This is an an optimisation idiom that is used (only when absolutely necessary) to reduce the space overhead of C++ vtables in very small systems.  It doesn't really apply to the Java AWT -- different language and context.
+
+Smell: '''Inconsistent method/argument conventions'''
+
+The one that bit me most recently is that most methods in the AWT define rectangles using left,top,width,height parameters, except for methods of the Image class that defines rectangles using left,top,right,bottom parameters.
+
+Smell: '''Mixed metaphors'''
+
+The getParent method of class Component returns a reference to the Container that contains the component.  However, the method to get the Components within a Container is not called getChild, it's called getComponent.
+
+Smell: '''No separation of independent concerns'''
+
+The ability to lay out graphical objects within a container is a separate concern from handling user input events.  However, the Component/Container/Layout classes mix the two concerns.  This makes it impossible to use layout managers to arrange visual decorations (icons and text, for example) within an interactive component (a button for example).  You can see the result of this in Swing where buttons can have one icon and one text label, and the JButton class has to lay out the icon and text explicitly, reimplementing logic that is already implemented in the AWT layout managers.
+
+Smell: '''Methods take multiple parameters instead of ValueObject''''''s'''
+
+Many methods that expect a rectangle as an argument take four int parameters instead of a single java.awt.Rectangle.  Many methods that expect a point take two int parameters instead of a single java.awt.Point.  There aren't even overloaded methods that can take either a single value object or multiple parameters.  Therefore client code either stores compound values in multiple variables, or has to split and recreate instances of value classes.
+
+----
+'''To be classified:'''
+
+	* Client code is responsible for performing some of the logic of the GUI objects.  For example, code that modifies the contents of a Container must explicitly ask the container to perform layout management.  Why?  The Container knows that its contents have changed and should automatically schedule layout management to be performed sometime in the future (when the event loop is idle, for example).
+
+''Isn't that because in GUI programming, you want more control of rendering?  Waiting until idle time leads to sluggish redraws.  Not good.''
+
+If you really do need to do immediate layout management, then one can always invoke the layout manager explicitly.  However, if that is the case, you should not be using components in a layout manager to draw your display, but something rendered onto a DoubleBuffer with minimised RefreshRectangles, etc.  See the GraphicsPatterns for more information about this.
+
+On the other hand, layout management of AWT components is not particularly fast in the first place.  Also, layout management has to be performed when a component changes size.  This usually occurs when the component's properties are changed, and when one property is changed, it is likely that another property of the same component, or a property of a component in the same container, will also change.  If the frame laid out all its descendents every time a single property changed, a lot of computation would be wasted.  Therefore, most graphics toolkits use DeferredUpdate''''s (typically IdleUpdates) to perform layout management, because this makes it much more convenient for the programmer writing the user interface code.
+
+-----
+
+In the Java 2 version of AWT, Rectangle has public int fields called x, y, width and height.
+It also has methods called getX, getY, getWidth and getHeight, but they return
+double.
+I believe that Rectangle, Shape, Point, and for that matter javax.swing.tree.TreeNode should not be in AWT at all, but rather in some data structures package.
+Those classes should be independent of the GUI toolkit used for rendering.
+--JohnFarrell
+
+While I'd normally agree, we found that rectangles in particular are thorny beasts when it comes to graphics programming. They should return ints for one thing. The the question is, is a rectangle from (0,0) to (0,0) one or zero units wide? In graphics, it is 1 unit (pixel) wide. In AWT and Windows, it is 0 units (pixels) wide. This gets to be infuriating after awhile. So we wrote our own stateless subclass of RECT (in Windows). -- SunirShah
+
+I can't think of any graphics systems that treats a rectangle from (0,0) to (0,0) as 1 pixel wide.  Some graphics systems draw the ''edges'' of such a rectangle with a pen that is one or more pixels wide, and thereby draw a rectangle that has a width of greater than zero, but that is a property of the pen selected in the graphics context rather than the rectangle.
+
+''The Adobe ScalableVectorGraphics plugin treats singularities as having one display pixel of width. This, however, is a bug.''
+
+----
+
+Parts of the implementation secretly expect to receive implementation specific classes derived from public base classes in the java.awt package.  For instance, methods that expect parameters of type java.awt.Image don't work if you pass them a class you derived from Image.  You might want to do this to use the DecoratorPattern for example.
+
+----
+
+CategoryJava

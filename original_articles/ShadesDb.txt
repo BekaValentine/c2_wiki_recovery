@@ -1,0 +1,320 @@
+The Shades project can be found at http://sourceforge.net/projects/shadesdb
+
+'''Shades'''
+
+Shades is an Object/Relational Mapping (ORM) framework that works in conjunction with JDBC APIs. Instead of relying on XML or annotations for configuration, Shades relies on an interface called ORMapping. This makes shades simple and flexible. Shades has no new transaction model nor Connection management which you must learn. You control the transactions, and the Connection that Shades uses, through plain JDBC interfaces. Shades is designed to work well with modern web development frameworks like Tapestry and Wicket.
+----
+
+'''Basic Examples'''
+The following code fragments are designed to familiarize you with the basic usage of shades. Don’t worry about understanding them completely, because they are just fragments. More details will come later.
+
+*Populate List of results
+ dbSess.setParameter("author", "william gibson");
+ RecordSet rs = dbSess.executeQuery(conn, dictionary.getQuery("q-by-auth"));
+ List<Book> books = new ArrayList<Book>();
+ rs.populateList(books. Book.class)
+
+*Iterate RecordSet
+ dbSess.setParameter("author", "william gibson");
+ RecordSet rs = dbSess.executeQuery(conn, dictionary.getQuery("q-by-auth"));
+ Book book = new Book();
+ while(rs.hasNext()){
+     rs.populate(book);
+     System.out.println(book.getTitle() + “ was written by ” + book.getAuthor());
+ }
+
+*Page through large RecordSet
+ dbSess.setParameter("author", "william gibson");
+ int from = 0;
+ int to = 9;
+ do{
+  dbSess.setParameter(“from”, String.valueOf(from));                 
+  dbSess.setParameter(“to”, String.valueOf(to));
+  RecordSet rs = dbSess.executeQuery(conn, dictionary.getQuery("q-by-auth"));
+  int recordsInPage = 0; 
+  while(rs.hasNext()){
+     //do something with rs
+     recordsInPage++;
+  } 
+  from +=10;
+  to +=10;
+ }while(10 == recordsInPage);
+
+*Create a complex join
+ RecordCandidate aBook = query.newCandidate(bookOrm, “aBook”);
+ RecordCandidate anotherBook = query.newCandidate(bookOrm, “anotherBook”);
+ RecordCandidate aPublisher = query.newCandidate(publisherOrm, “aPublisher”);
+ aBook.relatedTo(anAuthor,"book->author");
+ aBook.where("AUTHOR like 'william gibson');
+ aBook.relatedTo(aPublisher,"book<->publisher");
+ anotherBook.relatedTo(aPublisher, "book<->publisher");
+ query.setFetchGroups(anotherBook);
+ dbSess.excecuteQuery(conn, q);
+
+*Update a Pojo
+ Book myBook = new Book();
+ dbSess.setParameter("author", "william gibson");
+ dbSess.executeQuery(conn. query).populateNext(myBook);
+ myBook.setTitle(“Monalisa Overdrive”);
+ dbSess.update(myBook);
+
+*Safely Update a Pojo (optimistic concurrency)
+ Book myBook = new Book();
+ dbSess.setParameter("author", "william gibson");
+ dbSess.executeQuery(conn. query).populateNext(myBook);
+ myBook.setTitle(“Monalisa Overdrive”);
+ dbSess.setCheckChanges(true);
+ dbSess.update(myBook);
+
+*Create a relationship between records in the database
+ Book b1 = new Book();
+ dbSess.setParameter(“title”, “burning chrome”);
+ dbSess.executeQuery(conn, q).populateNext(b1);
+ Record r1 = dbSess.getRecords(b1)[0];
+ Book b2 = new Book();
+ dbSess.setParameter(“title”, “neuromancer”);
+ dbSess.executeQuery(conn, q).populateNext(b2);
+ Record r2 = dbSess.getRecords(b2)[0];
+ dbSess.createRelationship(r1,r2,”book->companion-book”)
+
+*manually provide the SQL
+ String expr="SELECT FNAME AS FNAME FROM STUDENT WHERE "+
+  "LNAME LIKE ${lname}";
+ Query q = QueryFactory.newImmutableQuery(expr);
+ RecordCandidate cand = q.candidate(dict.getORM("STUDENT"));
+ cand.setFetchColumns("FNAME");
+ List students = new ArrayList();
+ sess.setParameter("lname", "smith");
+ sess.executeQuery(connection,q).populateList(students, Student.class);
+ System.out.println(students);
+----
+'''The ORMDictionary'''
+An application must define an ORMDictionary. An ORMDictionary is a repository of ORMappings and SQL fragments. The dictionary is essentially a named Singleton hashtable that allows you to assign names to important structures like ORMapping objects, that you will want to easily access throughout your application.
+
+The following is a static code block that creates and initializes an ORMDictionary. 
+
+ static{
+   ORMDictionary dict = ORMDictionaryFactory.getInstance("school-schema");                   //LINE 1
+   dict.defineORMapping("TEACHER", new TeacherMapping());                                    //Line 2
+   dict.defineORMapping("STUDENT", new StudentMapping());                                    //Line 3
+   dict.defineRelationship("student->teacher", "${this.alias}.FK = ${that.alias}.PK");       //Line 4
+   dict.defineRelationshipRemover("student~>teacher",                                        //Line 5
+     "UPDATE  STUDENT SET FK = NULL WHERE PK = ${this.PK}");                                 //Line 6
+   dict.defineRelationshipSetter("student+>teacher",                                         //Line 7
+      "UPDATE  STUDENT SET  FK = ${that.PK} WHERE PK = ${this.PK});                          //Line 8
+ }
+
+
+*Line 1 – gets an ORMDictionary named “”school-schema.
+*Line2 – define an ORMapping named “TEACHER”. TeacherMapping is an implementation of ORMapping which we will look at later.
+*Line 3  - define an ORMapping named “STUDENT”. StudentMapping is an implementation of ORMapping which we will look at later.
+*Line 4 – define a relationship named “student->teacher”. Named relationships are used to build queries. More on that later.
+*Line 6 – define a relationship remover named “student~>teacher”. 
+*Line 8 – define a relationship setter named “student+>teacher”.
+----
+'''Relationship SQL (this and that)'''
+The ORMDictionary defines relationships, which are really parameterized fragments of a SQL expression, which defines a join between related records.Let’s look at the definition of the “student->teacher” relationship in the ORMDictionary for the “school-schema” from line 5, above. 
+
+ dict.defineRelationship("student->teacher", "${this.alias}.FK = ${that.alias}.PK");
+
+Like everything in the ORMDictionary, the relationship is named. The name can be anything you like. The name “student->teacher” has been chosen because it is visually descriptive, in that the arrow pointing from student to teacher is reminiscent of a foreign key in the STUDENT table pointing to the TEACHER. The “student->teacher” relationship says that  a relationship exists between a student and a teacher when the FK in the STUDENT table matches the PK in the TEACHER table
+
+Because Shades always uses SQL table aliases (in order to accommodate “circular” or “self referential” joins) you should never put the name of a table into the relationship join expression.  In order to allow Shades to dynamically substitute the table alias, at runtime, substitution variables are used. The ${} syntax will be familiar to ANT users, as a substitution variable.
+
+“this” and “that” are the only two reserved variable names in Shades. The special parameter names, “this” and “that” refer to the principle RecordCandidate and the subordinate RecordCandidate of a join. In the code below studentCandidate is the principle RecordCandidate and teacherCandidate is the subordinate RecordCandidate.
+
+
+ Query query = QueryFactory.
+                        newQuery(ORMDictionaryFactory.getInstance("school-schema"));
+ RecordCandidate studentCandidate =      
+                        query.candidate(dict.getORM("STUDENT"), “aStudent");
+ RecordCandidate teacherCandidate =      
+                        query.candidate(dict.getORM("TEACHER"), "aTeacher");
+ studentCandidate.relatedTo(teacherCandidate, "student->teacher");
+ query.setFetchGroups(studentCandidate);
+
+
+When the above query is executed, Shades will replace ${this.alias} with “aStudent”, and will replace ${that.alias} with “aTeacher”. Shades will then combine the relationship-join with other elements of the query to produce:
+
+ SELECT
+ 	aStudent.FNAME AS ‘aStudent.FNAME’
+	aStudent.LNAME AS ‘aStudent.LNAME’
+	aStudent.GRADE AS ‘aStudent.GRADE’
+ FROM
+	STUDENT AS aStudent
+	TEACHER AS aTeacher
+ WHERE
+	aStudent.FK = aTeacher.PK
+
+As you can see, the relationship is used only in the formulation of the WHERE clause. The Query itself, and its RecordCandidates and fetch groups are used to determine which columns are selected and from which tables. Notice that ${this.alias} has been replaced with “aStudent.FK” and ${that.alias} has been replaced with “aTeacher.PK”. 
+
+Note that you can control which columns appear in the SELECT clause using setFetchGroups. In the code fragement above, the fetchgroup was set to the studentCandidate RecordCandidate, which is why only columns from the STUDENT table appear in the SELECT clause.
+
+Now lets look at the relationship setter and remover from Line 6 and Line 8. Unlike the relationship SQL, which is a fragment used only in the WHERE clause, the relationship setter and remover SQL are complete SQL expressions. Notice that actual table names can be used, because table aliases are never used in INSERT or DELETE SQL statements. Also note how the “this” and “that” vatiables are uses to identify actual column values at runtime. For example, “${this.PK} will be replaced, at runtime, with the actual value of the PK column of the principle record.
+
+For example, the relationship setter, "UPDATE  STUDENT SET  FK = ${that.PK} WHERE PK = ${this.PK})”  might get turned into the following, at runtime:
+
+UPDATE STUDENT SET FK = 127 WHERE PK = 324
+
+Unlike the relationship SQL, in which only the special “alias” variable may be referred to under the “this” and “that” scope, relationship creators and removers may reference any valid column name under the “this” and “that” scope.
+
+----
+
+'''ORMapping'''
+The ORMapping interface tells Shades how to perform I/O on your table. Generally one does not implement ORMapping from scratch, but extends an abstract class like DefaultORMapping. 
+
+DefaultORMapping
+The following shows how to implement ORMapping with an anonymous inner class that overrides the DefaultORMapping.
+
+The essential methods of ORMapping are: 
+*getTableName – returns the name of the table.
+*getColumnNames – returns the names of the columns that you will use
+*loadColumnIntoPojo – loads a column value into your pojo
+*getColumnFromPojo – gets the value of a column from your pojo
+*getColumn – gets a column from a java.sql.ResultSet
+*isIdentity – determines if a column participates in the identity of a pojo
+
+
+ public class DefaultORMapping{
+  public String getTableName(){return “BOOK”;}
+  public String[] getColumnNames(){return new String[]{“AUTHOR”,”TITLE”, “PUBLISH_DATE”};}
+  public boolean loadColumnIntoPojo(String columnName, Object columnValue, Object pojo){
+    Book book = (Book) pojo;
+    if (columnName.endsWith(“AUTHOR”)) book.setAuthor((String) columnValue);
+    else if(columnName.endsWith(“TITLE”)) book.setTitile((String) columnValue);
+    else if(columnName.endsWith(“PUBLISH_DATE”)) book.setPubDate((Date) columnValue);
+  }
+  public boolean getColumnFromPojo(String columnName, Object pojo){
+    Book book = (Book) pojo;
+    if (columnName.endsWith(“AUTHOR”)) return book.getAuthor();
+    else if(columnName.endsWith(“TITLE”)) return book.getTitle();
+    else if(columnName.endsWith(“PUBLISH_DATE”)) return book.getPubDate());
+  }
+ public Obect getColumn(String columnName, java.sql.ResultSet rs) throws java.sql.SQLException{
+    if(columnName.endsWith(“PUBLISH_DATE”)) return rs.getDate(columnName));
+    else return rs.getString(columnName); 
+  }
+  public boolean isIdentity(String columName){
+    if(columnName.endsWith(“AUTHOR”) || columName.endsWith(“TITLE”)) return true;
+    else return false;
+  }
+ }
+
+''Why does the implementation say if (columnName.endsWith(“PUBLISH_DATE”))? Shouldn’t it be if (columnName.equals(“PUBLISH_DATE”))? ''
+
+Shades uses ''table aliases'' when it does selects. This means that the column name in the JDBC result set will be “<TABLE_ALIAS>.PUBLISH_DATE”, not “PUBLISH_DATE”. Consequently “equals” would fail for “PUBLISH_DATE”.  So the simple rule is, always use “endsWith” not “equals” to identify columns.
+----
+
+'''Identity Columns'''
+An identity column is a column that participates in uniquely identifying a row. Shades uses identity columns for a singular purpose: To update the correct rows when DatabaseSession.update(pojo) is called. A pojo may map to multiple rows in multiple tables, using multiple ORMappings . Therefore, when update is called, if any of the pojo fields is dirty, at least one ORMapping is used in the formulation of updates to the database. The identity columns are used to formulate the WHERE clause. To continue with our Book example, let us say that AUTHOR and TITLE columns, taken together, constitute the identity of a row in the BOOK table.
+
+''The idIdentity method of ORMapping should return true for each column that participates in the identity of the pojo''
+
+Consider that a misspelling has been discovered in the spelling of a BOOK TITLE. Let’s pretend the book’s titled was inadvertently entered as “NUROMANCER” when it should have been “NEUROMANCER”. After correcting the spelling by calling setTitle on the pojo, with the correct spelling, and call to DatabaseSession.update would generate SQL that looks like this:
+
+UPDATE BOOK SET TITLE=”NEUROMANCER” WHERE TITLE=”NUROMANCER” AND AUTHOR=”WILLIAM GIBSON”.
+
+You may not have even realized it, but we just performed a change of identity. In Shades, change of identity is as easy as changing any other field of the pojo. What’s more, Shades imposes no restrictions on how you implement identity or hashcode in your pojo. 
+
+'''Pojo Identity'''
+A column that participates in the identity of Pojo may or may not be a natural part of your domain model Pojo. For example, an autoincrementing identity column is probably not a natural part of your pojo – shades doesn’t care either way. Identity columns default to being part of the pojo. That is, if you don’t say otherwise, you need to implement loadColumnIntoPojo and getColumnFromPojo to handle the identity column. 
+
+''If you don’t want the identity column loaded into the pojo, you should override the isPojoField method of DefaultORMapping to return false for the identity column in question. ''
+
+'''Non-pojo Identity'''
+It is common for ''autogenerated keys'' to constitute the identity of a row. Often these keys don’t have a natural fit in your pojo model. 
+*IsIdentity should still return true for autogenerated identity column(s)
+*GetColumn must still be implemented for the autogenerated column(s)
+*IsPojoField should return false for the autogenerated column(s)
+*IsGenerateKey should return true for the autogenerated columns(s)
+*GetColumnFromPojo and loadColumnIntoPojo do NOT have to handle the autogenerated column.
+
+The DefaultORMapping has the following code in its implementation of isPojoField:
+
+public boolean isPojoField(String columnName){
+   return !isGeneratedKey(columnName);
+}
+
+Therefore, you can see that the default behavior is to treat a generated key as a non-pojo field. However, you may have a generated key which IS part of your pojo model. In this case, override isPojoField to return true for the autogenerated identity column in question.
+
+'''Non-standard Generated Keys'''
+JDBC provides a standard mechanism for returning generated keys, via the Statement.getGeneratedKeys method. HSQLDB and other databases do not support getGeneratedKeys in the standard manner. For non-standard generated keys, the DefaultORMapping will not work. You will need to:
+*Override ORMapping.executeInsert
+*Override loadGeneratedKey
+
+DefaultHsqlORMapping provides an implementation of ORMapping for HSQLDB which properly overrides executeInsert and loadGenerated keys using the non-standard HSQLDB “Call IDENTITY()” to retrieve generated keys. For platforms other than HSQLDB, that don’t implement generated keys in a standard manner, you can use the sourceode for DefaultHsqlORMapping as a starting point – it is just a few lines of code.
+
+----
+'''Query'''
+Query is an interface defined in the hendrey.orm package. To get an instance of a Query, you use the shades.QueryFactory. The QueryFactory.newQuery takes an ORMDictionary as a parameter. You may also choose to store the query itself inside the ORMdictionary so it can be conveniently retrieved throughout your program code by calling getQuery on your ORMDictionary. The code below is identical to a code fragment presented earlier, except that we now define a Query and store it in the ORMDictionary starting at line 10.
+
+ static{
+   ORMDictionary dict = ORMDictionaryFactory.getInstance("school-schema");
+   dict.defineORMapping("TEACHER", new TeacherMapping());
+   dict.defineORMapping("STUDENT", new StudentMapping()); 
+   dict.defineRelationship("student->teacher", "${this.alias}.FK = ${that.alias}.PK");
+   dict.defineRelationshipRemover("student~>teacher",
+     "UPDATE  STUDENT SET FK = NULL WHERE PK = ${this.PK}");
+   dict.defineRelationshipSetter("student+>teacher", 
+      "UPDATE  STUDENT SET  FK = ${that.PK} WHERE PK = ${this.PK});
+   Query query = QueryFactory.newQuery(dict);
+   RecordCandidate student = 
+       query.newCandidate(dict.getORMapping(“STUDENT”), “aStudent”);
+   student.where(“LNAME like ${lastname}”);
+   dict.defineQuery(“q-by-name”, query);
+ }
+
+ 
+The RecordCandidate is the fundamental mechanism for configuring queries. The RecordCandidate appears on line 11 of the above snippet. The RecordCandidate, like the name implies, represents a candidate record (row) in the database. On line 12 we change the RecordCandidate from being unconstrained, to being constrained by a where clause. In this case the where-clause is parameterized by ${lastname}. This defines a variable name “lastname”, which you can provide a value to, at runtime, like this:
+
+ Query q = ORMDictionaryFactory.getInstance(“school-schema”).getQuery(“q-by-name”);
+ dbSession.setParameter(“lastname”, “Appel”);
+ dbSession.executeQuery(conn, query);
+
+A where-clause can be applied more than once to a query – the effect is cumulative:
+
+ Query query = QueryFactory.newQuery(dict);
+ RecordCandidate student = 
+       query.newCandidate(dict.getORMapping(“STUDENT”), “aStudent”);
+ student.where(“LNAME like ${lastname}”);
+ student.where(“AND GRADE = 12”);
+
+As you can see, the .where() method simply appends to the overall WHERE-clause of the query. This seems fairly mundane. And it is. The real power of the RecordCandidate lies in using the .relatedTo() method. This allows one RecordCandidate (the primary candidate) to be related to a second candidate (the subordinate candidate).
+
+On Line 6, below. we define a second RecordCandidate assigned to a variable named teacher. On line 8 we relate student to teacher, using the named relationship “student->teacher” defined in the ORMDictionary. Finally we apply a where-clause to the teacher. This query has the net effect of selecting any 12th grade student of a particular last name, as well as all teachers of the student. An interesting feature of Shades, is that ALL the RecordCandidates are retrieved.
+    
+ Query query = QueryFactory.newQuery(dict);                          //LINE 1
+ RecordCandidate student =                                           //LINE 2
+       query.newCandidate(dict.getORMapping(“STUDENT”), “aStudent”); //LINE 3
+ student.where(“LNAME like ${lastname}”);                            //LINE 4
+ student.where(“AND GRADE = 12”);                                    //LINE 5
+ RecordCandidate teacher =                                           //LINE 6
+ 	query.newCandidate(dict.getORMapping(“TEACHER”), “aTeacher”);//LINE 7
+ student.relatedTo(teacher, “student->teacher”);                     //LINE 8
+ teacher.where(“GRADE = 12”);                                        //LINE 9
+----
+
+'''Fetch Groups'''
+
+If you whish to retrieve only the teachers of the student, not the student himself, do this:
+
+ query.retrieves(student);
+
+The retrieves method excepts varargs. So you could do this, and get the same behavior as the default fetch group:
+
+ query.retrieves(student, teacher);
+
+If wish to load a set of columns other than the ORMapping's default (the detault is ORMapping.getColumnNames()), use RecordCandidate.setFetchColumns(String[] columns), like this:
+ RecordCandidate student =                                           
+       query.newCandidate(dict.getORMapping(“STUDENT”), “aStudent”); 
+ student.setFetchColumns(new String[]{"FNAME","LNAME"});
+or like this:
+ student.setFetchColumns(dict.getORMapping(“STUDENT”).getColumnNames("student-name-only"));
+where "student-name-only" is simply the name of a set of columns. (note that you must have implemented ORMapping.getColumnNames(String columnsetName) in your ORMapping.
+
+
+
+
+
+----
+CategoryFramework CategoryJdbc CategoryApi

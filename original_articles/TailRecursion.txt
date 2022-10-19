@@ -1,0 +1,116 @@
+Recursive procedures call themselves to work towards a solution to a problem. In simple implementations this balloons the stack as the nesting gets deeper and deeper, reaches the solution, then returns through all of the stack frames. This waste is a common complaint about recursive programming in general.
+
+A function call is said to be tail recursive if there is nothing to do after the function returns except return its value. Since the current recursive instance is done executing at that point, saving its stack frame is a waste. Specifically, creating a new stack frame on top of the current, finished, frame is a waste. A compiler is said to implement TailRecursion if it recognizes this case and replaces the caller in place with the callee, so that instead of nesting the stack deeper, the current stack frame is reused. This is equivalent in effect to a "GoTo", and lets a programmer write recursive definitions without worrying about space inefficiency (from this cause) during execution. TailRecursion is then as efficient as iteration normally is.
+
+The term TailCallOptimization is sometimes used to describe the generalization of this transformation to non-recursive TailCall''''''s. The best-known example of a language that does this is the SchemeLanguage, which is required to support ProperTailCall''''''s.  Recursion is the basic iteration mechanism in Scheme.
+
+----
+Consider this recursive definition of the factorial function in C:
+
+  factorial(n) {
+    if (n == 0) return 1;
+    return n * factorial(n - 1);
+  }
+This definition is ''not'' tail-recursive since the recursive call to factorial is not the last thing in the function (its result has to be multiplied by n). But watch this:
+
+  factorial1(n, accumulator) {
+    if (n == 0) return accumulator;
+    return factorial1(n - 1, n * accumulator);
+  }
+  
+  factorial(n) {
+    return factorial1(n, 1);
+  }
+The tail-recursion of factorial1 can be equivalently defined in terms of goto:
+
+  factorial1(n, accumulator) {
+  beginning:
+    if (n == 0) return accumulator;
+    else {
+      accumulator *= n;
+      n -= 1;
+      goto beginning;
+    }
+  }
+From the goto version, we can derive a version that uses C's built-in control structures:
+
+  factorial1(n, accumulator) {
+    while (n != 0) {
+      accumulator *= n;
+      n -= 1;
+    }
+    return accumulator;
+  }
+And Perl
+
+  sub factorial {
+    my $arg = shift;
+    $arg == 0 ? 1 : $arg * factorial($arg - 1);
+  }
+The simple C and Perl examples illustrates a case where the recursive call could be optimized into a goto. As far as we know, neither common Perl nor C implementations do this. Does anyone know better? Conforming SchemeImplementations ''must'' do tail-call optimization.
+
+-- ScottWalters and others
+
+''Knowing better: gcc 2.95.3 on an i386 does tail-recursion elimination on the tail-recursive factorial1 function when "-O" is specified on the command line. It does not eliminate the tail-call from factorial to factorial1, but a sufficiently high optimization level will cause factorial1 to get inlined, creating an equivalent effect. --BillTrost''
+
+''Knowing even better: gcc 3.2.1 on an i386 does tail-call elimination with -O2, even across source file boundaries, but only if the function being called takes no more arguments than the calling function. The command-line option to control this is called "-foptimize-sibling-calls" (does anyone understand why?) --BillTrost''
+
+''Knowing only a little bit: functions that take the same word-count of arguments, and return the same word-count of values, are considered "siblings" in the gcc internal lexicon, and this optimization only applies to tail calls between such "sibling" functions. --MikeShaver''
+
+See: http://www.cs.utexas.edu/users/wilson/schintro/schintro_127.html for an explanation of how it works in the SchemeLanguage and how it relates to continuations.
+* This link is dead as of 10/04/05. I found it also here: 
+http://icem-www.folkwang-hochschule.de/~finnendahl/cm_kurse/doc/schintro/schintro_127.html
+
+----
+So if TailRecursion is an obvious improvement, why doesn't everyone do it? One of the primary reasons is that calls which were optimized out cannot later show up in a debugging stack backtrace. Similarly, any language which offers facilities for examining the caller cannot easily implement TailRecursion.
+
+	 :	''Quick test, EmacsLisp (21.2.1) doesn't do it. I '''think''' cmucl does, but I read x86 by guessing what the instructions mean... could someone check out http://www.t8o.org/~mca1001/bucket/cmucl-tailrec-test.txt and update, please? -- MatthewAstley)''
+sbcl does this if you use the proper optimization declarations. I know for certain that a:
+  (declaim (optimize (debug 0) (safety 0) (speed 3)))
+will enable the optimization of tail-calls into gotos globally.
+
+It also doesn't work in languages that allocate data structures on the stack,
+or more generally, languages that have things with "dynamic extent".
+* False, "allocate data structures on the stack" is an implementation issue, not an abstract issue. Standards-conforming C language can be implemented without putting anything on the system stack, and industrial-strength versions of Lisp have often used the system stack heavily. Perhaps a different phrasing was intended.
+
+E.g. in C, consider
+
+  int g(int *p);
+ 
+  int f(void)
+  {
+     int ar[2];
+     
+     ar[0] = 3; ar[1] = 4;
+     return g(ar);
+  }
+
+After the call to g, function f still has to do something, namely popping ar off the stack. Therefore, in this situation the call to g cannot be replaced with a jump. In Scheme, there is never a problem, since everything in Scheme has unlimited extent (even continuations!).
+
+''What do you mean by unlimited extent? Your example seems to me to be the perfect example of a tail call that could be optimized by a compiler to be tail recursive (if you were calling '''f''' from '''f'''). The call is in a tail position and everything. The only thing I can see is that there is no recursion in your example. How is it different from the code below?''
+
+ (define g
+     (lambda (p)
+         (car p))) ; Since scheme doesn't allow me to do prototypes
+
+ (define f
+     (lambda ()
+         (let ((ar (list 3 4)))
+           (g ar))))
+
+''The only difference seems to be that Scheme supports continuations and C doesn't. But isn't that a compiler issue and not a question of how you pass arguments?''
+
+Unlimited extent is another name for what most people call GarbageCollection; objects created live forever (unless the system can prove that they cannot be accessed anymore, at which point they can be destroyed by the garbage collector).
+
+The difference between the CeeLanguage code and SchemeLanguage code cited here is that the array in the CeeLanguage example has limited extent; it is destroyed when f() ends.  The normal way a compiler implements this is with a stack, with g()'s stack pushed on top of f()'s.  The central idea of TailCallOptimization is that (instead of keeping f() alive during the call to g()) we end all of f()'s processing and "hand off to" (GoTo) g().  However, that would entail destroying the array, so g() will be accessing invalid storage.
+
+In the SchemeLanguage example, the array (really a list there) has unlimited extent, so it lives until g is done with it.
+
+'''But, if f() does not pass to g() any of its own stack-allocated variables, it can pop them ''before'' calling g().'''
+
+[It seems to me that this CeeLanguage discussion is indeed about implementation only, not about absolutes. For starters, it is incorrect to claim that functions must always clean up the stack before they return, implying a series of pops. Typically the frame pointer saved on the stack is restored to the stack pointer, automatically cleaning up an indefinite amount of crud. Further, if (due to TailCallOptimization) one or more functions failed to do that, nonetheless a parent function eventually would restore the old stack pointer, cleaning up after all descendents. Further furthermore, the TailCallOptimization could do even better than this, and have versions of tail-called functions do the right thing with restoring the stack pointer themselves. That may be unclear as text but it's pretty obvious when you start thinking about saving and restoring frame/stack pointers.]
+* This seems all true, but is still mired in implementation; the deeper point is that any compiler/interpreter for any language might be able to optimize TailRecursion via a large number of techniques that have been invented over the years. The overall notion, however, is abstract, not concrete, and thus not implementation-dependent, aside from the single question "can this abstraction be implemented for language X?"
+----
+See TailCallOptimization
+
+And, of course, see TailRecursion

@@ -1,0 +1,154 @@
+I created this page to describe some things about a database API I've been developing at work for some time now, to answer the curiosity of another wikizen. Unfortunately, I'm not at liberty to share the code, but I've occasionally thought about starting an Open Source version.
+
+The API is based on Tutorial D, described in TheThirdManifesto. My main goals are:
+	* Make it easy for application developers to write custom queries without understanding all the arcana of SQL, or suffering its verbosity.
+	* Implement an algebra that more closely follows relational theory than SQL does.
+	* Isolate the application from the details of both the underlying DBMS API, and quirks of the DBMS's SQL dialect. (We are in fact considering a change of DBMS in the foreseeable future.)
+	* Facilitate presentation of a logical schema, hiding details of the physical schema.
+	* Augment the DBMS's ability to describe and enforce data constraints. (For historical reasons, our current implementation uses Jet SQL, which only barely qualifies as a DBMS.) This assumes that the database is always accessed through this system.
+	* Provide mechanisms for defining and using schema-specific domains (types).
+	* Provide performance comparable to using hand-coded embedded SQL statements.
+
+An "extra credit" goal that I'd dearly like to achieve is the ability to support relation-valued attributes.
+
+The basic approach is to supply a core system, the primary purpose of which is to allow the construction of data structures that represent types (domains), individual database values, tuples, and query expressions. A separate subsystem is responsible for translating the expression trees into DBMS queries. (Via SQL, although there's nothing inherent to the first system that mandates this.) Finally, the schema designers provide a layer on top of all this which defines types, base relations, predefined views, and data constraints that make up a specific logical schema.
+
+The read-only part of this system is largely working as I write this (Jan 2003), although a version of our software using it hasn't been released yet.
+
+To give a flavor of what C++ application code ends up looking like, here's an example off the top of my head showing the definition and processing of a query. This would make more sense if I provided information on the example schema, but use your imagination:
+
+  void PrintEmployeeProjectManagers(CDatabase& db)
+  {
+	CTupleList tl(db["Employees"]
+		  .Join("Projects")
+		  .Join(db["Employees"]
+			.Rename("ID", "ManagerID")
+			.Rename("Name", "ManagerName"))
+		  .DropAllBut(attr("Name") | attr("ManagerName")));
+	for (CTupleList::iterator i = tl.begin(); i != tl.end(); ++i)
+	std::cout << (*i)["Name"] << "  " << (*i)["ManagerName"] << std::endl;
+  }
+
+The joins are, implicitly, inner joins. Outer joins are also supported, but since the system does not support null attribute states, the syntax for outer joins is a little more complicated and requires the expression to supply default values. 
+
+''What about just supplying blanks for strings and 0's for numbers? Such defaults could be in a system table so that things like default dates can also be supplied. It could be a cluttery mess to supply defaults to each column.''
+
+	 :	That could be added as an enhancement, true. I'll think about it. But in general, when you're forming the outer join, you do need to be able to specify the defaults you'd like to see in that particular view. What you want will depend on the purpose of your view. 
+
+Joins are performed on like-named attributes, which must have compatible types - there is nothing akin to the ON clause of SQL. Obviously, careful naming of attributes in the database schema can make the writing of typical query expressions very easy.
+
+	 :	''This could hamper CalculatedRelations, I would note.''
+
+	 :	But it doesn't, because of the Rename operator. It can be used to make attribute names match up if they don't a priori. (See the example above.) By naming attributes that mean the same thing in different tables the same, the most commonly used joins become easy, but unanticipated joins are not at all hard. Provided you've got a description of the schema in front of you, that is.
+
+	 :	Also, you could use a Cartesian join with an equality requirement between any two attributes to get the same effect. (The algebra isn't as redundant as SQL, but does contain some redundancies.) This is logically equivalent, although in the current implementation the difference will unfortunately propagate to the SQL, where some SQL engines will incur a performance penalty for the construct.
+
+Addressing attributes using strings for the names, rather than treating them as members of classes, is less than ideal, but the system unfortunately is predicated on dynamic typing of relations and tuples. To do otherwise might be possible using advanced template techniques, but would be very difficult, since most query expressions would give rise to new, implied types of relations and tuples.
+
+The hairiest part of the current implementation is, by far, the SQL generator. Jet's SQL dialect has many odd limitations and quirks that must be worked around in various ways. It is certainly possible at the moment to write queries that will produce an exception instead of an SQL string, but my users haven't discovered any of those recently. :-)
+
+The SQL generator is basically a Visitor class that walks the expression tree and builds a ''different'' expression tree using data structures that are tied more closely to Jet SQL's structure. This is then finally turned into an SQL string when the query is executed to produce a tuple list.
+
+The operators that are currently available include:
+	* Join
+	* LeftJoin/RightJoin
+	* Union
+	* Minus
+	* Restrict (aka WHERE)
+	* SummarizePer (a better GROUP BY)
+	* Drop/DropAllBut
+	* Add (extend a relation with a calculated attribute)
+	* Rename
+	* Redefine (shorthand for Add("temp",...).Drop("orig").Rename("temp", "orig"))
+	* If (trinary operator - maybe someday a Case expression if I can come up with nice syntax)
+	* ==, <, >, <=, >=, +, - (all the usual operations on scalar values)
+	* !, &&, ||
+	* Like (modelled on SQL's pattern matching
+	* StringConcat (which should just be called Concat)
+... and probably more that I can't think of right now. There's also a system in place for defining new schema-specific operators, which hasn't gotten a lot of exercise yet.
+
+The type system is problematic and has just undergone a lot of revision. Tutorial D's types have a lot of restrictions that C++ types don't, so there's not a straightforward mapping between an arbitrary C++ class and a database type.
+
+The write path will be very interesting when I get around to working on it. It should be possible to make just about any view updatable, provided that there are default values defined for attributes not exposed by the view. Since the system will have an algebraic expression tree that defines each view in terms of base tables, I'll be able to implement some of the suggestions from the relational theory literature on handling updates through joins, unions, etc., breaking each write down into a series of updates on base tables.
+
+-- DanMuller
+
+----
+
+Some questions and comments:
+
+My C++ is rusty. How do you propose things like WHERE clause Boolean expressions be defined? Also, is it possible perhaps to make a more language-neutral API? 
+
+To be practical, these would have to be translatable into SQL for use on existing machines. If it is superior to SQL, that might be difficult.
+
+Further, I cannot find a non-fee version of the Tutorial D language beyond some cryptic syntax charts. Do you have any leads?
+
+I am glad to see somebody working on such things, though. SQL needs an overhaul. It is the COBOL of relational query languages IMO. Keep up the good work!
+
+''Thanks for the encouragement!''
+
+''Boolean expressions based on references to attributes can be represented in the syntax trees. The Restrict operation (which I forgot in my first draft of this page) is used to apply a boolean expression to a relation.''
+
+API's to make syntax trees? That does not sound very pleasant. I think I would prefer just passing on a Boolean expression to the database engine (or syntax builder) as a string.
+
+	 :	''Why? Due to C++'s operator overloading abilities, the API allows the expressions to be presented in quite natural syntax, with compile-time syntax checking. If it passes the compiler, it produces a valid syntax tree, modulo dynamic type checks on referenced attributes of relations. No embedded compiler needed, less run-time debugging of syntax, and ability to reference variables in the program without constructing a query string. That's the whole point of the API. Have you ever maintained code that builds SQL strings dynamically?''
+
+''You ask: Is it possible to make a more language-neutral API? Neutral with respect to which language? C++ or SQL? With respect to C++: One of my most important goals is to make this as easy to use from C++ as possible. And representing the expression trees in a language-neutral way would complicate things. If I were to approach the issue of building this system for cross-language use, I would probably define a linearized representation for crossing language boundaries - or network boundaries. That representation could be text or a more compact binary format.''
+
+''Regarding Tutorial D, a copy of an LALR(1) grammar for it is available on the authors' web site, http://www.thethirdmanifesto.com. Or you could look for an inexpensive used copy of TheThirdManifesto. It's not easy reading, but if you're seriously interested in database theory, I think it's rewarding. Stay away from the first edition; the multiple inheritance scheme is much revised and better thought out in the second.''
+
+''(Discussion regarding Chris Date moved to ChrisDate.)''
+----
+A similar API is available in HaskellLanguage: HaskellDb. A CeePlusPlus API could have similar design.
+----
+2004-10-13 DanMuller: Work has continued, sporadically, on this system. A lot of my time, unfortunately, is spent working around limitations of the Jet DB engine currently underlying the project - the generated SQL has uncovered some truly bizarre bugs in the SQL interpreter.
+
+Brief mention is now made of this project on http://www.thethirdmanifesto.com/. Too bad this can't be open-sourced.
+
+''Check out http://duro.sourceforge.net/, which must come close.''
+
+One area where I may eventually end up diverging quite a bit from Tutorial D is in the type system for scalar types. I'm no longer convinced that the strict set-based type system is worth the hassle. It may be perfectly adequate to have a looser system based on convertibility of types, together with type constraints on attributes in database relvars. In other words, shift the emphasis from domains to attribute constraints (where D&D tend to go the other way, barely mentioning attribute constraints in passing.) This direction in thinking stems in part from some exchanges with Costin Cozineau a few months ago here on C2. So far, we've been working entirely with primitive types. There hasn't been a strong push for representing application-specific types directly in the database schema, which is in itself rather interesting.
+
+''This is interesting. Any possibility of more detail?''
+
+Sure, but I've not had a chance to flesh the idea out further, so the details are just from my mental musings.
+
+When I started working on this API (which we call CsiDb), I was a firmly entrenched StrongTyping advocate. If I'd had my druthers, the query expressions built with this API would have inferred the specific types of attributes and expressions at compile time. There were a number of forces working against this, however:
+* Our existing DBMS API (an OO-based design which I was bent on replacing because of its many limitations and performance problems) was weakly typed with respect to field values, making use of Microsoft's COleVariant class. The application-level programmers were very much accustomed to a generic style of programming that leveraged this run-time typing approach.
+* Making the types of attributes manifest in the context of relations would likely have required a lot of statically defined information about the schema (probably supplied by code generation tools).
+* The entire API becomes much more complex, requiring a lot of fancy template work to accommodate the propagation of attribute types. When I started this, I was working with VC6, which had template support that was weak in some areas.
+* If you examine the example above, you'll see an implied database object as a source of base relvar references. (Cf. '''db["Employees"]'''.) My original thought was that the base relvars would be completely typed -- the static type carrying information about the types of all the attributes. Well, this is probably possible using templates, but again, it makes things very complex. Also, there was a desire among the application programmers to decouple such expressions from the database object, so that now one can use the syntax '''relvar("Employees")''' to refer to the same base relvar, and no attribute type information is available at compile time.
+
+Over the past few years my affinity for StrongTyping has weakened, due in large part to participation on this wiki -- mainly from reading the thoughts of people like DougMerritt, and becoming reacquainted with Lisp. CsiDb has become much more dynamic in its typing, which has simplified the API. A lot of type checking is done at runtime, so it is extremely rare for any type errors to propagate down to the generated SQL. I'm considering taking a further step in this direction, basically applying GreenspunsTenthRuleOfProgramming, by simplifying the expression-building API even further and making all basic object types (relations, tuples, scalar values, relvar references, attribute references, expressions) derive from a common base class and all usable as expression elements. The internal structure of expressions would be simplified in this approach to the point where they're basically analogous to EssExpressions. Another motivation behind this change is the desire to treat ''functions'' as something closer to first-class objects. For performance reasons, we'd like to leverage the DBMS' "querydef" feature (aka "defined query", "stored procedure", "view"), and these are most naturally represented as functions. 
+
+Type checking really needs to happen only in these places:
+* When processing an expression to interpret operator invocations - an operator may not be applicable to certain argument types or combinations of argument types.
+* When retrieving attribute values from the system and converting to a "native" host type. Currently the programmer needs to do an explicit cast-like operation at this point, and that will likely continue to be the case.
+* In the write path, when storing data in the database. At this point, attribute constraints kick in, and conversion to the DBMS' native types. The write path currently exists but is quite rudimentary. 
+
+At this point, I can see no reason that the API couldn't take an entirely Lisp-like approach to typing, deferring it as late as possible.
+
+The main disadvantage, of course, is the lack of early detection of type errors. However, I've already largely sacrificed this to satisfy the application programmers.
+
+Working with a dynamic API in a language like C++ is inconvenient because of the compile/link/test cycle. Type errors and join errors (usually, unwanted joins on like-named attributes) are not uncommon while developing a complex query expression. What is sorely wanted is some sort of interactive tool for testing new expressions - perhaps something as simple as taking a user-supplied expression string, writing it to a C++ source file, compiling it, and dynamically loading and testing it - a sort of poor man's REPL.
+
+The problems with Date and Darwen's type system have primarily been due to the fact that it's hard to implement efficiently in C++. Not nearly impossible, just hard. And my work to date is indicating that it's unnecessary, if one is willing to sacrifice compile-time type checking.
+
+-- DanMuller
+
+----
+
+Someone added a reference here to RollYourOwnDatabase. Please note that this page describes an API, not a complete database system. -- DanMuller
+
+''Is the interface generally intended to go on top of existing RDBMS? If so, how are C++ expressions converted into SQL?''
+
+Yes. Not that I wouldn't find it interesting to write my own database system from scratch, but why would I? (And more importantly, why would my employer pay me to?)
+
+As described very briefly above, the C++ expressions build data structures which are later traversed and converted to ''different'' data structures that closely mirror the structure of SQL statements, and then those are converted to actual SQL. If I were using a more capable DBMS that had a good optimizer, I could probably skip the intermediate step. As it is, I have to worry a bit about the form of the SQL, for reasons of performance. In its current incarnation, CsiDb does a bit of optimizing, for example discarding unnecessary join terms.
+----
+
+I have since moved on to a project built in C# (as of the latter half of 2005). We have re-implemented a small subset of this library there, and are considering the possibility of expanding it. (One alternative is to limp along with a small subset until MicrosoftLinq becomes available, then switch to that.) I'm finding that it's not possible to make the API fit as seamlessly into the language because of C# limitations -- e.g. the logical OR and AND operators can't be overloaded. The result looks somewhat more like the awkward examples shown on ExpressionApiComplaints. -- DanMuller
+
+
+----
+See also ExpressionApiComplaints, RollYourOwnDatabase, TopsQueryLanguage, MinimalTable, TrueRelationalToPseudoRelationalMapper, TutorialDee

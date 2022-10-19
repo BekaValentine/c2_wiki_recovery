@@ -1,0 +1,553 @@
+Here is an example of a piece of code that does not do any reflection or something like that, yet is difficult to express in a statically-typed language. The code snippet (in Python) implements a mapping from binary trees to numbers. (Actually, arbitrary values, but that isn't the interesting part here.) During a lookup, the binary tree is traversed exactly once.
+
+The challenge is to implement this algorithm in a statically-typed language of choice, with as little casting or unnecessary dynamic dispatch (i.e. dynamic dispatch were you in fact know in advance to which method will be dispatched, but you need the dynamic dispatch to satisfy the typing system) as possible.
+
+-- StephanHouben
+
+  # The following two classes define binary trees
+
+  class Node:
+      def isNode(self):
+          return 1
+
+  class Branch:
+      def __init__(self, left, right):
+          self.left = left;
+          self.right = right
+
+      def isNode(self):
+          return 0
+
+  # A mapping using binary trees as keys
+  class Mapping:
+      hasNodeValue = 0
+      branchMapping = None
+
+      def set(self, key, value):
+          if key.isNode():
+              self.hasNodeValue = 1
+              self.nodeValue = value
+          else:
+              self.getBranchMapping().getMapping(key.left).set(key.right, value)
+
+      def get(self, key):
+          if key.isNode():
+              if self.hasNodeValue:
+                  return self.nodeValue
+              else:
+                  raise KeyError()
+          else:
+              return self.getBranchMapping().get(key.left).get(key.right)
+
+      def getBranchMapping(self):
+          # lazy initialization of branchMapping
+          if self.branchMapping is None:
+              self.branchMapping = Mapping()
+          return self.branchMapping
+
+      def getMapping(self, key):
+          # always get a mapping, possibly an empty one
+          try:
+              result = self.get(key)
+          except KeyError:
+              result = Mapping()
+              self.set(key, result)
+          return result
+
+  # tests
+  t1 = Node()
+  t2 = Branch(t1, t1)
+  t3 = Branch(t2, t1)
+  t4 = Branch(Node(), Node()) # equal but not identical to t2
+  t5 = Branch(t4, t3)
+  m = Mapping()
+
+  m.set(t4, 1)
+  m.set(t1, 2)
+  m.set(t5, 5)
+  assert m.get(t4) == 1
+  assert m.get(t1) == 2
+  assert m.get(t2) == 1
+  assert m.get(t5) == 5
+
+  m.set(t2, 3)
+  m.set(t5, 6)
+  m.set(t3, 4)
+  assert m.get(t2) == 3
+  assert m.get(t3) == 4
+  assert m.get(t4) == 3
+  assert m.get(t5) == 6
+  print "All tests succeeded"
+----
+
+I haven't actually tried this yet, but it looks reasonably simple (in java). However, i think i can see the problem: there are going to be situations that look like this:
+
+ Node node ;
+ if (node instanceof Leaf)
+ {
+  Leaf leaf = (Leaf)node ;
+  // do something with leaf
+ }
+ else // we know that node instanceof Branch, so don't actually test
+ {
+  Branch branch = (Branch)node ;
+  // do something with branch
+ }
+This is ugly because it has one strictly unnecessary cast (to Leaf) and one very iffy cast (to Branch - there's no strict reason that node couldn't be some other type, as we haven't made Node bounded with respect to subclassing in any way, because we can't). Oh, and it uses instanceof, which is nasty.
+
+My first reaction is to say "okay, it's not pretty; it would be nice if we had some language construct which combined instanceof, if and cast, a bit like:
+
+ Node node ;
+ ifinstanceof( Leaf node )
+ {
+  // in here, Leaf is of type Node
+ }
+''[minor interjection: don't you mean 'node' is of type 'Leaf'?]''
+
+My second reaction is to wonder if it couldn't all be done with polymorphism, avoiding instanceof and casts altogether. I need more time to think about this, though. Would it matter if it was recursive?
+
+-- TomAnderson
+
+I don't think any casting or instanceof is needed on the keys (the binary tree objects). The problem I encountered is with the values, so let me explain. Suppose (let's think C++ or Generic Java here) that we have a class Mapping<T>. We wonder what the type of the branchMapping instance variable is. The relevant line in the code is
+  return self.getBranchMapping().get(key.left).get(key.right) 
+We see that branchMapping is itself a Mapping; to be exact, it is a Mapping producing a Mapping<T>, i.e. it is of type Mapping<Mapping<T> >. But this branchMapping variable itself contains a branchMapping variable which is of type Mapping<Mapping<Mapping<T> > >. So in fact, we have an infinite regression of types here. If we allow such an infinite regression in our language, then this example can be completely statically typed. However, every statically-typed language I have encountered so far (C++, ObjectiveCaml, Java) disallows such infinite regressions.
+
+-- StephanHouben
+
+I haven't thought about it enough but it seems that the difficulty stems from the decision to choose distinct "types" for Node and Branch. If you had one type "BranchNode" both getBranchMapping() and getMapping() would return BranchNode. In reality you'd probably use a common base class for Branch and Node.  --AndrewQueisser
+
+----
+
+Hopefully, the challenge is to make the tests pass in a statically-typed language: not to implement a dynamically-typed implementation in a statically-typed language. Under this assumption, I submit the following (tested in GnuCpp 2.95.2). There are no casts, nor hacks like "isNode"; though I do use a double-dispatch. I attack the problem by defining an ordering relation between trees. With this done, I can use the standard map template from STL:
+
+  #include <map>
+  #include <iostream>
+  #include <assert.h>
+  
+  class Branch;
+  
+  class Tree
+  {
+    public:
+      virtual bool less(const Tree*) const = 0;
+      virtual bool greater_or_equal(const Branch*) const = 0;
+      virtual ~Tree() {}
+  };
+  
+  class Node : public Tree
+  {
+    public:
+      bool less(const Tree*) const
+      {
+        return false;
+      }
+  
+      bool greater_or_equal(const Branch*) const
+      {
+        return true;
+      }
+  };
+  
+  class Branch : public Tree
+  {
+    private:
+      const Tree *_left;
+      const Tree *_right;
+  
+    public:
+  
+      Branch(const Tree* left, const Tree* right) :
+        _left(left),
+        _right(right)
+      {
+        assert(left);
+        assert(right);
+      }
+  
+      bool less(const Tree* other) const
+      {
+        return other->greater_or_equal(this);
+      }
+  
+      bool greater_or_equal(const Branch* other) const
+      {
+        return other->_left->less(_left)
+          || other->_right->less(_right);
+      }
+  };
+  
+  template<>
+  struct less<const Tree*> : public binary_function<const Tree*, const Tree*, bool>
+  {
+    bool operator () (const Tree* a, const Tree* b) const
+    {
+      return a->less(b);
+    }
+  };
+  
+  int main ()
+  {
+    // tests
+    Tree *t1 = new Node();
+    Tree *t2 = new Branch(t1, t1);
+    Tree *t3 = new Branch(t2, t1);
+    Tree *t4 = new Branch(new Node(), new Node()); // equal but not identical to t2
+    Tree *t5 = new Branch(t4, t3);
+    map<const Tree*, int> m;
+  
+    m[t4] = 1;
+    m[t1] = 2;
+    m[t5] = 5;
+    assert( m[t4] == 1 );
+    assert( m[t1] == 2 );
+    assert( m[t2] == 1 );
+    assert( m[t5] == 5 );
+  
+    m[t2] = 3;
+    m[t5] = 6;
+    m[t3] = 4;
+    assert( m[t2] == 3 );
+    assert( m[t3] == 4 );
+    assert( m[t4] == 3 );
+    assert( m[t5] == 6 );
+    cout << "All tests succeeded" << endl;
+  
+  }
+A version that meets the "traverse the tree only once" criteria is not quite so clean; but still requires no casts, nor redundant dispatches:
+
+  #include <assert.h>
+  #include <iostream>
+  
+  class Mapping;
+  
+  struct Tree
+  {
+    virtual Mapping *get_mapping(Mapping *in) = 0;
+    virtual ~Tree() {}
+  };
+  
+  struct Mapping
+  {
+    int _value;
+    Mapping *_node;
+    Mapping *_branch;
+  
+    Mapping () : _node(0), _branch(0), _value(0) {}
+  
+    Mapping *node()
+    {
+      if (!_node) _node = new Mapping;
+      return _node;
+    }
+  
+    Mapping *branch()
+    {
+      if (!_branch) _branch = new Mapping;
+      return _branch;
+    }
+  
+    Mapping *find(Tree *key)
+    {
+      return key ? key->get_mapping(this) : this;
+    }
+  
+    void set ( Tree *key, int value )
+    {
+      find(key)->_value = value;
+    }
+  
+    int get ( Tree *key )
+    {
+      return find(key)->_value;
+    }
+  };
+  
+  struct Node : Tree
+  {
+    Mapping *get_mapping(Mapping *in)
+    {
+      return in->node();
+    }
+  };
+  
+  struct Branch : Tree
+  {
+    Tree *_left;
+    Tree *_right;
+  
+    Branch (Tree *left, Tree *right) : _left(left), _right(right) {}
+  
+    Mapping *get_mapping(Mapping *in)
+    {
+      return in->branch()->find(_left)->find(_right);
+    }
+  };
+  
+  int main ()
+  {
+    // tests
+    Tree *t1 = new Node();
+    Tree *t2 = new Branch(t1, t1);
+    Tree *t3 = new Branch(t2, t1);
+    Tree *t4 = new Branch(new Node(), new Node()); // equal but not identical to t2
+    Tree *t5 = new Branch(t4, t3);
+    Mapping m;
+  
+    m.set(t4, 1);
+    m.set(t1, 2);
+    m.set(t5, 5);
+    assert( m.get(t4) == 1 );
+    assert( m.get(t1) == 2 );
+    assert( m.get(t2) == 1 );
+    assert( m.get(t5) == 5 );
+  
+    m.set(t2, 3);
+    m.set(t5, 6);
+    m.set(t3, 4);
+    assert( m.get(t2) == 3 );
+    assert( m.get(t3) == 4 );
+    assert( m.get(t4) == 3 );
+    assert( m.get(t5) == 6 );
+    cout << "All tests succeeded" << endl;
+  
+  }
+--DaveWhipp
+
+''I am very impressed. It seems you win the challenge! However, I find it strange that you both have a special Mapping for a node, and a value. Only one should ever be used in every Mapping object, right? -- StephanHouben''
+
+You are right. A 'union' could fix that. But there are other problems, too. At the moment, even a single-node tree requires 2 Mapping objects to represent the mapping - and the terminal mapping never uses the _branch or _node members. The reason is simple: the simple recursive traversal of the tree doesn't tell me when I reach the end. So my implementation goes one mapping past the end to find the associated value. Here's one possible optimized version; an alternative would introduce a special Left''''''Mapping class, to avoid the union and the flag:
+
+  #include <assert.h>
+  #include <iostream>
+  
+  class Mapping;
+  
+  struct Tree
+  {
+    virtual Mapping *get_mapping(Mapping *in, bool parent_is_rightmost) = 0;
+    virtual ~Tree() {}
+  };
+  
+  struct Mapping
+  {
+    union
+    {
+      int value;
+      Mapping *map;
+    } _node;
+    Mapping *_branch;
+  
+    Mapping ()
+    {
+      _node.map=0;
+      _branch=0;
+    }
+  
+    Mapping *node()
+    {
+      if (!_node.map) _node.map = new Mapping;
+      return _node.map;
+    }
+  
+    Mapping *branch()
+    {
+      if (!_branch) _branch = new Mapping;
+      return _branch;
+    }
+  
+    Mapping *find(Tree *key, bool parent_is_rightmost)
+    {
+      return key ? key->get_mapping(this, parent_is_rightmost) : this;
+    }
+  
+    void set ( Tree *key, int value )
+    {
+      find(key, true)->_node.value = value;
+    }
+  
+    int get ( Tree *key )
+    {
+      return find(key, true)->_node.value;
+    }
+  };
+  
+  struct Node : Tree
+  {
+    Mapping *get_mapping(Mapping *in, bool parent_is_rightmost)
+    {
+      return parent_is_rightmost ? in : in->node();
+    }
+  };
+  
+  struct Branch : Tree
+  {
+    Tree *_left;
+    Tree *_right;
+  
+    Branch (Tree *left, Tree *right) : _left(left), _right(right) {}
+  
+    Mapping *get_mapping(Mapping *in, bool parent_is_rightmost)
+    {
+      return in->branch()->find(_left, false)->find(_right, parent_is_rightmost);
+    }
+  };
+  
+  int main ()
+  {
+    // tests
+    Tree *t1 = new Node();
+    Tree *t2 = new Branch(t1, t1);
+    Tree *t3 = new Branch(t2, t1);
+    Tree *t4 = new Branch(new Node(), new Node()); // equal but not identical to t2
+    Tree *t5 = new Branch(t4, t3);
+    Mapping m;
+  
+    m.set(t4, 1);
+    m.set(t1, 2);
+    m.set(t5, 5);
+    assert( m.get(t4) == 1 );
+    assert( m.get(t1) == 2 );
+    assert( m.get(t2) == 1 );
+    assert( m.get(t5) == 5 );
+  
+    m.set(t2, 3);
+    m.set(t5, 6);
+    m.set(t3, 4);
+    assert( m.get(t2) == 3 );
+    assert( m.get(t3) == 4 );
+    assert( m.get(t4) == 3 );
+    assert( m.get(t5) == 6 );
+    cout << "All tests succeeded" << endl;
+  
+  }
+----
+
+In ObjectiveCaml, this is a fairly simple program:
+
+ module O''''''rderedTree = 
+ struct
+ (* Define a recursive type for mappings *)
+
+ type t = Leaf | Branch of (t * t) ;;
+
+ (* Define an ordering function
+   -1, 0, 1 represent less than, equals, greater than, respectively *)
+ let rec compare = fun t1 t2 ->
+   match (t1, t2) with
+    (Leaf, Leaf) -> 0
+  | (Branch _, Leaf) -> -1
+  | (Leaf, Branch _) -> 1
+  | (Branch (l1, r1), Branch (l2, r2)) -> 
+      let left_compare = compare l1 l2 in
+        if left_compare = 0 
+         then compare r1 r2
+         else left_compare ;;
+ end ;;
+
+ (* Create a new mapping module given our Ordered type *)
+ module T''''''reeMap = Map.Make(O''''''rderedTree);;
+
+ open O''''''rderedTree;;
+ open T''''''reeMap;;   (* Bring our functions into the toplevel *)
+
+ (* Tests *)
+ let t1 = Leaf;;
+ let t2 = Branch(t1, t1);;
+ let t3 = Branch(t2, t1);;
+ let t4 = Branch(Leaf, Leaf);;
+ let t5 = Branch(t4, t3);;
+ 
+ let m = empty;; (* Map.empty is the starting map *)
+
+ let add_list = fun origmap item_list ->
+   List.fold_left (fun map (key, value) -> add key value map) origmap item_list;;
+
+ (* Note that the mapping functions do not alter the map that is passed in,
+    we need to keep supplying the map and holding on to the return value, this
+    could be wrapped up in a class if you want to keep the semantics of a map
+    in other languages
+ *)
+
+ let m = add_list m [(t4, 1); (t1, 2); (t5, 5)];;
+ assert(find t4 m = 1);;
+ assert(find t1 m = 2);;
+ assert(find t2 m = 1);;
+ assert(find t5 m = 5);;
+
+ let m = add_list m [(t2, 3); (t5, 6); (t3, 4)];;
+ assert(find t2 m = 3);;
+ assert(find t3 m = 4);;
+ assert(find t4 m = 3);;
+ assert(find t5 m = 6);;
+ print_endline "Passes all tests";;
+-- TomCrimi
+
+''But this doesn't implement the original algorithm, and it doesn't satisfy the "traverse only once" rule. -- StephanHouben''
+
+Sorry, I didn't notice that the first time around, the word 'mapping' stuck to my head. In any case, I've rewritten it to use tries just as you have. It can use some cleaning, but it passes the unit tests, and the requirement of visiting each node once.
+
+ exception Not_Found;;
+
+ type tree = Leaf | Branch of (tree * tree) ;; 
+ type 'a trie = Node | Tree of ('a trie * 'a trie * 'a option) ;;
+
+ let add = fun trie tree value ->
+   let rec add' = fun trie treel value ->
+     match (trie, treel) with
+ 	(Node, [Leaf]) -> Tree (Node, Node, Some value)
+      | (Node, Leaf::bl) -> Tree (Node, add' Node bl value, None)
+      | (Node, Branch (l, r)::bl) -> Tree (add' Node (l::r::bl) value, Node, None)
+      | (Tree (tl, tr, _), [Leaf]) -> Tree (tl, tr, Some value)
+      | (Tree (tl, tr, v), Leaf::bl) -> Tree (tl, add' tr bl value, v)
+      | (Tree (tl, tr, v), Branch (l, r)::bl) -> 
+          Tree (add' tl (l::r::bl) value, tr, v)
+  in
+    add' trie [tree] value
+ ;;
+
+
+ let find = fun trie tree -> 
+   let rec find' = fun trie treel ->
+     match (trie, treel) with
+	(Node, _) -> raise Not_Found
+      | (Tree (tl, tr, v), [Leaf]) ->  v
+      | (Tree (tl, tr, v), Leaf::bl) -> find' tr bl
+      | (Tree (tl, tr, v), Branch (l, r)::bl) -> find' tl (l::r::bl)
+      | _ -> raise Not_Found
+  in
+    match (find' trie [tree]) with
+	Some v -> v
+      | None -> raise Not_Found 
+ ;;
+
+
+ (* Tests *)
+
+ let add_list = fun origmap item_list ->
+   List.fold_left (fun map (key, value) -> add map key value)
+   origmap item_list;;
+
+ let t1 = Leaf;;
+ let t2 = Branch(t1, t1);;
+ let t3 = Branch(t2, t1);;
+ let t4 = Branch(Leaf, Leaf);;
+ let t5 = Branch(t4, t3);;
+
+ let m = Node;; (* Map.empty is the starting map *)
+ let m = add_list m [(t4, 1); (t1, 2); (t5, 5)];;
+ assert(find m t4 = 1);;
+ assert(find m t1 = 2);; 
+ assert(find m t2 = 1);; 
+ assert(find m t5 = 5);;
+
+ let m = add_list m [(t2, 3); (t5, 6); (t3, 4)];;
+ assert(find m t2 = 3);;
+ assert(find m t3 = 4);;
+ assert(find m t4 = 3);;
+ assert(find m t5 = 6);;
+ print_endline "Passes all tests";;
+-- TomCrimi
+
+----
+
+  O'Caml allows recursive types if you use the right options. The option is -rectypes as isn't documented in the man pages.  --NoelWelsh

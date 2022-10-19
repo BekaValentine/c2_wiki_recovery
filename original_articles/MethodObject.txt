@@ -1,0 +1,164 @@
+From pages 34-37 of the SmalltalkBestPracticePatterns.
+
+If a method has several temps and parameters, it can be difficult to break it up with ComposedMethod. Each sub-method requires too many parameters for the code to read well.
+
+Instead:
+	0 Create a new class
+	0 Give the class an instance variable for each temporary variable and parameter of the original method, plus an instance variable for the original receiver, if it is used
+	0 Give the class one method, compute, whose body is the body of the original method
+	0 Replace the original method with one that creates an instance of the new class, constructed with the parameters and receiver of the original method, and invokes "compute"
+
+Note that this process consists of two smaller refactorings: steps 1-3, and step 4. TestEveryRefactoring.
+
+You will find that the new class is easy to refactor. The sub-methods that were so painful to separate before become trivial, because all the methods share the same name space.
+
+----
+This looks like a FunctorObject to me ... ''or when their use hinders clarity they can be considered PolterGeists.''
+----
+
+MethodObject is the twin brother of LexicalClosure. They're slightly different ways of implementing exactly the same concept: A function that can share its arguments among subfunctions without passing them explicitly. (And whose evaluation can be delayed after the arguments are passed!)
+
+This PythonLanguage MethodObject:
+ class Method''''''Object:
+     def __init__(self, x, y, z):
+        [store x, y and z]
+
+     def __call__(self):
+        [do stuff with x, y and z]
+
+     def sub(self):
+        [sub-function that has access to x, y and z]
+
+Could instead be written as a LexicalClosure, if Python supported them*:
+ def Method''''''Function(x, y, z):
+     def compute():
+         [do stuff with x, y and z]
+
+     def sub():
+         [sub-function that has access to x, y and z]
+
+     return compute()
+
+And the syntax for using either is identical!
+ m = Method''''''Object(x, y, z)
+ print m()
+
+ c = Method''''''Function(x, y, z)
+ print c()
+
+* Python does give you read access to LexicalVariables, but not full write access (due to its name-binding and scoping rules).
+* ''As of Python 3 (and possibly earlier Pythons), complete LexicalScoping can be achieved using the nonlocal keyword. The following version gives each subfunction both read and write access to x, y, and z.''
+
+ def Method''''''Function(x, y, z):
+     def compute():
+         nonlocal x, y, z
+         [do stuff with x, y and z]
+
+     def sub():
+         nonlocal x, y, z
+         [sub-function that has access to x, y and z]
+
+     return compute()
+
+----
+
+
+''Example anyone?''  See MethodObjectExample
+
+''I was hoping for an actual or somewhat realistic domain UseCase rather than code framework.''
+
+------------
+
+I once created a method object to clean up some transaction-pairing code in a portfolio management system. Much to my surprise, the new object began to take on a pivotal role in our evolving system, to the point that the initial method was reduced from producing answers to producing objects. That is, it became a FactoryMethod for objects we now realized were more ''in the domain'' than the answers we had previously sought.
+
+The object had been named after the method that spawned it, a verb turned into a noun. With its increased importance, we thought the object should be named properly but found that our domain specialists couldn't help. They ended up adopting our nominalization.
+
+I've cited this example many times as a case where evolutionary modeling, refactoring, and simple source code esthetics led to a discovery ''in the domain'' unreachable by other means. I've been quizzed on this by my analysis-oriented friends: (surely) if I had worked a little harder up front, couldn't I have discovered this thing and have avoided ever programming it any other way? But the answer is no. It wasn't there as a concept in the expert's mind until we put it there. The object would remain lost today were it not for disgust for code that failed to be clear.
+-- WardCunningham
+
+See WhatIsAnAdvancer.
+
+----
+I agree that these things cannot generally be found at analysis time; mostly because the things that in my experience have wanted to become MethodObject''''''s tend to be algorithms. While doing OOA, algorithmic complexity is usually not a consideration. I suppose you ''could'' anticipate that you would need an algorithm if you set yourself up to look for them, but most of us don't. -- RussellGold
+----
+I believe that one line of the evolution of objects has them grow out of stack frames and closures. (In this pattern, it's the stack frame that becomes the object - the instance - rather than the method itself.) This isn't always an illuminating way of looking at what objects are, but it can help understand patterns like this.
+-- DaveHarris
+----
+To a CPU architect hardware guy, the MethodObject refactoring is quite interesting, since it moves data that would be stack allocated into the object. As DaveHarris comments, some object patterns may have evolved out of stack frames and closures. Now, if the MethodObject is stack allocated, as in C++, then the data members of the object will be stack allocated; but in languages like Java and, I believe, Smalltalk, the MethodObject will be heap allocated. In many ways, MethodObject is a semi-reentrant form of the old FORTRAN calling convention, where a stack memory region was allocated for parameters.
+
+This is interesting because CPU architects are just getting around to hardware optimizations based on the stack pointer. Specialized stack caches were found in the Intel 960 and an AT&T chip. More recently, memory renaming hardware has been proposed that essentially converts stack references to registers.
+
+Obviously, if refactorings like MethodObject are widely used, and move data from stack to heap, these stack oriented hardware optimizations will be less useful. That's okay: there are more general techniques. It's just that the stack-oriented techniques are so much easier to implement.
+
+Further, good compilers can often arrange to pass parameters in registers. C++ compilers almost certainly will not be able to do so for a MethodObject; even Java compiler disambiguation is probably incapable of register allocating a MethodObject.
+
+Oh, yeah, doesn't a bit of special care need to be taken if the function refactored by MethodObject is potentially recursive, or even just reentrant?  A MethodObject needs to be allocated for each potentially simultaneously active calling context; allocating the MethodObject as a local will suffice.
+
+I'm interested in any other implications of object refactorings.
+
+-- AndyGlew
+
+--
+
+That is an interesting point. But in general I believe compilers should be able to optimize anyway. To address your specific point: Java _can_ actually do "escape analysis" (since Java SE 6), which means it will track instances created within a method. If the instance never "escapes" the method, it can safely be allocated on the stack. Thus method object instances might actually be put on the stack by the optimizer. See http://www.ibm.com/developerworks/java/library/j-jtp09275.html for details.
+
+-- Sebastian Leske
+-----
+
+SmalltalkBestPracticePatterns and the RefactoringBook both say that each parameter from the old method should become a parameter on the constructor of the MethodObject. Intuitively I would have made them parameters on the "compute" method (and maybe even the parameter that is pointing back to the original object). Any advantages/disadvantages fo either solution? -- MarkoSchulz
+
+''Well, sending them to the constructor can be more optimal if you are going to reuse the MethodObject over and over again with the same inputs. However, sending them to the compute method allows you to use the same object with different inputs.''
+
+Passing the parameters to the constructor makes it easier to refactor your new object, since you won't have to muck with parameters every time you move code out of your ''compute'' method into another method. Also, being able to use the same method object with different inputs is an optimization done to avoid the cost of an extra object creation and deletion. Like all optimizations, it should never be done until necessary.
+
+Passing the parameters to the constructor is thread-safe. Otherwise, you must ensure that the compute method is synchronized so it can never be called in the middle of another computation. -- JuanCasares
+
+Conceptually, the reason you're making a MethodObject is that you're saying "this algorithm is complicated enough to make an object with its own instance identity." That identity is determined by its inputs, since that's the only thing to distinguish one instance of your MethodObject class from another. If you pass the inputs in for the "compute" method, than you don't have any significant object identity ... you might as well just make it a class method on a utility class at that point. -- francis
+
+''Specifically, if you really need the MethodObject, then the first thing the compute method must do is assign the parameters to the instance variables.  -- JackRich''
+
+I'm much, much too lazy to do that.
+
+What I'm doing right now is passing all of the bindings (variable names -> values) when I instantiate the method object. Then I have a single generic method to suck all of the values into the variables. That method works no matter how many variables there are or what they're named.
+
+But I'm changing that so that instead of constructing a bindings dictionary and then passing it, I'm going to programmatically call all of the accessors in the method object with the appropriate value. This would allow me to perform basic transformations on the values as they come in, making my compute method all but disappear. It's now down to just a result object creation method.
+
+The advantages of using distinct accessors for each variable are that you can easily see,
+* what values don't have any processing on them
+* what values are discarded (make a #junk: method that does nothing)
+* operations that work on multiple values from those that work on single values
+
+-----
+
+''Refactoring into a MethodObject is one of the most powerful refactorings I know, but I have yet to grasp really ''why'' it has such a big impact on the code. With most refactorings I can imagine beforehand how much nicer the code will be, but after introducing a MethodObject I'm often gladly surprised. I may even use this refactoring too seldom because I can't imagine the result.''
+
+The namespace inside of a method is rather limited. That inside of an object is much more powerful, as it can be shared between methods. Long stretches of logic require more powerful mechanisms to make their structure clear. Perhaps that's why moving from a lexical namespace to an object namespace does so much to clarify the logic. The sapling has been transplanted from a pot to real soil, and now it can grow more comfortably.
+
+''If you objectify something explicitly, you are free to really work with it. You are not limited to the implicit operation of the programming language. For example, say your method needs to live in a different module, even a different machine, you have an identifiable lump which may be moved, the 'dotted lines' for such a restructuring already exist.''
+
+''I tend to think of everything as a simple object in some sense. Sometimes, the identity/encapsulation of the object is not at the same scale as the object so it cannot be treated individually. That is a form of optimization away from my conceptual default that every entity has an explicitly structured identity. I particularly like Linda for its support of this approach. Smalltalk appears to have a similar perfume.''
+
+A shorter way to say the above is simply that you're using the method object to implement DynamicScoping. See DynamicScopingInSmalltalk for an example.
+
+----
+
+Recently, I've been working on an ObjectiveCee object, "OSBlock", that acts like a Smalltalk block.  I've made a lot of progress, but the parsing(of a string representing objective-c code) represents some complexity. I've ended up having a parser MethodObject that turns a string into a tree structure by means of a string-scanning MethodObject that scans through a string and keeps track of 'depth'(of square brackets: in [foo bar:[baz gaz]], foo bar: is at depth 1, and baz gaz is at depth 2) so that another MethodObject can 'chunk' a string according to depth(such that the aforementioned example string is chunked into: "_chunk_1_0", "foo bar:_chunk_2_0", and "baz gaz").
+
+MethodObject is a very powerful and useful refactoring, that gets a lot of noise out of an existing object.  ''Usually, when a whole bunch of code is sitting around, it could be more useful somewhere else''- especially if it declares a ton of temps, in which case it's practically screaming 'make me an object.'  The string chunking method was larger than many of my existing objects were, the first time I implemented it. I MethodObject''''''ed it, then reimplemented it using the old interface, and it was nice.
+
+--JoeOsborn
+
+----
+I've found this refactoring very useful.
+I worked at a company where a NetNegativeProducingProgrammer was regarded as an all-powerful guru.  Lots of LongMethodSmell in his code.  I had to work with some functionality which he had written, in a very non-ObjectOriented way, as a gigantic static method on a class that was essentially a placeholder to put the method.
+
+The class was actually not intended to be instantiated--this was in JavaLanguage, and he'd made the constructor private.  I made the constructor public, and made it take all the data it needed in arguments and put it in instance variables.  Suddenly I realized I'd done the MethodObject refactoring, which I'd read about on this page.  After that, the ExtractMethod refactorings I had wanted to do before suddenly became very easy.  With ExtractMethod and RenameMethod refactorings, I removed the LongMethodSmell.
+
+Then I discovered that this class and another class were similar, and performed an ExtractSuperclass to make them siblings.--ApoorvaMuralidhara
+
+
+----
+
+I'm looking for a MethodObjectExample before I proceed. --TerryLorber
+
+See DynamicScopingInSmalltalk for an example.

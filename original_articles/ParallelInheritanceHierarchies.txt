@@ -1,0 +1,255 @@
+A ''parallel inheritance hierarchy'' is a set of classes ''P''1 -- ''Pk'' and ''Q''1 -- ''Qk'', such that for all ''1 <= i,j <= k'', the relationship ''Pi'' <: ''Pj''implies ''Qi'' <: ''Qj''.  Sometimes, a weaker conclusion (''Qi'' <:= ''Qj'') may be used, but the degenerate case of that is ''Qi := Qj'' for all ''i'' and ''k''.  Not very interesting.
+
+(In the above, <: means strict subtype, <:= means subtype, := means type equivalence).
+
+Often times, there may be a type function (such as a CeePlusPlus template or JavaGenerics) mapping ''Pi'' to ''Qi''.  At other times, the hierarchies are constructed manually.
+  
+
+Examples:
+
+	* Transactions and accounts, for different types of transactions and account (securities, money, services, goods of type X, etc).  A transaction can only be posted to an account of the same type.
+
+	* MementoPattern: Originators and Mementoes often form parallel hierarchies.
+
+	* Networked node using a standard protocol.  Protocol messages in a hierarchy containing non-standard extensions to the protocols in a parallel hierarchy.
+
+	* .... add other examples.
+
+----
+
+Moved here from OnceAndOnlyOnce:
+
+In the slides for XpImmersion, RobertMartin mentions parallel inheritance hierarchies as an example of OnceAndOnlyOnce. I find it to be one of the hardest repetitions to ReFactor away, though. Does anyone have any hot tips? --JohannesBrodwall 
+
+There are two ways to go. To remove the parallel: refactor either or both hierarchies until their members are congruent, then collapse pairwise. To remove duplication between the parallels: define distinct responsibilities refined by each hierarchy and relocate methods as appropriate. -- WardCunningham 
+
+This all became a little abstract for me. What about an example? Say I have an accounting and logistics system. I have an abstract class Account and an abstract class Transaction. Each transaction transfers something from one account to another. Now, I have several types of accounts: Abstract Securities''''''Account, Bonds''''''Account, Stock''''''Account, Money''''''Account and Services''''''Account. For each type of account there is a parallel type of transaction, so abstract Securities''''''Transaction, Bonds''''''Transaction, Money''''''Transaction and Services''''''Transaction. Each transaction must have a counter-transaction, and all transactions posted towards an account accumulate to create the balance (maybe this is a third parallel hierarchy). Now what? -- JohannesBrodwall 
+
+A good example indeed. My experience on WyCash was that the prevailing domain classification exerted way too much influence over our initial hierarchies as it may have yours too. We couldn't merge the two hierarchies because Transaction and Account instances have different lifetimes. Instead, as per the second choice above, we focused on redistribution of responsibilities which turned out as follows. 
+
+	* Transactions -- long lived private factual information 
+	* Accounts -- organizational structure related to reporting 
+	* Calculators -- industry accepted analytic components 
+	* Advancers -- mechanics of interpreting transactions 
+
+We were stunned at the discovery of advancers two years into maintenance. We never would have gotten this far without a long term commitment to aggressive refactoring. -- WardCunningham 
+
+See WhatIsAnAdvancer
+
+I am not sure if I follow you.  How does this solve the parallel inheritance?  Part of the problem is that I am not sure I understand what an advancer is.  Could you provide an example? -- JohannesBrodwall
+
+----
+
+Another approach is to factor the domain type information into QuaTypes. Then, in the first example given, transactions and accounts would just be transactions and accounts, and would delegate enforcing the rules that were in the hierarchy to their qua type. --KeithBraithwaite
+
+----
+
+I second the above question, as the current version of WhatIsAnAdvancer assumes too much knowledge of accounting, or something else I'm deficient in.  But I tend to agree that parallel hierarchies are evil, having worked on one large system that had three layers with hundreds of classes each, all for database access.  Unfortunately, the lines between the layers were a little fuzzy (at least after a few maintenance cycles by dozens of programmers) so when you were looking for a transaction detail you might find it in any of the three.
+
+However, there are cases where it's hard to avoid them and maintain cohesive class definitions, and I'm wondering if you or someone else has figured out how to approach this.  Let me give a real example.  Right now, I'm setting up a class hierarchy to visually represent some domain objects, let's call them Apples, Oranges, and Bananas.  My first instinct is to follow the MVC pattern and split the attributes of an Apple (mass, color, etc.) from the attributes of its display (coordinates, brush, etc.)  Considering that both the basic state/behavior and the display state/behavior are non-trivial, and in particular that I plan to support multiple display technologies (for example, GUI and HTML), MVC seems to make darn good sense.
+
+However, these classes are going to need their own display code.  I've thought about abstracting a single view that works from the basic attributes, or some meta-display level added to the models, but there doesn't seem to be a way to do so that isn't entirely too overwrought to be sensible.  So I may need at least three classes for each fruit: a model, an HTML view, and a GUI view.  This is ugly, as adding a new fruit requires adding all three classes and tying them together in two different controllers.  But on the other hand, putting the attributes and methods for handling HTML into the model object seems even worse, especially considering it may be running in a GUI that never uses them.
+
+So this seems like a case where parallel hierarchies are the lesser of two evils, but I'd gladly take a better solution if I could find one.  Any thoughts?  -- ScottVachalek
+
+----
+
+It seems the question is still open - given a parallel class hierarchy, a: can someone explain why this is troublesome, and b: how to refactor out?  Given the model below:
+
+
+
+	A ------------->pAA
+	^		^
+	|		|
+	_____		_______
+	|	|	 |	|
+	B	C	pBB	pCC
+
+The pAA hierarchy does something, it doesnt matter what.  Then the need to persist that structure comes about, and the A hierarchy is written.  Each class in the A hierarchy knows how to store its equivalent class in the pAA hierarchy.  Firstly, is this what we are talking about when we say parallel hierarchy (that might sound like a stupid question, but its better to make sure we are all clear).  Secondly, if that is a bad design, can smoeone explain why and give an example of how to improve it?
+
+----
+I've come to accept that ParallelHierarchies are a necessary evil in some cases (evil because it is a form of duplication) such as the two cited here.  The question I would like to resolve, is what is the best way to relate the two hierarchies.  I can see three choices:
+	* reflection with a mandatory relationship between names (UGH)
+	* an external map object (factory) that has to be maintained as you add new classes
+	* have one hierarchy responsible for constructing its corresponding object in the other hierarchy
+
+None of these give me warm fuzzies.  Comments from the experts?
+-- DavidCorbin
+----
+I have made (what I consider to be) legitimate use of parallel hierarchies in the past - when entrenched in CORBA/RMI-style design.
+
+I felt that it would be advantageous to provide a very real physical split in the class implementation:interface divide...
+
+  /src/myproject/classes
+  /src/myproject/interfaces
+...of course the two directory structures (and class structures) mirrored each other - my convention was to name the interface classes after the implementation class, but with an 'I' prefix - and I could then provide one source-tree each to the client (interfaces) and server (classes) development teams. They never needed (nor should they) to meddle with each others' code. 
+
+An unintended side-effect was that it really aided the junior programmers' appreciation of the benefit of cleanly defined code layers!
+
+I could have stored each interface class alongside its implementation class but, apart from the additional housework required to maintain the source-trees, isolating the two distinct codebases seemed to better match their purpose.
+
+I agree that this is a very real CodeSmell, but not necessarily indicative of poor design.
+
+-- DanKane
+----
+
+Does multiple dispatch offer a valid way to remove parallel hierarchies?
+----
+
+Here I will try to list some ways of dealing with ParallelInheritanceHierarchies, their pros/cons, and when to use them.  The following will assume that there are only two hierarchies that are parallel to each other.  It should be similar for more than two hierarchies.  Defining the scope is the main factor that affects how parallel hierarchies are dealt with.
+
+* Keep the parallel hierarchies
+** Scope
+*** Broad scope that is hard to limit. 
+*** Maximum flexibility is required.
+** Advantages
+*** Maximum flexibility.
+** Disadvantages
+*** Harder to maintain with the risk that changing one class might require changing the other.  
+*** Two subclasses need to be created when introducing a new concept.
+
+* Keep a partial parallel hierarchy with the rest collapsed
+** Scope
+*** Uncertain to whether to distribute responsibilities in one hierarchy or more.
+*** Intermediate step when collapsing two hierarchies into one.
+** Possible advantages
+*** Certain flexibility.
+*** Keep the option to use single or parallel hierarchies open.
+** Possible disadvantages
+*** Limited by the representing factory.
+** How
+*** Add FactoryMethod to the main/controlling hierarchy that will return object in another hierarchy.
+*** For each class pair that needs collapsing create a single class that implements both interfaces or through MultipleInheritance and return itself for the FactoryMethod.
+*** Other class pair can be left alone if both of them contain many methods.
+** Example
+*** In the ModelViewController framework, any view/controller pair that only contains few methods in each class can probably be collapsed into one while leaving other pairs intact.
+
+* Keep one of the hierarchies and collapse the other hierarchy into one class
+** Scope
+*** One hierarchy can be represented using one class and use MoveMethod to move the methods to the other hierarchy.
+*** When one of the hierarchies contains few methods in total.
+** Possible advantages
+*** Easier to maintain and easier to look up the few methods that perform similar tasks. 
+** Possible disadvantages
+*** Cluttering the classes in the remaining hierarchy.
+*** The only class from the collapsed hierarchy could be too large.
+** How
+*** Use MoveMethod to move methods into the main hierarchy and then abstract the common properties and common methods into a single class.  ''or''
+*** If each classes in the other hierarchy contain one or two methods, then move all those methods into a single class and append those methods with the name of class where it originates from.
+*** Now add DoubleDispatch by adding a method in each class in the remaining hierarchy with one argument that accepts the class from the collapsed hierarchy.  Then in that method, call the appropriate method in the collapsed hierarchy.
+** Example
+*** A possible refactoring for the above Account/Transaction example, would be collapse the Transaction hierarchy into a single Transaction class while the relevant manipulation methods would be moved into the Account hierarchy.
+
+
+* Collapse the two hierarchies into one hierarchy
+** Scope
+*** When both hierarchy contains few methods and the responsibilities seem to overlap.
+** Advantages
+*** Single hierarchy to maintain.
+** Possible disadvantages
+*** Having huge classes.
+** How
+***As described in RefactoringImprovingTheDesignOfExistingCode using MoveMethod and MoveField to finally remove the class.
+
+The approach to deal with ParallelInheritanceHierarchies would be to understand and define the scope of the current situation and use CollapseHierarchy or PairWiseCollapsing when there are only few methods in the single hierarchy or in one of the class pair.
+
+--ChaoKuoLin
+----
+If ParallelInheritanceHierarchies are required for a design, doesn't that indicate that the LiskovSubstitutionPrinciple is violated?
+
+Also, how do you prevent ParallelInheritanceHierarchies of TestCase''''''s?  That is:
+
+	A <------------	AbstractTest''''''A
+	^		^
+	|		|
+	|_______	|_______
+	|	|	|	|
+	B	C	TestC	TestB
+
+That is the one issue which makes me nervous about UnitTest''''''s. --JimmyCerra.
+
+----
+I have a similar problem. I have classes A, B, C and D. B, C and D inherit from A. The data and functionality in these classes solves problem X quite nicely. I now have a new problem Y, that could be solved by the same group of classes if I added an attribute to class A and changed the behavour of classes C and D a bit. The new attribute in A can not be empty. The problem is that there is no equivalent data in problem X that would meet the requirements for problem Y and changing the functionality for classes C and D to solve Y would break X.
+
+What really irks me about this problem is that the existing hierarchy contains about 90% of the data and behavour that I need. Anybody else have this problem?
+
+
+	A	A+	<--- Class A+ has one additional attribute added to it
+	^	^		The attribute does not affect B, C and D
+	|	|
+	+- B	+- B
+	+- C	+- C~	<--- Because of the addition of one attribute in A+ some of
+	+- D	+- D~	behavour of C~ and D~ differes from C and D however the
+			 attributes in C~ and D~ is identical to the attributes 
+			 in C and D
+JohnGriffin
+
+''Josh, can you provide more context about the problem?  You solution seems to violate the LiskovSubstitutionPrinciple.  It could be solved via the AdapterPattern, BridgePattern, or DecoratorPattern.  The Decorator could be useful:''
+	A <--------+
+	^	  |
+	|	  |
+	+- B	|
+	+- C	|	+- D	\/
+	+--------- ADecorator
+''Here's an example in Java:''
+	public interface A {
+	public Object oldMethod1();
+	public Object oldMethod2();
+	/* ... */
+	}
+
+	public class B implements A { /* ... */ }
+
+	public class C implements A { /* ... */ }
+
+	public class D implements A { /* ... */ }
+
+	public class ADecorator implements A {
+	private A impOfA;
+	public ADecorator(A a) {impOfA = a;}
+	public Object newMethod() { /* ... */}
+	public Object oldMethod1() { return impOfA.oldMethod1();}
+	public Object oldMethod2() { return impOfA.oldMethod2();}
+	/* ... */
+	}
+''The new behavior is added via newMethod (you can add more).  Old functunality is delegated to the other instance of A.  That is...''
+	new ADecorator(new B());
+'' ...or something like that.  It still satisfies the LSP, with the extra functunality available if you need it.''
+
+''-- Jimmy Cerra''
+
+I don't know if this will make sense. Here is the hierarchy I have:
+			Task
+			  ^
+			  |
+	+-----------+---------+----------------+
+	|		|	 |		|
+  ActionItem	Meeting DefectReport	ChangeRequest
+
+
+A Task is related to a ProjectRelease like so:
+
+	Project ----* ProjectRelease ----* ReleaseTask ----* Task
+
+So every release of a project has a number of tasks to be completed. These tasks can be different things: meetings to attend, bugs to fix, etc. This hierarchy is modelled to fit over a relational database schema where ActionItem etc. has a foreign key, task_id, referencing the primary key of task. The idea being that a user of the system can look at the contents of the Task table and see a summary of what tasks they need to perform without having to scan additional tables. ReleaseTask contains foreign key references to ProjectRelease and Task.
+
+Now, there is a new module, committees that needs to be built. The original idea is to reuse part of the Task hierarchy so you would have something like:
+
+	ReleaseTask ----* Task *---- CommitteeTask
+
+This would allow the Committee to reuse the existing code and data structures. The alternative at this point seems to be duplicating part of the Task hierarchy or adding new classes like ProjectReleaseMeeting and CommitteeMeeting.
+
+''I'd go with delegation (i.e. the original idea). -- JimmyCerra''
+
+----
+
+MixIn often solves this rather efficiently as you can extract common features into them thus removing the problem entirely. In this example:
+
+	* Transactions and accounts, for different types of transactions and account (securities, money, services, goods of type X, etc).  A transaction can only be posted to an account of the same type.
+
+In this particular case you would extract high level functions pertaining to transaction processing into a MixIn and include it into different classes that need to process transactions that may or may not have common parentage.
+------
+When you get funky overlaps, perhaps it's time to consider something based on SetTheory instead of trees. It's a smell that should make you stop and go, "maybe I'm using the wrong abstraction". --top
+----
+
+See also TransactionsAndAccounts, LimitsOfHierarchies ContraVsCoVariance

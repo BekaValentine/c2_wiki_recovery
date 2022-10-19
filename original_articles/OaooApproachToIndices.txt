@@ -1,0 +1,62 @@
+I've been toying with this idea in my head for a while:  A OnceAndOnlyOnce approach to maintaining object indices using an ObjectOrientedDatabase.  I haven't tried it yet because my current project's query requirements are very light and would do well to have no query indices.  I wonder what other's think?
+-----
+GemStonej (and I assume GemStone/S) allow listeners to be notified which objects have changed when a transaction is about to commit through a combination of GsSessionActionListenerIF.precommit() and the GsSessionIF.getNotifyObjects() messages.  Note, because of GemStonej's implementation, this would only work for already committed objects (which is one of my GemStoneGripes).
+
+Suppose a singleton IndexManager object registered itself as a listener and, on precommit(), it cycled through the list of all the objects that have been changed filtering for all of the objects implementing an interface called Indexable:
+
+ public interface Indexable {
+    public void indexInto(Index i);
+ }
+
+So the IndexManager code would look something like:
+ indexableObject.indexInto(this);
+
+The indexable object would then provide the necessary data elements to the master index such as:
+ public void indexInto(Index index) {
+    index.put("color:magenta", this);
+ }
+
+Of course, for large data sets with complex query operations, you might want to improve the private protocol between Indexable objects and Index to handle sub-indices, or class-based indices or whatever.
+----
+
+So, you have to do indexing by hand (it's not transparent as it would be in any real database). More, you are unsure if it works and how it works with transactions. I'd like to warn you that a pre-commit notification is not good enough for maintaining an index.
+
+Not only you have to do indexing by hand, but you also have to do queries by hand.
+
+Is this only a Gemstone/J/S limitation, or is it common across several OODBs. --CostinCozianu
+
+''Anybody care to tell us how is it supposed work under standard ODMG model ?''  Well, I found out. It is an implementation matter and therefore ODMG 3.0 leaves it to implementations. And justly so. --CostinCozianu
+
+----
+
+Also object changes and index changes need to be done in a transactional context.
+It would be bad to partially update and object and/or one or more indexes
+''Yes, I agree.  Because it is a precommit, all of this would occur in the same commit scope.''
+
+That's a big wheel you're reinventing there, if I understand you. Good luck :) -- RichardHenderson
+
+[''chuckle''] wouldn't be the first time I've choked on a wheel too big to swallow (yes, I did try to mix more metaphors in there!)...
+
+It seems to me the difficult part lay in the operations that the index needs to perform.  In my experience, index operations need to be:
+	* simple lookup (give me all the widgets that are keyed under X), in which case the index implementation is simply a map of some sort, or
+	* range lookup (give me all the widgets that cost under X), in which case the index implementation is probably a B-tree.
+
+Finally, you need some sort of efficient intersection operation on the set of objects that the index returns.
+
+Note, I'm not talking about arbitrary queries on a data set and I'm certainly not talking about query optimization.  It's been my experience, though that most applications requiring persistence fall into one of two categories:  (1) OLTP where the queries are preset and application specific and (2) OLAP where the queries are dynamic and generally very complex.  The two rarely mix if, for no other reason, schemas acceptable for OLTP are generally not good for OLAP and vice versa.  I don't intend to address OLAP.  That's the domain of RDBMS's and they do that quite well.  I'm just considering the OLTP case.
+
+Sounds like a reasoned approach. The separation of OLTP and OLAP requirements is a good point. --RichardHenderson
+----
+
+''My dear friend, you can use the reference I gave you in SemanticBinaryModel to givbe you a HUGE head start in your wheel reinvention enterprise. See chapter 9, paragraph 9.1.2.2.1. ''
+
+Thank you for providing the exact reference.  I'll take a look at it.
+
+''But in the meantime, I wanted to ask you if you are absolutely sure, that Gemstone/J/S (including the latest and greatest versions) does not give you a CREATE INDEX facility ?'' CostinCozianu
+
+GemStonej (and I assume GemStone/S) has a index and query services.  I've never used them, though.  I probably should before I start down my hike, but one of its shortcomings is it only deals with primitive data types and a small selection of classes (basically, the data type object reflections and a few others).  
+
+This presents some problems, both theoretically and practically.  On the theory side, this implementation requires me to break encapsulation and create a dependency between whatever creates the index and the particular datatype of my key.  On the practical side, it would be impossible to provide a range index on my Fromidge class (they are orderable).  True, I could provide a mapping between integers and Fromidge instances, but this is cumbersome to maintain and an example of the same DatabaseImpedanceMismatch we've been discussing.
+
+Furthermore (I admit this is more of a personal issue), GemStone's query service works by mapping object instance variables to query attributes through reflection magic.  One practical problem of this is I could not, for example, put an index on a computed value, such as average.  I would have to have an average instance variable AND a getAverage() method. This is kind of distateful to me, though I can't really explain why.  
+

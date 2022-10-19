@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Instance Data Discussion
+      </h1>
+      <p>
+        Discussion related to the <a href="InstanceData.html">InstanceData</a> pattern of the <a href="ObjectBasedProgramming.html">ObjectBasedProgramming</a> pattern language.
+      </p>
+      <hr/>
+      <p>
+        If I read this correctly, you are simply suggesting using a <em>struct</em> to represent the data attributes of a given class. However, you seem to be moving a step further without actually spelling it out.
+      </p>
+      <p>
+        The reference to storage mechanisms implies that you would have a function to allocate and initialise the objects of a given class. It follows that you must also have a function to release an instance of this class.
+      </p>
+      <p>
+        I'm not sure this is strictly necessary. If you do not have the luxury of RAM for a heap, this implies an internal allocator - perhaps an array of objects. This means that RAM must be allocated permanently for the objects even when not in use.
+      </p>
+      <p>
+        It is often useful to be able to declare instances of (small) objects on the stack frame of the calling routine.
+      </p>
+      <p>
+        For example, let us say you have a system such as a scanning radio. Whenever the user presses the SCAN button, the radio proceeds to scan through the spectrum until it finds a frequency with a strong enough signal, then it stops. It also stops if it gets back to its starting point.
+      </p>
+      <p>
+        Some frequencies may be blocked for various reasons (they might be police bands for example). These are recorded in a list of "banned" frequencies.
+      </p>
+      <p>
+        I would not like the object responsible for processing the button press to know all the details of how many frequencies are available, which ones are blocked, and so on. So I have an Iterator class to handle this.
+      </p>
+      <code>
+        class SpectrumIter<br/>
+        {<br/>
+        private:<br/>
+        Frequency i;<br/>
+        Frequency firstUsable;<br/>
+        Frequency lastUsable;<br/>
+        Frequency *blocked;<br/>
+      </code>
+      <code>
+        Frequency NextCandidate();<br/>
+      </code>
+      <code>
+        public:<br/>
+        SpectrumIter ( Frequency startPoint );<br/>
+        Frequency Next();<br/>
+        };<br/>
+      </code>
+      <p>
+        All of the data in this class is private, but it is unlikely that an instance would be very long lived. So, in C I choose to expose the guts of the class in a struct, thus:
+      </p>
+      <code>
+        // SpIter.H<br/>
+      </code>
+      <code>
+        typedef struct SpectrumIter<br/>
+        {<br/>
+        char private[SI_PRIVATE_SIZE];<br/>
+        } SpectrumIter;<br/>
+      </code>
+      <code>
+        Frequency SpectrumIter_Construct( SpectrumIter *, Frequency startPoint);<br/>
+        Frequency SpectrumIter_Next( SpectrumIter * );<br/>
+        Frequency SpectrumIter_Value ( SpectrumIter *);<br/>
+      </code>
+      <p>
+        In the implementation, I might have
+      </p>
+      <code>
+        // SpIter.c<br/>
+      </code>
+      <code>
+        typedef union SpectrumIter_rep<br/>
+        {<br/>
+        SpectrumIter xRep;<br/>
+        struct<br/>
+        {<br/>
+        Frequency i;<br/>
+        Frequency startPoint;<br/>
+        } rep;<br/>
+        } SpectrumIter_rep;<br/>
+      </code>
+      <code>
+        static const Frequency firstUsable = ...;<br/>
+        static const Frequency lastUsable = ...;<br/>
+        static const Frequency blocked[] = { ... };<br/>
+        static const Frequency stepSize = ...;<br/>
+      </code>
+      <code>
+        static Frequency NextCandidate  ( Frequency f )<br/>
+        {<br/>
+        return (f > lastUsable-stepSize) ? firstUsable : f + stepSize;<br/>
+        }<br/>
+      </code>
+      <code>
+        static int FrequencyBlocked ( Frequency f )<br/>
+        {<br/>
+        int i;<br/>
+        int numBlocked = sizeof(blocked)/sizeof(blocked[0]);<br/>
+      </code>
+      <code>
+        for (i = 0; i < numBlocked && f < blocked[i]; i++ )<br/>
+        /* empty */ ;<br/>
+      </code>
+      <code>
+        return (i < numBlocked && f == blocked[i]);<br/>
+        }<br/>
+      </code>
+      <code>
+        void SpectrumIter_Construct( SpectrumIter *pThis, Frequency startPoint)<br/>
+        {<br/>
+        SpectrumIter_rep *this = *pThis;<br/>
+      </code>
+      <code>
+        this->rep.i = this->rep.startPoint = startPoint;<br/>
+        return SpectrumIter_Next(pThis);<br/>
+        }<br/>
+      </code>
+      <code>
+        Frequency SpectrumIter_Next( SpectrumIter *pthis )<br/>
+        {<br/>
+        SpectrumIter_rep *this = *pThis;<br/>
+        Frequency i;<br/>
+      </code>
+      <code>
+        for (i = NextCandidate(this->rep.i); <br/>
+        i != this->rep.startPoint; <br/>
+        i = NextCandidate(i))<br/>
+        {<br/>
+        if (!FrequencyBlocked(i))<br/>
+        break;<br/>
+        }<br/>
+      </code>
+      <code>
+        this->rep.i = i;<br/>
+        return i;<br/>
+        }<br/>
+      </code>
+      <code>
+        Frequency SpectrumIter_Value ( SpectrumIter *pThis);<br/>
+        {<br/>
+        SpectrumIter_rep *this = *pThis;<br/>
+        return this->rep.i;<br/>
+        }<br/>
+      </code>
+      <p>
+        Now I can declare one of these on the stack when I need one, thus:
+      </p>
+      <code>
+        #include "SpIter.h"<br/>
+        extern Frequency CurrentScanFrequency( void );<br/>
+        extern void SetScanFrequencyTo( Frequency );<br/>
+        extern int SignalPresentOn ( Frequency )<br/>
+      </code>
+      <code>
+        void ScanPressed ( void )<br/>
+        { <br/>
+        SpectrumIter i;<br/>
+        Frequency startPoint = CurrentScanFrequency();<br/>
+        Frequency f = SpectrumIter_Construct(&i, startPoint);<br/>
+      </code>
+      <code>
+        while (f != startPoint && !SignalPresentOn(f))<br/>
+        f = SpectrumIter_Next(&i);<br/>
+      </code>
+      <code>
+        SetScanFrequencyTo(f);<br/>
+        }<br/>
+      </code>
+      <p>
+        The client knows the size of the structure, but not its details. They can create and destroy them at will.
+      </p>
+      <p>
+        -- <a href="KeithDerrick.html">KeithDerrick</a>
+      </p>
+      <hr/>
+      <p>
+        I see no mention of VTables within this struct.
+      </p>
+      <p>
+        How would you implement the sample class hierarchy shown in the pattern description? Perhaps a sample header and implementation file.
+      </p>
+      <p>
+        -- <a href="KeithDerrick.html">KeithDerrick</a>
+      </p>
+      <hr/>
+      <p>
+        Keith covers the fact that in your class hierarchy all your data was protected/private.
+      </p>
+      <p>
+        There is also the case where we have a class with data AND methods, that we wish classes to inherit from a parent. So see <a href="ClassInheritanceDiscussion.html">ClassInheritanceDiscussion</a>, and we will create a ClassInheritancePattern at a later date when we are happy with how we wish to implement it.
+      </p>
+      <p>
+        -- <a href="ScottWalsh.html">ScottWalsh</a>
+      </p>
+      <hr/>
+      <p>
+        The <a href="PolymorphicFunction.html">PolymorphicFunction</a> pattern requires the instance data to be passed as an opaque reference (void*), rather than an exposed data type (e.g. TypeStructure*). The reason is to provide total abstraction of the design of the instance data. Collaborating classes have no knowledge of the structure of the instance data of the said class. As a result, the design of the instance data can be completely overhauled without affecting the collaborating classes. 
+      </p>
+      <p>
+        One subtle point that Keith may have missed is that the instance data may not be a single data structure. The instance data can be made up of multiple data structures. It can even be a file handle or a TCP/IP socket handle, or anything else. The <a href="FamilySplit.html">FamilySplit</a> pattern describes the circumstance under which it may be a good idea to split the instance data into multiple data structures.
+      </p>
+      <p>
+        Keith is asking for vtable inside the instance data. The <a href="PolymorphicFunction.html">PolymorphicFunction</a> pattern specifies how a polymorphic function should behave, however it does not specify how it should be implemented. The polymorphic behaviour can be achieved through the <a href="FunctionPointer.html">FunctionPointer</a> pattern and the <a href="PolymorphicFunctionWithEmbeddedBehaviour.html">PolymorphicFunctionWithEmbeddedBehaviour</a> pattern. If the <a href="PolymorphicFunctionWithEmbeddedBehaviour.html">PolymorphicFunctionWithEmbeddedBehaviour</a> pattern is applied, vtable is not required. Even if <a href="FunctionPointer.html">FunctionPointer</a> pattern is applied, a vtable is not required as long as the <a href="ClassDescriptor.html">ClassDescriptor</a> pattern is also applied.
+      </p>
+      <p>
+        Scott made a shrewd observation that I have assumed that all attributes in all classes in the class hierarchy being protected/private.
+      </p>
+      <p>
+        That's true, because a good OO design should not be exposing the internal structure of a class. However, for efficiency purposes it is often necessary to make compromises and make selected attributes publicly accessible. That's what the <a href="OperationVapourware.html">OperationVapourware</a> pattern provides. The intent and motivation of the <a href="OperationVapourware.html">OperationVapourware</a> pattern will be updated to make this more explicit.
+      </p>
+      <p>
+        -- <a href="StephenCheng.html">StephenCheng</a>
+      </p>
+    </div>
+  </body>
+</html>

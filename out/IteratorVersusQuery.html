@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <base href="/mount/ultralaser_home/Projects/c2_wiki_recovery/out/">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="page">
+      <h1>
+        <img src="wiki.gif" />
+        Iterator Versus Query
+      </h1>
+      <p>
+        My <a href="ExBase.html">ExBase</a> days still make me appreciate easy application of "cursoring" techniques. That is, the ability to process records one-at-a-time with an imperative (procedural) style. (Sometimes called "iterating".) Newer query-favoring tools don't seem to acknowledge this, making cursoring cumbersome or verbose.
+      </p>
+      <p>
+        As an example, suppose from a vendor we receive and import a CSV file representing a table with "header" rows and "detail" rows in the following table structure:
+      </p>
+      <code>
+        table: rawInfo<br/>
+        --------------<br/>
+        lineNum  // sequential line number<br/>
+        lineType // 'header' or 'detail'<br/>
+        content<br/>
+      </code>
+      <p>
+        We want to associate the headers with corresponding detail so that we have a table or view with just the detail that has the columns: "lineNum", "headNum", and "content". "headNum" is the corresponding header line number.
+      </p>
+      <p>
+        The declarative SQL way to do such is generally using a correlated sub-query along the lines of:
+      </p>
+      <code>
+        SELECT A.lineNum, <br/>
+        (SELECT max(H.lineNum) FROM rawInfo as H<br/>
+        WHERE H.lineNum < A.lineNum AND H.lineType = 'header'<br/>
+        ) AS headNum, <br/>
+        A.content<br/>
+        FROM rawInfo AS A<br/>
+        WHERE A.lineType <> 'header'<br/>
+      </code>
+      <p>
+        The cursor-oriented approach would resemble:
+      </p>
+      <code>
+        // cursor pseudo-code<br/>
+        curHeadNum = 0;   <br/>
+        for r = each row in rawInfo ordered by lineNum {<br/>
+        if r.lineType = 'header' {<br/>
+        curHeadNum = r.lineNum;<br/>
+        } else {<br/>
+        save(r.lineNum, curHeadNum, r.content);<br/>
+        }<br/>
+        } // next r<br/>
+      </code>
+      <p>
+        (Error handling code for missing headers is not shown for either.)
+      </p>
+      <p>
+        I believe most developers will find the cursor-oriented approach more intuitive and "natural" because it is "mechanical" instead of logical.
+      </p>
+      <p>
+        However, one may argue that one just has to learn how to switch to declarative thinking. "Don't be a baby and just learn the 'smart' way."
+      </p>
+      <p>
+        But, I still find that the cursor-oriented approach is often more flexible. It will have less <a href="DiscontinuitySpike.html">DiscontinuitySpike</a>s as changes or additions are made. Maybe this is also a limitation of my ability to design effective declarative solutions quickly and concisely. Or it maybe a limit of declarative approaches in general or the specific query language, such as SQL or dialects of. For example, SQL is natorious for <a href="ThickBreadSmell.html">ThickBreadSmell</a>.
+      </p>
+      <p>
+        Either way, for me, cursoring solutions are still often easier to devise for many situations despite having greatly improved my declarative skills. Saying that declarative is always better for me or my team-mates may go against practical <a href="MindOverhaulEconomics.html">MindOverhaulEconomics</a> even if our brains were the bottleneck.
+      </p>
+      <p>
+        Further, the above cursor approach is simply <strong>much faster</strong> on the RDBMS I've tested it on. It's hard to see how an optimizer can automatically optimize the SQL version to compete. That would take some impressive AI.
+      </p>
+      <p>
+        Thus, cursoring (iteration) still has a place.
+      </p>
+      <p>
+        (By the way, a practical application of this is analyzing a text file folder/directory listing dump, such as from "DIR /S" in DOS or "ls" variants in Unix.)
+      </p>
+      <hr/>
+      <p>
+        Although <a href="TutorialDee.html">TutorialDee</a> defines a mechanism for iterating the tuples of a relation, it's deliberately awkward and verbose to (among other things) discourage students from using iterative techniques where set-oriented ones are preferable.  The <a href="RelProject.html">RelProject</a>, however, defines a simple tuple iterator.  For example, the following iteratively outputs the <a href="RelVar.html">RelVar</a> names in the catalog in alphabetical order:
+      </p>
+      <code>
+        FOR sys.Catalog ORDER(ASC Name); <br/>
+        WRITELN Name;<br/>
+        END FOR; <br/>
+      </code>
+      <p>
+        <em>Rats, now I have to add iterators to </em><a href="TopsQueryLanguage.html">TopsQueryLanguage</a> to compete. (That and little things like implementation.) [See later below for suggested compromise] --top<em></em>
+      </p>
+      <p>
+        Implementation would be nice.  Here's a slightly more complex, but realistic, example of Rel / <a href="TutorialDee.html">TutorialDee</a> code that generates a backup of a database by emitting it as an executable script to re-create the database:
+      </p>
+      <code>
+        // Version 0.3.2 Database Backup Script<br/>
+      </code>
+      <code>
+        WRITELN "/*** Rel Database Backup ***/";<br/>
+        WRITELN;<br/>
+      </code>
+      <code>
+        WRITELN "// Created in Rel Version " || (ver FROM TUPLE FROM (EXTEND sys.Version ADD (major || "." || minor || "." || revision || " " || release AS ver)));<br/>
+        WRITELN "// Using DatabaseToScript version 0.3.2";<br/>
+        WRITELN;<br/>
+      </code>
+      <code>
+        WRITELN "BEGIN TRANSACTION;";<br/>
+        WRITELN;<br/>
+      </code>
+      <code>
+        BEGIN TRANSACTION;<br/>
+      </code>
+      <code>
+        FOR<br/>
+        UNION {<br/>
+        EXTEND sys.Catalog {Name, Owner, CreationSequence, Definition, isVirtual} WHERE Owner <> "Rel" ADD (0 AS ProcessSequence, "var" AS objectType),<br/>
+        EXTEND (sys.Operators WHERE CreatedByType="") {Name, Owner, CreationSequence, Definition} WHERE Owner <> "Rel" ADD (0 AS ProcessSequence, "operator" AS objectType, false AS isVirtual),<br/>
+        EXTEND sys.Types {Name, Owner, CreationSequence, Definition} WHERE Owner <> "Rel" ADD (0 AS ProcessSequence, "type" AS objectType, false AS isVirtual),<br/>
+        EXTEND sys.Constraints {Name, Owner, CreationSequence, Definition} WHERE Owner <> "Rel" ADD (1 AS ProcessSequence, "constraint" AS objectType, false AS isVirtual)<br/>
+        } ORDER (ASC ProcessSequence, ASC CreationSequence);<br/>
+        BEGIN;<br/>
+        WRITELN "ANNOUNCE '" || objectType || " " || Name || "';";<br/>
+        CASE;<br/>
+        WHEN objectType = "var" THEN<br/>
+        BEGIN;<br/>
+        WRITELN "VAR " || Name || " " || Definition || ";";<br/>
+        IF NOT isVirtual THEN<br/>
+        EXECUTE "IF COUNT(" || Name || ") > 0 THEN BEGIN; WRITE '" || Name || " := '; OUTPUT " || Name || "; WRITELN ';'; END; END IF;";<br/>
+        END IF;<br/>
+        END;<br/>
+        WHEN objectType = "constraint" THEN WRITELN "CONSTRAINT " || Name || " " || Definition || ";";<br/>
+        ELSE WRITELN Definition;<br/>
+        END CASE;<br/>
+        WRITELN;<br/>
+        END;<br/>
+        END FOR;<br/>
+      </code>
+      <code>
+        COMMIT;<br/>
+      </code>
+      <code>
+        WRITELN "COMMIT;";<br/>
+        WRITELN;<br/>
+      </code>
+      <code>
+        WRITELN "/*** End of Rel Database Backup ***/";<br/>
+      </code>
+      <code>
+        WRITELN "ANNOUNCE 'End of Script.';";<br/>
+      </code>
+      <hr/>
+      <p>
+        For <a href="TopsQueryLanguage.html">TopsQueryLanguage</a>, I'll avoid defining an imperative language at this point. However, I'll suggest two commands that allow ties to imperative languages:
+      </p>
+      <ul>
+        <li>
+           changeRun(<table>,<scriptName>,[<column-table>])
+        </li>
+        <li>
+           rt = run(<table>,<scriptName>,[<column-table>])
+        </li>
+      </ul>
+      <p>
+        "changeRun" passes a reference of the given table to the given script. The script can then process the given table as it pleases with its own loop. (The TQL processor may have to actualize the given table if its virtual at the time.) A reference API would be provided to access it in a typical iterator fashion {row = getNext()}, probably distributed as C code which can then be re-wrapped for specific languages.
+      </p>
+      <p>
+        The optional <a href="TqlColumnTable.html">TqlColumnTable</a> can be used to pass parameters. It's generally sent as four associative arrays, or plain arrays if the language does not support associative arrays. The usual column-table short-cut syntax can be used. Normally, only the "expr" portion would be used in practice.
+      </p>
+      <p>
+        "run" is somewhat similar to changeRun; however, it executes the script for each record and returns a result table (rt). It better fits the spirit of <a href="FunctionalProgramming.html">FunctionalProgramming</a> than "changeRun", but may be less efficient because, first, it must make a new (virtual) table rather than change an existing one; and second, re-executes the script for each row in the source table (thus, no explicit loop needed). 
+      </p>
+      <p>
+        The re-execution in "run" is probably more overhead than an explicit single loop, as done by "changeRun". "changeRun" essentially would be categorized as one of the <a href="TqlDataAlterationOperators.html">TqlDataAlterationOperators</a>.
+      </p>
+      <p>
+        (This still needs some pondering because in-table-versus result-table and inner-looping versus implied-looping should be independent choices.)
+      </p>
+      <p>
+        --top
+      </p>
+      <hr/>
+      <p>
+        <a href="CategoryExample.html">CategoryExample</a>
+      </p>
+    </div>
+  </body>
+</html>

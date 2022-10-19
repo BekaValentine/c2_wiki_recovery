@@ -1,0 +1,139 @@
+
+The Object Graph
+
+Blue Abyss presents itself as a vast directed Object Graph made up of secure high-level caps (capabilities) and versioned garbage-collected nodes obeying a single consistent semantics. Different parts of the graph belong to different Components, possibly on different machines, each of which is implemented by its own process. These different components are transparently connected together using portals, types of capabilities which know how to send a message to a different component, that are reified in terms of other capabilities.
+
+Components
+
+The Blue Abyss system is made up of many different components providing various abstractions layered one on top of another. These abstractions primarily occur in one of four stacks. These stacks are:
+
+storage
+concurrency
+graphics (actually, human-computer interaction)
+computation
+
+The storage stack is composed of a device driver, a partition manager, a RAID, a log, a cleaner, a graphsystem, and the RAM manager (which provides caching and unification of objects in the graphsystem only).
+
+The concurrency stack is composed of IP, TCP, (various obsolete protocols such as FTP and HTTP,) an OpenTalk-like RPC protocol, and a peer-to-peer groupware application called Communities. (Communications / networking is a method for concurrent storage and access, yet the storage part is already handled by the storage stack, so the purpose of communications can only be concurrency of objects in the graphsystem.)
+
+The top of the graphics stack is an ObjectBrowser.
+
+The computation stack is composed of schedulers and an HLL language such as Smalltalk.
+
+Users usually interact directly only with the top layers of each stack, namely the object browser, the language, the graphsystem (which is second from the top), and Communities. However, since every part of the system is accessible and interconnected, users are free to explore as far and as deep as they wish. Assuming of course that they have sufficient privilege.
+
+Caps
+
+Caps in other systems are primitive objects containing no internal state. They usually come in many distinct kinds and are implemented solely by the kernel. (So many kinds that they almost seem to form an infinite language.) The object graph described by these caps is present but hardly visible considering how very much work it takes to navigate it, for how little reward the activity provides. As a consequence, the object graph in these systems tends to be rather flat locally and inaccessible globally. And in fact, since this object graph resides solely in the kernel, the users are never exposed to it.
+
+Caps in Blue Abyss are of exactly two kinds, links and portals, and contain large amounts of internal state. This internal state is composed of a set of permissions (read, write, watch, override, plus any additional permissions a user sees fit to set or unset at use time) which can be in any of three states (set, unset, absent), a set of timestamps, version numbers of the target node to which the cap applies, and metastate (loans, equity, and a garbage collection Condition) which applies to the entirety of a unilink (the set of invariant caps through time which is experienced by the user as a single dynamic cap).
+
+As already stated, the entire Blue Abyss system from top to bottom, and one side to another, presents itself as a vast extended graph. Users are directly exposed to this graph, and its navigation and manipulation are made easy and fruitful by the concepts of override and absent permissions. These concepts are used to aggressively aggregate capabilities such that owning a capability (having unrestricted access to it, provided by override being set) implies the ownership of the entire subgraph (of caps with override absent) beneath that capability.
+
+   A
+  / \
+ B - C
+  \ / \
+   D - E
+
+Figure 1
+
+In the graph depicted in Figure 1, the caps AB, AC, BD, CD, and CE all have override absent. As a consequence, anyone with an override cap to any of these objects will own everything strictly below, and including, that object in the graph. In particular, someone with an override cap to B would own B and D but not E. E is not reachable from B using a strictly downwards chain of caps.
+
+These concepts of override and absent permissions which permit aggregation, and in fact the entire concept of aggregation itself, are novel to Blue Abyss and do not exist anywhere else that I am aware of.
+
+Blue Abyss follows the dogma that caps control all access in the system and nodes contain all data and perform all services. It doesn't matter what cap you have, or what component it's in, it will always obey the same semantics. The only thing that matters is what node it links to. While caps have the same meaning across all components, this is radically different for nodes.
+
+If you decompose the caps in typical capability systems into separate caps and nodes, such that their functionality resides in the nodes, then the caps in these systems come with an internal but invariant state of exactly 1 bit. Either read, or read-write. These are truly primitive systems.
+
+(The decomposition of primitive caps into separate caps and nodes might seem notional but it is not. Since primitive caps have no state, since they are not objects in their own right, their identity derives almost entirely from the resources they point to. Duplicates of a cap are thought of as the same object from the user's point of view, much like one would view the integer 4 and the integer 4 to be one and the same even though they are physically distinct on this page. As a result, the cap and the node are one.)
+
+While caps are the most fundamental user-visible units, they're not the basic units of everyday life. These units are links. Links are composed of pairs of capabilities targeting each others' node. The caps in a link are said to be synced to each other and open as a consequence. Links are generally of three types, depending on the value of their override permission: unset-absent (upwards), unset-unset (sideways), absent-unset (downwards). As in figure 1 above, an upwards link means that the link goes upwards from your position (eg, AB is upwards from B's point of view), a downwards' link goes downwards from your position (eg, BD from B's point of view), and a sideways link goes sideways (eg, BC).
+
+What distinguishes a link (or full link) from a mere pair of caps (or unilinks) is the fact that updates to a node are automatically available to the user of a full link. The creation of a full link is a subscription to the target node, and entitles its user to ongoing service until such time as an owner of the link (someone with override over it) describes to revoke it.
+
+Permissions and Operations
+
+In Blue Abyss, all operations are controlled by 4 permissions working in concert with two primary quotas. The key difference between a permission and a quota is that acquisition of the former is path-dependent while the latter are not. The standard permissions are read, modify, watch, and override.
+
+* having read confers the ability to read the keys and contents in the node beyond a cap
+* modify confers the ability to insert and remove keys and contents in the node beyond a cap
+** having modify does not confer the ability to read or in any way probe the node since modifications will just clobber preexisting data
+* watch confers the ability to reflect on the system, for example:
+** returning from a node only when it has been modified
+** accessing usage statistics of nodes and caps
+* override trumps all other perms and confers the additional ability to change the backpermissions of an open, synced capability
+
+It should be noted that all permissions are defined in terms of node operations. Even "changing the backpermissions of a cap" is a node operation since it involves the replacement of the cap's pair in the target node with an upgraded clone of it. (Having write permission only confers the ability to downgrade the backpermissions of a cap.)
+
+Override also INTERACTS with:
+* garbage collection conditions
+* quotas / backquotas
+* versions
+
+Note that having modify confers the ability to modify a node only so far as the availability of resources allows. In particular, inserting a link or data into a node requires PositiveStorage, and removing a link  r cutting data from a node requires NegativeStorage. Thus, a node can be made fixed-size by isolating it off from any possible source of positive or negative storage. Of course, fixed-size modifiable nodes are only useful if an operation is provided to overwrite their contents without using any storage whatsoever. This typically requires versioning to be optimized away. (see Implementation Optimizations)
+
+syncing
+open caps
+
+modifying the present vs the past: what you can't do in the past (change perms primitively)
+caps control access to versionioned nodes using version limits
+
+Nodes
+
+Nodes in different components usually have vastly different meanings. Usually, nodes in the same component will have very different meanings represented by their different relationships to other nodes. For example, in the hard disk component, a node can be a block of hard disk. In the scheduler, a node can be a piece of a thread. In the object browser, a node can be a part of a rendered model.
+
+Nodes keep track of an arbitrary number of named caps which they hold (in KeyKOS, caps are limited to 16 per node and their names are 1 to 16). They also keep track of an arbitrary number of degenarate caps (called bytes) with equally degenerate names (eg, 1, 2, ... 1024, ...). The byte array of a node is not a separate concept from caps, it is very specifically a set of caps that all have their permissions absent and quotas set to zero.
+
+Each node keeps track of a contiguous set of versions. Each version may hold only one cap of a unilink. That is, while it can hold both ends of a link, it may only hold one cap from each end. In contrast, each cap applies to a contiguous set of versions in a node. Caps provide access to the past just as easily as they provide access to the present. When an attempt to write or otherwise change the past occurs, the node targeted returns a new node with a shared collection of versions, up to the branch point. The new node retains the old one's past history without interfering in its relationships. In some ways it is the old node, and in others not. Thus, users retain read and write access to anything they ever had read and write access to, indefinitely, without negatively impacting any other users of these nodes.
+
+garbage collection
+
+Resource Quotas
+
+Resource usage is controlled through a system of quotas that is part of links' metastate. All caps in a uni-link share the same quota, so it's not possible for a user to get around their quota's revokation by the simple expedient of going into the past. Nor is it possible for them to use their quota multiple times by going into the past. (The thoughtless non-solution of disallowing writes to the past is obviously not an option for a serious designer.)
+
+When a node receives a resource-consuming request, it tries to fill it using the equity it's accumulated. If it doesn't have sufficient equity, it tries to loan the resource from each of the caps it holds in turn. Each of these caps can grant or deny the request based on their balance of trade and loan authorizations. If a cap decides to loan resources, it will request them from its target node which will consider this a resource-consuming request. Alterately, a node may decide to fill a request by recalling resources which it has preloaned or overloaned, or which have simply become freed after having been loaned and used.
+
+Portals do not transmit resource requests to other components; the operation wouldn't even be meaningful. In the interests of avoiding constant and repeated resource requests, nodes may choose to pre-loan and overloan while they are still flush with resources, and recall any unused resources when these are scarce. Allocation of resources is non-deterministic; resources may come from anyone or any chain willing to give or loan them, and no attempt is made to find a best fit.
+
+Note that no user may create a full link to a fixed size node since inserting a link into a node is a resource-consuming request. (The most important resource it consumes being namespace).
+
+Fixed-size nodes are specified by the expedient of not giving or lending anyone your resources to grow or shrink them, nor allowing anyone a direct link to these nodes so that they may apply their own resources to grow or shrink them.
+
+Of course, just as with read-only nodes, it is logically impossible to prevent the owner of a resource from changing its size. The only thing that may be done is to make this owner a robot which never requests such an operation, and to provide users only with non-override links to a lobby (see sterilization of privileges).
+
+Resources to a node remain committed until every user of the node relinquishes their link to it. Any attempt by a component to reallocate resources is purely optional, and failure to resolve a reallocation results in the resources remaining committed. No attempt is made to find a best fit reallocation.
+
+The meaning of resources varies from component to component. Thus, the primary resource in the storage stack is storage, in the concurrency stack it is network bandwidth, and in the computation stack it is either CPU time slices, or CPU time slices per second. The graphics stack has both storage and computation as primary resources.
+
+Having more than one resource means that a node has more than one size. A node in the graphics stack might thus have two different sizes to indicate how much of each resource (bytes, and cycles) it has consumed.
+
+(Note that the division of resources into positive and negative kinds is especially beneficial in cases where only one of these kinds exist. For example, only positive computation exists since having consumed it, it can never be unconsumed.)
+
+While there is no limitation to the user's ability to define a resource any more than there are limitations on the ability to define permissions, it is entirely pointless since no node in the component will make use of the defined permissions, and no portal will propagate these resource quotas to other components. For elementary security reasons, a node can't be asked to execute arbitrary code provided by the user. Besides, it's the object browser's job to provide such extensibility to users.
+
+In addition to giving and loaning independent resources, a node may choose to convert an amount of one resource into one of another resource. Users may control this by setting a price. This interconvertibility allows the development of derivatives such as futures.
+
+So for instance, it's possible for a node to acquire 1 GB of storage or bandwidth for some unspecified time in the future, without preventing anyone else from using that storage now. It would also be possible for threads to sell futures for computation cycles if their own computation isn't time-sensitive. Another interesting derivative of computation rates would be exclusive computation for a limited period of time.
+
+In a sufficiently sophisticated system, it would even be possible to secure resources for a limited period of time, at the cost of a massive penalty if the time limit is exceeded. This would be implemented by paying a security deposit upfront and getting refunded when the resource is returned.
+
+I do not currently perceive any need to implement securities.
+
+Implementation Optimizations
+
+There are any number of ways this model can be optimized or degenerated when implemented by a component. 
+
+Since most caps have absent permissions and metastate, these values can be stored efficiently and look-aside logic used to verify that they're absent. A language can make all of its object pointers into high-level capabilities with minimal overhead by encoding the absence of permissions and metastate as a single bit in those same object pointers. The full cost of high-level caps will be paid only by those pointers that make use of their advanced features.
+
+The timestamps and usage statistics can also be optimized away by generating forged values. The creation date would be the beginning of the epoch, the last modification time would be 'now', every cap would be traversed once per hour, and so on.
+
+Components that are meant to be read-only or to contain only fixed size nodes, can exploit these assumptions to optimize further. The version number of a node is always 1, so that even though a user can only create a unilink to a node and thus never subscribe to it, that unilink provides subscriber-like access. Until the version number becomes 2, which causes all unilinks previously handed out to be revoked. Again, you only pay for keeping track of every individual capability if you plan to use it. (In the general case of user storage, yes you do plan to use it.)
+
+sterilization of privilege: the creation and use of dead-drops and lobbies. link creation and destruction rules.
+
+creation as cloning by branching off of version zero
+
+metastate
+metastate's sterilization upon branching

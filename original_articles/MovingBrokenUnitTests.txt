@@ -1,0 +1,136 @@
+''Here's the problem. You have written unit tests, both to help you understand your design and to find bugs. In due time, you refactor your code, which causes tests to break. The interface they communicate with has changed, so they must change to match. Are there reasonable alternatives to RefactorBrokenUnitTests?''
+
+See also DeletingBrokenUnitTests.
+
+-----------------
+
+You can reduce the cost of refactoring broken tests by deleting them and recreating them somewhere else. Suppose you're testing a class C. You write unit tests before the code as an aid to getting class C right. Time passes. You make a change to C's interface and break some tests. You could fix the tests. But you notice that C is used by B, which is in turn used by A. A is a class with a more stable interface. Perhaps it's part of a published API. It may be easy to write tests that talk to A's interface but exercise C's code in the same way that the now-broken tests did. Rather than fix the C tests, "promote" them to the A interface. That reduces predicted future maintenance costs. There are some losses (debugging is harder, it's more likely that you won't be testing what you think you're testing, etc.). But this indirect testing approach has worked well for me. -- BrianMarick
+
+----
+
+Question added to DeletingBrokenUnitTests.
+
+-----
+
+Here are two concrete near-examples of moved unit tests. A real
+example would start with a conventional unit test (one that calls
+methods-under-test directly). I would describe how that test was broken by a code change, then how it was moved to a more distant and
+stable interface. In both of these cases, though,
+I started out by testing through the more distant interface. I did
+that because it made my life easier. The tests were easier to write in the first place,
+as well as being more resistant to change. 
+
+So perhaps these are not the best examples. But they're easy to
+explain. And generic discussions like this one often desperately need
+some concreteness.
+
+'''Please''' note that I have not claimed that '''all''' tests should
+be written against distant interfaces. --BrianMarick
+
+'''Example 1:'''
+
+I have some Java code that takes mixed boolean and relational
+expressions and generates variant expressions. For example, it converts "(a&&b)||c" to "a&&(b||c)". 
+
+I began the project by creating
+classes for the different types of nodes in a conventional parse tree. Those
+classes came with a variety of conventional unit tests (that check
+that equals() works, etc.).
+
+However, I soon moved to code (and tests) that worked with more
+substantial expressions. Testing code that manipulates parse trees is
+a pain. I don't want to build parse trees by hand. And I don't want to
+write result-checking code like this:
+
+     assert(result instanceof ExprAnd);
+     assert(result.leftChild() instanceof ExprBooleanVariable);
+     assert(result.rightChild() instanceof ExprOr);
+     ...
+
+So I next implemented parsing code (which I'd need eventually, anyway). The bulk of my tests look something like this:
+
+    expr = Parser.parse("a && b || c");
+    result = mutator.mutate(expr);
+    assertEquals(Parser.parse("a&&(b||c)"), result);
+
+There's some danger that a bug in the parser could mask a bug in the
+mutator. Something like that happened once, but I caught it not much
+later. As far as I know, it only happened once. The small perplexity
+it caused - "how could this test be failing when those others worked?"
+- was well worth it. 
+
+'''Example 2. '''
+
+I was writing a C code coverage tool, GCT [1]. GCT, like many coverage
+tools, works by parsing source code, transforming the parse tree, then writing the transformed tree as
+source code again. So, for example, to measure which branches are
+taken in which direction, it would convert code like this:
+
+   if (b)...
+
+into something like this:
+
+   if ( (b?covarray[121]++:covarray[122]++), b )...
+
+For more about coverage, see [2]. 
+
+One type of coverage is called weak
+mutation coverage. Suppose you refer to a variable's value:
+
+   ... J = VAR + 1 ...
+
+At the point of reference to VAR, weak mutation coverage asks that you
+compare the value of VAR to all type-compatible variables. So you end
+up generating code like this: 
+
+   ... VAR!=otherVAR ... VAR!=yetanotherVAR ... 
+
+So GCT must know what variables are in scope at each
+variable reference. Now consider this code. 
+
+    {
+    int otherVAR;
+    ...
+       {
+       struct mumble otherVAR;
+       int VAR...
+       ...
+       J = VAR + 1;
+       ...
+
+At the point where VAR is used, the ''integer'' otherVAR is not in
+scope. It is shadowed by the ''struct'' with the same name. It would
+be incorrect to generate code comparing VAR to otherVAR.
+
+I could have tested the scope-handling routines directly. Instead, I
+wrote a little C program like the above, fed it to GCT,
+then compiled the resulting C code. If GCT had
+incorrectly used otherVAR, the C compiler would have choked on the
+result. I think that was the right way to create the test: 
+
+	* I already had a framework for such tests, so the typing was minimal. 
+	* No matter what changes about GCT's implementation, the above code is a "corner case" C program that a weak mutation coverage tool must handle. This test will never go out of style. 
+	* Given that C is a ubiquitous standard, this test should never break. It will never need maintenance. 
+	* The test serves as pretty understandable documentation of the need for the feature; arguably more understandable than a code-level test. (But likely harder to find.)
+----
+Both your examples are really about representation. The idea here is something like, "Unit tests are easier to write, and less fragile, if we have a nice representation for the before- and after- data." When I first read the "move" description I thought it was much more indirect (along the lines of defining multiplication in terms of addition and then assuming that a test of multiplication will verify addition too). If we think of the switch from C to A as a change of representation then we ca see that "niceness" includes ideas like isomorphism and fidelity.
+
+This form, about representation, is something I've found myself. In other words, I HaveThisPattern. Albeit reversed: I have XML import and export for my data structures, and instead of comparing the data structure I compare the XML text. In other words, like:
+
+    expr = Parser.parse("a && b || c");
+    result = mutator.mutate(expr);
+    assertEquals(result.asString(), "a&&(b||c)" );
+
+This means I have to write asString() instead of equals(), which just happened to be more convenient for me. -- DaveHarris
+
+That's a good point. It's ideal if the more distant interface maps nicely (one-to-one) onto the interface of the class. But sometimes I do the equivalent of testing addition via multiplication. 
+
+Note that my tests ''implemented'' through multiplication would be ''designed'' to exercise addition in the same way as direct tests would. That is, I'd think about what to test about addition, ''then'' think about how to exercise it via the distant interface. (Let me hasten to add again that indirect test implementation isn't always the right answer - it's a sometimes-useful tool.)
+
+Now, this seems crazy. What if the addition code changes? What reason do I have to believe that these indirect tests will exercise the changed code in any useful way? Maybe none. Two comments:
+	* No existing suite will be adequate to test changed code. Whenever I change code, I must first create tests designed to test the change.  
+	* The tests do lose some power because they're distant. That's a tradeoff I'm willing to make to avoid a maintenance burden.
+
+Nowadays, I tend '''not''' to implement my tests through a distant "safe" interface when I create them. They're first implemented by exercising a class's methods directly. When they later break, I consider whether I want to fix them in place or move them to a more stable interface. The new tests - those specific to the change that broke the old ones - are directly implemented. My mental picture is of old tests "bubbling up" to some stable interface, constantly being replaced by tests targeted at changes.
+
+I lack enough experience to make sweeping claims about this approach, but it seems like a reasonable one to try. --BrianMarick

@@ -1,0 +1,38 @@
+This is an example of having a class do one thing, and have a group of classes to do what you need. Hopefully it can help people who think that JavaIoClassesAreImpossibleToUnderstand. See TightGroupOfClasses.
+----
+For some reason, I recent have to parse an MIME stream, particular for handling file uploads from browsers using multipart-formdata encoding.
+
+I need the following characteristics from the parsing code:
+
+* Can easily wrapped in the servlet filter level, so the servlet code can deal with the parameters as usual.
+* Can parse in streaming mode, such that it can terminate if it receives invalid parameters, so users won't get invalid input message after waiting 10 mins uploading a file with other invalid parameters.
+
+The straight forward way is to create a parser that takes the MIME boundary, and read the stream, parsing the MIME parts, store parameters and files along the way, while looking for the boundary. In fact, this is what I have done a couple years ago in another project. To terminate the parsing on invalid parameters, the parser can take listeners and notify them when parameters and files are received, and the registered listeners can terminate the parsing.
+
+My experience with the straight forward implementation is that it is quite difficult to maintain and debug, because the parser is doing quite a few things at the same time. It is looking for the MIME boundary, parsing an MIME part, handling different text encoding, do different things for different parts (simple parameter and files), etc, all mixed up in the main parsing method.
+
+So this time, I do it differently. I follow the XML digester schema for the overall structure, namely, there is an M''''''imeDigester that parses the stream but only fires registered Rules while doing nothing itself.  So the parsing and part handling is separated. Then I created an I''''''nputStreamSplitter input stream filter, that will terminate if a certain termination byte sequence is read, leaving the source steam at the byte after the termination sequence.
+
+Now, the mime parsing function becomes very clear like this:
+
+ I''''''nputStream mainStream = new I''''''nputStreamSplitter(source, "--" + boundary + "--");
+ while (mainStream.available())
+ {
+    I''''''nputStream partStream = new I''''''nputStreamSplitter(source, "--" + boundary);
+    part = parsePart(partStream);
+    fireRules(part); // part contains the headers, and the partStream
+    partStream.close(); // leave the mainStream at the start of the next part.
+ }
+The best thing I found in this approach is that each individual class is easily tested. The stream splitter can use any byte sequence for test cases, finding the termination took the longest to debug in my old implementation, now it can be make very robust because it is isolated.
+
+Later on, I wish to add more useful error messages during the parsing that will indicate the offset of the problem.  Now, this offset counting is for the function of the MIME parser, but the straight forward way is the modify the stream splitter to count the offset, mixing up the responsibilities.  So, intead, I created another stream filter B''''''yteCountInputStream along the line of the L''''''ineNumberReader, that simply counts the byte read and provide a getByteCount() method.  Now I plug this filter in the main parsing and can easily get the offset from the main stream and the offset in a particular part easily without modifying the splitter class at all:
+
+ B''''''yteCountInputStream mainStream = new B''''''yteCountInputStream(new I''''''nputStreamSplitter(source, "--" + boundary + "--"));
+ try {
+     .... // parsing
+ } catch (Exception e) {
+      throw new M''''''imeParseException(e, mainStream.getByteCount());
+ }
+-- OliverChung
+----
+See TightGroupOfClasses, JavaIoClassesAreImpossibleToUnderstand
